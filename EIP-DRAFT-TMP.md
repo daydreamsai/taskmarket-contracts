@@ -1,7 +1,7 @@
 ---
 eip: TBD
 title: Task Market Protocol (TMP)
-description: A 5-mode on-chain task coordination protocol with keyless agent support via PGTR
+description: An actor-agnostic 5-mode on-chain task coordination protocol supporting human-to-human, agent-to-agent, and mixed human/agent interactions via ERC-8004 identity and PGTR
 author: TBD
 discussions-to: TBD
 status: Draft
@@ -15,12 +15,19 @@ requires: 20, 165, 8004, TBD (PGTR)
 
 The Task Market Protocol (TMP) defines a standard interface for on-chain task coordination
 supporting five procurement modes: **Bounty**, **Claim**, **Pitch**, **Benchmark**, and **Auction**.
-TMP enables any frontend, aggregator, or autonomous agent to interact with any compliant task
-market contract without implementation-specific knowledge.
 
-TMP is built on PGTR (EIP-TBD), which allows keyless agents to authorize task actions via
-on-chain payment receipts. TMP additionally integrates ERC-8004 for on-chain identity, reputation,
-and automated benchmark validation.
+TMP is **actor-agnostic**: requesters and workers may be humans, autonomous AI agents, IoT
+devices, or any combination thereof. A human may post a task for an AI agent to complete, an
+AI agent may post a task for a human specialist, two agents may transact entirely without human
+involvement, or two humans may use the protocol as a trustless escrow — the contract treats all
+participants identically. This symmetry is grounded in ERC-8004, which provides a single
+identity primitive shared by both human and machine actors.
+
+TMP enables any frontend, aggregator, or autonomous agent to interact with any compliant task
+market contract without implementation-specific knowledge. TMP is built on PGTR (EIP-TBD),
+which allows keyless actors to authorize task actions via on-chain payment receipts rather than
+private-key signatures. TMP integrates ERC-8004 for actor-agnostic on-chain identity,
+reputation, and automated benchmark validation.
 
 Tasks are identified by `bytes32` IDs generated deterministically by the contract using the
 requester's address and a monotonic nonce, enabling backends to pre-compute task IDs before
@@ -34,15 +41,21 @@ interfaces. The absence of a standard means:
 
 1. **Fragmentation** — Workers must track multiple incompatible contracts; aggregators must write
    custom adapters.
-2. **No keyless agent support** — Existing designs require workers and requesters to hold private
-   keys and pay gas, excluding lightweight AI agents and IoT devices.
-3. **No automated evaluation** — Benchmark-style tasks (prove you achieved metric X) require
+2. **Actor-specific designs** — Existing markets are designed for either humans or agents, not
+   both. Human-facing markets require wallets and UIs; agent-facing markets require custom APIs.
+   Neither is natively composable with the other.
+3. **No keyless actor support** — Existing designs require participants to hold private keys and
+   pay gas, excluding lightweight AI agents, IoT devices, and human users who prefer payment-only
+   authorization.
+4. **No automated evaluation** — Benchmark-style tasks (prove you achieved metric X) require
    trusted off-chain evaluators with no on-chain finality.
-4. **Missing portable identity** — Reputation accrued on one market is not portable to another.
+5. **Missing portable identity** — Reputation accrued on one market is not portable to another,
+   and there is no shared identity layer between human and machine participants.
 
-TMP addresses all four gaps: a common interface, PGTR-based keyless authorization, ERC-8004
-Validation Registry integration for automated benchmarks, and ERC-8004 Reputation Registry for
-portable reputation.
+TMP addresses all five gaps: a common interface, actor-agnostic design grounded in ERC-8004
+identity, PGTR-based keyless authorization, ERC-8004 Validation Registry integration for
+automated benchmarks, and ERC-8004 Reputation Registry for portable reputation across all
+actor types.
 
 ### Relationship to ERC-8183
 
@@ -51,7 +64,8 @@ coordination standard. TMP addresses a broader design space:
 
 | Dimension | ERC-8183 | TMP |
 |-----------|----------|-----|
-| Keyless agents | ERC-2771 (signature-based) | PGTR (payment-receipt-based) |
+| Actor model | Agent-focused | Actor-agnostic (human ↔ agent, any combination) |
+| Keyless actors | ERC-2771 (signature-based) | PGTR (payment-receipt-based) |
 | Coordination modes | 1 linear flow | 5 modes |
 | Trustless evaluation | Optional | Benchmark + ERC-8004 Validation Registry |
 | ERC-8004 integration | Recommended | Normative (all 3 registries) |
@@ -398,12 +412,19 @@ Once set, the deliverable field MUST NOT be overwritten by a subsequent `submitW
 
 ## Part V: ERC-8004 Integration (Normative)
 
+ERC-8004 is the actor-agnostic identity layer for TMP. Both human and machine participants
+(requesters and workers) are represented as ERC-8004 actors. This shared identity primitive
+enables human-to-agent, agent-to-human, agent-to-agent, and human-to-human task interactions
+to be treated uniformly by the protocol and by reputation indexers.
+
 TMP contracts that support reputation MUST integrate with all three ERC-8004 registries:
 
 ### Identity Registry
 
-Workers are ERC-8004 agents. The `workerAgentId` parameter in `rateTask` MUST correspond to
-a valid agent ID in the ERC-8004 Identity Registry.
+Requesters and workers are ERC-8004 actors — human or machine. The `workerAgentId` parameter
+in `rateTask` MUST correspond to a valid actor ID in the ERC-8004 Identity Registry. Any
+participant that registers an ERC-8004 identity (human or AI agent) participates in the same
+reputation graph.
 
 ### Reputation Registry
 
