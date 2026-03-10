@@ -1,7 +1,7 @@
 ---
 eip: TBD
 title: Payment-Gated Transaction Relay (PGTR)
-description: A relay primitive where on-chain payment receipt serves as authorization instead of a cryptographic signature
+description: An actor-agnostic relay primitive where on-chain payment receipt serves as authorization for any token-holding principal — human, AI agent, or machine — without requiring a private key
 author: TBD
 discussions-to: TBD
 status: Draft
@@ -14,31 +14,43 @@ requires: 20, 165
 ## Abstract
 
 Payment-Gated Transaction Relay (PGTR) defines a protocol for forwarding on-chain transactions on
-behalf of principals (agents, contracts, or EOAs) where the authorization proof is an on-chain
-payment receipt rather than a cryptographic signature. A **PGTR Forwarder** accepts an X402-style
-payment from a payer, verifies the payment against an expected amount and target, and calls the
-destination contract with the payer's address available as the authenticated sender. Destination
-contracts read the authenticated payer address from the forwarder via `pgtrSender()` rather than
-from `msg.sender`.
+behalf of principals — humans, AI agents, IoT devices, or contracts — where the authorization
+proof is an on-chain payment receipt rather than a cryptographic signature. A **PGTR Forwarder**
+accepts an X402-style payment from a payer, verifies the payment against an expected amount and
+target, and calls the destination contract with the payer's address available as the authenticated
+sender. Destination contracts read the authenticated payer address from the forwarder via
+`pgtrSender()` rather than from `msg.sender`.
 
-PGTR is a new primitive. It is not a profile of ERC-2771. ERC-2771 solves gas abstraction—the
+PGTR is **actor-agnostic**: the payer may be a human using a wallet app, an autonomous AI agent
+with a funded address, an IoT device, or any other token-holding entity. The protocol treats all
+principals identically — authorization is "I paid", not "I signed". This is the property that
+allows TMP (EIP-TMP) to support human↔agent, agent↔agent, and human↔human task interactions
+under a single interface.
+
+PGTR is a new primitive. It is not a profile of ERC-2771. ERC-2771 solves gas abstraction — the
 signer still needs a key and must produce an off-chain signature before the relay can act. PGTR
-solves **key abstraction**—any party that controls tokens and can reach an HTTP endpoint can
+solves **key abstraction** — any actor that controls tokens and can reach an HTTP endpoint can
 authorize on-chain actions without ever managing a private key.
 
 ## Motivation
 
-Autonomous AI agents, IoT devices, and other keyless participants require a way to authorize
-on-chain actions without the overhead of key management. Existing meta-transaction standards
-(ERC-2771, ERC-4337) presuppose that the principal can produce a valid cryptographic signature.
-This assumption breaks for:
+Any actor — human or machine — that can hold tokens should be able to authorize on-chain actions
+without the overhead of private key management. Existing meta-transaction standards (ERC-2771,
+ERC-4337) presuppose that the principal can produce a valid cryptographic signature. This assumption
+breaks for a wide class of actors:
 
-1. **Keyless agents** — software agents running in sandboxed environments where key storage is
+1. **Keyless AI agents** — software agents running in sandboxed environments where key storage is
    impractical or undesirable.
-2. **Micropayment-gated APIs** — HTTP services that accept X402 payments and need to translate
+2. **Human users preferring payment-only UX** — users who interact via payment flows (e.g.,
+   credit card → stablecoin bridge → X402) and should not be required to manage a separate signing
+   key for on-chain authorization.
+3. **Micropayment-gated APIs** — HTTP services that accept X402 payments and need to translate
    them into on-chain actions without intermediate key escrow.
-3. **Token-authenticated machine accounts** — systems where authorization is "I paid" rather than
-   "I signed."
+4. **IoT and machine accounts** — devices and automated systems where authorization is "I paid"
+   rather than "I signed."
+
+PGTR unifies all these cases under a single primitive: any token-holding actor, regardless of
+whether they are human or machine, can participate in PGTR-gated protocols on equal footing.
 
 PGTR establishes a minimal interface that destination contracts implement to trust PGTR forwarders,
 and that forwarders implement to be detectable by ERC-165.
@@ -191,12 +203,13 @@ PGTR and ERC-2771 are different primitives solving different problems:
 
 | Dimension | ERC-2771 | PGTR |
 |-----------|----------|------|
+| Actor model | Key-holding principals only | Actor-agnostic (human, agent, IoT, contract) |
 | Authorization proof | Off-chain ECDSA signature | On-chain payment receipt |
 | Principal requirement | Must hold a private key | Must hold tokens |
 | Sender detection | Appended 20-byte suffix in calldata | `pgtrSender()` call on forwarder |
 | Gas payment | Relayer pays gas | Forwarder (server) pays gas |
 | Replay protection | Signature nonce in forwarder | Receipt hash in forwarder |
-| Use case | Gas abstraction for key holders | Key abstraction for token holders |
+| Use case | Gas abstraction for key holders | Key abstraction for any token-holding actor |
 
 A destination contract MAY support both ERC-2771 and PGTR simultaneously by checking whether
 `msg.sender` is an ERC-2771 trusted forwarder first, then a PGTR trusted forwarder.
