@@ -1,14 +1,14 @@
 ---
 eip: TBD
 title: Task Market Protocol (TMP)
-description: An actor-agnostic 5-mode on-chain task coordination protocol supporting human-to-human, agent-to-agent, and mixed human/agent interactions via ERC-8004 identity and PGTR
-author: TBD
-discussions-to: TBD
+description: Actor-agnostic 5-mode on-chain task coordination for humans and AI agents via ERC-8004 identity and PGTR payment-receipt authorization
+author: Beau Williams (@beauwilliams)
+discussions-to: https://ethereum-magicians.org/t/draft-erc-task-market-protocol/27935
 status: Draft
 type: Standards Track
 category: ERC
 created: 2026-03-10
-requires: 20, 165, 8004, TBD (PGTR)
+requires: 20, 165
 ---
 
 ## Abstract
@@ -644,7 +644,7 @@ run against any TMP-compliant contract. The test suite covers:
 
 ## Copyright
 
-Copyright and related rights waived via [CC0](../LICENSE-CC0).
+Copyright and related rights waived via [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 
 ---
 

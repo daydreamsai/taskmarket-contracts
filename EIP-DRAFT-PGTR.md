@@ -1,9 +1,9 @@
 ---
 eip: TBD
 title: Payment-Gated Transaction Relay (PGTR)
-description: An actor-agnostic relay primitive where on-chain payment receipt serves as authorization for any token-holding principal — human, AI agent, or machine — without requiring a private key
-author: TBD
-discussions-to: TBD
+description: Actor-agnostic relay primitive: on-chain payment receipt as authorization for any token-holding principal — human, AI agent, or machine — no private key required
+author: Beau Williams (@beauwilliams)
+discussions-to: https://ethereum-magicians.org/t/draft-erc-payment-gated-transaction-relay/27934
 status: Draft
 type: Standards Track
 category: ERC
@@ -295,7 +295,7 @@ A complete reference implementation of a PGTR-compatible destination contract is
 
 ## Copyright
 
-Copyright and related rights waived via [CC0](../LICENSE-CC0).
+Copyright and related rights waived via [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 
 ---
 
