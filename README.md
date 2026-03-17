@@ -2,15 +2,15 @@
 
 [![CI](https://github.com/daydreamsai/taskmarket-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/daydreamsai/taskmarket-contracts/actions/workflows/ci.yml)
 
-Solidity interfaces, reference implementation, and EIP drafts for the **Task Market Protocol (TMP)** and **Payment-Gated Task Routing (PGTR)**.
+Solidity interfaces, reference implementation, and ERC drafts for the **Task Market Protocol (ERC-8195)** and **Payment-Gated Transaction Relay (ERC-8194)**.
 
 ---
 
 ## What is TMP / PGTR?
 
-**TMP (Task Market Protocol)** defines a standard interface for on-chain task markets where requesters post bounties, workers submit results, and payments are released upon acceptance. See [`EIP-DRAFT-TMP.md`](./EIP-DRAFT-TMP.md) for the full specification.
+**TMP (Task Market Protocol — ERC-8195)** defines a standard interface for on-chain task markets where requesters post bounties, workers submit results, and payments are released upon acceptance. See [`erc-8195.md`](./erc-8195.md) for the full specification.
 
-**PGTR (Payment-Gated Task Routing)** is a new authorization primitive where a USDC payment receipt (EIP-3009 `transferWithAuthorization`) serves as the proof of authorization, replacing traditional signature-based meta-transactions. See [`EIP-DRAFT-PGTR.md`](./EIP-DRAFT-PGTR.md).
+**PGTR (Payment-Gated Transaction Relay — ERC-8194)** is a new authorization primitive where a USDC payment receipt (EIP-3009 `transferWithAuthorization`) serves as the proof of authorization, replacing traditional signature-based meta-transactions. See [`erc-8194.md`](./erc-8194.md).
 
 ---
 
@@ -22,7 +22,7 @@ cd taskmarket-contracts
 forge test
 ```
 
-All 113 tests should pass (88 TaskMarket + 25 ITMP compliance).
+All 137 tests should pass (112 TaskMarket + 25 ITMP compliance).
 
 ---
 
@@ -30,8 +30,8 @@ All 113 tests should pass (88 TaskMarket + 25 ITMP compliance).
 
 | Interface | License | Description |
 |-----------|---------|-------------|
-| `ITMP.sol` | CC0-1.0 | Core task lifecycle (post, submit, accept, dispute) |
-| `ITMPForwarder.sol` | CC0-1.0 | PGTR forwarder — payment-gated meta-transactions |
+| `ITMP.sol` | CC0-1.0 | Core task lifecycle (post, submit, accept, dispute) — ERC-8195 |
+| `IPGTRForwarder.sol` | CC0-1.0 | PGTR forwarder interface — payment-gated relay — ERC-8194 |
 | `ITMPMode.sol` | CC0-1.0 | Pluggable task mode selector |
 | `ITMPFees.sol` | CC0-1.0 | Platform fee configuration |
 | `ITMPReputation.sol` | CC0-1.0 | On-chain rating hooks |
@@ -40,7 +40,9 @@ All 113 tests should pass (88 TaskMarket + 25 ITMP compliance).
 
 All interfaces are in [`src/interfaces/`](./src/interfaces/).
 
-The reference implementation is [`src/TaskMarket.sol`](./src/TaskMarket.sol) (MIT).
+Reference implementations (MIT):
+- [`src/TaskMarket.sol`](./src/TaskMarket.sol) — ERC-8195 TMP reference implementation
+- [`src/TaskMarketForwarder.sol`](./src/TaskMarketForwarder.sol) — ERC-8194 PGTR forwarder reference implementation
 
 ---
 
@@ -93,16 +95,16 @@ forge script script/Deploy.s.sol:Deploy \
 
 ---
 
-## EIP Status
+## ERC Status
 
-| Draft | Status |
-|-------|--------|
-| [`EIP-DRAFT-TMP.md`](./EIP-DRAFT-TMP.md) | Draft — not yet submitted |
-| [`EIP-DRAFT-PGTR.md`](./EIP-DRAFT-PGTR.md) | Draft — not yet submitted |
+| ERC | Spec | PR | Discussion |
+|-----|------|----|------------|
+| ERC-8194 (PGTR) | [`erc-8194.md`](./erc-8194.md) | [ethereum/ERCs#1603](https://github.com/ethereum/ERCs/pull/1603) | [Ethereum Magicians](https://ethereum-magicians.org/t/erc-8194-payment-gated-transaction-relay/27934) |
+| ERC-8195 (TMP) | [`erc-8195.md`](./erc-8195.md) | [ethereum/ERCs#1604](https://github.com/ethereum/ERCs/pull/1604) | [Ethereum Magicians](https://ethereum-magicians.org/t/erc-8195-task-market-protocol/27935) |
 
 ---
 
 ## License
 
-- **Reference implementation** (`src/TaskMarket.sol`, `test/`, `script/`): [MIT](./LICENSE)
-- **Interfaces** (`src/interfaces/`) and **EIP drafts**: [CC0-1.0](./LICENSE-CC0)
+- **Reference implementations** (`src/TaskMarket.sol`, `src/TaskMarketForwarder.sol`, `test/`, `script/`): [MIT](./LICENSE)
+- **Interfaces** (`src/interfaces/`) and **ERC drafts**: [CC0-1.0](./LICENSE-CC0)
