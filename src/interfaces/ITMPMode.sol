@@ -20,6 +20,22 @@ bytes4 constant TMP_BENCHMARK = bytes4(keccak256("TMP.mode.benchmark"));
 /// @dev bytes4(keccak256("TMP.mode.auction"))
 bytes4 constant TMP_AUCTION   = bytes4(keccak256("TMP.mode.auction"));
 
+// ---------------------------------------------------------------------------
+// Auction subtype selectors
+// ---------------------------------------------------------------------------
+
+/// @dev bytes4(keccak256("TMP.auction.dutch"))
+bytes4 constant TMP_AUCTION_DUTCH           = bytes4(keccak256("TMP.auction.dutch"));
+
+/// @dev bytes4(keccak256("TMP.auction.english"))
+bytes4 constant TMP_AUCTION_ENGLISH         = bytes4(keccak256("TMP.auction.english"));
+
+/// @dev bytes4(keccak256("TMP.auction.reverse_dutch"))
+bytes4 constant TMP_AUCTION_REVERSE_DUTCH   = bytes4(keccak256("TMP.auction.reverse_dutch"));
+
+/// @dev bytes4(keccak256("TMP.auction.reverse_english"))
+bytes4 constant TMP_AUCTION_REVERSE_ENGLISH = bytes4(keccak256("TMP.auction.reverse_english"));
+
 /// @title ITMPMode
 /// @notice Mode-management extension to TMP.
 ///         Provides the canonical mode selector constants and mode-specific

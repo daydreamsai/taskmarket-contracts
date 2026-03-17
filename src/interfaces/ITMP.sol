@@ -13,7 +13,7 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         - Emit the declared events on every corresponding state transition
 ///         - Ensure refundExpired() bypasses all hooks/extensions (fund safety)
 ///
-/// requires: ERC-20, ERC-165, ERC-8004
+/// requires: ERC-20, ERC-165, ERC-8004, ERC-8194 (PGTR)
 interface ITMP is IERC165 {
 
     // -------------------------------------------------------------------------
@@ -52,9 +52,13 @@ interface ITMP is IERC165 {
         uint256 bidDeadline;
         uint256 maxPrice;
         bytes32 deliverable;
+        bytes32 contentHash;    // Optional: keccak256 of off-chain task description
+        string  contentURI;     // Optional: URI pointing to extended task metadata
+        bytes4  auctionSubtype; // Auction subtype selector (zero for non-auction tasks)
     }
 
     /// @notice Worker performance statistics.
+    /// @dev avgRating = ratedTasks > 0 ? (totalStars * 100) / ratedTasks : 0
     struct WorkerStats {
         uint256 completedTasks;
         uint256 ratedTasks;
@@ -97,6 +101,13 @@ interface ITMP is IERC165 {
         uint256 refundAmount
     );
 
+    /// @notice Emitted when a requester cancels an open task and receives a refund.
+    event TaskCancelled(
+        bytes32 indexed taskId,
+        address indexed requester,
+        uint256 refundAmount
+    );
+
     // -------------------------------------------------------------------------
     // Required functions
     // -------------------------------------------------------------------------
@@ -104,49 +115,54 @@ interface ITMP is IERC165 {
     /// @notice Create a new task and escrow the reward.
     ///         The contract MUST generate the task ID as:
     ///         keccak256(abi.encode(block.chainid, address(this), requester, requesterNonce[requester]++))
-    /// @param requester     Address credited as task creator on-chain
+    ///         The requester is read from the PGTR forwarder via _effectiveSender() / pgtrSender().
+    ///         The USDC reward MUST be transferred to this contract by the forwarder before this call.
     /// @param reward        USDC reward amount (6 decimals); for Auction = max price
     /// @param duration      Task lifetime in seconds
-    /// @param mode          4-byte mode selector (see ITMPMode for canonical values)
-    /// @param pitchDeadline Seconds from now for pitch acceptance (Pitch mode only, 0 otherwise)
-    /// @param bidDeadline   Seconds from now for bid submission (Auction mode only, 0 otherwise)
-    /// @return taskId       Contract-generated canonical task identifier
+    /// @param mode            4-byte mode selector (see ITMPMode for canonical values)
+    /// @param pitchDeadline   Seconds from now for pitch acceptance (Pitch mode only, 0 otherwise)
+    /// @param bidDeadline     Seconds from now for bid submission (Auction mode only, 0 otherwise)
+    /// @param contentHash     Optional keccak256 of off-chain task description (bytes32(0) if unused)
+    /// @param contentURI      Optional URI pointing to extended task metadata (empty string if unused)
+    /// @param auctionSubtype  Auction subtype selector (see ITMPMode; bytes4(0) for non-auction tasks)
+    /// @return taskId         Contract-generated canonical task identifier
     function createTask(
-        address requester,
         uint256 reward,
         uint256 duration,
         bytes4  mode,
         uint256 pitchDeadline,
-        uint256 bidDeadline
+        uint256 bidDeadline,
+        bytes32 contentHash,
+        string  calldata contentURI,
+        bytes4  auctionSubtype
     ) external returns (bytes32 taskId);
 
     /// @notice Accept a worker's submission and release escrowed payment.
+    ///         The requester is read from the PGTR forwarder via _effectiveSender().
     ///         Payment is atomic with status update (nonReentrant required).
     /// @param taskId    Task identifier
-    /// @param requester Must match task.requester
     /// @param worker    Worker address to receive payment
-    function acceptSubmission(bytes32 taskId, address requester, address worker) external;
+    function acceptSubmission(bytes32 taskId, address worker) external;
 
     /// @notice Record that a worker has submitted deliverable work.
+    ///         The worker is read from the PGTR forwarder via _effectiveSender().
     ///         Anchors a content hash on-chain for tamper-evident audit trail.
     ///         State change is mode-dependent:
     ///           Bounty/Benchmark → PendingApproval
     ///           Claim/Pitch/Auction → no state change (worker already locked)
     /// @param taskId     Task identifier
-    /// @param worker     Worker submitting work
     /// @param deliverable Content hash of the work artifact (keccak256, IPFS CID, or ZK commitment)
-    function submitWork(bytes32 taskId, address worker, bytes32 deliverable) external;
+    function submitWork(bytes32 taskId, bytes32 deliverable) external;
 
     /// @notice Rate a completed task and record feedback via ERC-8004.
+    ///         The requester is read from the PGTR forwarder via _effectiveSender().
     /// @param taskId       Task identifier
-    /// @param requester    Must match task.requester
     /// @param rating       Score 0–100
     /// @param workerAgentId ERC-8004 agentId of worker (0 if unknown)
     /// @param feedbackURI  URI of off-chain feedback document
     /// @param feedbackHash keccak256 of the feedback document
     function rateTask(
         bytes32 taskId,
-        address requester,
         uint8 rating,
         uint256 workerAgentId,
         string calldata feedbackURI,
@@ -165,13 +181,7 @@ interface ITMP is IERC165 {
     /// @return Task info struct
     function getTask(bytes32 taskId) external view returns (TaskInfo memory);
 
-    /// @notice Get aggregated performance statistics for a worker.
+    /// @notice Returns cumulative statistics for a worker address.
     /// @param worker Worker address
-    /// @return completedTasks Number of tasks completed
-    /// @return avgRating      Average rating scaled by 100 (e.g. 7500 = 75.00)
-    /// @return ratedTasks     Number of tasks that received a rating
-    function getWorkerStats(address worker)
-        external
-        view
-        returns (uint256 completedTasks, uint256 avgRating, uint256 ratedTasks);
+    function getWorkerStats(address worker) external view returns (WorkerStats memory);
 }
