@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.4.4",
+  "checkpoint_id": "b065a16162c3",
+  "session_id": "14e2626c-a78f-4dba-82be-baa14f25cdf2",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-17T09:29:38.7916Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".env",
+    ".turbo/turbo-build.log",
+    ".turbo/turbo-test.log",
+    "README.md"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 9759,
+    "cache_creation_tokens": 1486570,
+    "cache_read_tokens": 73558350,
+    "output_tokens": 327446,
+    "api_call_count": 727
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-17T09:29:34.544561Z",
+    "agent_lines": 0,
+    "human_added": 81,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 81,
+    "agent_percentage": 0
+  },
+  "transcript_path": ".claude/projects/-Users-admin-Git-Downloads-Daydreams-taskmarket/14e2626c-a78f-4dba-82be-baa14f25cdf2.jsonl"
+}

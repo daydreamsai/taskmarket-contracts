@@ -1,0 +1,1762 @@
+Implement the following plan:
+
+# Plan: ERC Number Updates, PGTR Alignment, and Full Forwarder Refactor
+
+## Context
+
+Two ERC PRs have been submitted to ethereum/ERCs:
+- PR #1603 (PGTR) → assigned ERC-8194 by editor `abcoathup`
+- PR #1604 (TMP)  → assigned ERC-8195 by editor `abcoathup`
+
+The editor requested: update `eip:` frontmatter and rename files.
+
+Beyond the ERC admin changes, the implementation should conform to ERC-8194 properly. Currently `TaskMarket.sol` receives `requester`/`worker` as explicit parameters passed by the backend server — this is NOT the pattern ERC-8194 specifies. ERC-8194 requires the destination contract to read the authenticated payer via `IPGTRForwarder(msg.sender).pgtrSender()` on a deployed forwarder contract, not from calldata.
+
+Additionally, the forwarder interface is currently named `IPGTRForwarder` — but PGTR (ERC-8194) is a standalone ERC independent of TMP. The interface belongs to PGTR and must be named `IPGTRForwarder`. TMP (ERC-8195) imports it as a dependency.
+
+This plan is split into two phases:
+- **Phase 1** — ERC doc updates + terminology cleanup (safe to land now)
+- **Phase 2** — Full PGTR forwarder: new contract + TaskMarket refactor + backend update
+
+---
+
+## Phase 1: ERC Document Updates + Contract Terminology
+
+### 1.1 — Rename ERC Files (git mv)
+
+```
+packages/contracts/EIP-DRAFT-PGTR.md  →  packages/contracts/erc-8194.md
+packages/contracts/EIP-DRAFT-TMP.md   →  packages/contracts/erc-8195.md
+```
+
+### 1.2 — Update erc-8194.md (PGTR)
+
+- `eip: TBD` → `eip: 8194`
+- `author: TBD` → `author: Beau Williams (@beauwilliams)`
+- `discussions-to: TBD` → `https://ethereum-magicians.org/t/erc-8194-payment-gated-transaction-relay/27934`
+- Body: `"EIP-TMP"` → `"ERC-8195"`
+
+### 1.3 — Update erc-8195.md (TMP)
+
+**Frontmatter:**
+- `eip: TBD` → `eip: 8195`
+- `author: TBD` → `author: Beau Williams (@beauwilliams)`
+- `discussions-to: TBD` → `https://ethereum-magicians.org/t/erc-8195-task-market-protocol/27935`
+- `requires: 20, 165, 8004, TBD (PGTR)` → `requires: 20, 165, 8004, 8194`
+
+**Cross-references:**
+- All `EIP-TBD` and `EIP-PGTR` occurrences → `ERC-8194`
+
+**Auction state machine — add clock-based path:**
+
+```
+### Auction Mode
+
+Open
+  --[submitBid*]-------> Open        (sealed bid recorded; status unchanged)
+  --[acceptAuction*]---> Claimed     (clock-based subtypes: dutch, reverse_dutch)
+  --[selectLowestBidder]--> Claimed  (sealed-bid subtypes: english, reverse_english; after bidDeadline)
+  --[expire]-----------> Expired
+
+Claimed (winner locked)
+  --[submitWork*]----> Claimed       (deliverable hash recorded; status unchanged)
+  --[acceptSubmission]--> Accepted
+  --[expire]----------> Expired (winner auto-paid in refundExpired)
+```
+
+**ITMP interface in spec — align with actual ITMP.sol:**
+- `TaskCompleted` → `TaskAccepted` (spec was stale); update full signature to match ITMP.sol
+- Fix `TaskCreated`: `bytes4 indexed mode` → `bytes4 mode` (not indexed); fix param order
+- `getWorkerStats` return: `WorkerStats memory` → `(uint256, uint256, uint256)` tuple
+- Remove `requesterNonce(address)` and `isTrustedForwarder(address)` from ITMP interface listing
+  (requesterNonce is a public mapping; isTrustedForwarder is a PGTR destination requirement, not ITMP)
+
+**_effectiveSender description — update PGTR destination section:**
+
+Describe the TWO valid PGTR destination patterns since ERC-8195 currently uses explicit params.
+Note that Phase 2 migrates the reference implementation to Pattern A.
+
+```
+Pattern A (pgtrSender call — normative ERC-8194):
+  function _effectiveSender() internal view returns (address) {
+      if (trustedForwarders[msg.sender]) {
+          return IPGTRForwarder(msg.sender).pgtrSender();
+      }
+      return msg.sender;
+  }
+  // Functions take NO explicit requester/worker param; read from _effectiveSender()
+
+Pattern B (explicit param — used by current TaskMarket reference implementation):
+  // Forwarder passes payer address as explicit calldata parameter.
+  // Destination trusts the forwarder to set it correctly.
+  // Equivalent authorization model, different calling convention.
+```
+
+### 1.4 — Rename `IPGTRForwarder` → `IPGTRForwarder`
+
+PGTR is a standalone ERC (ERC-8194). Its forwarder interface should not carry the `ITMP` prefix.
+
+- `git mv packages/contracts/src/interfaces/IPGTRForwarder.sol packages/contracts/src/interfaces/IPGTRForwarder.sol`
+- Rename the interface declaration inside: `interface IPGTRForwarder` → `interface IPGTRForwarder`
+- Update all imports and usages:
+  - `packages/contracts/src/TaskMarket.sol` — import + `_effectiveSender()` call
+  - `packages/contracts/src/interfaces/ITMP.sol` — imports `IPGTRForwarder`
+  - `packages/contracts/test/TaskMarket.t.sol` and `ITMP.t.sol` — any references
+- Update erc-8194.md: `IPGTRForwarder` → `IPGTRForwarder` throughout (interface name, title comment, ERC-165 table)
+- Update erc-8195.md: import reference and any mention of `IPGTRForwarder` → `IPGTRForwarder`
+
+### 1.5 — Contract: Rename `onlyServer` → `onlyTrustedForwarder`
+
+In `packages/contracts/src/TaskMarket.sol`:
+- Rename modifier declaration (line 160)
+- Update all 12 function declarations that use `onlyServer`
+
+No ABI change (modifiers are not ABI-visible).
+
+### 1.6 — Contract: Add `isTrustedForwarder` Function
+
+Add after `removeForwarder`:
+```solidity
+/// @notice Returns true if addr is a trusted PGTR forwarder (ERC-8194 requirement).
+function isTrustedForwarder(address addr) external view returns (bool) {
+    return trustedForwarders[addr];
+}
+```
+
+### 1.7 — Test: Update One Comment
+
+`packages/contracts/test/TaskMarket.t.sol` line 403:
+- `// Access control (onlyServer)` → `// Access control (onlyTrustedForwarder)`
+
+---
+
+## Phase 2: Full PGTR Forwarder
+
+### 2.1 — New Contract: `TaskMarketForwarder.sol`
+
+Implements `IPGTRForwarder` (ERC-8194) — this is TMP's concrete PGTR forwarder. The backend EOA calls this contract; it sets `pgtrSender`, transfers USDC on behalf of the payer, and forwards to `TaskMarket`.
+
+```
+packages/contracts/src/TaskMarketForwarder.sol
+```
+
+Key responsibilities:
+1. Accept ERC-3009 `transferWithAuthorization` from payer → transfer USDC to `TaskMarket`
+2. Verify receipt hash not consumed, not expired
+3. Set `_pgtrSender = payer` (transient or storage, reset after call)
+4. Call `TaskMarket.<function>(...)` — functions now take no explicit requester param
+5. Reset `_pgtrSender`
+6. Emit `PaymentGatedCall(payer, taskMarket, selector, amount)`
+
+Storage:
+- `mapping(bytes32 => bool) public consumedReceipts`
+- `address private _pgtrSender` (or `bytes32 transient` in Solidity ≥0.8.28)
+
+USDC flow: `payer --ERC-3009--> TaskMarket escrow` (forwarder authorizes the transferWithAuthorization, TaskMarket escrow receives directly)
+
+### 2.2 — Update `TaskMarket.sol` Function Signatures
+
+Remove explicit `requester`/`worker` params where the sender IS the caller. Replace with `address <role> = _effectiveSender()` inside the function.
+
+| Function | Change |
+|----------|--------|
+| `createTask(address requester, uint256 reward, ...)` | Remove `requester`; `address requester = _effectiveSender()` |
+| `claimTask(bytes32 taskId, address worker, uint256 stakeAmount)` | Remove `worker`; `address worker = _effectiveSender()` |
+| `submitWork(bytes32 taskId, address worker, bytes32 deliverable)` | Remove `worker`; `address worker = _effectiveSender()` |
+| `acceptSubmission(bytes32 taskId, address requester, address worker)` | Remove `requester`; keep `worker` (requester is caller, worker is specified target) |
+| `forfeitAndReopen(bytes32 taskId, address requester)` | Remove `requester`; `address requester = _effectiveSender()` |
+| `rateTask(bytes32 taskId, address requester, uint8 rating, ...)` | Remove `requester` |
+| `cancelTask(bytes32 taskId, address requester)` | Remove `requester` |
+| `updateTask(bytes32 taskId, address requester, ...)` | Remove `requester` |
+| `selectWorker(bytes32 taskId, address requester, address worker)` | Remove `requester`; keep `worker` |
+| `submitBid(bytes32 taskId, address worker, uint256 price)` | Remove `worker`; `address worker = _effectiveSender()` |
+| `acceptAuction(bytes32 taskId, address worker, uint256 price)` | Remove `worker`; `address worker = _effectiveSender()` |
+| `selectLowestBidder(bytes32 taskId)` | No change (no principal param) |
+
+Add `_effectiveSender()` helper:
+```solidity
+function _effectiveSender() internal view returns (address) {
+    if (trustedForwarders[msg.sender]) {
+        return IPGTRForwarder(msg.sender).pgtrSender();
+    }
+    return msg.sender;
+}
+```
+
+### 2.3 — Update `ITMP.sol` Interface
+
+Update all function signatures in `packages/contracts/src/interfaces/ITMP.sol` to match the new signatures (remove explicit requester/worker params as above).
+
+Note: this changes the `ITMP` interfaceId (XOR of function selectors). The new interfaceId must be updated in docs and `supportsInterface`.
+
+### 2.4 — Update `erc-8195.md` ITMP Interface Block
+
+Replace the ITMP Solidity interface block in the spec with the new signatures to match 2.3.
+
+### 2.5 — Update Forge Tests
+
+`packages/contracts/test/TaskMarket.t.sol` and `ITMP.t.sol`:
+- All direct calls to `createTask(requester, ...)` → `createTask(reward, ...)` (requester comes from forwarder/pgtrSender)
+- Deploy `TaskMarketForwarder` in test setup; have tests call through forwarder
+- Add new `TaskMarketForwarder.t.sol` covering: receipt replay, expiry, pgtrSender atomicity, PaymentGatedCall event
+
+All 64 existing tests + new forwarder tests should pass.
+
+### 2.6 — Update Backend
+
+`apps/backend/src/services/contract.ts`:
+- All contract calls route through `TaskMarketForwarder.relay(...)` instead of calling `TaskMarket` directly
+- Backend constructs the `data` calldata for each TaskMarket function
+- Backend passes the payer address (user wallet) and the ERC-3009 authorization from the user
+- `CONTRACT_ADDRESS` env var stays (TaskMarket proxy); add `FORWARDER_ADDRESS` env var
+
+### 2.7 — Deploy
+
+New deployment order:
+1. Deploy `TaskMarket` proxy (if not already deployed, or upgrade existing)
+2. Deploy `TaskMarketForwarder` pointing to TaskMarket + USDC
+3. Call `TaskMarket.addForwarder(forwarderAddress)`
+4. Update backend `.env`: add `FORWARDER_ADDRESS`
+
+Upgrade script `script/Upgrade.s.sol` remains unchanged (only upgrades TaskMarket impl).
+
+---
+
+## Sync to Public Repo
+
+After merging Phase 1 and Phase 2 to `main`, the workflow at `.github/workflows/sync-contracts.yml` auto-fires and pushes `packages/contracts/` to `daydreamsai/taskmarket-contracts`. No manual action needed.
+
+---
+
+## Verification
+
+**Phase 1:**
+1. `make test contracts` — all 64 tests still pass
+2. No `onlyServer` references remain in `packages/contracts/src/`
+3. `isTrustedForwarder` function present in `TaskMarket.sol`
+4. `erc-8194.md` and `erc-8195.md` exist; old `EIP-DRAFT-*.md` gone
+5. No `TBD` in eip/discussions-to/requires fields of either ERC file
+
+**Phase 2:**
+1. `make test contracts` — all tests pass including new forwarder tests
+2. `grep "requester" packages/contracts/src/TaskMarket.sol` — no explicit params, only internal variables
+3. Backend smoke tests pass: `make smoke bounty`, `make smoke claim`, etc.
+4. New ITMP interfaceId computed and updated in `supportsInterface`
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   The user asked to implement a two-phase plan titled "Plan: ERC Number Updates, PGTR Alignment, and Full Forwarder Refactor." The plan:
+   - **Phase 1** (ERC doc updates + terminology cleanup): Rename ERC draft files, update frontmatter, rename ITMPForwarder→IPGTRForwarder, update ITMP interface in spec docs, rename onlyServer→onlyTrustedForwarder, add isTrustedForwarder function, fix auction state machine.
+   - **Phase 2** (Full PGTR forwarder): New TaskMarketForwarder.sol contract, refactor all TaskMarket.sol function signatures to remove explicit requester/worker params (replace with `_effectiveSender()`), update ITMP.sol interface, rewrite all Forge tests, update backend contract.ts.
+
+2. Key Technical Concepts:
+   - **ERC-8194 (PGTR)**: Payment-Gated Transaction Relay — actor-agnostic relay primitive using on-chain payment receipts for authorization without private keys
+   - **ERC-8195 (TMP)**: Task Market Protocol — 5-mode on-chain task coordination (Bounty, Claim, Pitch, Benchmark, Auction)
+   - **IPGTRForwarder interface**: Implements `isPGTRForwarder()`, `pgtrSender()`, `isTrustedForwarder(address)`, `PaymentGatedCall` event
+   - **`_effectiveSender()` pattern**: If `trustedForwarders[msg.sender]`, return `IPGTRForwarder(msg.sender).pgtrSender()`; else return `msg.sender`
+   - **UUPS upgradeable proxy**: TaskMarket uses OZ v5.6.1 upgradeable pattern; storage layout must be preserved
+   - **onlyTrustedForwarder modifier**: Renamed from `onlyServer`; guards all mutating functions
+   - **Receipt replay protection**: `keccak256(abi.encode(pgtrSender, amount, receiptNonce, validBefore, target, selector))` stored in `consumedReceipts` mapping
+   - **USDC flow (Phase 2)**: Forwarder calls `usdc.transferFrom(msg.sender, taskMarket, amount)` before calling TaskMarket; TaskMarket no longer calls transferFrom in createTask/claimTask/updateTask
+   - **MockPGTRForwarder for tests**: Test contract implementing IPGTRForwarder, pre-transfers USDC to market, sets `_pgtrSenderValue` during relay
+
+3. Files and Code Sections:
+
+   - **`packages/contracts/EIP-DRAFT-PGTR.md` → `packages/contracts/erc-8194.md`** (git mv)
+     - Updated frontmatter: `eip: 8194`, `author: Beau Williams (@beauwilliams)`, `discussions-to: https://ethereum-magicians.org/t/erc-8194-payment-gated-transaction-relay/27934`
+     - All `ITMPForwarder` → `IPGTRForwarder` (replace_all)
+     - `TMP (EIP-TMP)` → `TMP (ERC-8195)`
+
+   - **`packages/contracts/EIP-DRAFT-TMP.md` → `packages/contracts/erc-8195.md`** (git mv)
+     - Updated frontmatter: `eip: 8195`, author, discussions-to, `requires: 20, 165, 8004, 8194`
+     - All `ITMPForwarder` → `IPGTRForwarder`, `EIP-TBD` → `ERC-8194`, `EIP-PGTR` → `ERC-8194`
+     - Fixed `TaskCreated` event: removed `indexed` from mode, fixed param order `(taskId, requester, reward, expiryTime, mode)`
+     - `TaskCompleted` → `TaskAccepted` with full signature `(taskId, requester, worker, workerPayment, platformFee)`
+     - `getWorkerStats` return: `WorkerStats memory` → `(uint256 completedTasks, uint256 avgRating, uint256 ratedTasks)`
+     - Removed `requesterNonce` and `isTrustedForwarder` from ITMP interface listing
+     - Updated Auction state machine to add `acceptAuction*` path and `reverse_english` note
+     - Added "PGTR Destination Patterns" section with Pattern A (`pgtrSender` call) and Pattern B (explicit param — current impl)
+
+   - **`packages/contracts/src/interfaces/ITMPForwarder.sol` → `packages/contracts/src/interfaces/IPGTRForwarder.sol`** (git mv)
+     - Interface renamed: `ITMPForwarder` → `IPGTRForwarder`
+     - Title comment updated: `/// @title IPGTRForwarder` + added `(ERC-8194)` to notice
+
+   - **`packages/contracts/src/interfaces/ITMP.sol`** — completely rewritten for Phase 2
+     - Added `requires: ERC-8194 (PGTR)` to NatSpec
+     - `createTask`: removed `address requester` param; comment says requester read from `_effectiveSender()`; USDC must be pre-transferred by forwarder
+     - `submitWork`: removed `address worker` param; worker read from `_effectiveSender()`
+     - `acceptSubmission`: removed `address requester`, kept `address worker`
+     - `rateTask`: removed `address requester` param
+     - `getWorkerStats`: returns `(uint256 completedTasks, uint256 avgRating, uint256 ratedTasks)` tuple
+     - Removed `requesterNonce` and `isTrustedForwarder` from interface
+     ```solidity
+     function createTask(uint256 reward, uint256 duration, bytes4 mode, uint256 pitchDeadline, uint256 bidDeadline) external returns (bytes32 taskId);
+     function acceptSubmission(bytes32 taskId, address worker) external;
+     function submitWork(bytes32 taskId, bytes32 deliverable) external;
+     function rateTask(bytes32 taskId, uint8 rating, uint256 workerAgentId, string calldata feedbackURI, bytes32 feedbackHash) external;
+     ```
+
+   - **`packages/contracts/src/TaskMarketForwarder.sol`** — new file
+     ```solidity
+     contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
+         IERC20 public immutable usdc;
+         address public immutable taskMarket;
+         address private _pgtrSenderStorage;
+         mapping(bytes32 => bool) public consumedReceipts;
+
+         function isPGTRForwarder() external pure override returns (bool) { return true; }
+         function pgtrSender() external view override returns (address) {
+             require(_pgtrSenderStorage != address(0), "No active forwarded call");
+             return _pgtrSenderStorage;
+         }
+         function isTrustedForwarder(address addr) external view override returns (bool) { return addr == address(this); }
+         
+         function relay(
+             address pgtrSenderAddr, uint256 paymentAmount,
+             uint256 validBefore, bytes32 receiptNonce, bytes calldata data
+         ) external nonReentrant {
+             require(block.timestamp <= validBefore, "Receipt expired");
+             bytes4 selector = bytes4(data[:4]);
+             bytes32 receiptHash = keccak256(abi.encode(pgtrSenderAddr, paymentAmount, receiptNonce, validBefore, taskMarket, selector));
+             require(!consumedReceipts[receiptHash], "Receipt already consumed");
+             consumedReceipts[receiptHash] = true;
+             if (paymentAmount > 0) {
+                 require(usdc.transferFrom(msg.sender, taskMarket, paymentAmount), "USDC transfer failed");
+             }
+             _pgtrSenderStorage = pgtrSenderAddr;
+             (bool success, bytes memory result) = taskMarket.call(data);
+             _pgtrSenderStorage = address(0);
+             if (!success) { ... revert ... }
+             emit PaymentGatedCall(pgtrSenderAddr, taskMarket, selector, paymentAmount);
+         }
+     }
+     ```
+
+   - **`packages/contracts/src/TaskMarket.sol`** — partially updated for Phase 2
+     - Added `import {IPGTRForwarder} from "./interfaces/IPGTRForwarder.sol";`
+     - Updated `@dev` comment: now says "authenticated actor read from forwarder via _effectiveSender()"
+     - Added `_effectiveSender()` internal helper:
+       ```solidity
+       function _effectiveSender() internal view returns (address) {
+           if (trustedForwarders[msg.sender]) {
+               return IPGTRForwarder(msg.sender).pgtrSender();
+           }
+           return msg.sender;
+       }
+       ```
+     - **Phase 1**: renamed `onlyServer` → `onlyTrustedForwarder` (replace_all), added `isTrustedForwarder(address)` external function
+     - **Phase 2 functions updated so far**:
+       - `createTask(uint256 reward, uint256 duration, bytes4 mode, uint256 pitchDeadline, uint256 bidDeadline)` — removed `address requester`, added `address requester = _effectiveSender()`, removed `transferFrom` call (replaced with comment: USDC pre-transferred by forwarder)
+       - `claimTask(bytes32 taskId, uint256 stakeAmount)` — removed `address worker`, added `address worker = _effectiveSender()`, removed stake `transferFrom`
+       - `selectWorker(bytes32 taskId, address worker)` — removed `address requester`, added `address requester = _effectiveSender()`
+       - `submitBid(bytes32 taskId, uint256 price)` — removed `address worker`, added `address worker = _effectiveSender()`
+       - `acceptAuction(bytes32 taskId, uint256 price)` — removed `address worker`, added `address worker = _effectiveSender()`
+       - `submitWork(bytes32 taskId, bytes32 deliverable)` — removed `address worker`, added `address worker = _effectiveSender()`
+       - `acceptSubmission(bytes32 taskId, address worker)` — removed `address requester`, added `address requester = _effectiveSender()`
+       - `forfeitAndReopen(bytes32 taskId)` — removed `address requester`, added `address requester = _effectiveSender()`
+     - **Still needs updating**: `rateTask`, `cancelTask`, `updateTask` (including removing transferFrom for reward increase)
+
+   - **`packages/contracts/test/TaskMarket.t.sol`** — Phase 1: updated comment `// Access control (onlyTrustedForwarder)`
+   - **`apps/backend/src/services/contract.ts`** — read, needs update for Phase 2
+
+4. Errors and fixes:
+   - **Edit tool "File has not been read yet" error**: When attempting to edit `IPGTRForwarder.sol` immediately after `git mv`, the file needed to be re-read at the new path before editing. Fixed by calling Read on the new path first.
+   - **Duplicate section header**: After adding `// Core task functions` section comment after `isTrustedForwarder`, a duplicate existed. Fixed with Edit to remove the duplicate, keeping only the correct placement.
+
+5. Problem Solving:
+   - **USDC flow for Phase 2**: Resolved the design question about how USDC gets to TaskMarket. Decision: forwarder calls `usdc.transferFrom(msg.sender, taskMarket, amount)` (server approved forwarder), removing the need for TaskMarket to call transferFrom. This keeps atomicity within a single transaction.
+   - **ERC-3009 vs simple transferFrom**: The `relay()` function uses simple `transferFrom` (server pre-approves forwarder) rather than requiring user ERC-3009 signatures, maintaining backward compatibility with the X402 payment flow.
+   - **Test infrastructure for Phase 2**: Decided to create a `MockPGTRForwarder` test contract that: holds USDC (pre-funded), transfers USDC to market before relay, sets `_pgtrSenderValue`, calls target.call(data), resets sender.
+   - **Interface ID change**: When ITMP.sol function signatures change, `type(ITMP).interfaceId` automatically recomputes. `supportsInterface` in TaskMarket.sol uses `type(ITMP).interfaceId` dynamically, so no manual update needed.
+
+6. All user messages:
+   - "Implement the following plan: [full plan text for ERC Number Updates, PGTR Alignment, and Full Forwarder Refactor]"
+
+7. Pending Tasks:
+   - Complete remaining Phase 2 TaskMarket.sol function updates:
+     - `rateTask(bytes32 taskId, uint8 rating, uint256 workerAgentId, string calldata feedbackURI, bytes32 feedbackHash)` — remove `address requester`, add `address requester = _effectiveSender()`
+     - `cancelTask(bytes32 taskId)` — remove `address requester`, add `address requester = _effectiveSender()`
+     - `updateTask(bytes32 taskId, uint256 newReward, uint256 newExpiryTime, uint256 newBidDeadline, uint256 newPitchDeadline)` — remove `address requester`, add internal, remove `transferFrom` for reward increase
+   - Complete rewrite of `packages/contracts/test/TaskMarket.t.sol` with MockPGTRForwarder
+   - Complete rewrite of `packages/contracts/test/ITMP.t.sol` with new function signatures
+   - Write new `packages/contracts/test/TaskMarketForwarder.t.sol` (forwarder-specific tests)
+   - Update `packages/contracts/erc-8195.md` ITMP interface block to match new Phase 2 signatures
+   - Update `apps/backend/src/services/contract.ts`:
+     - Update MARKET_ABI to remove explicit params
+     - Add FORWARDER_ABI for relay function
+     - Update all `contractCreateTask`, `contractClaimTask`, etc. to route through forwarder
+     - Add `FORWARDER_ADDRESS` env var to `apps/backend/src/config/env.ts`
+   - Run `make test contracts` to verify all tests pass
+   - Verify: `grep "requester" packages/contracts/src/TaskMarket.sol` shows no explicit params, only internal variables
+
+8. Current Work:
+   Phase 2 implementation is in progress. The conversation was cut off while editing `packages/contracts/src/TaskMarket.sol`. The last completed edit was updating `forfeitAndReopen` to remove the explicit `address requester` parameter:
+   ```solidity
+   function forfeitAndReopen(bytes32 taskId) external onlyTrustedForwarder {
+       address requester = _effectiveSender();
+       Task storage task = tasks[taskId];
+       require(requester == task.requester, "Not requester");
+   ```
+   Still remaining in TaskMarket.sol: `rateTask`, `cancelTask`, `updateTask`.
+
+9. Optional Next Step:
+   Continue updating the remaining functions in `packages/contracts/src/TaskMarket.sol`. The last edit was to `forfeitAndReopen` and the next functions are `rateTask`, `cancelTask`, and `updateTask`:
+
+   From the plan:
+   > | `rateTask(bytes32 taskId, address requester, uint8 rating, ...)` | Remove `requester` |
+   > | `cancelTask(bytes32 taskId, address requester)` | Remove `requester`; `address requester = _effectiveSender()` |
+   > | `updateTask(bytes32 taskId, address requester, ...)` | Remove `requester` |
+
+   The work was at the point of: "Update TaskMarket.sol with all the Phase 2 function signature changes" — specifically the assistant had just run:
+   ```
+   function forfeitAndReopen(bytes32 taskId) external onlyTrustedForwarder {
+       address requester = _effectiveSender();
+   ```
+   and was about to continue with `rateTask`, `cancelTask`, `updateTask`, then rewrite the tests.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   The user asked to implement a two-phase plan titled "Plan: ERC Number Updates, PGTR Alignment, and Full Forwarder Refactor." The previous context had completed Phase 1 and most of Phase 2. This session continued Phase 2 by:
+   - Completing remaining `TaskMarket.sol` function signature changes (`rateTask`, `cancelTask`, `updateTask`)
+   - Rewriting test files (`TaskMarket.t.sol`, `ITMP.t.sol`) with `MockPGTRForwarder` pattern
+   - Updating backend `contract.ts` to route all calls through the PGTR forwarder
+
+2. Key Technical Concepts:
+   - **ERC-8194 (PGTR)**: Payment-Gated Transaction Relay — forwarder contract sets `pgtrSender` atomically during call, allowing destination contracts to authenticate actors without private keys
+   - **ERC-8195 (TMP)**: Task Market Protocol — 5-mode on-chain task coordination
+   - **`_effectiveSender()` pattern**: `if (trustedForwarders[msg.sender]) return IPGTRForwarder(msg.sender).pgtrSender(); return msg.sender;`
+   - **`onlyTrustedForwarder` modifier**: Guards all mutating functions in TaskMarket
+   - **MockPGTRForwarder test pattern**: Test contract that holds USDC, sets `_pgtrSenderValue`, calls `target.call(data)`, propagates reverts via assembly
+   - **Foundry `vm.expectRevert` pitfall**: The cheat code is consumed by the FIRST call after it's set; calling `market.BOUNTY()` inside `abi.encodeCall(...)` arguments is evaluated BEFORE the relay call but AFTER `vm.expectRevert`, consuming it prematurely
+   - **`relayThroughForwarder` backend helper**: Approves forwarder for USDC, generates `validBefore` + random `receiptNonce`, calls `forwarder.relay(pgtrSenderAddr, paymentAmount, validBefore, receiptNonce, data)`
+   - **UUPS upgradeable proxy**: TaskMarket uses OpenZeppelin v5.6.1 upgradeable pattern
+   - **Receipt replay protection**: `keccak256(abi.encode(pgtrSender, amount, receiptNonce, validBefore, target, selector))` stored in `consumedReceipts` mapping in TaskMarketForwarder
+
+3. Files and Code Sections:
+
+   - **`packages/contracts/src/TaskMarket.sol`** — Phase 2 function signature updates completed
+     - `rateTask`: removed `address requester` param, added `address requester = _effectiveSender()`
+     - `cancelTask`: removed `address requester` param, renamed signature to `cancelTask(bytes32 taskId)`, added `address requester = _effectiveSender()`
+     - `updateTask`: removed `address requester` param, added `address requester = _effectiveSender()`, removed `transferFrom` for reward increase (replaced with comment: "Additional USDC was transferred to this contract by the forwarder before this call")
+     ```solidity
+     function rateTask(
+         bytes32 taskId,
+         uint8 rating,
+         uint256 workerAgentId,
+         string calldata feedbackURI,
+         bytes32 feedbackHash
+     ) external onlyTrustedForwarder {
+         address requester = _effectiveSender();
+         ...
+     }
+     function cancelTask(bytes32 taskId) external onlyTrustedForwarder nonReentrant {
+         address requester = _effectiveSender();
+         ...
+     }
+     function updateTask(
+         bytes32 taskId,
+         uint256 newReward,
+         uint256 newExpiryTime,
+         uint256 newBidDeadline,
+         uint256 newPitchDeadline
+     ) external onlyTrustedForwarder nonReentrant {
+         address requester = _effectiveSender();
+         ...
+         if (newReward > task.reward) {
+             // Additional USDC was transferred to this contract by the forwarder before this call.
+         }
+     }
+     ```
+
+   - **`packages/contracts/test/TaskMarket.t.sol`** — Complete rewrite with MockPGTRForwarder
+     - Added `MockPGTRForwarder` contract implementing `IPGTRForwarder`
+     - Changed `address public server = address(6)` to `MockPGTRForwarder public forwarder`
+     - Added relay helpers: `_relay()`, `_createTask()`, `_claimTask()`, `_selectWorker()`, `_submitBid()`, `_acceptAuction()`, `_selectLowestBidder()`, `_submitWork()`, `_acceptSubmission()`, `_forfeitAndReopen()`, `_rateTask()`, `_cancelTask()`, `_updateTask()`
+     - Added new tests: `test_IsTrustedForwarder_Registered()`, `test_IsTrustedForwarder_Unknown()`
+     ```solidity
+     contract MockPGTRForwarder is IPGTRForwarder {
+         IERC20 public usdc;
+         address private _pgtrSenderValue;
+         constructor(address _usdc) { usdc = IERC20(_usdc); }
+         function isPGTRForwarder() external pure override returns (bool) { return true; }
+         function pgtrSender() external view override returns (address) { return _pgtrSenderValue; }
+         function isTrustedForwarder(address addr) external view override returns (bool) { return addr == address(this); }
+         function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+             return interfaceId == type(IPGTRForwarder).interfaceId || interfaceId == type(IERC165).interfaceId;
+         }
+         function relay(address target, address pgtrSenderAddr, uint256 paymentAmount, bytes calldata data) external returns (bytes memory) {
+             if (paymentAmount > 0) { require(usdc.transfer(target, paymentAmount), "USDC transfer failed"); }
+             _pgtrSenderValue = pgtrSenderAddr;
+             (bool success, bytes memory result) = target.call(data);
+             _pgtrSenderValue = address(0);
+             if (!success) {
+                 if (result.length > 0) { assembly { revert(add(result, 32), mload(result)) } }
+                 revert("relay failed");
+             }
+             return result;
+         }
+     }
+     ```
+     - Key fix: pre-compute calldata before `vm.expectRevert` to avoid `market.BOUNTY()` consuming the expectation:
+     ```solidity
+     function test_RevertWhen_CreateTask_ZeroReward() public {
+         bytes memory data = abi.encodeCall(market.createTask, (0, DURATION, market.BOUNTY(), 0, 0));
+         vm.expectRevert("Reward must be greater than 0");
+         forwarder.relay(address(market), requester, 0, data);
+     }
+     ```
+
+   - **`packages/contracts/test/ITMP.t.sol`** — Complete rewrite with `ComplianceMockForwarder`
+     - Replaced `address public forwarder = address(0x0006)` (EOA) with `ComplianceMockForwarder public fwd`
+     - All calls now go through `fwd.relay(address(market), pgtrSender, paymentAmount, data)`
+     - Added `_relay()` and `_createTask()` helpers
+     - Fixed `test_Compliance_MultiForwarder_RemoveRevokes`: pre-compute data before `vm.expectRevert`
+
+   - **`apps/backend/src/config/env.ts`** — Added `FORWARDER_ADDRESS` as optional field
+     ```typescript
+     FORWARDER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid forwarder address').optional(),
+     ```
+
+   - **`apps/backend/src/services/contract.ts`** — Major refactor in progress
+     - Updated imports: added `import { randomBytes } from 'crypto'` and `encodeFunctionData` from viem
+     - Updated `MARKET_ABI` to new signatures (no explicit requester/worker):
+     ```typescript
+     const MARKET_ABI = parseAbi([
+       'function createTask(uint256,uint256,bytes4,uint256,uint256) returns (bytes32)',
+       'function claimTask(bytes32,uint256)',
+       'function selectWorker(bytes32,address)',
+       'function acceptSubmission(bytes32,address)',
+       'function rateTask(bytes32,uint8,uint256,string,bytes32)',
+       'function submitWork(bytes32,bytes32)',
+       'function submitBid(bytes32,uint256)',
+       'function selectLowestBidder(bytes32)',
+       'function acceptAuction(bytes32,uint256)',
+       'function cancelTask(bytes32)',
+       'function updateTask(bytes32,uint256,uint256,uint256,uint256)',
+       'function forfeitAndReopen(bytes32)',
+       'function addForwarder(address)',
+       'function removeForwarder(address)',
+       'function trustedForwarders(address) view returns (bool)',
+       'function requesterNonce(address) view returns (uint256)',
+     ]);
+     const FORWARDER_ABI = parseAbi([
+       'function relay(address pgtrSenderAddr, uint256 paymentAmount, uint256 validBefore, bytes32 receiptNonce, bytes calldata data)',
+     ]);
+     ```
+     - Added `resolveForwarderAddress()` helper
+     - Added `RELAY_VALID_WINDOW_SECS = 300` constant
+     - Added `relayThroughForwarder(pgtrSenderAddr, paymentAmount, data)` internal helper:
+     ```typescript
+     async function relayThroughForwarder(
+       pgtrSenderAddr: `0x${string}`,
+       paymentAmount: bigint,
+       data: `0x${string}`
+     ): Promise<`0x${string}`> {
+       // approves forwarder for USDC if paymentAmount > 0
+       // generates validBefore = now + 300s, receiptNonce = randomBytes(32)
+       // calls forwarder.relay(pgtrSenderAddr, paymentAmount, validBefore, receiptNonce, data)
+     }
+     ```
+     - Updated `contractCreateTask` through `contractRateTask` to use `encodeFunctionData` + `relayThroughForwarder`
+     - `contractSelectLowestBidder` uses `0x000...000` as pgtrSender placeholder (no principal)
+     - **Still needs updating**: `contractCancelTask` and `contractUpdateTask` (and `contractSubmitWork` if it exists as a separate export)
+
+4. Errors and Fixes:
+   - **`vm.expectRevert` consumed by `market.BOUNTY()` in `abi.encodeCall` arguments**: 
+     - Error: "next call did not revert as expected" — trace showed `market.BOUNTY()` (via `ERC1967Proxy::fallback() [staticcall]`) was the first call after `vm.expectRevert`, not the relay call
+     - Fix: Pre-compute calldata into a local `bytes memory data` variable BEFORE calling `vm.expectRevert`, then pass the pre-computed `data` to `forwarder.relay(...)`
+     - Affected tests: `test_RevertWhen_CreateTask_ZeroRequester`, `test_RevertWhen_CreateTask_ZeroReward`, `test_RevertWhen_CreateTask_ZeroDuration`, `test_RemoveForwarder`, `test_Compliance_MultiForwarder_RemoveRevokes`
+   - **`randomBytes` not exported from viem**:
+     - Fix: Changed `import { randomBytes } from 'viem'` to `import { randomBytes } from 'crypto'`
+
+5. Problem Solving:
+   - **MockPGTRForwarder design**: The mock holds USDC internally (minted to it in setUp) and uses `usdc.transfer(target, paymentAmount)` (rather than `transferFrom`) to pre-fund the market before calling TaskMarket functions. This avoids the need for per-test USDC approvals.
+   - **pgtrSender = address(0) for ZeroRequester test**: Mock's `pgtrSender()` returns `_pgtrSenderValue` without a require check, allowing testing with address(0) as the pgtrSender to trigger "Invalid requester" in createTask.
+   - **selectLowestBidder pgtrSender**: Uses `0x000...000` as placeholder since the function doesn't call `_effectiveSender()`.
+   - **updateTask additional payment**: The relay's `paymentAmount` must equal `newReward - currentReward` for reward increases. The test helper accepts `additionalPayment` explicitly.
+   - All 115 tests passing after fixes (90 in TaskMarket.t.sol + 25 in ITMP.t.sol).
+
+6. All User Messages:
+   - "Implement the following plan: [full plan text for ERC Number Updates, PGTR Alignment, and Full Forwarder Refactor]" (from previous context, continued in this session)
+   - (No new user messages in this session — the entire session was autonomous continuation from the previous context summary)
+
+7. Pending Tasks:
+   - Complete `contractCancelTask` and `contractUpdateTask` in `apps/backend/src/services/contract.ts` to use `relayThroughForwarder` pattern
+   - Check/add `contractSubmitWork` export if missing from contract.ts
+   - Update `apps/backend/src/services/contract.ts` — `contractUpdateTask` needs `currentReward` parameter (or read from chain) to compute `additionalPayment = max(0, newReward - currentReward)` for forwarder relay
+   - Update `apps/backend/src/routers/tasks.router.ts` call to `contractUpdateTask` to pass `BigInt(task.reward)` as current reward
+   - Write new `packages/contracts/test/TaskMarketForwarder.t.sol` (forwarder-specific tests covering receipt replay, expiry, pgtrSender atomicity, PaymentGatedCall event)
+   - Update `packages/contracts/erc-8195.md` ITMP interface block to match new Phase 2 function signatures
+   - Run `make test contracts` to verify all tests pass
+   - Verify: `grep "requester" packages/contracts/src/TaskMarket.sol` shows no explicit params, only internal variables
+
+8. Current Work:
+   Immediately before this summary, the assistant was editing `apps/backend/src/services/contract.ts` to refactor all contract functions to use the `relayThroughForwarder` helper. The last completed Edit replaced `contractCreateTask` through `contractRateTask`. The file still has TypeScript errors from `contractCancelTask` and `contractUpdateTask` which still use the old direct `writeContract` pattern with stale MARKET_ABI argument types.
+
+   Current state of the remaining functions (not yet updated):
+   ```typescript
+   export async function contractCancelTask(
+     taskId: `0x${string}`,
+     requester: `0x${string}`,
+     contractAddress?: string | null
+   ): Promise<`0x${string}`> {
+     // Still calls writeContract with MARKET_ABI directly — NEEDS UPDATE
+     // args: [taskId, requester]  ← old signature, causes TS error
+   }
+
+   export async function contractUpdateTask(
+     taskId: `0x${string}`,
+     requester: `0x${string}`,
+     newReward: bigint,
+     newExpiryTime: bigint,
+     newBidDeadline: bigint,
+     newPitchDeadline: bigint,
+     contractAddress?: string | null
+   ): Promise<`0x${string}`> {
+     // Still calls writeContract with MARKET_ABI directly — NEEDS UPDATE
+     // Also had approval logic that needs to be moved to forwarder pattern
+   }
+   ```
+
+9. Optional Next Step:
+   Continue updating `apps/backend/src/services/contract.ts` by replacing the remaining old-style `contractCancelTask` and `contractUpdateTask` functions with the `relayThroughForwarder` pattern. For `contractUpdateTask`, add a `currentReward: bigint = 0n` parameter to compute `additionalPayment = newReward > currentReward ? newReward - currentReward : 0n`, then update the call in `tasks.router.ts` to pass `BigInt(task.reward)`.
+
+   The work was at: replacing the functions in contract.ts — specifically the last Edit replaced `contractCreateTask` through `contractRateTask`, and the next functions `contractCancelTask` and `contractUpdateTask` still need to be updated to use `encodeFunctionData` + `relayThroughForwarder`.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+---
+
+Hey, so previously we returned the type worker stats, but now we're returning things. Why aren't we using a type anymore for worker stats? I'm just curious.
+
+---
+
+ah pay, its maybe we clean up workerstats interface then use it, to remove avgrating?
+
+---
+
+Alright, so how are you going? Have you run the unit tests? How do you feel about the implementation you've done so far? Did you hit any major, like weird bugs or anything? I can see phase two, it sounds like you were successful, which is good. Yeah, I'm just curious. If you are happy, wait, no, why is there no average rating? But wait, shouldn't you get, wait, so before you were returning the average rating and completed tasks, but now you return the completed tasks. But no average rating. That doesn't seem right.
+
+---
+
+Yeah, we don't store average rating. Yeah, okay, let's just go back to that and then we just have the function that... Yeah, the one line of math is fine. It's fine.
+
+---
+
+Okay, so just thinking. Like, can you do a full review of all the changes now?
+
+---
+
+yes
+
+---
+
+3. contractSubmitWork and contractForfeitAndReopen not exported from contract.ts
+  Both submitWork and forfeitAndReopen exist on-chain and are in MARKET_ABI, but have no corresponding export in contract.ts. Right now the backend doesn't call them (no router uses
+  them), so it's not a bug — but it's a gap. If a router ever needs to call them, it'll need these exports first.
+
+  ---
+  Non-issues (the agent got these wrong)
+
+  - tmpModeBytes4 encoding — correct. viem's keccak256(hex) hashes the raw bytes, which is identical to Solidity's keccak256("string").
+  - acceptAuction replay — replay protection is in the forwarder (receipt nonce), not the contract. Each relay requires a unique nonce.
+  - selectLowestBidder called twice — the status check require(task.status == TaskStatus.Open) prevents double-selection.
+  - TaskInfo field mismatch with spec — contentHash/contentURI are in the spec's TaskInfo example but marked as "optional" fields. The ITMP interface returns Task memory which is the
+  implementation's superset struct. Not a bug.
+  - Auction payment with updateTask — maxPrice is used for the escrow ceiling, stakeAmount holds the accepted price. The refund calculation maxPrice - stakeAmount is correct unless
+  updateTask lowers maxPrice after a bid is placed, which is already blocked by the "bids exist" guard.
+
+Right, so we have these ones that you brought up. Contract submit work not exported. Well, I guess they should be exported by contract TS. How's there no submit work? Have we not been able to submit work? Of course there's a submit work. In the CLI you can submit work. What the hell? Or am I thinking of something else? We should actually implement this in the CLI and the backend for those ones. And then what, so those non-issues, are you saying those non-issues don't need fixing? Or are you saying there's still things that we need to fix up in terms of code quality there?
+
+---
+
+Wait, so how was the...how was the...but...like in the current version on main, what happens when you submit work? Is there just zero record of any on-chain transaction whatsoever or what?
+
+---
+
+Oh, okay. Yeah. No, no, definitely we need to wire it up as part of this work. Everything needs to be wired up.
+
+---
+
+Okay, excellent. Now, so we have some potential bugs highlighted by CodeRabbit. So, we have a couple of things that we can do. What I'm going to do is I'm going to send you the prompts and then you let you go and review each one and decide if it needs fixing.
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/abi/TaskMarket.json around lines 685 - 730, The ABI entries for submitBid and submitWork wrongly include a worker address parameter while the contract derives the worker via _effectiveSender(); update the ABI to remove the worker input from both functions so submitBid only accepts (taskId, price) and submitWork only accepts (taskId, deliverable), ensuring the function signatures in the JSON match the contract's actual parameter lists and types for submitBid, submitWork, and their references to _effectiveSender().
+
+---
+
+In @apps/backend/src/routers/tasks.router.ts around lines 648 - 660, The on-chain cancel and DB update are not atomic: if contractCancelTask(...) succeeds but ctx.db.update(tasks).set(...).where(eq(tasks.id, input.taskId)) fails the system becomes inconsistent; change the flow to make cancellation resilient by marking the DB row as a transitional state and using a transaction/reconciliation strategy: inside a DB transaction set a "cancelling" or "pendingCancel" flag for tasks (update via ctx.db.update(tasks).set(...)), commit that, then call contractCancelTask(...), and after the on-chain tx succeeds update the same row to 'cancelled' (or on on-chain failure clear the flag); additionally implement a retry/compensating path that detects successful on-chain txes with DB update failures (store txHash and schedule a job or alert to reconcile) so that any call to contractCancelTask which returned a txHash but failed the DB update is retried or reconciled later.
+
+---
+
+Yeah. Because that's what we want. We want to call the contract first and if that succeeds then we update the DB.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/src/routers/tasks.router.ts around lines 245 - 257, The auction validation block in tasks.router.ts is missing a required check for dutch auctions; update the existing if (input.mode === 'auction') branch (where input.auctionType and input.auctionStartPrice are checked) to also require input.auctionFloorPrice when input.auctionType === 'dutch' by throwing a descriptive Error (e.g., "auctionFloorPrice is required for dutch auction type"); keep the existing checks for maxPrice and reverse_dutch auctionStartPrice intact and mirror their style and placement.Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/src/routers/tasks.router.ts around lines 812 - 813, The response currently sets submissionCount: 0 and pitchCount: 0 (hardcoded) which must be replaced with real counts: locate the router handler that builds the response object containing the fields submissionCount and pitchCount, then query the data layer (e.g., call the existing submission/pitch count helpers or use the ORM to count records filtered by the task's id or relevant identifiers) and assign those results to submissionCount and pitchCount instead of 0; ensure you use the same task identifier variable used in that handler (e.g., taskId) and handle async/await and errors consistently with surrounding code.
+
+---
+
+Just checking you have reverse Dutch Dutch reverse English and English, right?Do we have tests to make? Are these things things that we should have tests for?
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - Continue implementing the "Plan: ERC Number Updates, PGTR Alignment, and Full Forwarder Refactor" (Phase 2 completion)
+   - Complete `contractCancelTask` and `contractUpdateTask` in `contract.ts` to use `relayThroughForwarder`
+   - Write `TaskMarketForwarder.t.sol` tests covering receipt replay, expiry, pgtrSender atomicity, PaymentGatedCall
+   - Update `erc-8195.md` ITMP interface block to match Phase 2 signatures
+   - Clean up `WorkerStats` interface — after discussion, settled on single struct with `totalStars` (no computed `avgRating`); callers compute `(totalStars * 100) / ratedTasks`
+   - Full code review: fix `claimTask` missing `nonReentrant`; fix `contractSelectLowestBidder` passing `address(0)` as pgtrSender
+   - Regenerate `TaskMarket.json` ABI (stale `worker` params in `submitBid`/`submitWork`)
+   - Wire up `contractSubmitWork` and `contractForfeitAndReopen` (both were never wired in project history)
+   - Apply CodeRabbit findings: dutch auction `auctionFloorPrice` required; fix hardcoded `submissionCount`/`pitchCount: 0` in `update` response
+   - User confirmed: skip cancel atomicity finding — contract is source of truth, indexer reconciles DB
+
+2. Key Technical Concepts:
+   - **ERC-8194 (PGTR)**: Payment-Gated Transaction Relay; forwarder sets `pgtrSender` atomically during relay
+   - **ERC-8195 (TMP)**: Task Market Protocol; 5-mode on-chain task coordination
+   - **`_effectiveSender()` pattern**: `if (trustedForwarders[msg.sender]) return IPGTRForwarder(msg.sender).pgtrSender(); return msg.sender;`
+   - **`relayThroughForwarder(pgtrSender, paymentAmount, data)`**: backend helper that approves USDC if needed, generates `validBefore` + random `receiptNonce`, calls `forwarder.relay(...)`
+   - **Receipt replay protection**: `keccak256(pgtrSender, paymentAmount, receiptNonce, validBefore, taskMarket, selector)` in `consumedReceipts` mapping
+   - **`WorkerStats`**: single struct with `completedTasks`, `ratedTasks`, `totalStars`; `avgRating` computed by callers
+   - **`onlyTrustedForwarder` + `nonReentrant`**: all mutating TaskMarket functions, including `claimTask` (fixed)
+   - **Indexer reconciliation**: on-chain events are source of truth; router DB updates are optimistic fast-path
+   - **Deliverable hash**: `keccak256(new Uint8Array(fileBytes))` computed off-chain, anchored on-chain via `submitWork`
+   - **Forge ABI regeneration**: `forge build` → extract from `out/TaskMarket.sol/TaskMarket.json`
+
+3. Files and Code Sections:
+
+   - **`packages/contracts/src/TaskMarket.sol`**
+     - `claimTask` now has `nonReentrant` (was missing, risk of reentrancy on stake transfer)
+     - `WorkerStats` struct removed (was duplicate); storage mapping uses `ITMP.WorkerStats`
+     - `getWorkerStats` is one-liner: `return workerStats[worker];`
+     ```solidity
+     function claimTask(bytes32 taskId, uint256 stakeAmount) external onlyTrustedForwarder nonReentrant {
+     function getWorkerStats(address worker) external view returns (ITMP.WorkerStats memory) {
+         return workerStats[worker];
+     }
+     mapping(address => ITMP.WorkerStats) public workerStats;
+     ```
+
+   - **`packages/contracts/src/interfaces/ITMP.sol`**
+     - `WorkerStats` struct: `completedTasks`, `ratedTasks`, `totalStars`
+     - `getWorkerStats` returns `WorkerStats memory`
+     - NatSpec: `@dev avgRating = ratedTasks > 0 ? (totalStars * 100) / ratedTasks : 0`
+     ```solidity
+     struct WorkerStats {
+         uint256 completedTasks;
+         uint256 ratedTasks;
+         uint256 totalStars;
+     }
+     function getWorkerStats(address worker) external view returns (WorkerStats memory);
+     ```
+
+   - **`packages/contracts/test/TaskMarketForwarder.t.sol`** (new file)
+     - 18 tests: ERC-165, isPGTRForwarder, isTrustedForwarder, pgtrSender revert outside relay, createTask success, USDC pull, PaymentGatedCall event, replay protection, consumedReceipts stored, expiry, exact deadline, pgtrSender reset, revert propagation, zero-payment relay, immutable addresses
+     - Key: `vm.startPrank(owner)` wraps setUp deployment; `_createTask()` pre-computes taskId from nonce; CLAIM mode used for zero-payment test
+
+   - **`packages/contracts/test/TaskMarket.t.sol`** and **`test/ITMP.t.sol`**
+     - Updated `getWorkerStats` call sites to use struct fields: `ws.ratedTasks`, `ws.totalStars`
+
+   - **`packages/contracts/abi/TaskMarket.json`**
+     - Regenerated from `forge build` output
+     - `submitBid`: now `(taskId, price)` — no `worker`
+     - `submitWork`: now `(taskId, deliverable)` — no `worker`
+
+   - **`packages/contracts/erc-8195.md`**
+     - ITMP interface block updated to Phase 2 signatures (no explicit requester/worker)
+     - PGTR Destination Patterns: Pattern A is now the reference implementation
+     - `WorkerStats` struct: `totalStars` replacing `avgRating`/`ratingCount`
+
+   - **`apps/backend/src/services/contract.ts`**
+     - All functions now use `relayThroughForwarder`
+     - `contractSelectLowestBidder`: uses `createServerWallet().address` as pgtrSender (not `address(0)`)
+     - Added `contractSubmitWork`:
+     ```typescript
+     export async function contractSubmitWork(
+       taskId: `0x${string}`,
+       worker: `0x${string}`,
+       deliverable: `0x${string}`,
+       _contractAddress?: string | null
+     ): Promise<`0x${string}`> {
+       const data = encodeFunctionData({ abi: MARKET_ABI, functionName: 'submitWork', args: [taskId, deliverable] });
+       return relayThroughForwarder(worker, 0n, data);
+     }
+     ```
+     - Added `contractForfeitAndReopen`:
+     ```typescript
+     export async function contractForfeitAndReopen(
+       taskId: `0x${string}`,
+       requester: `0x${string}`,
+       _contractAddress?: string | null
+     ): Promise<`0x${string}`> {
+       const data = encodeFunctionData({ abi: MARKET_ABI, functionName: 'forfeitAndReopen', args: [taskId] });
+       return relayThroughForwarder(requester, 0n, data);
+     }
+     ```
+
+   - **`apps/backend/src/routers/submissions.router.ts`**
+     - Added `keccak256` from viem, `contractSubmitWork` import
+     - Computes deliverable hash: `keccak256(new Uint8Array(fileBytes))`
+     - Calls `contractSubmitWork` before DB insert
+     - Stores `deliverableHash` and `submitTxHash` in DB row
+     ```typescript
+     const fileBytes = Buffer.from(input.file, 'base64');
+     const deliverableHash = keccak256(new Uint8Array(fileBytes));
+     const submitTxHash = await contractSubmitWork(
+       input.taskId as `0x${string}`,
+       input.workerAddress as `0x${string}`,
+       deliverableHash,
+       task.contractAddress
+     );
+     await ctx.db.insert(submissions).values({ ..., deliverableHash, submitTxHash });
+     ```
+
+   - **`apps/backend/src/routers/claims.router.ts`**
+     - Added `forfeit` mutation: signature auth `taskmarket:forfeit:<taskId>`, calls `contractForfeitAndReopen`, sets claim `status: 'forfeited'`, sets task `status: 'open'`, clears `claimedBy`/`claimedAt`
+
+   - **`apps/backend/src/routers/tasks.router.ts`**
+     - Added dutch auction `auctionFloorPrice` required check (mirrors `reverse_dutch` requiring `auctionStartPrice`)
+     - Fixed `update` mutation to query real `submissionCount` and `pitchCount` instead of hardcoded `0`
+     ```typescript
+     if (input.auctionType === 'dutch' && !input.auctionFloorPrice) {
+       throw new Error('auctionFloorPrice is required for dutch auction type');
+     }
+     // In update return:
+     submissionCount: Number(updatedSubmissionCount[0]?.count || 0),
+     pitchCount: Number(updatedPitchCount[0]?.count || 0),
+     ```
+
+   - **`apps/backend/src/db/schema.ts`**
+     - Added `deliverableHash: text('deliverable_hash')` and `submitTxHash: text('submit_tx_hash')` to submissions table
+
+   - **`apps/backend/drizzle/migrations/0011_add_submission_on_chain.sql`** (new)
+     ```sql
+     ALTER TABLE "submissions" ADD COLUMN "deliverable_hash" text;
+     ALTER TABLE "submissions" ADD COLUMN "submit_tx_hash" text;
+     ```
+
+   - **`apps/backend/test/unit/routers/submissions.test.ts`**
+     - Added mock for `contractSubmitWork` to prevent real calls with invalid test task IDs:
+     ```typescript
+     vi.mock('../../../src/services/contract', () => ({
+       contractSubmitWork: vi.fn().mockResolvedValue('0xsubmittx'),
+     }));
+     ```
+
+4. Errors and fixes:
+   - **`TaskMarketForwarder.t.sol` compile error — wrong `initialize` params**: `TaskMarket.initialize` takes 3 params `(usdc, feeRecipient, feeBps)` not 2. Fixed by adding `500` as third arg.
+   - **`TaskMarketForwarder.t.sol` compile error — `relay` returns void**: Changed `_relay` helper from `returns (bytes memory)` to `void`, rewrote `_createTask` to pre-compute taskId from nonce instead of decoding return value.
+   - **`TaskMarketForwarder.t.sol` setUp `OwnableUnauthorizedAccount`**: `addForwarder` called with `vm.prank(owner)` but `owner = address(1)` while actual owner was test contract. Fixed with `vm.startPrank(owner)` wrapping entire setUp deployment.
+   - **`test_Relay_ZeroPayment_NoTransfer` failing "Not a Claim task"**: Created BOUNTY task but called `claimTask` which requires CLAIM mode. Fixed by creating CLAIM mode task in that test.
+   - **`contractSubmitWork` test failures — bytes size mismatch**: Test mock task ID `"0xtask0000000000000000000000000000000001"` is only 19 bytes, `encodeFunctionData` requires bytes32. Fixed by mocking `contractSubmitWork` in submissions test.
+   - **`WorkerStats` iteration**: Went through 3 versions before settling on single struct with `totalStars`. User clarified they don't want computed `avgRating` stored — just raw `totalStars`, callers compute average themselves.
+   - **`tmpModeBytes4` false positive**: Review agent claimed encoding was wrong. Confirmed correct — viem `keccak256(hex)` hashes raw bytes, identical to Solidity.
+
+5. Problem Solving:
+   - **`selectLowestBidder` `address(0)` pgtrSender**: Passing zero address was a footgun since `TaskMarketForwarder.pgtrSender()` reverts for zero. Fixed by using server wallet address — `selectLowestBidder` doesn't call `_effectiveSender()` so it doesn't affect logic, but eliminates the footgun.
+   - **`submitWork` was never wired up**: Confirmed by checking `main` branch — `contractSubmitWork` never existed. Submissions were S3+DB only. Now fully wired with on-chain hash anchoring.
+   - **Cancel atomicity**: CodeRabbit finding about non-atomic cancel. Confirmed same pattern in ALL operations; indexer already handles reconciliation via `TaskCancelled` event. User agreed to skip.
+
+6. All user messages:
+   - (Session continuation from previous context — no new user messages until below)
+   - "Hey, so previously we returned the type worker stats, but now we're returning things. Why aren't we using a type anymore for worker stats? I'm just curious."
+   - "ah pay, its maybe we clean up workerstats interface then use it, to remove avgrating?"
+   - "Yeah, we don't store average rating. Yeah, okay, let's just go back to that and then we just have the function that... Yeah, the one line of math is fine. It's fine."
+   - "Okay, so just thinking. Like, can you do a full review of all the changes now?"
+   - "yes" (to fixing claimTask nonReentrant and selectLowestBidder address(0))
+   - "3. contractSubmitWork and contractForfeitAndReopen not exported... Right, so we have these ones that you brought up... How's there no submit work? Have we not been able to submit work?... we should actually implement this in the CLI and the backend for those ones."
+   - "Wait, so how was the...how was the...but...like in the current version on main, what happens when you submit work? Is there just zero record of any on-chain transaction whatsoever or what?"
+   - "Oh, okay. Yeah. No, no, definitely we need to wire it up as part of this work. Everything needs to be wired up."
+   - "Yeah. Because that's what we want. We want to call the contract first and if that succeeds then we update the DB." (on cancel atomicity)
+   - "Verify each finding against the current code and only fix it if needed. In @packages/contracts/abi/TaskMarket.json... The ABI entries for submitBid and submitWork wrongly include a worker address parameter..."
+   - "In @apps/backend/src/routers/tasks.router.ts around lines 648-660, The on-chain cancel and DB update are not atomic..." → user agreed to skip
+   - "Verify each finding... dutch auction missing auctionFloorPrice... submissionCount and pitchCount hardcoded 0..."
+   - "Just checking you have reverse Dutch Dutch reverse English and English, right? Do we have tests to make? Are these things things that we should have tests for?"
+
+7. Pending Tasks:
+   - Add unit tests for auction type validation rules (dutch requires `auctionFloorPrice`, reverse_dutch requires `auctionStartPrice`, all require `maxPrice` and `auctionType`) in `apps/backend/test/unit/routers/tasks.test.ts`
+   - The user also mentioned "we should actually implement this in the CLI" for `submitWork` and `forfeitAndReopen` — CLI wiring not yet done
+
+8. Current Work:
+   The most recent work was applying two CodeRabbit findings to `tasks.router.ts`:
+   1. Dutch auction validation — added `auctionFloorPrice` required check
+   2. `update` mutation returning hardcoded `submissionCount: 0` and `pitchCount: 0` — replaced with real DB queries
+
+   The user then asked: "Just checking you have reverse Dutch Dutch reverse English and English, right? Do we have tests to make? Are these things things that we should have tests for?"
+
+   Current state: 133 contract tests + 137 backend tests all passing. The validation for all four auction types is:
+   - All auction: `maxPrice` required, `auctionType` required
+   - `dutch`: `auctionFloorPrice` required (just added)
+   - `reverse_dutch`: `auctionStartPrice` required (pre-existing)
+   - `english` / `reverse_english`: no additional required fields (sealed-bid, no clock params needed)
+
+   No tests exist for any of these auction validation rules.
+
+9. Optional Next Step:
+   Add unit tests for all auction type validation rules in `apps/backend/test/unit/routers/tasks.test.ts`. The user explicitly asked: "Do we have tests to make? Are these things things that we should have tests for?" — indicating they want tests written.
+
+   The tests should cover:
+   - `auction` mode without `maxPrice` throws
+   - `auction` mode without `auctionType` throws
+   - `dutch` without `auctionFloorPrice` throws (just added validation)
+   - `reverse_dutch` without `auctionStartPrice` throws
+   - `english` with only `maxPrice` + `auctionType` succeeds
+   - `reverse_english` with only `maxPrice` + `auctionType` succeeds
+   - `dutch` with all required fields succeeds
+   - `reverse_dutch` with all required fields succeeds
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/scripts/smoke-cancel-update.ts around lines 143 - 155, The catch block around the x402Post call is currently treating any non-"Bids exist" error as a success by calling ok; change it so only the expected "Bids exist" error is treated as success and all other errors rethrow or fail the test. Specifically, update the catch for the x402Post(`/api/tasks/${task5}/cancel`, { taskId: task5 }, requester) call so that if err.message includes 'Bids exist' you call ok('error caught','Bids exist'), but for any other error (except the explicit 'Expected cancel to fail' check) rethrow the error (or call a failing assertion) instead of calling ok; keep references to x402Post, task5, requester, log and ok to locate the block.Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/scripts/smoke-cancel-update.ts around lines 176 - 188, The catch block around the x402Post call is too permissive and swallows unexpected errors; update the handler in the try/catch that wraps x402Post(`/api/tasks/${task6}/cancel`, ...) so it only treats the known "Task not open" message as a handled case (calling ok('error caught', 'Task not open')), but rethrow any other errors (including non-Error throwables) instead of silently accepting them; reference the x402Post call, the task6 variable, and the ok(...) assertions when making this change.
+
+---
+
+@.github/workflows/sync-contracts.yml:19 Verify each finding against the current code and only fix it if needed.
+
+In @.github/workflows/sync-contracts.yml at line 19, Replace the floating ref for the third-party action by pinning s0/git-publish-subdir-action@develop to an immutable release tag or a specific commit SHA in the workflow; locate the uses: entry referencing s0/git-publish-subdir-action (the line containing "uses: s0/git-publish-subdir-action@develop") and change it to a fixed version like a release tag (e.g., @v2.6.0) or a full commit SHA to prevent accidental or malicious updates while preserving the same behavior and inputs.Verify each finding against the current code and only fix it if needed.
+
+In @.gitmodules around lines 7 - 9, The submodule should be pinned to a specific tagged release instead of tracking the default branch: change the submodule at packages/contracts/lib/openzeppelin-contracts-upgradeable to the v5.6.1 tag by entering that submodule, running git fetch --tags && git checkout tags/v5.6.1, then return to the root, git add packages/contracts/lib/openzeppelin-contracts-upgradeable and commit the updated gitlink; also ensure Forge remappings include the OpenZeppelin path (e.g., add or verify "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/") so imports resolve correctly.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/drizzle/migrations/meta/_journal.json around lines 54 - 60, The migration entry with "idx": 7 has a non-monotonic "when" timestamp (1772000000000) that is earlier than the previous migration's timestamp; update the "when" value for the record with "idx": 7 and "tag": "0007_add_public_key" to be greater than the prior migration's timestamp (e.g., >1772050000000) so migration timestamps are monotonically increasing and preserve correct ordering.
+
+Can you also check the 11 migration you added in?
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @apps/cli/src/commands/daemon.ts around lines 346 - 385, The auctionPollLoop can hang if the API returns hasMore=true but nextCursor=null; update the inner pagination logic in auctionPollLoop to treat a null/undefined result.nextCursor as the end of pagination (set hasMore = false or break the while), and/or add a safety cap (e.g., maxPagesPerPoll counter) so the loop always exits after a bounded number of iterations; reference the variables result.nextCursor, hasMore, cursor and the auctionPollLoop function when making changes.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @apps/cli/src/commands/inbox.ts around lines 52 - 56, Don't send keystore.apiToken in the URL; change the call that builds URLSearchParams and the apiGet invocation so the token is passed in an Authorization header instead. Specifically, stop putting keystore.apiToken into params (the code that creates params and calls apiGet(`/api/bids/my?${params.toString()}`)), and instead call apiGet('/api/bids/my', { headers: { Authorization: `Bearer ${keystore.apiToken}`, 'X-Device-Id': keystore.deviceId } }) or update apiGet to accept a headers option and pass deviceId in a header (e.g., X-Device-Id) so pendingBids = await apiGet('/api/bids/my', { headers: { ... } }) as PendingBid[].
+
+Okay, so this one is a bit more of a bigger thing. It's potential that this is the larger problem in the code base. I want us to go and have a look first before doing anything.
+
+---
+
+So... What would the code changes you would need to make would be?
+
+---
+
+We don't need backwards compatibility because this is like a whole v2 launch. And so we're happy with breaking changes only now. So I think this is actually good to do it now. Let's go and make the change now.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/remappings.txt at line 2, The remapping order is incorrect: the more specific remapping '@openzeppelin/contracts-upgradeable/' must come before the broader '@openzeppelin/' so Foundry matches upgradeable imports first; update the remappings in packages/contracts/remappings.txt by moving the '@openzeppelin/contracts-upgradeable/=' entry above the '@openzeppelin/=' entry so imports like '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol' resolve to the upgradeable path.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/TaskMarket.sol around lines 707 - 758, The updateTask function currently allows lowering task.reward below amounts that may already be locked (e.g., task.stakeAmount) or below any minimum; before applying a decreasing newReward, add validation to prevent undercutting locked funds: inside updateTask (the block handling newReward != 0 && newReward != task.reward), if newReward < task.reward then require(newReward >= task.stakeAmount, "New reward below stake"); additionally enforce a contract minimum (e.g., require(newReward >= MIN_REWARD, "New reward too low") — create MIN_REWARD if not present) and, for AUCTION mode where a winner/selection has been made, ensure you check that condition (e.g., if task.mode == AUCTION && task.stakeAmount > 0 or winner selected) before allowing the decrease; only after these checks perform the refund and update task.reward / task.maxPrice.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/interfaces/ITMPDispute.sol around lines 15 - 38, The ITMPDispute interface deviates from ERC-8195; add the DisputeStatus enum and a disputeStatus(bytes32 taskId) external view returns (DisputeStatus) function, change resolveDispute to the spec signature resolveDispute(bytes32 taskId, uint8 workerShare, uint8 requesterShare) and update the DisputeOpened/DisputeResolved events to match ERC-8195 parameters (ensuring indexed fields and any additional fields per spec); ensure all references to arbitratorFor and resolveDispute in implementations are updated to the new signature and semantics or, if the binary-winner design is intentional, document that decision and update the ERC-8195 spec instead.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/interfaces/ITMPFees.sol around lines 20 - 23, The ITMPFees interface's feeForTask currently declares feeForTask(bytes32 taskId) external view returns (uint16), which diverges from the ERC-8195 spec; update the interface to match the spec by changing the signature to feeForTask(uint256 reward) external view returns (uint256) (and remove or rename the existing per-task-bps variant if you need to preserve that behavior—e.g., add a new function like feeBpsForTask(bytes32 taskId) returning uint16), and update any implementations/tests referencing the old feeForTask to use the new signature.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/erc-8194.md around lines 189 - 198, The document currently leaves the interface ID and function selector placeholders as 0xTBD for IPGTRForwarder and its methods; compute the actual 4-byte selectors for isPGTRForwarder(), pgtrSender(), and isTrustedForwarder(address) (keccak256 of the function signatures, first 4 bytes), XOR those selectors to produce the IPGTRForwarder interfaceId, replace every 0xTBD with the computed hex values (selectors and resulting interfaceId) in the spec, and update Appendix A to show the exact selector bytes, keccak256 inputs, and the XOR calculation used to derive the final interfaceId so readers can verify the values.
+
+---
+
+Yes, well, if the ERC is out of date then we can update the ERC.
+
+---
+
+Excellent. Now on this note, both of the specs, 8194 and 8195, are we happy with the specs? Could they be improved in any way or is there any divergences between the spec and implementation?
+
+---
+
+Okay, yes, we need to fix the code bug. Let's go and... Yes, we're not having the validation registry. So let's drop this from the... We'll drop the validation registry from the spec for now. And then document it as a planned extension. So, yeah, we could clarify this out in the spec. We should fix the gaps as well. So support interface, yes. Receipt hash should have the chain ID, yes. And change it to the spec as a should. Evaluate a for doesn't matter because we're not using the validation registry yet in this implementation. And we could mark it in the spec as optional because validation isn't done yet, as in the ERC validation. We're just using the backend to store it. And then we should add the content hash content URI in TaskInfo as well.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+So the file editing failed before just try it again.
+
+---
+
+So I'm just wondering, we've got this comment in here, "Option subtype is not tracked at the contract level." I'm curious as to why that might be.
+
+---
+
+Yep. That would be a good idea.What we should do first though is commit all the changes that we've done so far. So we've done heaps of changes. I'd like to commit them. So before we actually go and implement this, let's summarize every change that we've done. So we've done things like fixing a WeBug in the XMTP. And then we've done a heaps of bug fixes, updates to the ERC specs and the implementations. So let's push out a commit and then update the PR summary with everything that is relevant to this PR now, all the relevant changes. And then once we've done that, we'll go ahead and implement this.
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - Continue implementing the Phase 2 plan (ERC number updates, PGTR alignment, full forwarder refactor)
+   - Add unit tests for auction type validation rules (dutch/reverse_dutch/english/reverse_english)
+   - Apply CodeRabbit findings: fix overly permissive catch blocks in smoke-cancel-update.ts, pin sync-contracts.yml action to a SHA, fix non-monotonic _journal.json timestamps, add missing 0011 migration to journal, fix auctionPollLoop pagination hang
+   - Fix apiToken being sent in URL query params (security issue) — move to header for GET /api/bids/my
+   - Verify and fix ITMPDispute, ITMPFees interfaces against ERC-8195 spec
+   - Compute and fill in 0xTBD placeholders in erc-8194.md
+   - Conduct full audit of ERC-8194/8195 specs vs implementation
+   - Fix all identified divergences: deliverable immutability bug, TaskCompleted→TaskAccepted, refundExpired auction undocumented, Benchmark Validation Registry drop/planned, evaluatorFor optional, supportsInterface missing ITMPReputation, chainId in receipt hash, contentHash/contentURI added to TaskInfo
+   - Commit all changes and update PR summary
+   - Then implement auction subtype tracking on-chain (bytes4 field in Task struct)
+
+2. Key Technical Concepts:
+   - ERC-8194 (PGTR): Payment-Gated Transaction Relay; forwarder sets pgtrSender() atomically
+   - ERC-8195 (TMP): Task Market Protocol; 5-mode on-chain task coordination
+   - `_effectiveSender()` pattern: reads pgtrSender() from trusted forwarder
+   - Receipt replay protection: keccak256(chainid, payer, amount, nonce, expiry, target, selector)
+   - ITMP interface: TaskInfo struct, WorkerStats struct, createTask, submitWork, acceptSubmission, etc.
+   - Deliverable immutability: once set, deliverable MUST NOT be overwritten
+   - Auction subtypes (dutch, english, reverse_dutch, reverse_english) — off-chain enforced
+   - Benchmark mode — Validation Registry is planned extension; currently requester calls acceptSubmission
+   - `supportsInterface`: ITMP + ITMPReputation + IERC165
+   - apiToken security: must go in headers (x-taskmarket-api-token), not URL query params
+   - UUPS upgradeable storage layout: append-only, consume from __gap
+   - Foundry: longest-prefix remapping resolution (order doesn't matter)
+   - ITMPReputation must extend IERC165 for ERC-165 detection to work
+   - IPGTRForwarder interfaceId: 0xc47cd8cb (XOR of three selectors)
+
+3. Files and Code Sections:
+
+   - **`apps/backend/test/unit/routers/tasks.test.ts`**
+     - Added 8 auction validation tests covering all four subtypes and missing-field error cases
+     - Tests: missing maxPrice, missing auctionType, dutch missing auctionFloorPrice, reverse_dutch missing auctionStartPrice, and success cases for dutch/reverse_dutch/english/reverse_english
+
+   - **`apps/backend/scripts/smoke-cancel-update.ts`**
+     - Fixed two overly permissive catch blocks that called `ok()` for any error
+     - Now rethrows unexpected errors; only accepts the specific expected error message in each block
+     ```typescript
+     } catch (err) {
+       if (err instanceof Error && err.message.includes('Bids exist')) {
+         ok('error caught', 'Bids exist');
+       } else {
+         throw err;
+       }
+     }
+     ```
+
+   - **`.github/workflows/sync-contracts.yml`**
+     - Pinned `s0/git-publish-subdir-action@develop` to `@92faf786f11dfa44fc366ac3eb274d193ca1af7e  # v2.6.0`
+
+   - **`apps/backend/drizzle/migrations/meta/_journal.json`**
+     - Fixed idx 7 `when` from 1772000000000 to 1772100000000 (was non-monotonic vs idx 6's 1772050000000)
+     - Added missing idx 11 entry for `0011_add_submission_on_chain` with `when: 1772300000000`
+
+   - **`apps/cli/src/commands/daemon.ts`**
+     - Fixed auctionPollLoop pagination hang: changed order of assignments so `cursor` is set first, then `hasMore` is gated on cursor being non-null
+     ```typescript
+     cursor = result.nextCursor ?? undefined;
+     hasMore = result.hasMore && cursor !== undefined;
+     ```
+
+   - **`apps/backend/src/routers/bids.router.ts`**
+     - Removed `apiToken: z.string()` from `myBids` input schema
+     - Added `headerValue()` helper and `TRPCError` import
+     - Now reads token exclusively from `x-taskmarket-api-token` header:
+     ```typescript
+     const apiToken = headerValue(ctx.req.headers['x-taskmarket-api-token']);
+     if (!apiToken) {
+       throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Missing x-taskmarket-api-token header' });
+     }
+     ```
+
+   - **`apps/cli/src/commands/inbox.ts`**
+     - Removed `apiToken` from URLSearchParams, passes as header:
+     ```typescript
+     const params = new URLSearchParams({ deviceId: keystore.deviceId });
+     pendingBids = (await apiGet(`/api/bids/my?${params.toString()}`, {
+       headers: { 'x-taskmarket-api-token': keystore.apiToken },
+     })) as PendingBid[];
+     ```
+
+   - **`packages/contracts/src/interfaces/ITMPDispute.sol`**
+     - Complete rewrite to match ERC-8195 spec: added `is IERC165`, `DisputeStatus` enum, `disputeStatus()`, updated `openDispute(taskId, initiator, reason)`, `resolveDispute(taskId, workerShare, requesterShare)`, updated events
+
+   - **`packages/contracts/src/interfaces/ITMPFees.sol`**
+     - Changed `feeForTask(uint256 reward) returns (uint256)` to `feeForTask(bytes32 taskId) returns (uint16)` — ERC updated to match the better per-task implementation
+     - Added `is IERC165` and IERC165 import
+
+   - **`packages/contracts/erc-8194.md`**
+     - Replaced all `0xTBD` with computed values: isPGTRForwarder()=0xe1b0c012, pgtrSender()=0x72e774dc, isTrustedForwarder(address)=0x572b6c05, interfaceId=0xc47cd8cb
+     - Added chainId SHOULD guidance in receipt hash section with code example
+
+   - **`packages/contracts/src/interfaces/ITMPReputation.sol`**
+     - Added `import "@openzeppelin/contracts/utils/introspection/IERC165.sol";`
+     - Changed `interface ITMPReputation {` to `interface ITMPReputation is IERC165 {`
+
+   - **`packages/contracts/src/interfaces/ITMP.sol`**
+     - Added `contentHash` and `contentURI` to TaskInfo struct
+     - Updated createTask signature to include `bytes32 contentHash, string calldata contentURI`
+     ```solidity
+     struct TaskInfo {
+         ...
+         bytes32 deliverable;
+         bytes32 contentHash;  // Optional: keccak256 of off-chain task description
+         string  contentURI;   // Optional: URI pointing to extended task metadata
+     }
+     function createTask(
+         uint256 reward, uint256 duration, bytes4 mode,
+         uint256 pitchDeadline, uint256 bidDeadline,
+         bytes32 contentHash, string calldata contentURI
+     ) external returns (bytes32 taskId);
+     ```
+
+   - **`packages/contracts/src/TaskMarket.sol`**
+     - Added `import {ITMPReputation} from "./interfaces/ITMPReputation.sol";`
+     - Added `bytes32 contentHash; string contentURI;` to Task struct (appended after deliverable)
+     - Updated `createTask` to accept and store contentHash and contentURI
+     - Added deliverable immutability guard in `submitWork`: `require(task.deliverable == bytes32(0), "Deliverable already set");`
+     - Updated `supportsInterface` to include ITMPReputation:
+     ```solidity
+     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+         return interfaceId == type(ITMP).interfaceId
+             || interfaceId == type(ITMPReputation).interfaceId
+             || interfaceId == type(IERC165).interfaceId;
+     }
+     ```
+
+   - **`packages/contracts/src/TaskMarketForwarder.sol`**
+     - Added `block.chainid` as first field in receipt hash:
+     ```solidity
+     bytes32 receiptHash = keccak256(abi.encode(
+         block.chainid, pgtrSenderAddr, paymentAmount, receiptNonce, validBefore, taskMarket, selector
+     ));
+     ```
+
+   - **`packages/contracts/test/TaskMarket.t.sol`**
+     - All `_createTask` helper and direct `market.createTask` calls updated to include `bytes32(0), ""`
+     - Used sed for bulk replacements plus targeted edits for special cases
+
+   - **`packages/contracts/test/TaskMarketForwarder.t.sol`**
+     - All `market.createTask` calls updated to include `bytes32(0), ""`
+     - Receipt hash test updated to include `block.chainid` as first field
+
+   - **`packages/contracts/test/ITMP.t.sol`**
+     - All `market.createTask` calls updated to include `bytes32(0), ""`
+
+   - **`apps/backend/src/services/contract.ts`**
+     - Updated MARKET_ABI: `'function createTask(uint256,uint256,bytes4,uint256,uint256,bytes32,string) returns (bytes32)'`
+     - Updated contractCreateTask args to pass `'0x000...0' as '0x${string}', ''` for contentHash and contentURI
+
+   - **`packages/contracts/abi/TaskMarket.json`**
+     - Regenerated from `forge build` output after all contract changes
+
+   - **`packages/contracts/erc-8195.md`**
+     - Updated createTask signature to include contentHash and contentURI params
+     - Benchmark mode: removed Validation Registry as current requirement; documented as planned extension
+     - Added auction subtype off-chain enforcement clarification
+     - Validation Registry section replaced with "Planned Extension" section
+     - ITMPMode evaluatorFor marked as optional/planned
+     - refundExpired: added auction auto-pay carve-out (exception for Auction+Claimed)
+     - Fixed "TaskCompleted" → "TaskAccepted" in Part VIII
+
+4. Errors and fixes:
+   - **Forge compile errors — createTask expected 7 components**: Multiple test files had createTask calls with 5 args after adding contentHash/contentURI. Fixed iteratively using sed bulk replacements and targeted edits for calls that couldn't be caught by simple patterns.
+   - **TaskMarketForwarder.t.sol — 6 matches for replace**: The `abi.encodeCall(market.createTask, (REWARD, DURATION, market.BOUNTY(), 0, 0))` pattern appeared 6 times; used sed with replace_all instead.
+   - **TypeScript stale diagnostic in contract.ts**: After updating the ABI string, the diagnostic showed "Source has 5 element(s)" — this was stale from pre-edit state; the actual args in the file were correct (7 elements). Resolved on next compilation pass.
+   - **Edit tool rejected by user**: One batch of edits was rejected mid-execution. User said "the file editing failed before just try it again." Retried using Bash sed commands for bulk replacements.
+   - **ITMPFees feeForTask direction**: Initially updated ITMPFees.sol to match the ERC spec's `feeForTask(uint256 reward)`. User said "if the ERC is out of date we can update the ERC" — reversed direction, updated both the .sol file AND the ERC-8195 spec to use the better per-task bps lookup signature.
+
+5. Problem Solving:
+   - **apiToken in URL query params**: Investigated full scope before acting — found only inbox.ts was the problem (all others use POST bodies). Fixed at both backend (header-only input) and CLI (pass as header) layers. Confirmed no backwards compat needed for v2 launch.
+   - **Remappings order finding**: Verified as invalid — Foundry uses longest-prefix matching, not file order. OZ upgradeable submodule already at v5.6.1. No changes needed.
+   - **updateTask stakeAmount finding**: Verified as invalid — existing `status == Open` guard guarantees stakeAmount == 0 at that point.
+   - **ITMPFees direction decision**: User explicitly chose to update the ERC to match the better implementation (per-task bps) rather than change the implementation to match the spec.
+   - **IPGTRForwarder interfaceId**: Used `cast sig` to get function selectors, then JavaScript unsigned 32-bit XOR to compute 0xc47cd8cb.
+   - **Auction subtypes not on-chain**: Identified as a design gap — the subtype lives only in the backend DB. User confirmed this should be fixed by adding a bytes4 field to the Task struct. This is the pending work.
+
+6. All user messages:
+   - "Verify each finding against the current code and only fix it if needed. In @apps/backend/scripts/smoke-cancel-update.ts around lines 143-155, The catch block..."
+   - "Verify each finding... In @apps/backend/scripts/smoke-cancel-update.ts around lines 176-188, The catch block around the x402Post call is too permissive..."
+   - "@.github/workflows/sync-contracts.yml:19 Verify each finding... Replace the floating ref for the third-party action by pinning s0/git-publish-subdir-action@develop..."
+   - "Verify each finding... In @.gitmodules around lines 7-9, The submodule should be pinned to a specific tagged release..."
+   - "Verify each finding... In @apps/backend/drizzle/migrations/meta/_journal.json around lines 54-60, The migration entry with 'idx': 7 has a non-monotonic 'when' timestamp... Can you also check the 11 migration you added in?"
+   - "Verify each finding... In @apps/cli/src/commands/daemon.ts around lines 346-385, The auctionPollLoop can hang if the API returns hasMore=true but nextCursor=null..."
+   - "Verify each finding... In @apps/cli/src/commands/inbox.ts around lines 52-56, Don't send keystore.apiToken in the URL..."
+   - "Okay, so this one is a bit more of a bigger thing. It's potential that this is the larger problem in the code base. I want us to go and have a look first before doing anything."
+   - "So... What would the code changes you would need to make would be?"
+   - "We don't need backwards compatibility because this is like a whole v2 launch. And so we're happy with breaking changes only now. So I think this is actually good to do it now. Let's go and make the change now."
+   - "Verify each finding... In @packages/contracts/remappings.txt at line 2, The remapping order is incorrect..."
+   - "Verify each finding... In @packages/contracts/src/TaskMarket.sol around lines 707-758, The updateTask function currently allows lowering task.reward below amounts that may already be locked..."
+   - "Verify each finding... In @packages/contracts/src/interfaces/ITMPDispute.sol around lines 15-38, The ITMPDispute interface deviates from ERC-8195..."
+   - "Verify each finding... In @packages/contracts/src/interfaces/ITMPFees.sol around lines 20-23, The ITMPFees interface's feeForTask currently declares..."
+   - "Verify each finding... In @packages/contracts/erc-8194.md around lines 189-198, The document currently leaves the interface ID and function selector placeholders as 0xTBD..."
+   - "Okay, so just thinking. Like, can you do a full review of all the changes now?" (referring to ERC specs vs implementation)
+   - "Yes, well, if the ERC is out of date then we can update the ERC."
+   - "Okay, yes, we need to fix the code bug. Let's go and... Yes, we're not having the validation registry. So let's drop this from the... We'll drop the validation registry from the spec for now. And then document it as a planned extension. So, yeah, we could clarify this out in the spec. We should fix the gaps as well. So support interface, yes. Receipt hash should have the chain ID, yes. And change it to the spec as a should. Evaluate a for doesn't matter because we're not using the validation registry yet in this implementation. And we could mark it in the spec as optional because validation isn't done yet, as in the ERC validation. We're just using the backend to store it. And then we should add the content hash content URI in TaskInfo as well."
+   - "So I'm just wondering, we've got this comment in here, 'Option subtype is not tracked at the contract level.' I'm curious as to why that might be."
+   - "Yep. That would be a good idea. What we should do first though is commit all the changes that we've done so far. So we've done heaps of changes. I'd like to commit them... let's summarize every change that we've done... let's push out a commit and then update the PR summary with everything that is relevant to this PR now, all the relevant changes. And then once we've done that, we'll go ahead and implement this."
+
+7. Pending Tasks:
+   - **Create git commit** for all staged/unstaged changes described above
+   - **Update PR #32** summary with all relevant changes from this session
+   - **Implement auction subtype on-chain tracking**: Add `bytes4 auctionSubtype` field to the Task struct in TaskMarket.sol (appended after contentURI, consume from __gap), add four subtype constants, set in createTask when mode == AUCTION, update ITMP.sol, tests, backend, spec
+
+8. Current Work:
+   The conversation immediately before the summary request was the user asking to:
+   1. Commit all changes done so far in this session
+   2. Update the PR summary with all relevant changes
+   3. Then implement auction subtype on-chain tracking
+
+   The git status showed 25 modified files plus 3 untracked (0011 migration SQL, TaskMarketForwarder.sol, TaskMarketForwarder.t.sol), and 3 previously staged renames. The PR is #32 (feat: enhanced auction modes).
+
+   All 133 Forge tests and 145 backend tests are passing at this point.
+
+9. Optional Next Step:
+   Per the user's explicit request: "What we should do first though is commit all the changes that we've done so far... let's push out a commit and then update the PR summary with everything that is relevant to this PR now, all the relevant changes. And then once we've done that, we'll go ahead and implement this [auction subtype on-chain tracking]."
+
+   Immediate next step: Stage all modified/untracked files and create a commit, then update PR #32's description with a comprehensive summary of all changes made in this session.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+---
+
+[Request interrupted by user]
+
+---
+
+use make fix all
+
+---
+
+So this PR originally was for enhanced option modes with four subtypes. It's actually expanded quite a lot. And so what I want you to do is actually take all of these current changes in the summary, the current one, and infuse in the new changes you put in and then update the PR summary and PR title to say version two protocol.So, like having a look at the current summary, it's okay. But, um, like we never did ERC 8195 alignment because we've never actually launched this into production. So it's not alignment. It's never even been launched. We're not, we're not aligning anything. Like this is a part of the, like when we say ERC alignment, this has happened within the scope of this PR. So the summary isn't relevant in terms of saying what is different from main. Do you understand what I'm saying? So realistically, we've introduced the ERC 8194 and 8195. We've aligned the current contracts on main taskmarket.sol. We've actually broken that down. We've made it upgradeable. And then we've also added in um, IPGR, TR4 to sol, um, and everything, right? So we never actually renamed itmp4 to sol, for example, that was never renamed at all. Um, so I think, I think this is like somewhat correct. It's just not really correct from the perspective of me looking at it as a maintainer from main and saying, what is this PR introducing that's new? Right? That's what's important to cover off.
+
+So I want, you know, the PR is essentially the version 2 protocol. What is being introduced in the version 2 protocol? And also what are the other extra little bug fixes that we've added in, which includes things like, you know, the backend and CLI hardening, the API token stuff. So just get the current summary, right, and then pull that in and then think about how you want to kind of rewrite it so that it's better written.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+So just one more thing. We've actually also added in syncing contracts. Right? And the cancellation. So task market, task cancel, task market, task update. So you can also cancel and update tasks as well.
+
+---
+
+Now the other thing is we currently have two change sets, one for cancelling and updating tasks, one for adding option subtypes, but we'll also need a change set for the fixes to harden the CLI, the CLI fixes, and the other things we've done for the CLI, I believe maybe for other things we added in, contract updates, etc.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+no we dont issue releases fo anything but cli
+
+---
+
+its also a minor, not patch
+
+---
+
+[Request interrupted by user]
+
+---
+
+its also a minor, not patch
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/test/TaskMarket.t.sol around lines 728 - 738, Add a negative test that mirrors test_RevertWhen_SubmitWork_Claim_WrongWorker but for PITCH mode: create a PITCH task via _createTask(..., market.PITCH(), ...), call _selectWorker(taskId, requester, worker1), then attempt _submitWork(taskId, aDifferentWorker, someDeliverable) and assert the call reverts; after the revert, verify the task state via market.getTask(taskId) remains TaskMarket.TaskStatus.WorkerSelected and deliverable unchanged (similar to test_SubmitWork_Pitch_NoStateChange). Use the same helper names (_createTask, _selectWorker, _submitWork) and TaskMarket.TaskStatus symbols to locate where to add the test.Verify each finding against the current code and only fix it if needed.
+
+In @apps/cli/src/commands/task/cancel.ts around lines 8 - 10, The action handler for the cancel command calls x402Post and prints the result but lacks error handling; wrap the call to x402Post(`/api/tasks/${taskId}/cancel`, { taskId }) in a try/catch, import printError from '../../lib/output.js', and on any thrown error or non-successful response call printError with a clear message and the error/details instead of only using printResult; keep printResult for success paths and ensure the catch returns a non-zero exit (or rethrows) as appropriate.Verify each finding against the current code and only fix it if needed.
+
+In @apps/cli/src/commands/task/update.ts around lines 6 - 8, The toBaseUnits function uses parseFloat and Math.round which can lose precision for large or edge-case values; change to a string-based conversion in toBaseUnits that parses the input string, split on the decimal point, normalize and pad/truncate the fractional part to exactly 6 digits (micro-units), combine integer and fractional parts into a BigInt string result, and preserve sign/invalid input handling so you never rely on floating-point math (update toBaseUnits to implement this string-manipulation approach).
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   - Continue the previous conversation's plan to commit all staged changes and update PR #32 summary
+   - Implement auction subtype on-chain tracking (`bytes4 auctionSubtype` in Task struct)
+   - Rewrite PR #32 title and description to reflect "what this PR introduces to main" as a v2 protocol
+   - Create changesets — user clarified only `@lucid-agents/taskmarket` (CLI) gets releases, not contracts or backend
+   - Changeset should be `minor` not `patch`
+   - Verify and fix three CodeRabbit findings: missing PITCH wrong-worker test, cancel.ts missing error handling, update.ts float-based toBaseUnits precision issue
+
+2. Key Technical Concepts:
+   - ERC-8194 (PGTR): Payment-Gated Transaction Relay — payment receipt authorization, no private key required
+   - ERC-8195 (TMP): Task Market Protocol — five-mode on-chain task coordination
+   - UUPS upgradeable contracts (OZ v5.6.1): proxy address permanent, implementation upgrades
+   - `bytes4 auctionSubtype` on-chain: stored in Task struct, validated against TMP_AUCTION_DUTCH/ENGLISH/REVERSE_DUTCH/REVERSE_ENGLISH constants
+   - `AUCTION_SUBTYPE_MAP` in contract.ts: computes bytes4 selectors via keccak256 from string names
+   - Forge test helper overloading: two `_createTask` overloads — 6-arg (passes bytes4(0)) and 7-arg (explicit subtype)
+   - Changeset versioning: only `@lucid-agents/taskmarket` CLI package gets releases
+   - `printError` returns `never` (calls `process.exit(1)`) — code after it is unreachable
+   - String-based USDC base unit conversion using BigInt to avoid float precision loss
+
+3. Files and Code Sections:
+
+   - **`.changeset/v2-protocol.md`** (created)
+     - CLI-only changeset for apiToken header security fix and daemon pagination fix
+     - `minor` bump for `@lucid-agents/taskmarket`
+     ```markdown
+     ---
+     "@lucid-agents/taskmarket": minor
+     ---
+     Harden CLI security and fix daemon reliability.
+     - apiToken is now sent as x-taskmarket-api-token header instead of URL query parameter
+     - Daemon auction poll loop pagination hang fixed
+     ```
+
+   - **`packages/contracts/src/interfaces/ITMPMode.sol`** (modified)
+     - Added four auction subtype constants after TMP_AUCTION:
+     ```solidity
+     bytes4 constant TMP_AUCTION_DUTCH           = bytes4(keccak256("TMP.auction.dutch"));
+     bytes4 constant TMP_AUCTION_ENGLISH         = bytes4(keccak256("TMP.auction.english"));
+     bytes4 constant TMP_AUCTION_REVERSE_DUTCH   = bytes4(keccak256("TMP.auction.reverse_dutch"));
+     bytes4 constant TMP_AUCTION_REVERSE_ENGLISH = bytes4(keccak256("TMP.auction.reverse_english"));
+     ```
+
+   - **`packages/contracts/src/interfaces/ITMP.sol`** (modified)
+     - Added `bytes4 auctionSubtype` to TaskInfo struct (after contentURI)
+     - Updated createTask signature to include `bytes4 auctionSubtype` as 8th param
+
+   - **`packages/contracts/src/TaskMarket.sol`** (modified)
+     - Updated import to include all four subtype constants
+     - Added public constants: `AUCTION_DUTCH`, `AUCTION_ENGLISH`, `AUCTION_REVERSE_DUTCH`, `AUCTION_REVERSE_ENGLISH`
+     - Added `bytes4 auctionSubtype` to Task struct (appended after contentURI)
+     - Added subtype validation in createTask when mode == AUCTION
+     - Stores `mode == AUCTION ? auctionSubtype : bytes4(0)` in task
+
+   - **`packages/contracts/test/TaskMarket.t.sol`** (modified)
+     - Added overloaded `_createTask` helper (7-arg with auctionSubtype)
+     - Updated all AUCTION test calls to pass `market.AUCTION_DUTCH()` subtype
+     - Added three new tests: `test_RevertWhen_CreateTask_Auction_InvalidSubtype`, `test_CreateTask_Auction_StoresSubtype`, `test_CreateTask_NonAuction_SubtypeZero`
+     - Added `test_RevertWhen_SubmitWork_Pitch_WrongWorker`:
+     ```solidity
+     function test_RevertWhen_SubmitWork_Pitch_WrongWorker() public {
+         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+         _selectWorker(taskId, requester, worker1);
+         vm.expectRevert("Worker mismatch");
+         forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+         TaskMarket.Task memory task = market.getTask(taskId);
+         assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.WorkerSelected));
+         assertEq(task.deliverable, bytes32(0));
+     }
+     ```
+
+   - **`apps/backend/src/services/contract.ts`** (modified)
+     - Updated `MARKET_ABI` createTask signature to include `bytes4` as 8th param
+     - Added `auctionSubtype` parameter to `contractCreateTask`
+     - Added `AUCTION_SUBTYPE_MAP`:
+     ```typescript
+     export const AUCTION_SUBTYPE_MAP: Record<string, `0x${string}`> = {
+       dutch: tmpModeBytes4('TMP.auction.dutch'),
+       english: tmpModeBytes4('TMP.auction.english'),
+       reverse_dutch: tmpModeBytes4('TMP.auction.reverse_dutch'),
+       reverse_english: tmpModeBytes4('TMP.auction.reverse_english'),
+     };
+     ```
+
+   - **`apps/backend/src/routers/tasks.router.ts`** (modified)
+     - Imported `AUCTION_SUBTYPE_MAP`
+     - Computes `auctionSubtype` from `input.auctionType` before calling `contractCreateTask`
+
+   - **`apps/backend/test/unit/routers/tasks.test.ts`** (modified)
+     - Added `AUCTION_SUBTYPE_MAP` to the contract service mock
+
+   - **`apps/frontend/src/lib/contracts.ts`** (modified)
+     - Fixed: was exporting the full Foundry artifact; now exports just `.abi` array:
+     ```typescript
+     import { TaskMarketABI as TaskMarketArtifact } from '@taskmarket/contracts/abi';
+     export const TaskMarketABI = TaskMarketArtifact.abi;
+     ```
+
+   - **`apps/cli/src/commands/task/cancel.ts`** (modified)
+     - Added try/catch with `printError` for error handling:
+     ```typescript
+     .action(async (taskId: string) => {
+       try {
+         const result = await x402Post(`/api/tasks/${taskId}/cancel`, { taskId });
+         printResult(result as Record<string, unknown>);
+       } catch (err) {
+         printError(err instanceof Error ? err.message : String(err));
+       }
+     });
+     ```
+
+   - **`apps/cli/src/commands/task/update.ts`** (modified)
+     - Replaced float-based `toBaseUnits` with string-based BigInt version:
+     ```typescript
+     function toBaseUnits(humanUsdc: string): string {
+       const [intPart = '0', fracPart = ''] = humanUsdc.trim().split('.');
+       const padded = fracPart.slice(0, 6).padEnd(6, '0');
+       return (BigInt(intPart) * 1_000_000n + BigInt(padded)).toString();
+     }
+     ```
+     - Removed pre-existing unreachable `return` statements after `printError` calls (since `printError` returns `never`)
+
+   - **`packages/contracts/erc-8195.md`** (modified)
+     - Added auction subtype constants block
+     - Updated TaskInfo struct with `bytes4 auctionSubtype` field
+     - Updated createTask signature with `bytes4 auctionSubtype` param
+     - Updated prose: subtype is now stored on-chain
+
+4. Errors and Fixes:
+   - **Pre-commit hook lint failures (Prettier)**: After first commit attempt, Prettier errors in `env.ts`, `bids.router.ts`, `claims.router.ts`, `contract.ts`. User said "use make fix all" — ran `make fix all` which fixed all formatting.
+   - **Forge fuzz test failure** (`testFuzz_CreateTask_AllModes`): The fuzz test passed AUCTION mode without a subtype, triggering "Invalid auction subtype" revert. Fixed by passing `market.AUCTION_DUTCH()` when mode is AUCTION in the fuzz test.
+   - **Backend test failure** (tasks.test.ts): `AUCTION_SUBTYPE_MAP` not exported from contract mock. Fixed by adding it to the `vi.mock` factory.
+   - **Frontend type error**: `contracts.ts` was exporting the full Foundry artifact object; wagmi expects just the ABI array. Fixed by exporting `TaskMarketArtifact.abi`.
+   - **`process.exit(1)` after `printError`**: `printError` returns `never` and already calls `process.exit(1)`, making an additional `process.exit(1)` unreachable. Removed the redundant call.
+   - **Unreachable `return` after `printError` in update.ts**: Pre-existing issue — three `return` statements after `printError(...)` calls were unreachable since `printError` is `never`. Removed all three.
+   - **Changeset bump level**: User corrected "minor not patch" for the v2-protocol changeset.
+   - **Changeset scope**: User said "we don't issue releases for anything but CLI" — removed `@taskmarket/contracts` and `@taskmarket/backend` from the changeset, keeping only `@lucid-agents/taskmarket`.
+
+5. Problem Solving:
+   - Auction subtype was previously only tracked in the backend DB. Added on-chain tracking via `bytes4 auctionSubtype` in Task struct validated at creation.
+   - PR description reframed from "alignment" language to "what does this PR add to main" — important because the code was never in production, so nothing was being "aligned."
+   - `printError` returning `never` pattern discovered — allows removing all defensive `return` statements after error calls.
+
+6. All User Messages:
+   - "use make fix all" (interrupted previous make fix command)
+   - "Like I can help you with stuff that you've done. So we have this whole plan..." (acknowledging the plan and all the work done)
+   - "So this PR originally was for enhanced option modes with four subtypes. It's actually expanded quite a lot... I want you to actually take all of these current changes in the summary...and then update the PR summary and PR title to say version two protocol...we've introduced the ERC 8194 and 8195...So I think this is like somewhat correct. It's just not really correct from the perspective of me looking at it as a maintainer from main and saying, what is this PR introducing that's new?"
+   - "So just one more thing. We've actually also added in syncing contracts. Right? And the cancellation. So task market, task cancel, task market, task update. So you can also cancel and update tasks as well."
+   - "Now the other thing is we currently have two change sets, one for cancelling and updating tasks, one for adding option subtypes, but we'll also need a change set for the fixes to harden the CLI, the CLI fixes, and the other things we've done for the CLI..."
+   - "no we dont issue releases fo anything but cli" (interrupted tool use)
+   - "its also a minor, not patch" (interrupted tool use)
+   - Three CodeRabbit findings verification requests:
+     1. TaskMarket.t.sol: add negative PITCH wrong-worker submitWork test
+     2. cancel.ts: add error handling around x402Post
+     3. update.ts: fix toBaseUnits float precision
+
+7. Pending Tasks:
+   - The `update.ts` line 66 still has a stale TS diagnostic (unreachable code): `body.pitchDeadline = ts` after `printError('--pitch-deadline must be in the future')` is unreachable since printError is `never`. The last edit removed the `return` but left `body.pitchDeadline = ts` without an `else` guard. This needs to be fixed by wrapping `body.pitchDeadline = ts` in an `else` block.
+   - The changes from the three CodeRabbit findings (cancel.ts, update.ts, TaskMarket.t.sol) have not yet been committed.
+   - No other explicit pending tasks from the user.
+
+8. Current Work:
+   Immediately before the summary request, we were addressing three CodeRabbit findings:
+
+   1. Added `test_RevertWhen_SubmitWork_Pitch_WrongWorker` to `TaskMarket.t.sol` after `test_RevertWhen_SubmitWork_Claim_WrongWorker`.
+
+   2. Added try/catch with printError to `apps/cli/src/commands/task/cancel.ts`.
+
+   3. Fixed `toBaseUnits` in `apps/cli/src/commands/task/update.ts` to use string-based BigInt conversion, and removed pre-existing unreachable `return` statements after `printError` calls. After the final edit removing the `return` after `printError('--pitch-deadline must be in the future')`, a TS diagnostic at line 66 remained showing `body.pitchDeadline = ts` is unreachable — the last tool result before the summary showed:
+   ```
+   update.ts:
+     ★ [Line 66:11] Unreachable code detected. [7027] (typescript)
+   ```
+   The current state of `update.ts` lines 63-68 is:
+   ```typescript
+   const ts = Math.floor(new Date(opts.pitchDeadline).getTime() / 1000);
+   if (ts <= Math.floor(Date.now() / 1000)) {
+     printError('--pitch-deadline must be in the future');
+   }
+   body.pitchDeadline = ts;
+   ```
+   None of these three-finding changes have been committed yet.
+
+9. Optional Next Step:
+   Fix the remaining unreachable code diagnostic in `update.ts` by wrapping `body.pitchDeadline = ts` in an `else` block (and similarly for `body.bidDeadline = ts`), then commit and push all three CodeRabbit finding fixes together. The exact file and location is `apps/cli/src/commands/task/update.ts` around lines 55-68 where both deadline assignments need `else` guards since `printError` is `never`.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/TaskMarketForwarder.sol around lines 43 - 46, Replace the string-based require checks in the relay function with the declared custom errors to save gas and keep error handling consistent: for the timestamp check currently using require(createdAt <= block.timestamp, "receipt expired") throw ReceiptExpired(); for the not-yet-valid check currently using require(createdAt >= block.timestamp, "not yet valid") throw ReceiptNotYetValid(); and for the consumed flag check currently using require(!receipt.consumed, "already consumed") throw ReceiptAlreadyConsumed(); also ensure any places that currently revert with a string on relay failure use the RelayFailed() custom error; update the relay function's control flow to revert with these named errors instead of string messages.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/TaskMarketForwarder.sol around lines 71 - 73, The isTrustedForwarder(address addr) implementation currently returns addr == address(this), which can be confusing because ERC-8194/2771 typically exposes trust on the recipient side; update the contract to add a NatSpec comment above the isTrustedForwarder function clarifying that this forwarder intentionally only trusts itself and that the function exists to allow external contracts to query forwarder trust relationships (or, if the intended behavior differs, change the implementation accordingly); reference the isTrustedForwarder function in your comment so reviewers can see the rationale or the alternative behavior to implement.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/TaskMarketForwarder.sol around lines 114 - 119, Replace the raw ERC-20 transferFrom call with OpenZeppelin's SafeERC20 to handle non-standard tokens: import SafeERC20 (import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";), add "using SafeERC20 for IERC20;" in the contract, ensure the usdc variable is an IERC20, and change the call from usdc.transferFrom(msg.sender, taskMarket, paymentAmount) to usdc.safeTransferFrom(msg.sender, taskMarket, paymentAmount) inside the payment block guarding paymentAmount.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/shared/src/schemas/task.schemas.ts around lines 78 - 92, Replace the hard-coded status z.enum list in the TaskListInputSchema with a union between the existing TaskStatus enum and the 'ALL' literal to prevent drift; specifically, change the status schema to use z.union([z.nativeEnum(TaskStatus), z.literal('ALL')]).optional().default('ALL') so it derives allowed values from TaskStatus (symbol: TaskStatus) and still permits the extra 'ALL' option (symbol: status in TaskListInputSchema).Verify each finding against the current code and only fix it if needed.
+
+In @apps/frontend/src/components/CreateTaskForm.tsx around lines 107 - 115, The auction fields are being added to body unconditionally; change the logic in CreateTaskForm so auctionType, auctionStartPrice and auctionFloorPrice are only set when data.mode === 'auction' (or the local mode variable indicates auction). Move the existing conditions into a single block that checks the mode first, then inside convert values with parseUnits only if auctionStartPrice/auctionFloorPrice are present, and assign auctionType only when provided — referencing data, body, parseUnits, auctionType, auctionStartPrice, auctionFloorPrice and mode to locate the code to update.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/src/interfaces/ITMP.sol around lines 23 - 33, Add a TaskCancelled event declaration to mirror the existing lifecycle events: declare an event named TaskCancelled that includes the task identifier and requester address (e.g., bytes32 indexed taskId, address indexed requester) in the contracts interface (alongside the TaskStatus enum and other lifecycle events) and emit this event from the function(s) that set TaskStatus to Cancelled so callers can observe cancellations (refer to TaskStatus and existing events like TaskAccepted/TaskExpired for naming/placement consistency).Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/test/ITMP.t.sol around lines 372 - 378, The test test_Compliance_RateTask_Range currently only checks that calling market.rateTask(taskId, 0, ...) doesn't revert; update it to assert expected state after rating=0: capture pre-call worker stats (e.g., via market.workerStats(worker1) or market.getWorkerStats(worker1) if available), call _relay(requester, 0, abi.encodeCall(market.rateTask, (taskId, 0, 0, "", bytes32(0)))), then assert post-call stats are unchanged (or explicitly updated to zero values) to reflect the sentinel behavior; reference the test function name test_Compliance_RateTask_Range, the taskId and worker1 variables, and the market.rateTask method when making these assertions.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/test/TaskMarket.t.sol around lines 84 - 89, The test defines a sequence of addresses (owner, feeRecipient, requester, worker1, worker2, alice) but skips address(6); update the declarations so they use sequential addresses (e.g., set alice = address(6)) or add a brief comment next to the existing alice declaration explaining why address(6) was intentionally skipped to make the gap clear for future readers; adjust the variables owner, feeRecipient, requester, worker1, worker2, and alice accordingly.Verify each finding against the current code and only fix it if needed.
+
+In @apps/cli/src/commands/task/update.ts around lines 43 - 51, Validate the parsed extendExpiry before using it: when opts.extendExpiry is set, parse it (e.g., const delta = parseInt(opts.extendExpiry, 10)) and check that delta is a valid finite integer (> = 0) using Number.isFinite or isNaN; if invalid, call printError (include the bad value) and return instead of computing body.expiryTime. Update the block around apiGet(`/api/tasks/${taskId}`), task.expiryTime, and body.expiryTime to use the validated delta so you never assign NaN to body.expiryTime.Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/scripts/smoke-auction-types.ts around lines 52 - 53, Replace the hardcoded sleep(35000) (and the similar sleep at 97-98) with a configurable/wrapped wait so CI slowness won't flake the test: introduce a configurable constant or read a timeout from an env var (e.g., AUCTION_DEADLINE_BUFFER_MS) and use that instead of 35000, or replace the single sleep call with a poll-and-retry loop that queries the auction/deadline endpoint until the deadline is observed passed (with a max timeout and backoff). Update the places that call sleep(...) (the console.log + await sleep(...) around the "Waiting ... for deadline" messages) to use the new configurable value or polling helper (e.g., waitForDeadline or pollUntilDeadline) so the wait is robust and adjustable in CI.Verify each finding against the current code and only fix it if needed.
+
+In @packages/contracts/test/TaskMarketForwarder.t.sol around lines 17 - 29, Duplicate MockUSDC contract definition should be extracted into a shared test helper: create a single MockUSDC contract (matching the current constructor, mint, and decimals behavior) in a shared test utilities file (e.g., a test/mocks or test/utils file) and replace the inline definitions in both TaskMarketForwarder.t.sol and ITMP.t.sol by importing that shared helper; update the test files to import the new MockUSDC symbol and remove the duplicated contract declarations so both tests use the single shared MockUSDC implementation.
+
+---
+
+Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/src/lib/auction.ts around lines 31 - 37, The dutch-auction branch currently converts BigInt range to Number (Number(range)) causing precision loss for very large values; update the calculation in the 'dutch' branch (variables floorPrice, range, drop, price) to use pure BigInt arithmetic by expressing progress as an integer fraction (e.g., scale progress to a numerator/denominator or use a fixed SCALE constant) and compute drop = (range * BigInt(numerator)) / BigInt(denominator) so no BigInt -> Number conversion is required; apply the same BigInt-safe approach to the other similar block referenced (lines 39-45).Verify each finding against the current code and only fix it if needed.
+
+In @apps/cli/src/commands/task/auction-accept.ts around lines 14 - 19, The current conversion using parseFloat and Math.round (around opts.minPrice -> parsed -> body.minPrice) can produce precision errors; replace it with a string-based conversion: validate opts.minPrice is a numeric string, split on the decimal point, pad or truncate the fractional part to exactly 6 digits (reject if more than 6 or decide rounding policy), concatenate integer and fractional parts into an integer string (or use BigInt) and assign that to body.minPrice instead of using parseFloat/Math.round; update the logic in auction-accept.ts where opts.minPrice is parsed to use this precise string-to-microunits conversion.Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/test/unit/routers/bids.test.ts around lines 505 - 527, The test "dutch: at t=100% price equals floorPrice" has a misleading setup: bidDeadline is set to Date.now() + 1000 (future) while the comment says 100% elapsed; update the test so the data clearly reflects 100% elapsed (e.g., set bidDeadline to a past date or adjust createdAt/deadline pair) and/or update the comment to match the actual values; locate the test using the it description and the makeTask call (fields auctionType, createdAt, bidDeadline, auctionFloorPrice) and ensure caller.auctionAccept(ACCEPT_INPUT) still asserts Number(result.acceptedPrice) >= auctionFloorPrice (1000000) after the fix.Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/src/routers/tasks.router.ts around lines 818 - 822, The update response is returning null for computed auction fields (currentAuctionPrice, auctionPriceReachesFloorAt, auctionPriceReachesMaxAt, currentLowestBid) instead of computing them like the GET handler; update the update flow to reuse the same computation used by the GET endpoint (or call the shared helper that computes auction fields) and populate those fields before sending the response, using the existing auctionBidCount variable as needed so the returned object matches the GET response shape.Verify each finding against the current code and only fix it if needed.
+
+In @apps/backend/src/routers/tasks.router.ts around lines 381 - 418, The listing does per-task DB calls causing N+1 queries: inside tasksWithCounts you call separate queries for submissions, proposals, bids and per-task lowest bid and computeClockPrice; to fix, batch these by querying submissions and proposals counts grouped by taskId, and fetch bids aggregated (COUNT and MIN(price)) grouped by taskId in a single DB query (using ctx.db.select(...).from(bids).groupBy(bids.taskId)), then map the results back to tasksList to set auctionBidCount and currentLowestBid; keep computeClockPrice(task, now) for in-memory clock price but only call it for auction tasks after mapping aggregated DB results to avoid per-task DB roundtrips.
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+1. Primary Request and Intent:
+   The conversation continued from a prior context and focused entirely on addressing CodeRabbit findings across multiple PR review batches. The user presented groups of CodeRabbit findings and asked to verify each against the current code and only fix if needed. The final batch (immediately before the summary request) contained two findings for `TaskMarket.sol`:
+   - Finding 1: The `_effectiveSender()` fallback to `msg.sender` is unreachable due to `onlyTrustedForwarder`; either simplify or add a comment explaining why it's retained.
+   - Finding 2: Add `lowestBidPrice`/`lowestBidder` fields to the `Task` struct and update `submitBid()` to maintain a running minimum, then simplify `selectLowestBidder()` to remove the O(n) loop.
+
+2. Key Technical Concepts:
+   - ERC-8194 (PGTR): Payment-Gated Transaction Relay — forwarder pattern, `pgtrSender()`, `_effectiveSender()`
+   - ERC-8195 (TMP): Task Market Protocol — five modes (bounty/claim/pitch/benchmark/auction) with four auction subtypes
+   - UUPS upgradeable contracts (OZ v5.6.1): storage layout constraints, `__gap` consumption
+   - `onlyTrustedForwarder` modifier makes `_effectiveSender()`'s `msg.sender` branch unreachable in practice
+   - O(n) bid scan in `selectLowestBidder()` — running minimum optimization
+   - BigInt precision: pure BigInt arithmetic `(range * elapsedMs) / totalMs` replaces `Number(range) * progress`
+   - N+1 query elimination: batched GROUP BY queries with `inArray` instead of per-task DB calls
+   - `printError` returns `never` — code after it is unreachable
+   - String-based USDC base unit conversion avoids float precision loss
+   - MockUSDC deduplication: shared `test/mocks/MockUSDC.sol`
+   - `AUCTION_DEADLINE_BUFFER_MS` env var for configurable smoke test sleep
+   - `TaskCancelled` event added to ITMP interface
+   - `TaskListInputSchema` status derived from `TaskStatus` enum + `z.literal('ALL')`
+
+3. Files and Code Sections:
+   - **`packages/contracts/src/TaskMarket.sol`** (most recent — partially worked on)
+     - The `_effectiveSender()` function at line 293-298 has a defensive `msg.sender` fallback:
+     ```solidity
+     function _effectiveSender() internal view returns (address) {
+         if (trustedForwarders[msg.sender]) {
+             return IPGTRForwarder(msg.sender).pgtrSender();
+         }
+         return msg.sender;
+     }
+     ```
+     - Finding 1: Add a comment explaining the fallback is kept for defensive correctness even though `onlyTrustedForwarder` makes the `msg.sender` branch unreachable in practice.
+     - Finding 2: Add `lowestBidPrice` and `lowestBidder` to Task struct; update `submitBid()` to maintain running minimum; simplify `selectLowestBidder()` to O(1). **NOTE: storage layout constraint** — new fields must be appended after all existing state variables and consume from `__gap`. They are struct fields (not state variables) so they don't affect `__gap`.
+
+   - **`packages/contracts/src/TaskMarketForwarder.sol`** (fixed in prior batch)
+     - Added SafeERC20 import and `using SafeERC20 for IERC20`
+     - Replaced string `require` with custom errors `ReceiptExpired`, `ReceiptAlreadyConsumed`
+     - Added NatSpec on `isTrustedForwarder`
+
+   - **`apps/backend/src/lib/auction.ts`** (fixed in prior batch)
+     - Replaced `Number(range) * progress` with `(range * elapsedMs) / totalMs` using pure BigInt
+
+   - **`apps/cli/src/commands/task/auction-accept.ts`** (fixed in prior batch)
+     - Replaced `parseFloat/Math.round` with string-based BigInt split conversion for `--min-price`
+
+   - **`apps/backend/src/routers/tasks.router.ts`** (fixed in prior batch)
+     - Added `inArray` import; replaced N+1 queries with 3 batched GROUP BY queries in list handler
+     - Update mutation now computes auction fields instead of returning null
+
+   - **`apps/backend/test/unit/helpers.ts`** (fixed in prior batch)
+     - Added `groupBy: vi.fn().mockReturnThis()` to `makeChain`
+
+   - **`packages/contracts/test/mocks/MockUSDC.sol`** (created in prior batch)
+     - Shared MockUSDC used by `TaskMarketForwarder.t.sol` and `ITMP.t.sol`
+
+   - **`packages/shared/src/schemas/task.schemas.ts`** (fixed in prior batch)
+     - `status` in `TaskListInputSchema` now uses `z.union([TaskStatus, z.literal('ALL')])`
+
+   - **`apps/frontend/src/components/CreateTaskForm.tsx`** (fixed in prior batch)
+     - Auction fields only assigned to body inside `mode === 'auction'` block
+
+   - **`packages/contracts/src/interfaces/ITMP.sol`** (fixed in prior batch)
+     - Added `TaskCancelled` event declaration
+
+   - **`packages/contracts/test/ITMP.t.sol`** (fixed in prior batch)
+     - `test_Compliance_RateTask_Range` now asserts `ratedTasks` increments and `totalStars` unchanged for rating=0
+     - Replaced inline `MockUSDC` with import from `./mocks/MockUSDC.sol`
+
+   - **`packages/contracts/test/TaskMarket.t.sol`** (fixed in prior batch)
+     - Comment added explaining `address(6)` gap between `worker2` and `alice`
+     - `test_RevertWhen_SubmitWork_Pitch_WrongWorker` added
+
+   - **`apps/cli/src/commands/task/update.ts`** (fixed in prior batch)
+     - `--extend-expiry` validated with `Number.isFinite(delta) && delta >= 0` before use
+     - Deadline assignments wrapped in `else` blocks (printError returns never)
+     - `toBaseUnits` uses string-based BigInt
+
+   - **`apps/cli/src/commands/task/cancel.ts`** (fixed in prior batch)
+     - `x402Post` wrapped in try/catch with `printError`
+
+   - **`.changeset/v2-protocol.md`** (created earlier)
+     - `minor` bump for `@lucid-agents/taskmarket` CLI only
+
+4. Errors and fixes:
+   - **Forge tests fail after custom errors added to forwarder**: `test_Relay_Expired_Reverts` and `test_Relay_Replay_Reverts` used string expects; updated to `TaskMarketForwarder.ReceiptExpired.selector` and `TaskMarketForwarder.ReceiptAlreadyConsumed.selector`.
+   - **N+1 fix broke tasks.test.ts**: `groupBy` not in `makeChain`. Fixed by adding `groupBy: vi.fn().mockReturnThis()` to `helpers.ts`.
+   - **Structural edit error in tasks.router.ts**: Intro of batched queries left extra `{` block and stale `submissionCount`/`pitchCount` variable references. Fixed with targeted edit replacing the entire `tasksWithCounts` map block.
+   - **TaskMarketForwarder.t.sol MockUSDC removal**: First edit removed the import line correctly but left the old contract body remnant; fixed with second targeted edit removing the leftover lines.
+
+5. Problem Solving:
+   - All prior CodeRabbit finding batches were fully addressed and committed. The final batch was presented but only partially started (the summary was requested mid-work).
+   - Two findings for `TaskMarket.sol` remain to be implemented.
+
+6. All user messages:
+   - "Verify each finding against the current code and only fix it if needed. [forwarder custom errors finding] [isTrustedForwarder NatSpec finding] [SafeERC20 finding]"
+   - "Verify each finding against the current code and only fix it if needed. [TaskListInputSchema finding] [CreateTaskForm auction fields finding] [ITMP TaskCancelled event finding] [ITMP.t.sol RateTask_Range finding]"
+   - "Verify each finding against the current code and only fix it if needed. [TaskMarket.t.sol address gap finding] [update.ts extendExpiry validation finding] [smoke-auction-types sleep finding] [MockUSDC duplication finding]"
+   - "Verify each finding against the current code and only fix it if needed. [auction.ts BigInt precision finding] [auction-accept.ts minPrice precision finding] [bids.test.ts misleading test finding] [tasks.router.ts update null auction fields finding] [tasks.router.ts N+1 queries finding]"
+   - "Verify each finding against the current code and only fix it if needed. [_effectiveSender fallback comment finding] [selectLowestBidder O(n) loop finding] [SUMMARY REQUEST]"
+
+7. Pending Tasks:
+   - **Finding 1 for TaskMarket.sol**: `_effectiveSender()` fallback — add comment explaining the defensive `msg.sender` branch is retained even though `onlyTrustedForwarder` makes it unreachable in practice (option B from the finding).
+   - **Finding 2 for TaskMarket.sol**: Add `lowestBidPrice`/`lowestBidder` to `Task` struct; update `submitBid()` to maintain running minimum; simplify `selectLowestBidder()` to O(1) lookup. Then update forge tests and run the full test suite.
+
+8. Current Work:
+   The last user message presented two `TaskMarket.sol` CodeRabbit findings and then triggered a summary request. No edits had been made yet for these two findings. The findings are:
+
+   **Finding 1** (`_effectiveSender` lines 287-298): The defensive `msg.sender` fallback in `_effectiveSender()` is unreachable because `onlyTrustedForwarder` guards all callers. Fix by adding a clear comment above explaining why the fallback is retained.
+
+   **Finding 2** (`submitBid`/`selectLowestBidder` lines 406-474): Replace the O(n) loop in `selectLowestBidder()` with a running minimum tracked in `submitBid()`. This requires adding `lowestBidPrice` (uint256) and `lowestBidder` (address) to the `Task` struct, updating `submitBid()` to compare and update them, and simplifying `selectLowestBidder()` to use them directly.
+
+   Key constraint: `Task` is a struct (not a state variable), so adding fields does not affect the `__gap` storage layout. However, it changes the struct's ABI and the `getTask()` return type.
+
+9. Optional Next Step:
+   Implement the two pending `TaskMarket.sol` findings:
+
+   **Finding 1**: Add a NatSpec comment to `_effectiveSender()` explaining the defensive fallback:
+   ```solidity
+   /// @dev Returns the authenticated actor for this call.
+   ///      If called by a trusted PGTR forwarder, returns forwarder.pgtrSender().
+   ///      Otherwise returns msg.sender.
+   ///      NOTE: In practice, onlyTrustedForwarder ensures this always queries pgtrSender().
+   ///      The msg.sender branch is retained as a defensive fallback for view-context callers
+   ///      and any future non-forwarded extensions that may not carry onlyTrustedForwarder.
+   ```
+
+   **Finding 2**: Add to `Task` struct:
+   ```solidity
+   address lowestBidder;
+   uint256 lowestBidPrice;
+   ```
+   Update `submitBid()` to maintain running minimum:
+   ```solidity
+   if (taskBids[taskId].length == 0 || price < task.lowestBidPrice) {
+       task.lowestBidPrice = price;
+       task.lowestBidder = worker;
+   }
+   ```
+   Simplify `selectLowestBidder()` to use `task.lowestBidder`/`task.lowestBidPrice` instead of the O(n) loop. Then run `make test` and commit.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /Users/admin/.REDACTED.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+---
+
+hmm does our erc specs need updates?
+
+---
+
+commit and push
+
+---
+
+now we will need to do a manual sync of to taskmarket-contracts
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+hmm we shouldnt delete yhose files
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+hmm but dont we commit the submodules?
+
+---
+
+hmm we havent updated reademe with erc nums, links to erc prs and eth agicians post?
+
+---
+
+Run forge build
+Compiling 63 files with Solc 0.8.24
+Solc 0.8.24 finished in 167.40ms
+Error: Compiler run failed:
+Error (2904): Declaration "TMP_AUCTION_DUTCH" not found in "src/interfaces/ITMPMode.sol" (referenced as "./interfaces/ITMPMode.sol").
+  --> src/TaskMarket.sol:14:1:
+   |
+14 | import {
+   | ^ (Relevant source part starts here and spans across multiple lines).
+
+Error (2904): Declaration "TMP_AUCTION_ENGLISH" not found in "src/interfaces/ITMPMode.sol" (referenced as "./interfaces/ITMPMode.sol").
+  --> src/TaskMarket.sol:14:1:
+   |
+14 | import {
+   | ^ (Relevant source part starts here and spans across multiple lines).
+
+Error (2904): Declaration "TMP_AUCTION_REVERSE_DUTCH" not found in "src/interfaces/ITMPMode.sol" (referenced as "./interfaces/ITMPMode.sol").
+  --> src/TaskMarket.sol:14:1:
+   |
+14 | import {
+   | ^ (Relevant source part starts here and spans across multiple lines).
+
+Error (2904): Declaration "TMP_AUCTION_REVERSE_ENGLISH" not found in "src/interfaces/ITMPMode.sol" (referenced as "./interfaces/ITMPMode.sol").
+  --> src/TaskMarket.sol:14:1:
+   |
+14 | import {
+   | ^ (Relevant source part starts here and spans across multiple lines).
+
+also the taskmarket-contracts build is failing, but main repo isnt
