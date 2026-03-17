@@ -38,6 +38,7 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
 
     IERC20 public immutable usdc;
     address public immutable taskMarket;
+    address public immutable authorizedRelayer;
 
     address private _pgtrSenderStorage;
 
@@ -47,12 +48,15 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
     error ReceiptExpired();
     error ReceiptNotYetValid();
     error RelayFailed();
+    error UnauthorizedRelayer();
 
-    constructor(address _usdc, address _taskMarket) {
+    constructor(address _usdc, address _taskMarket, address _authorizedRelayer) {
         require(_usdc != address(0), "Invalid USDC address");
         require(_taskMarket != address(0), "Invalid TaskMarket address");
+        require(_authorizedRelayer != address(0), "Invalid relayer address");
         usdc = IERC20(_usdc);
         taskMarket = _taskMarket;
+        authorizedRelayer = _authorizedRelayer;
     }
 
     // -------------------------------------------------------------------------
@@ -110,6 +114,7 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
         bytes32 receiptNonce,
         bytes calldata data
     ) external nonReentrant {
+        if (msg.sender != authorizedRelayer) revert UnauthorizedRelayer();
         if (block.timestamp > validBefore) revert ReceiptExpired();
 
         bytes4 selector = bytes4(data[:4]);

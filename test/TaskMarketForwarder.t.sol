@@ -43,7 +43,7 @@ contract TaskMarketForwarderTest is Test {
         market = TaskMarket(address(new ERC1967Proxy(impl, init)));
 
         // Deploy TaskMarketForwarder and register it
-        forwarder = new TaskMarketForwarder(address(usdc), address(market));
+        forwarder = new TaskMarketForwarder(address(usdc), address(market), server);
         market.addForwarder(address(forwarder));
 
         vm.stopPrank();
@@ -290,11 +290,26 @@ contract TaskMarketForwarderTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // Authorized relayer restriction
+    // -----------------------------------------------------------------------
+
+    function test_Relay_UnauthorizedCaller_Reverts() public {
+        bytes memory data = abi.encodeCall(
+            market.createTask,
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+        );
+        vm.prank(attacker);
+        vm.expectRevert(TaskMarketForwarder.UnauthorizedRelayer.selector);
+        forwarder.relay(requester, REWARD, _validBefore, _nonce(400), data);
+    }
+
+    // -----------------------------------------------------------------------
     // Immutable addresses
     // -----------------------------------------------------------------------
 
     function test_ImmutableAddresses() public view {
         assertEq(address(forwarder.usdc()), address(usdc));
         assertEq(forwarder.taskMarket(), address(market));
+        assertEq(forwarder.authorizedRelayer(), server);
     }
 }
