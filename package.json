@@ -1,13 +1,7 @@
 {
-  "name": "taskmarket-contracts",
-  "version": "1.0.0",
-  "description": "Task Market Protocol — Solidity interfaces, reference implementation, and EIP drafts (TMP/PGTR)",
-  "license": "MIT",
-  "homepage": "https://github.com/daydreamsai/taskmarket-contracts",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/daydreamsai/taskmarket-contracts.git"
-  },
+  "name": "@taskmarket/contracts",
+  "version": "0.0.0",
+  "private": true,
   "exports": {
     "./abi": "./abi/index.ts"
   },
@@ -18,8 +12,7 @@
     "fmt": "forge fmt",
     "fmt:check": "forge fmt --check",
     "deploy:local": "forge script script/Deploy.s.sol --rpc-url localhost --broadcast",
-    "deploy:testnet": "forge script script/DeployTestnet.s.sol --rpc-url base_sepolia --broadcast --verify",
-    "deploy:mainnet": "forge script script/Deploy.s.sol --rpc-url base --broadcast --verify",
+    "deploy:base-sepolia": "forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast --verify",
     "clean": "forge clean"
   }
 }

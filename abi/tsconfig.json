@@ -1,13 +1,8 @@
 {
+  "extends": "../../typescript-config/base.json",
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "strict": true,
-    "declaration": true,
-    "outDir": "./dist"
+    "esModuleInterop": true
   },
   "include": ["./**/*.ts", "./**/*.json"]
 }

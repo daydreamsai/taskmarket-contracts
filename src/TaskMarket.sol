@@ -8,8 +8,20 @@ import {Initializable} from "openzeppelin-contracts-upgradeable/contracts/proxy/
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {ITMP} from "./interfaces/ITMP.sol";
+import {IPGTRForwarder} from "./interfaces/IPGTRForwarder.sol";
 import {IReputationRegistry} from "./interfaces/IReputationRegistry.sol";
-import {TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION} from "./interfaces/ITMPMode.sol";
+import {ITMPReputation} from "./interfaces/ITMPReputation.sol";
+import {
+    TMP_BOUNTY,
+    TMP_CLAIM,
+    TMP_PITCH,
+    TMP_BENCHMARK,
+    TMP_AUCTION,
+    TMP_AUCTION_DUTCH,
+    TMP_AUCTION_ENGLISH,
+    TMP_AUCTION_REVERSE_DUTCH,
+    TMP_AUCTION_REVERSE_ENGLISH
+} from "./interfaces/ITMPMode.sol";
 
 /**
  * @title TaskMarket
@@ -17,9 +29,9 @@ import {TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION} from "./in
  *         Reference implementation of the Task Market Protocol (TMP) EIP.
  *
  * @dev Supports Bounty, Claim, Pitch, Benchmark, and Auction modes with platform
- *      fees and staking. All mutating functions are called by a trusted forwarder
- *      (PGTR pattern), which passes the real requester/worker addresses explicitly.
- *      This ensures on-chain records attribute activity to actual participants.
+ *      fees and staking. All mutating functions are called by a trusted PGTR forwarder
+ *      (ERC-8194). The authenticated actor (requester/worker) is read from the forwarder
+ *      via _effectiveSender(), which calls IPGTRForwarder(msg.sender).pgtrSender().
  *
  *      Task IDs are contract-generated:
  *        keccak256(abi.encode(block.chainid, address(this), requester, requesterNonce[requester]++))
@@ -44,7 +56,11 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     bytes4 public constant CLAIM     = TMP_CLAIM;
     bytes4 public constant PITCH     = TMP_PITCH;
     bytes4 public constant BENCHMARK = TMP_BENCHMARK;
-    bytes4 public constant AUCTION   = TMP_AUCTION;
+    bytes4 public constant AUCTION          = TMP_AUCTION;
+    bytes4 public constant AUCTION_DUTCH           = TMP_AUCTION_DUTCH;
+    bytes4 public constant AUCTION_ENGLISH         = TMP_AUCTION_ENGLISH;
+    bytes4 public constant AUCTION_REVERSE_DUTCH   = TMP_AUCTION_REVERSE_DUTCH;
+    bytes4 public constant AUCTION_REVERSE_ENGLISH = TMP_AUCTION_REVERSE_ENGLISH;
 
     // -------------------------------------------------------------------------
     // Types
@@ -78,12 +94,11 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
         uint256 bidDeadline;
         uint256 maxPrice;
         bytes32 deliverable;
-    }
-
-    struct WorkerStats {
-        uint256 completedTasks;
-        uint256 ratedTasks;
-        uint256 totalStars;
+        bytes32 contentHash;
+        string  contentURI;
+        bytes4  auctionSubtype; // Auction subtype selector (zero for non-auction tasks)
+        address lowestBidder;   // Running lowest bidder (english/reverse_english subtypes)
+        uint256 lowestBidPrice; // Running lowest bid price
     }
 
     struct Bid {
@@ -102,7 +117,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     mapping(address => bool) public trustedForwarders;
 
     mapping(bytes32 => Task) public tasks;
-    mapping(address => WorkerStats) public workerStats;
+    mapping(address => ITMP.WorkerStats) public workerStats;
     mapping(bytes32 => uint256) public stakeForfeit;
     mapping(bytes32 => Bid[]) public taskBids;
 
@@ -157,9 +172,18 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     // Modifiers
     // -------------------------------------------------------------------------
 
-    modifier onlyServer() {
+    modifier onlyTrustedForwarder() {
         require(trustedForwarders[msg.sender], "Not trusted forwarder");
         _;
+    }
+
+    // -------------------------------------------------------------------------
+    // ERC-8194: PGTR destination requirement
+    // -------------------------------------------------------------------------
+
+    /// @notice Returns true if addr is a trusted PGTR forwarder (ERC-8194 requirement).
+    function isTrustedForwarder(address addr) external view returns (bool) {
+        return trustedForwarders[addr];
     }
 
     // -------------------------------------------------------------------------
@@ -202,6 +226,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
      */
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == type(ITMP).interfaceId
+            || interfaceId == type(ITMPReputation).interfaceId
             || interfaceId == type(IERC165).interfaceId;
     }
 
@@ -258,6 +283,28 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     }
 
     // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * @dev Returns the authenticated actor for this call.
+     *      If called by a trusted PGTR forwarder, returns forwarder.pgtrSender().
+     *      Otherwise returns msg.sender.
+     *
+     *      NOTE: All mutating functions carry onlyTrustedForwarder, so the msg.sender
+     *      branch is unreachable in the current implementation. It is retained as a
+     *      defensive fallback for: (a) view-context callers that do not carry the
+     *      modifier, and (b) any future non-forwarded extensions that may be added
+     *      without onlyTrustedForwarder.
+     */
+    function _effectiveSender() internal view returns (address) {
+        if (trustedForwarders[msg.sender]) {
+            return IPGTRForwarder(msg.sender).pgtrSender();
+        }
+        return msg.sender;
+    }
+
+    // -------------------------------------------------------------------------
     // Core task functions
     // -------------------------------------------------------------------------
 
@@ -267,23 +314,29 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
      *           keccak256(abi.encode(block.chainid, address(this), requester, nonce))
      *         Callers SHOULD pre-compute the ID by reading requesterNonce[requester]
      *         before submitting this transaction.
-     * @param requester     Real requester wallet (task attributed on-chain to this address)
+     *         The requester is the authenticated actor from the PGTR forwarder (pgtrSender).
+     *         The USDC reward MUST be transferred to this contract by the forwarder before calling.
      * @param reward        USDC reward (6 decimals); for Auction = max price
      * @param duration      Task lifetime in seconds
-     * @param mode          4-byte mode selector (use BOUNTY/CLAIM/PITCH/BENCHMARK/AUCTION)
-     * @param pitchDeadline Seconds from now for pitch window (Pitch mode only, 0 otherwise)
-     * @param bidDeadline   Seconds from now for bid window (Auction mode only, 0 otherwise)
-     * @return taskId       Contract-generated canonical task identifier
-     * @dev Forwarder must have USDC approval for reward amount before calling.
+     * @param mode            4-byte mode selector (use BOUNTY/CLAIM/PITCH/BENCHMARK/AUCTION)
+     * @param pitchDeadline   Seconds from now for pitch window (Pitch mode only, 0 otherwise)
+     * @param bidDeadline     Seconds from now for bid window (Auction mode only, 0 otherwise)
+     * @param contentHash     Optional keccak256 of off-chain task description (bytes32(0) if unused)
+     * @param contentURI      Optional URI pointing to extended task metadata (empty string if unused)
+     * @param auctionSubtype  Auction subtype selector (bytes4(0) for non-auction tasks)
+     * @return taskId         Contract-generated canonical task identifier
      */
     function createTask(
-        address requester,
         uint256 reward,
         uint256 duration,
         bytes4  mode,
         uint256 pitchDeadline,
-        uint256 bidDeadline
-    ) external onlyServer returns (bytes32 taskId) {
+        uint256 bidDeadline,
+        bytes32 contentHash,
+        string  calldata contentURI,
+        bytes4  auctionSubtype
+    ) external onlyTrustedForwarder returns (bytes32 taskId) {
+        address requester = _effectiveSender();
         require(requester != address(0), "Invalid requester");
         require(reward > 0, "Reward must be greater than 0");
         require(duration > 0, "Duration must be greater than 0");
@@ -291,10 +344,19 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
             mode == BOUNTY || mode == CLAIM || mode == PITCH || mode == BENCHMARK || mode == AUCTION,
             "Invalid mode"
         );
+        if (mode == AUCTION) {
+            require(
+                auctionSubtype == AUCTION_DUTCH
+                    || auctionSubtype == AUCTION_ENGLISH
+                    || auctionSubtype == AUCTION_REVERSE_DUTCH
+                    || auctionSubtype == AUCTION_REVERSE_ENGLISH,
+                "Invalid auction subtype"
+            );
+        }
 
         taskId = keccak256(abi.encode(block.chainid, address(this), requester, requesterNonce[requester]++));
 
-        require(usdcToken.transferFrom(msg.sender, address(this), reward), "USDC transfer failed");
+        // USDC was transferred to this contract by the forwarder before this call.
 
         tasks[taskId] = Task({
             id: taskId,
@@ -313,20 +375,25 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
             feeBps: defaultFeeBps,
             bidDeadline: mode == AUCTION ? block.timestamp + bidDeadline : 0,
             maxPrice: mode == AUCTION ? reward : 0,
-            deliverable: bytes32(0)
+            deliverable: bytes32(0),
+            contentHash: contentHash,
+            contentURI: contentURI,
+            auctionSubtype: mode == AUCTION ? auctionSubtype : bytes4(0),
+            lowestBidder: address(0),
+            lowestBidPrice: 0
         });
 
         emit TaskCreated(taskId, requester, reward, block.timestamp + duration, mode);
     }
 
     /**
-     * @notice Claim a Claim-mode task on behalf of a worker
+     * @notice Claim a Claim-mode task. The worker is the authenticated actor (pgtrSender).
      * @param taskId      Task identifier
-     * @param worker      Real worker wallet address
-     * @param stakeAmount USDC stake amount (0 = no stake required)
-     * @dev If stakeAmount > 0, forwarder must have USDC approval for stake amount.
+     * @param stakeAmount USDC stake amount (0 = no stake required).
+     *                    If > 0, the forwarder must transfer the stake to this contract before calling.
      */
-    function claimTask(bytes32 taskId, address worker, uint256 stakeAmount) external onlyServer {
+    function claimTask(bytes32 taskId, uint256 stakeAmount) external onlyTrustedForwarder nonReentrant {
+        address worker = _effectiveSender();
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(worker != address(0), "Invalid worker");
@@ -334,9 +401,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
         require(task.status == TaskStatus.Open, "Task not available");
         require(block.timestamp <= task.expiryTime, "Task expired");
 
-        if (stakeAmount > 0) {
-            require(usdcToken.transferFrom(msg.sender, address(this), stakeAmount), "Stake transfer failed");
-        }
+        // If stakeAmount > 0, the stake was transferred to this contract by the forwarder.
 
         task.claimer = worker;
         task.claimedAt = block.timestamp;
@@ -347,12 +412,12 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     }
 
     /**
-     * @notice Select a worker for Pitch mode
-     * @param taskId    Task identifier
-     * @param requester Real requester wallet (must match task.requester)
-     * @param worker    Selected worker address
+     * @notice Select a worker for Pitch mode. The requester is the authenticated actor (pgtrSender).
+     * @param taskId Task identifier
+     * @param worker Selected worker address
      */
-    function selectWorker(bytes32 taskId, address requester, address worker) external onlyServer {
+    function selectWorker(bytes32 taskId, address worker) external onlyTrustedForwarder {
+        address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(requester == task.requester, "Not requester");
         require(task.mode == PITCH, "Not a Pitch task");
@@ -366,18 +431,24 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     }
 
     /**
-     * @notice Submit a bid on an Auction mode task
+     * @notice Submit a bid on an Auction mode task. The worker is the authenticated actor (pgtrSender).
      * @param taskId Task identifier
-     * @param worker Real worker wallet address
      * @param price  Bid price in USDC base units (must be <= maxPrice)
      */
-    function submitBid(bytes32 taskId, address worker, uint256 price) external onlyServer {
+    function submitBid(bytes32 taskId, uint256 price) external onlyTrustedForwarder {
+        address worker = _effectiveSender();
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(task.mode == AUCTION, "Not an Auction task");
         require(task.status == TaskStatus.Open, "Task not open");
         require(block.timestamp < task.bidDeadline, "Bid deadline passed");
         require(price <= task.maxPrice, "Bid exceeds max price");
+
+        // Maintain running minimum for O(1) winner selection in selectLowestBidder
+        if (taskBids[taskId].length == 0 || price < task.lowestBidPrice) {
+            task.lowestBidPrice = price;
+            task.lowestBidder = worker;
+        }
 
         taskBids[taskId].push(Bid({ worker: worker, price: price }));
 
@@ -387,44 +458,32 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     /**
      * @notice Select the lowest bidder after bid deadline.
      * @param taskId Task identifier
-     * @dev O(n) scan over bids. Implementations SHOULD maintain a running minimum
-     *      in submitBid() for O(1) selection in high-bid-count scenarios.
+     * @dev O(1): submitBid() maintains a running minimum in task.lowestBidder/lowestBidPrice.
      */
-    function selectLowestBidder(bytes32 taskId) external onlyServer {
+    function selectLowestBidder(bytes32 taskId) external onlyTrustedForwarder {
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(task.mode == AUCTION, "Not an Auction task");
         require(task.status == TaskStatus.Open, "Task not open");
         require(block.timestamp >= task.bidDeadline, "Bid deadline not passed");
+        require(task.lowestBidder != address(0), "No bids submitted");
 
-        Bid[] storage bids = taskBids[taskId];
-        require(bids.length > 0, "No bids submitted");
-
-        uint256 lowestPrice = bids[0].price;
-        address lowestBidder = bids[0].worker;
-
-        for (uint256 i = 1; i < bids.length; i++) {
-            if (bids[i].price < lowestPrice) {
-                lowestPrice = bids[i].price;
-                lowestBidder = bids[i].worker;
-            }
-        }
-
-        task.worker = lowestBidder;
-        task.stakeAmount = lowestPrice;
+        task.worker = task.lowestBidder;
+        task.stakeAmount = task.lowestBidPrice;
         task.status = TaskStatus.Claimed;
 
-        emit TaskWorkerSelected(taskId, lowestBidder);
+        emit TaskWorkerSelected(taskId, task.lowestBidder);
     }
 
     /**
      * @notice Directly award an open auction task to a worker at a given price.
      *         Used by clock-based auction subtypes (dutch, reverse_dutch).
+     *         The worker is the authenticated actor (pgtrSender).
      * @param taskId Task identifier
-     * @param worker Worker address accepting the clock price
      * @param price  Accepted price in USDC base units (must be <= task.maxPrice)
      */
-    function acceptAuction(bytes32 taskId, address worker, uint256 price) external onlyServer {
+    function acceptAuction(bytes32 taskId, uint256 price) external onlyTrustedForwarder {
+        address worker = _effectiveSender();
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(task.mode == AUCTION, "Not an Auction task");
@@ -439,19 +498,21 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
 
     /**
      * @notice Record that a worker has submitted deliverable work.
+     *         The worker is the authenticated actor (pgtrSender).
      *         Anchors a content hash on-chain for tamper-evident audit trail.
      *         State change is mode-dependent:
      *           BOUNTY/BENCHMARK → PendingApproval
      *           CLAIM/PITCH/AUCTION → no state change (worker already locked)
-     * @param taskId     Task identifier
-     * @param worker     Worker submitting work
+     * @param taskId      Task identifier
      * @param deliverable Content hash (keccak256, IPFS CID, or ZK commitment)
      */
-    function submitWork(bytes32 taskId, address worker, bytes32 deliverable) external onlyServer {
+    function submitWork(bytes32 taskId, bytes32 deliverable) external onlyTrustedForwarder {
+        address worker = _effectiveSender();
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(block.timestamp <= task.expiryTime, "Task expired");
 
+        require(task.deliverable == bytes32(0), "Deliverable already set");
         task.deliverable = deliverable;
 
         if (task.mode == BOUNTY || task.mode == BENCHMARK) {
@@ -469,12 +530,13 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     }
 
     /**
-     * @notice Accept submission and release payment to worker
-     * @param taskId    Task identifier
-     * @param requester Real requester wallet (must match task.requester)
-     * @param worker    Worker address to pay
+     * @notice Accept submission and release payment to worker.
+     *         The requester is the authenticated actor (pgtrSender).
+     * @param taskId Task identifier
+     * @param worker Worker address to pay
      */
-    function acceptSubmission(bytes32 taskId, address requester, address worker) external onlyServer nonReentrant {
+    function acceptSubmission(bytes32 taskId, address worker) external onlyTrustedForwarder nonReentrant {
+        address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(requester == task.requester, "Not requester");
         require(block.timestamp <= task.expiryTime, "Task expired");
@@ -527,13 +589,14 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     }
 
     /**
-     * @notice Forfeit claimer's stake and reopen Claim task
-     * @param taskId    Task identifier
-     * @param requester Real requester wallet (must match task.requester)
+     * @notice Forfeit claimer's stake and reopen Claim task.
+     *         The requester is the authenticated actor (pgtrSender).
+     * @param taskId Task identifier
      * @dev Can only be called after the task has expired. Claimer's stake is
      *      transferred to fee recipient as a non-delivery penalty.
      */
-    function forfeitAndReopen(bytes32 taskId, address requester) external onlyServer {
+    function forfeitAndReopen(bytes32 taskId) external onlyTrustedForwarder {
+        address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(requester == task.requester, "Not requester");
         require(task.mode == CLAIM, "Not a Claim task");
@@ -558,9 +621,9 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     }
 
     /**
-     * @notice Rate a completed task and submit ERC-8004 feedback
+     * @notice Rate a completed task and submit ERC-8004 feedback.
+     *         The requester is the authenticated actor (pgtrSender).
      * @param taskId        Task identifier
-     * @param requester     Real requester wallet (must match task.requester)
      * @param rating        Rating (0-100)
      * @param workerAgentId ERC-8004 agentId of worker, or 0 if unknown
      * @param feedbackURI   URI of the canonical off-chain feedback file
@@ -568,12 +631,12 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
      */
     function rateTask(
         bytes32 taskId,
-        address requester,
         uint8 rating,
         uint256 workerAgentId,
         string calldata feedbackURI,
         bytes32 feedbackHash
-    ) external onlyServer {
+    ) external onlyTrustedForwarder {
+        address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(requester == task.requester, "Not requester");
         require(task.status == TaskStatus.Accepted, "Task not accepted");
@@ -650,11 +713,12 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
 
     /**
      * @notice Cancel an open task and refund the escrowed reward to the requester.
+     *         The requester is the authenticated actor (pgtrSender).
      *         Auction tasks may only be cancelled if no bids have been submitted.
-     * @param taskId    Task identifier
-     * @param requester Real requester wallet (must match task.requester)
+     * @param taskId Task identifier
      */
-    function cancelTask(bytes32 taskId, address requester) external onlyServer nonReentrant {
+    function cancelTask(bytes32 taskId) external onlyTrustedForwarder nonReentrant {
+        address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(requester == task.requester, "Not requester");
@@ -670,22 +734,24 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
 
     /**
      * @notice Update an open task's parameters. Pass 0 for any field to leave unchanged.
+     *         The requester is the authenticated actor (pgtrSender).
      *         Auction tasks may only be updated if no bids have been submitted.
-     * @param taskId          Task identifier
-     * @param requester       Real requester wallet (must match task.requester)
-     * @param newReward       New reward amount (0 = no change); if higher, approval required
-     * @param newExpiryTime   New absolute expiry Unix timestamp (0 = no change)
-     * @param newBidDeadline  New absolute bid deadline (Auction only, 0 = no change)
+     *         If newReward > current reward, the forwarder must transfer the additional
+     *         USDC to this contract before calling.
+     * @param taskId           Task identifier
+     * @param newReward        New reward amount (0 = no change); if higher, forwarder pre-transfers delta
+     * @param newExpiryTime    New absolute expiry Unix timestamp (0 = no change)
+     * @param newBidDeadline   New absolute bid deadline (Auction only, 0 = no change)
      * @param newPitchDeadline New absolute pitch deadline (Pitch only, 0 = no change)
      */
     function updateTask(
         bytes32 taskId,
-        address requester,
         uint256 newReward,
         uint256 newExpiryTime,
         uint256 newBidDeadline,
         uint256 newPitchDeadline
-    ) external onlyServer nonReentrant {
+    ) external onlyTrustedForwarder nonReentrant {
+        address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(task.requester != address(0), "Task does not exist");
         require(requester == task.requester, "Not requester");
@@ -699,8 +765,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
 
         if (newReward != 0 && newReward != task.reward) {
             if (newReward > task.reward) {
-                uint256 additional = newReward - task.reward;
-                require(usdcToken.transferFrom(msg.sender, address(this), additional), "USDC transfer failed");
+                // Additional USDC was transferred to this contract by the forwarder before this call.
             } else {
                 uint256 refund = task.reward - newReward;
                 require(usdcToken.transfer(task.requester, refund), "USDC refund failed");
@@ -739,18 +804,10 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     /**
      * @notice Get worker statistics
      * @param worker Worker address
-     * @return completedTasks Number of completed tasks
-     * @return avgRating      Average rating (scaled by 100)
-     * @return ratedTasks     Number of rated tasks
+     * @return Worker stats struct (completedTasks, ratedTasks, totalStars)
      */
-    function getWorkerStats(address worker)
-        external
-        view
-        returns (uint256 completedTasks, uint256 avgRating, uint256 ratedTasks)
-    {
-        WorkerStats memory stats = workerStats[worker];
-        uint256 avg = stats.ratedTasks > 0 ? (stats.totalStars * 100) / stats.ratedTasks : 0;
-        return (stats.completedTasks, avg, stats.ratedTasks);
+    function getWorkerStats(address worker) external view returns (ITMP.WorkerStats memory) {
+        return workerStats[worker];
     }
 
     /**

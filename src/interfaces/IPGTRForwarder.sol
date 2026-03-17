@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-/// @title ITMPForwarder
-/// @notice Payment-Gated Transaction Relay (PGTR) forwarder interface.
+/// @title IPGTRForwarder
+/// @notice Payment-Gated Transaction Relay (PGTR) forwarder interface (ERC-8194).
 ///
 ///         A PGTR forwarder verifies an on-chain X402 payment receipt and
 ///         relays calls to a TMP contract, passing the payer's address as the
@@ -14,7 +14,7 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///
 ///         Security: Forwarder SHOULD be a multisig. Single-EOA forwarders
 ///         MUST disclose the centralization risk to users.
-interface ITMPForwarder is IERC165 {
+interface IPGTRForwarder is IERC165 {
     /// @notice Returns true; marks this contract as a PGTR forwarder
     ///         for ERC-165 detection by TMP contracts.
     function isPGTRForwarder() external view returns (bool);
