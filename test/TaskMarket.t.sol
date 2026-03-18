@@ -173,8 +173,8 @@ contract TaskMarketTest is Test {
         _relay(_req, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
     }
 
-    function _rateTask(bytes32 taskId, address _req, uint8 _rating, uint256 _waid, string memory _uri, bytes32 _hash) internal {
-        _relay(_req, 0, abi.encodeCall(market.rateTask, (taskId, _rating, _waid, _uri, _hash)));
+    function _rateTask(bytes32 taskId, address _req, uint8 _rating, uint256 _waid, uint256 _raid, string memory _uri, bytes32 _hash) internal {
+        _relay(_req, 0, abi.encodeCall(market.rateTask, (taskId, _rating, _waid, _raid, _uri, _hash)));
     }
 
     function _cancelTask(bytes32 taskId, address _req) internal {
@@ -232,7 +232,7 @@ contract TaskMarketTest is Test {
         bytes32 expectedId = _nextTaskId(requester);
 
         vm.expectEmit(true, true, false, true);
-        emit TaskMarket.TaskCreated(expectedId, requester, REWARD, block.timestamp + DURATION, market.BOUNTY());
+        emit ITMP.TaskCreated(expectedId, requester, REWARD, block.timestamp + DURATION, market.BOUNTY());
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
 
@@ -242,7 +242,7 @@ contract TaskMarketTest is Test {
         assertEq(task.requester, requester);
         assertEq(task.reward, REWARD);
         assertEq(task.mode, market.BOUNTY());
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Open));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open));
     }
 
     function test_CreateTask_RequesterNonceIncrements() public {
@@ -272,7 +272,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), feeRecipientBalanceBefore + expectedFee);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
         assertEq(task.worker, worker1);
 
         assertEq(market.getWorkerStats(worker1).completedTasks, 1);
@@ -288,7 +288,7 @@ contract TaskMarketTest is Test {
         _claimTask(taskId, worker1, stakeAmount);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
         assertEq(task.claimer, worker1);
         assertEq(task.stakeAmount, stakeAmount);
     }
@@ -320,7 +320,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), feeRecipientBalanceBefore + stakeAmount);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Open));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open));
         assertEq(task.claimer, address(0));
         assertEq(task.stakeAmount, 0);
     }
@@ -334,7 +334,7 @@ contract TaskMarketTest is Test {
         _selectWorker(taskId, requester, worker1);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.WorkerSelected));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.WorkerSelected));
         assertEq(task.worker, worker1);
     }
 
@@ -350,7 +350,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(worker1) - 1000 * 10 ** 6, expectedWorkerPayment);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
     }
 
     function test_AcceptSubmission_Benchmark() public {
@@ -364,7 +364,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(worker1) - 1000 * 10 ** 6, expectedWorkerPayment);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
     }
 
     function test_RateTask() public {
@@ -372,9 +372,9 @@ contract TaskMarketTest is Test {
         _acceptSubmission(taskId, requester, worker1);
 
         vm.expectEmit(true, true, false, true);
-        emit TaskMarket.TaskRated(taskId, worker1, 5);
+        emit ITMP.TaskRated(taskId, worker1, 5, 0);
 
-        _rateTask(taskId, requester, 5, 0, "", bytes32(0));
+        _rateTask(taskId, requester, 5, 0, 0, "", bytes32(0));
 
         TaskMarket.Task memory task = market.getTask(taskId);
         assertEq(task.rating, 5);
@@ -394,7 +394,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Expired));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Expired));
     }
 
     function test_SetDefaultFeeBps() public {
@@ -446,9 +446,9 @@ contract TaskMarketTest is Test {
     function test_RevertWhen_RateTaskTwice() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _acceptSubmission(taskId, requester, worker1);
-        _rateTask(taskId, requester, 5, 0, "", bytes32(0));
+        _rateTask(taskId, requester, 5, 0, 0, "", bytes32(0));
         vm.expectRevert("Already rated");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 4, 0, "", bytes32(0))));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 4, 0, 0, "", bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
@@ -503,7 +503,7 @@ contract TaskMarketTest is Test {
 
         vm.prank(alice);
         vm.expectRevert("Not trusted forwarder");
-        market.rateTask(taskId, 5, 0, "", bytes32(0));
+        market.rateTask(taskId, 5, 0, 0, "", bytes32(0));
     }
 
     // -----------------------------------------------------------------------
@@ -668,7 +668,7 @@ contract TaskMarketTest is Test {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _acceptSubmission(taskId, requester, worker1);
         vm.expectRevert("Not requester");
-        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.rateTask, (taskId, 5, 0, "", bytes32(0))));
+        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.rateTask, (taskId, 5, 0, 0, "", bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
@@ -717,12 +717,12 @@ contract TaskMarketTest is Test {
         bytes32 deliverable = keccak256("my work artifact");
 
         vm.expectEmit(true, true, false, true);
-        emit TaskMarket.TaskSubmitted(taskId, worker1, deliverable);
+        emit ITMP.TaskSubmitted(taskId, worker1, deliverable);
 
         _submitWork(taskId, worker1, deliverable);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.PendingApproval));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.PendingApproval));
         assertEq(task.deliverable, deliverable);
     }
 
@@ -733,7 +733,7 @@ contract TaskMarketTest is Test {
         _submitWork(taskId, worker1, deliverable);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.PendingApproval));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.PendingApproval));
         assertEq(task.deliverable, deliverable);
     }
 
@@ -745,7 +745,7 @@ contract TaskMarketTest is Test {
         _submitWork(taskId, worker1, deliverable);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
         assertEq(task.deliverable, deliverable);
     }
 
@@ -757,7 +757,7 @@ contract TaskMarketTest is Test {
         _submitWork(taskId, worker1, deliverable);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.WorkerSelected));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.WorkerSelected));
         assertEq(task.deliverable, deliverable);
     }
 
@@ -767,7 +767,7 @@ contract TaskMarketTest is Test {
         _acceptSubmission(taskId, requester, worker1);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
     }
 
     function test_RevertWhen_SubmitWork_TaskExpired() public {
@@ -795,7 +795,7 @@ contract TaskMarketTest is Test {
 
         // State must be unchanged
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.WorkerSelected));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.WorkerSelected));
         assertEq(task.deliverable, bytes32(0));
     }
 
@@ -806,14 +806,14 @@ contract TaskMarketTest is Test {
     function test_RevertWhen_RateTask_NotAccepted() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert("Task not accepted");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 3, 0, "", bytes32(0))));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 3, 0, 0, "", bytes32(0))));
     }
 
     function test_RevertWhen_RateTask_InvalidRating() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _acceptSubmission(taskId, requester, worker1);
         vm.expectRevert("Rating must be 0-100");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 101, 0, "", bytes32(0))));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 101, 0, 0, "", bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
@@ -930,7 +930,7 @@ contract TaskMarketTest is Test {
         _acceptAuction(taskId, worker1, acceptPrice);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
         assertEq(task.worker, worker1);
         assertEq(task.stakeAmount, acceptPrice);
     }
@@ -953,7 +953,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + expectedRefund);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
     }
 
     function test_AcceptAuction_priceExceedsMax() public {
@@ -993,7 +993,7 @@ contract TaskMarketTest is Test {
         assertEq(task.requester, requester);
         assertEq(task.worker, worker1);
         assertEq(task.stakeAmount, REWARD / 2);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
         assertEq(task.mode, market.AUCTION());
     }
 
@@ -1017,7 +1017,7 @@ contract TaskMarketTest is Test {
 
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Expired));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Expired));
     }
 
     function test_RefundExpired_Auction_WithWinner() public {
@@ -1036,7 +1036,7 @@ contract TaskMarketTest is Test {
         uint256 feeRecipientBalanceBefore = usdc.balanceOf(feeRecipient);
 
         vm.expectEmit(true, true, true, true);
-        emit TaskMarket.TaskAccepted(taskId, requester, worker1, expectedWorkerPayment, fee);
+        emit ITMP.TaskAccepted(taskId, requester, worker1, expectedWorkerPayment, fee);
         market.refundExpired(taskId);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + expectedWorkerPayment);
@@ -1044,7 +1044,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(feeRecipient), feeRecipientBalanceBefore + fee);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
 
         assertEq(market.getWorkerStats(worker1).completedTasks, 1);
     }
@@ -1068,7 +1068,7 @@ contract TaskMarketTest is Test {
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
     }
 
     // -----------------------------------------------------------------------
@@ -1080,13 +1080,13 @@ contract TaskMarketTest is Test {
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
 
         vm.expectEmit(true, true, false, true);
-        emit TaskMarket.TaskCancelled(taskId, requester, REWARD);
+        emit ITMP.TaskCancelled(taskId, requester, REWARD);
 
         _cancelTask(taskId, requester);
 
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Cancelled));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Cancelled));
     }
 
     function test_CancelTask_Claim() public {
@@ -1097,7 +1097,7 @@ contract TaskMarketTest is Test {
 
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Cancelled));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Cancelled));
     }
 
     function test_CancelTask_Auction_NoBids() public {
@@ -1108,7 +1108,7 @@ contract TaskMarketTest is Test {
 
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(TaskMarket.TaskStatus.Cancelled));
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Cancelled));
     }
 
     function test_RevertWhen_CancelTask_AuctionHasBids() public {
