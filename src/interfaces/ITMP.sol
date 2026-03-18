@@ -34,7 +34,7 @@ interface ITMP is IERC165 {
 
     /// @notice Minimal task descriptor returned by getTask().
     ///         Implementations MAY return a superset of these fields.
-    struct TaskInfo {
+    struct Task {
         bytes32 id;
         address requester;
         address worker;
@@ -55,6 +55,8 @@ interface ITMP is IERC165 {
         bytes32 contentHash;    // Optional: keccak256 of off-chain task description
         string  contentURI;     // Optional: URI pointing to extended task metadata
         bytes4  auctionSubtype; // Auction subtype selector (zero for non-auction tasks)
+        address lowestBidder;   // Running lowest bidder (english/reverse_english subtypes)
+        uint256 lowestBidPrice; // Running lowest bid price
     }
 
     /// @notice Worker performance statistics.
@@ -108,6 +110,14 @@ interface ITMP is IERC165 {
         uint256 refundAmount
     );
 
+    /// @notice Emitted when a requester rates a completed task.
+    event TaskRated(
+        bytes32 indexed taskId,
+        address indexed worker,
+        uint8           rating,
+        uint256         raterAgentId   // ERC-8004 agent ID of the requester (0 if unregistered)
+    );
+
     // -------------------------------------------------------------------------
     // Required functions
     // -------------------------------------------------------------------------
@@ -156,15 +166,17 @@ interface ITMP is IERC165 {
 
     /// @notice Rate a completed task and record feedback via ERC-8004.
     ///         The requester is read from the PGTR forwarder via _effectiveSender().
-    /// @param taskId       Task identifier
-    /// @param rating       Score 0–100
+    /// @param taskId        Task identifier
+    /// @param rating        Score 0-100
     /// @param workerAgentId ERC-8004 agentId of worker (0 if unknown)
-    /// @param feedbackURI  URI of off-chain feedback document
-    /// @param feedbackHash keccak256 of the feedback document
+    /// @param raterAgentId  ERC-8004 agentId of the requester giving the rating (0 if unknown)
+    /// @param feedbackURI   URI of off-chain feedback document
+    /// @param feedbackHash  keccak256 of the feedback document
     function rateTask(
         bytes32 taskId,
         uint8 rating,
         uint256 workerAgentId,
+        uint256 raterAgentId,
         string calldata feedbackURI,
         bytes32 feedbackHash
     ) external;
@@ -179,7 +191,7 @@ interface ITMP is IERC165 {
     /// @notice Get task details.
     /// @param taskId Task identifier
     /// @return Task info struct
-    function getTask(bytes32 taskId) external view returns (TaskInfo memory);
+    function getTask(bytes32 taskId) external view returns (Task memory);
 
     /// @notice Returns cumulative statistics for a worker address.
     /// @param worker Worker address

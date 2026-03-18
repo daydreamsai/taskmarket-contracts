@@ -8,10 +8,12 @@ import {Initializable} from "openzeppelin-contracts-upgradeable/contracts/proxy/
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {ITMP} from "./interfaces/ITMP.sol";
+import {ITMPReputation} from "./interfaces/ITMPReputation.sol";
+import {ITMPFees} from "./interfaces/ITMPFees.sol";
 import {IPGTRForwarder} from "./interfaces/IPGTRForwarder.sol";
 import {IReputationRegistry} from "./interfaces/IReputationRegistry.sol";
-import {ITMPReputation} from "./interfaces/ITMPReputation.sol";
 import {
+    ITMPMode,
     TMP_BOUNTY,
     TMP_CLAIM,
     TMP_PITCH,
@@ -42,7 +44,7 @@ import {
  *      Storage layout rule: new state variables MUST be appended after existing ones
  *      and MUST consume slots from __gap. Never insert between existing variables.
  */
-contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
+contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -66,41 +68,6 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     // Types
     // -------------------------------------------------------------------------
 
-    enum TaskStatus {
-        Open,
-        Claimed,
-        WorkerSelected,
-        PendingApproval,
-        Accepted,
-        Expired,
-        Cancelled
-    }
-
-    struct Task {
-        bytes32 id;
-        address requester;
-        address worker;
-        uint256 reward;
-        uint256 createdAt;
-        uint256 expiryTime;
-        TaskStatus status;
-        uint8 rating;
-        bytes4 mode;
-        uint256 stakeAmount;
-        address claimer;
-        uint256 claimedAt;
-        uint256 pitchDeadline;
-        uint16 feeBps;
-        uint256 bidDeadline;
-        uint256 maxPrice;
-        bytes32 deliverable;
-        bytes32 contentHash;
-        string  contentURI;
-        bytes4  auctionSubtype; // Auction subtype selector (zero for non-auction tasks)
-        address lowestBidder;   // Running lowest bidder (english/reverse_english subtypes)
-        uint256 lowestBidPrice; // Running lowest bid price
-    }
-
     struct Bid {
         address worker;
         uint256 price;
@@ -117,7 +84,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     mapping(address => bool) public trustedForwarders;
 
     mapping(bytes32 => Task) public tasks;
-    mapping(address => ITMP.WorkerStats) public workerStats;
+    mapping(address => WorkerStats) public workerStats;
     mapping(bytes32 => uint256) public stakeForfeit;
     mapping(bytes32 => Bid[]) public taskBids;
 
@@ -138,34 +105,19 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     // Events
     // -------------------------------------------------------------------------
 
-    event TaskCreated(
-        bytes32 indexed taskId,
-        address indexed requester,
-        uint256 reward,
-        uint256 expiryTime,
-        bytes4  mode
-    );
+    // TaskCreated, TaskAccepted, TaskSubmitted, TaskRated, TaskExpired, TaskCancelled
+    // are inherited from ITMP.
+    // ReputationRegistryUpdated is inherited from ITMPReputation.
+
     event TaskClaimed(bytes32 indexed taskId, address indexed claimer, uint256 stakeAmount);
     event TaskWorkerSelected(bytes32 indexed taskId, address indexed worker);
-    event TaskAccepted(
-        bytes32 indexed taskId,
-        address indexed requester,
-        address indexed worker,
-        uint256 workerPayment,
-        uint256 platformFee
-    );
-    event TaskSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 deliverable);
-    event TaskRated(bytes32 indexed taskId, address indexed worker, uint8 rating);
-    event TaskExpired(bytes32 indexed taskId, address indexed requester, uint256 refundAmount);
     event StakeForfeited(bytes32 indexed taskId, address indexed claimer, uint256 stakeAmount);
     event StakeReturned(bytes32 indexed taskId, address indexed claimer, uint256 stakeAmount);
     event TaskReopened(bytes32 indexed taskId);
     event FeesUpdated(uint16 newFeeBps);
     event FeeRecipientUpdated(address newRecipient);
     event ForwarderUpdated(address indexed forwarder, bool trusted);
-    event ReputationRegistryUpdated(address newRegistry);
     event BidSubmitted(bytes32 indexed taskId, address indexed worker, uint256 price);
-    event TaskCancelled(bytes32 indexed taskId, address indexed requester, uint256 refundAmount);
     event TaskUpdated(bytes32 indexed taskId, uint256 newReward, uint256 newExpiryTime);
 
     // -------------------------------------------------------------------------
@@ -227,6 +179,8 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == type(ITMP).interfaceId
             || interfaceId == type(ITMPReputation).interfaceId
+            || interfaceId == type(ITMPFees).interfaceId
+            || interfaceId == type(ITMPMode).interfaceId
             || interfaceId == type(IERC165).interfaceId;
     }
 
@@ -626,6 +580,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
      * @param taskId        Task identifier
      * @param rating        Rating (0-100)
      * @param workerAgentId ERC-8004 agentId of worker, or 0 if unknown
+     * @param raterAgentId  ERC-8004 agentId of the requester giving the rating, or 0 if unknown
      * @param feedbackURI   URI of the canonical off-chain feedback file
      * @param feedbackHash  keccak256 hash of the feedback file content
      */
@@ -633,6 +588,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
         bytes32 taskId,
         uint8 rating,
         uint256 workerAgentId,
+        uint256 raterAgentId,
         string calldata feedbackURI,
         bytes32 feedbackHash
     ) external onlyTrustedForwarder {
@@ -648,7 +604,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
         workerStats[task.worker].ratedTasks++;
         workerStats[task.worker].totalStars += rating;
 
-        emit TaskRated(taskId, task.worker, rating);
+        emit TaskRated(taskId, task.worker, rating, raterAgentId);
 
         if (workerAgentId != 0 && reputationRegistry != address(0)) {
             try IReputationRegistry(reputationRegistry).giveFeedback(
@@ -762,6 +718,8 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
 
         uint256 originalReward = task.reward;
         uint256 originalExpiryTime = task.expiryTime;
+        uint256 originalBidDeadline = task.bidDeadline;
+        uint256 originalPitchDeadline = task.pitchDeadline;
 
         if (newReward != 0 && newReward != task.reward) {
             if (newReward > task.reward) {
@@ -790,8 +748,8 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
 
         bool changed = (newReward != 0 && newReward != originalReward)
             || (newExpiryTime != 0 && newExpiryTime != originalExpiryTime)
-            || (newBidDeadline != 0 && task.mode == AUCTION)
-            || (newPitchDeadline != 0 && task.mode == PITCH);
+            || (newBidDeadline != 0 && newBidDeadline != originalBidDeadline && task.mode == AUCTION)
+            || (newPitchDeadline != 0 && newPitchDeadline != originalPitchDeadline && task.mode == PITCH);
         if (changed) {
             emit TaskUpdated(taskId, task.reward, task.expiryTime);
         }
@@ -806,7 +764,7 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
      * @param worker Worker address
      * @return Worker stats struct (completedTasks, ratedTasks, totalStars)
      */
-    function getWorkerStats(address worker) external view returns (ITMP.WorkerStats memory) {
+    function getWorkerStats(address worker) external view returns (WorkerStats memory) {
         return workerStats[worker];
     }
 
@@ -817,6 +775,30 @@ contract TaskMarket is Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSU
      */
     function getTask(bytes32 taskId) external view returns (Task memory) {
         return tasks[taskId];
+    }
+
+    /**
+     * @notice Per-task fee in basis points stamped at task creation (ITMPFees).
+     * @param taskId Task identifier
+     * @return Fee in basis points for this task
+     */
+    function feeForTask(bytes32 taskId) external view returns (uint16) {
+        return tasks[taskId].feeBps;
+    }
+
+    /**
+     * @notice Returns the address responsible for evaluating work on a task (ITMPMode).
+     *         For all modes except Benchmark, this is the task requester.
+     *         For Benchmark mode, this is the ERC-8004 Validation Registry.
+     * @param taskId Task identifier
+     * @return evaluator Address that can call acceptSubmission() for this task
+     */
+    function evaluatorFor(bytes32 taskId) external view returns (address evaluator) {
+        Task storage task = tasks[taskId];
+        if (task.mode == BENCHMARK) {
+            return reputationRegistry; // Validation Registry (same address for now)
+        }
+        return task.requester;
     }
 
     /**
