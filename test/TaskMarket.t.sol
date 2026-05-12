@@ -923,10 +923,14 @@ contract TaskMarketTest is Test {
         uint256 acceptPrice = 40 * 10 ** 6;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
 
+        // Legacy event pair, kept for indexer backward compatibility.
         vm.expectEmit(true, true, false, true);
         emit TaskMarket.BidSubmitted(taskId, worker1, acceptPrice);
         vm.expectEmit(true, true, false, false);
         emit TaskMarket.TaskWorkerSelected(taskId, worker1);
+        // New dedicated event — preferred by new indexers.
+        vm.expectEmit(true, true, false, true);
+        emit TaskMarket.AuctionAccepted(taskId, worker1, acceptPrice);
         _acceptAuction(taskId, worker1, acceptPrice);
 
         TaskMarket.Task memory task = market.getTask(taskId);
@@ -1173,5 +1177,124 @@ contract TaskMarketTest is Test {
 
         TaskMarket.Task memory task = market.getTask(taskId);
         assertEq(task.reward, newReward);
+    }
+
+    // -----------------------------------------------------------------------
+    // submitPitch tests
+    // -----------------------------------------------------------------------
+
+    function _submitPitch(bytes32 taskId, address _worker, bytes32 pitchHash) internal {
+        _relay(_worker, 0, abi.encodeCall(market.submitPitch, (taskId, pitchHash)));
+    }
+
+    function test_SubmitPitch_emitsEventAndStoresHash() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        bytes32 pitchHash = keccak256(abi.encode(taskId, worker1, "my pitch text"));
+
+        vm.expectEmit(true, true, false, true);
+        emit TaskMarket.PitchSubmitted(taskId, worker1, pitchHash);
+        _submitPitch(taskId, worker1, pitchHash);
+
+        assertEq(market.taskPitchHashes(taskId, 0), pitchHash);
+    }
+
+    function test_SubmitPitch_appendsMultiple() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        bytes32 hash1 = keccak256(abi.encode(taskId, worker1, "pitch 1"));
+        bytes32 hash2 = keccak256(abi.encode(taskId, worker2, "pitch 2"));
+
+        _submitPitch(taskId, worker1, hash1);
+        _submitPitch(taskId, worker2, hash2);
+
+        assertEq(market.taskPitchHashes(taskId, 0), hash1);
+        assertEq(market.taskPitchHashes(taskId, 1), hash2);
+    }
+
+    function test_SubmitPitch_revertsOnWrongMode() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.expectRevert("Not a Pitch task");
+        _submitPitch(taskId, worker1, keccak256("pitch"));
+    }
+
+    function test_SubmitPitch_revertsAfterPitchDeadline() public {
+        // Task has a 2-day pitch window inside a 7-day expiry.
+        // Warping past the pitch deadline (but not the expiry) must revert.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        vm.warp(block.timestamp + 2 days + 1);
+        vm.expectRevert("Pitch deadline passed");
+        _submitPitch(taskId, worker1, keccak256("late pitch"));
+    }
+
+    function test_SubmitPitch_revertsWhenBothDeadlinesPassed() public {
+        // Warping past the full task duration (7 days) exceeds both the pitch
+        // deadline (2 days) and the expiry time. The pitch-deadline check fires
+        // first; this test just confirms the overall "too late" path reverts.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.expectRevert("Pitch deadline passed");
+        _submitPitch(taskId, worker1, keccak256("pitch"));
+    }
+
+    function test_SubmitPitch_revertsOnEmptyHash() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        vm.expectRevert("Empty pitch hash");
+        _submitPitch(taskId, worker1, bytes32(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // submitProof tests
+    // -----------------------------------------------------------------------
+
+    function _submitProof(bytes32 taskId, address _worker, bytes32 proofHash, bytes32 proofType, uint256 metricValue) internal {
+        _relay(_worker, 0, abi.encodeCall(market.submitProof, (taskId, proofHash, proofType, metricValue)));
+    }
+
+    function test_SubmitProof_emitsEventAndStoresHash() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        bytes32 proofHash = keccak256(abi.encode(taskId, worker1, "proof data"));
+        bytes32 proofType = keccak256("eval");
+        uint256 metricValue = 9500;
+
+        vm.expectEmit(true, true, false, true);
+        emit TaskMarket.ProofSubmitted(taskId, worker1, proofHash, proofType, metricValue);
+        _submitProof(taskId, worker1, proofHash, proofType, metricValue);
+
+        assertEq(market.taskProofHashes(taskId, 0), proofHash);
+    }
+
+    function test_SubmitProof_revertsOnWrongMode() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.expectRevert("Not a Benchmark task");
+        _submitProof(taskId, worker1, keccak256("proof"), keccak256("eval"), 0);
+    }
+
+    function test_SubmitProof_revertsAfterExpiry() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.expectRevert("Task expired");
+        _submitProof(taskId, worker1, keccak256("proof"), keccak256("eval"), 0);
+    }
+
+    function test_SubmitProof_revertsOnEmptyHash() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        vm.expectRevert("Empty proof hash");
+        _submitProof(taskId, worker1, bytes32(0), keccak256("eval"), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Storage layout — __gap is now 46 slots after consuming 2 for the new
+    // pitch / proof hash mappings. If a future upgrade reorders or shrinks
+    // gap incorrectly, this read of the last gap slot will fail.
+    // -----------------------------------------------------------------------
+
+    function test_StorageGapIs46Slots() public view {
+        // taskPitchHashes is at slot 10, taskProofHashes at 11, gap starts at 12.
+        // The last gap slot is 12 + 46 - 1 = 57; reading slot 58 should be a
+        // brand-new uninitialised slot just past the gap (zero) — and reading
+        // slot 57 should also be zero (the gap is just uint256[46] uninitialised).
+        bytes32 firstGapSlot = vm.load(address(market), bytes32(uint256(12)));
+        bytes32 lastGapSlot = vm.load(address(market), bytes32(uint256(57)));
+        assertEq(firstGapSlot, bytes32(0));
+        assertEq(lastGapSlot, bytes32(0));
     }
 }

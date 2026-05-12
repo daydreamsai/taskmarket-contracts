@@ -116,6 +116,7 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
     ) external nonReentrant {
         if (msg.sender != authorizedRelayer) revert UnauthorizedRelayer();
         if (block.timestamp > validBefore) revert ReceiptExpired();
+        if (data.length < 4) revert("Calldata too short");
 
         bytes4 selector = bytes4(data[:4]);
         bytes32 receiptHash = keccak256(abi.encode(
