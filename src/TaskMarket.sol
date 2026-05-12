@@ -97,9 +97,18 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     ///         Read this before calling createTask to pre-compute the task ID off-chain.
     mapping(address => uint256) public requesterNonce;
 
-    // Reserve 48 slots for future state variables (was 50; requesterNonce consumed 1,
-    // and trustedForwarders replaced authorizedServer at the same logical position).
-    uint256[48] private __gap;
+    /// @notice Anchored pitch hashes per task. Pitch content stays off-chain; the hash
+    ///         here is a tamper-proof commitment so third parties can verify text
+    ///         retrieved from any operator matches what was submitted on-chain.
+    mapping(bytes32 => bytes32[]) public taskPitchHashes;
+
+    /// @notice Anchored proof hashes per task. Same commitment pattern as pitches.
+    mapping(bytes32 => bytes32[]) public taskProofHashes;
+
+    // Reserve 46 slots for future state variables (was 50; trustedForwarders replaced
+    // authorizedServer at the same logical position, requesterNonce consumed 1,
+    // taskPitchHashes consumed 1, taskProofHashes consumed 1).
+    uint256[46] private __gap;
 
     // -------------------------------------------------------------------------
     // Events
@@ -119,6 +128,26 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     event ForwarderUpdated(address indexed forwarder, bool trusted);
     event BidSubmitted(bytes32 indexed taskId, address indexed worker, uint256 price);
     event TaskUpdated(bytes32 indexed taskId, uint256 newReward, uint256 newExpiryTime);
+
+    /// @notice Emitted when a worker anchors a pitch hash for a pitch-mode task.
+    event PitchSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 pitchHash);
+
+    /// @notice Emitted when a worker anchors a proof hash for a benchmark-mode task.
+    ///         proofType is the keccak256(typeString) bytes32 selector; metricValue is
+    ///         a free-form numeric score whose meaning is task-specific.
+    event ProofSubmitted(
+        bytes32 indexed taskId,
+        address indexed worker,
+        bytes32 proofHash,
+        bytes32 proofType,
+        uint256 metricValue
+    );
+
+    /// @notice Emitted when a worker accepts a dutch/reverse_dutch auction's clock
+    ///         price. Coexists with the legacy BidSubmitted + TaskWorkerSelected pair
+    ///         emitted by acceptAuction so older indexers keep working; new indexers
+    ///         should prefer this single event for clarity.
+    event AuctionAccepted(bytes32 indexed taskId, address indexed worker, uint256 acceptedPrice);
 
     // -------------------------------------------------------------------------
     // Modifiers
@@ -446,8 +475,63 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         task.worker = worker;
         task.stakeAmount = price;
         task.status = TaskStatus.Claimed;
+        // Legacy event pair, kept for backward compatibility with old indexers.
         emit BidSubmitted(taskId, worker, price);
         emit TaskWorkerSelected(taskId, worker);
+        // Dedicated event: new indexers should prefer this single signal.
+        emit AuctionAccepted(taskId, worker, price);
+    }
+
+    /**
+     * @notice Anchor a pitch-content hash on-chain for a pitch-mode task.
+     *         The pitch text itself stays off-chain; the hash is a tamper-proof
+     *         commitment that third parties can use to verify any operator-served
+     *         pitch text matches what the worker actually submitted.
+     *         The worker is the authenticated actor (pgtrSender).
+     * @param taskId    Task identifier
+     * @param pitchHash Content hash (typically keccak256(abi.encode(taskId, worker, pitchText)))
+     */
+    function submitPitch(bytes32 taskId, bytes32 pitchHash) external onlyTrustedForwarder {
+        address worker = _effectiveSender();
+        Task storage task = tasks[taskId];
+        require(task.requester != address(0), "Task does not exist");
+        require(task.mode == PITCH, "Not a Pitch task");
+        require(task.status == TaskStatus.Open, "Task not open");
+        require(block.timestamp <= task.pitchDeadline, "Pitch deadline passed");
+        require(block.timestamp <= task.expiryTime, "Task expired");
+        require(pitchHash != bytes32(0), "Empty pitch hash");
+
+        taskPitchHashes[taskId].push(pitchHash);
+        emit PitchSubmitted(taskId, worker, pitchHash);
+    }
+
+    /**
+     * @notice Anchor a benchmark-proof hash on-chain for a benchmark-mode task.
+     *         The proof data stays off-chain; the hash here is a tamper-proof
+     *         commitment. proofType is a free-form bytes32 selector (typically
+     *         keccak256(typeString)); metricValue is a task-specific numeric score.
+     *         The worker is the authenticated actor (pgtrSender).
+     * @param taskId      Task identifier
+     * @param proofHash   Content hash (typically keccak256(abi.encode(taskId, worker, proofData)))
+     * @param proofType   bytes32 selector identifying the proof scheme
+     * @param metricValue Task-specific numeric score
+     */
+    function submitProof(
+        bytes32 taskId,
+        bytes32 proofHash,
+        bytes32 proofType,
+        uint256 metricValue
+    ) external onlyTrustedForwarder {
+        address worker = _effectiveSender();
+        Task storage task = tasks[taskId];
+        require(task.requester != address(0), "Task does not exist");
+        require(task.mode == BENCHMARK, "Not a Benchmark task");
+        require(task.status == TaskStatus.Open, "Task not open");
+        require(block.timestamp <= task.expiryTime, "Task expired");
+        require(proofHash != bytes32(0), "Empty proof hash");
+
+        taskProofHashes[taskId].push(proofHash);
+        emit ProofSubmitted(taskId, worker, proofHash, proofType, metricValue);
     }
 
     /**
