@@ -1040,7 +1040,7 @@ contract TaskMarketTest is Test {
         uint256 feeRecipientBalanceBefore = usdc.balanceOf(feeRecipient);
 
         vm.expectEmit(true, true, true, true);
-        emit ITMP.TaskAccepted(taskId, requester, worker1, expectedWorkerPayment, fee);
+        emit ITMP.TaskCompleted(taskId, requester, worker1, expectedWorkerPayment, fee);
         market.refundExpired(taskId);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + expectedWorkerPayment);
