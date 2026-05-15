@@ -105,10 +105,15 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     /// @notice Anchored proof hashes per task. Same commitment pattern as pitches.
     mapping(bytes32 => bytes32[]) public taskProofHashes;
 
-    // Reserve 46 slots for future state variables (was 50; trustedForwarders replaced
+    /// @notice Whether a (task, worker) pair has been rated. Prevents inflating
+    ///         workerStats by rating the same worker twice on the same task in
+    ///         multi-winner Bounty / Benchmark flows.
+    mapping(bytes32 => mapping(address => bool)) public taskWorkerRated;
+
+    // Reserve 45 slots for future state variables (was 50; trustedForwarders replaced
     // authorizedServer at the same logical position, requesterNonce consumed 1,
-    // taskPitchHashes consumed 1, taskProofHashes consumed 1).
-    uint256[46] private __gap;
+    // taskPitchHashes consumed 1, taskProofHashes consumed 1, taskWorkerRated consumed 1).
+    uint256[45] private __gap;
 
     // -------------------------------------------------------------------------
     // Events
@@ -550,18 +555,21 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         require(task.requester != address(0), "Task does not exist");
         require(block.timestamp <= task.expiryTime, "Task expired");
 
-        require(task.deliverable == bytes32(0), "Deliverable already set");
-        task.deliverable = deliverable;
-
         if (task.mode == BOUNTY || task.mode == BENCHMARK) {
             require(task.status == TaskStatus.Open, "Task not open");
-            task.status = TaskStatus.PendingApproval;
+            // Multi-submission: do not write task.deliverable; do not transition status.
+            // The requester finalises via acceptSubmission(taskId, worker, deliverable)
+            // or acceptRanked(taskId, workers, shares, deliverables).
         } else if (task.mode == CLAIM) {
             require(task.status == TaskStatus.Claimed, "Task not claimed");
             require(worker == task.claimer, "Worker must be claimer");
+            require(task.deliverable == bytes32(0), "Deliverable already set");
+            task.deliverable = deliverable;
         } else if (task.mode == PITCH || task.mode == AUCTION) {
             require(task.status == TaskStatus.WorkerSelected || task.status == TaskStatus.Claimed, "Worker not selected");
             require(worker == task.worker, "Worker mismatch");
+            require(task.deliverable == bytes32(0), "Deliverable already set");
+            task.deliverable = deliverable;
         }
 
         emit TaskSubmitted(taskId, worker, deliverable);
@@ -573,7 +581,11 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param taskId Task identifier
      * @param worker Worker address to pay
      */
-    function acceptSubmission(bytes32 taskId, address worker) external onlyTrustedForwarder nonReentrant {
+    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable)
+        external
+        onlyTrustedForwarder
+        nonReentrant
+    {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
         require(requester == task.requester, "Not requester");
@@ -582,17 +594,22 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         if (task.mode == CLAIM) {
             require(task.status == TaskStatus.Claimed, "Task not claimed");
             require(worker == task.claimer, "Worker must be claimer");
+            require(deliverable == task.deliverable, "Deliverable mismatch");
         } else if (task.mode == PITCH) {
             require(task.status == TaskStatus.WorkerSelected, "Worker not selected");
             require(worker == task.worker, "Worker mismatch");
+            require(deliverable == task.deliverable, "Deliverable mismatch");
         } else if (task.mode == AUCTION) {
             require(task.status == TaskStatus.Claimed, "Winner not selected");
             require(worker == task.worker, "Worker mismatch");
+            require(deliverable == task.deliverable, "Deliverable mismatch");
         } else {
-            require(
-                task.status == TaskStatus.Open || task.status == TaskStatus.PendingApproval,
-                "Task not available"
-            );
+            // BOUNTY or BENCHMARK: deferred-write model. The requester names the
+            // winner and their deliverable here. submitWork didn't write either.
+            require(task.status == TaskStatus.Open, "Task not open");
+            require(worker != address(0), "Worker required");
+            require(deliverable != bytes32(0), "Deliverable required");
+            task.deliverable = deliverable;
         }
 
         task.status = TaskStatus.Accepted;
@@ -624,6 +641,67 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         }
 
         emit TaskCompleted(taskId, requester, worker, workerPayment, fee);
+    }
+
+    /**
+     * @notice Accept N workers at once with explicit share basis points.
+     *         Valid for modes that support multiple concurrent submissions
+     *         (Bounty, Benchmark). Shares MUST sum to 10000; fee taken per pair.
+     *         workers[0] becomes task.worker and deliverables[0] becomes
+     *         task.deliverable for single-worker-field back-compat.
+     *         Duplicate worker addresses ARE allowed (the requester may
+     *         intentionally pay the same worker via multiple slots).
+     * @param taskId       Task identifier
+     * @param workers      Recipient addresses in rank order
+     * @param shares       Basis-point shares; MUST sum to 10000
+     * @param deliverables Per-worker content hash; each MUST be non-zero
+     */
+    function acceptRanked(
+        bytes32 taskId,
+        address[] calldata workers,
+        uint16[] calldata shares,
+        bytes32[] calldata deliverables
+    ) external onlyTrustedForwarder nonReentrant {
+        address requester = _effectiveSender();
+        Task storage task = tasks[taskId];
+        require(requester == task.requester, "Not requester");
+        require(block.timestamp <= task.expiryTime, "Task expired");
+        require(task.mode == BOUNTY || task.mode == BENCHMARK, "Ranked only valid for Bounty/Benchmark");
+        require(task.status == TaskStatus.Open, "Task not open");
+
+        uint256 n = workers.length;
+        require(n >= 1, "No winners");
+        require(shares.length == n && deliverables.length == n, "Length mismatch");
+
+        uint256 sumShares;
+        for (uint256 i; i < n; ++i) {
+            require(deliverables[i] != bytes32(0), "Deliverable required");
+            sumShares += shares[i];
+        }
+        require(sumShares == 10000, "Shares must sum to 10000");
+
+        task.status = TaskStatus.Accepted;
+        task.worker = workers[0];
+        task.deliverable = deliverables[0];
+
+        uint256 reward = task.reward;
+        uint16 feeBps = task.feeBps;
+        uint256 totalFee;
+        for (uint256 i; i < n; ++i) {
+            uint256 pay = (reward * shares[i]) / 10000;
+            require(pay > 0, "Zero payout per pair");
+            uint256 fee = (pay * feeBps) / 10000;
+            uint256 net = pay - fee;
+            totalFee += fee;
+            workerStats[workers[i]].completedTasks++;
+            require(usdcToken.transfer(workers[i], net), "Worker payment failed");
+            emit TaskCompleted(taskId, requester, workers[i], net, fee);
+        }
+
+        if (totalFee > 0) {
+            require(usdcToken.transfer(feeRecipient, totalFee), "Fee transfer failed");
+            totalFeesCollected += totalFee;
+        }
     }
 
     /**
@@ -670,6 +748,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      */
     function rateTask(
         bytes32 taskId,
+        address worker,
         uint8 rating,
         uint256 workerAgentId,
         uint256 raterAgentId,
@@ -681,14 +760,28 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         require(requester == task.requester, "Not requester");
         require(task.status == TaskStatus.Accepted, "Task not accepted");
         require(rating <= 100, "Rating must be 0-100");
-        require(task.rating == 0, "Already rated");
 
-        task.rating = rating;
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            // Multi-winner: trust the rater's worker choice. No on-chain check
+            // that worker was actually paid; same trust model as accepting.
+            require(worker != address(0), "Worker required");
+        } else {
+            // Locked-worker modes: worker must be the on-chain task.worker.
+            require(worker == task.worker, "Worker mismatch");
+        }
 
-        workerStats[task.worker].ratedTasks++;
-        workerStats[task.worker].totalStars += rating;
+        require(!taskWorkerRated[taskId][worker], "Worker already rated");
+        taskWorkerRated[taskId][worker] = true;
 
-        emit TaskRated(taskId, task.worker, rating, raterAgentId);
+        // Record the first rating in task.rating for single-worker back-compat.
+        if (task.rating == 0) {
+            task.rating = rating;
+        }
+
+        workerStats[worker].ratedTasks++;
+        workerStats[worker].totalStars += rating;
+
+        emit TaskRated(taskId, worker, rating, raterAgentId);
 
         if (workerAgentId != 0 && reputationRegistry != address(0)) {
             try IReputationRegistry(reputationRegistry).giveFeedback(

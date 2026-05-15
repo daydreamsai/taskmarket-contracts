@@ -13,7 +13,12 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         - Emit the declared events on every corresponding state transition
 ///         - Ensure refundExpired() bypasses all hooks/extensions (fund safety)
 ///
-/// requires: ERC-20, ERC-165, ERC-8004, ERC-8194 (PGTR)
+/// requires: ERC-20, ERC-165, ERC-8004
+///
+/// note: ITMP does NOT mandate any particular authentication mechanism. An implementation
+///       MUST authenticate the requester and worker for each task action, but the mechanism
+///       is implementation-defined (direct msg.sender, ERC-2771, ERC-4337, ERC-8194 PGTR,
+///       x402 settlement callback, etc.). The reference implementation uses ERC-8194 PGTR.
 interface ITMP is IERC165 {
 
     // -------------------------------------------------------------------------
@@ -148,25 +153,50 @@ interface ITMP is IERC165 {
     ) external returns (bytes32 taskId);
 
     /// @notice Accept a worker's submission and release escrowed payment.
-    ///         The requester is read from the PGTR forwarder via _effectiveSender().
+    ///         The requester is authenticated by the implementation's chosen mechanism.
     ///         Payment is atomic with status update (nonReentrant required).
-    /// @param taskId    Task identifier
-    /// @param worker    Worker address to receive payment
-    function acceptSubmission(bytes32 taskId, address worker) external;
+    ///         For Bounty / Benchmark modes the deliverable is written here (deferred-write
+    ///         model — submitWork only emits the event). For Claim / Pitch / Auction the
+    ///         deliverable was already written by submitWork; the param is cross-checked.
+    /// @param taskId      Task identifier
+    /// @param worker      Worker address to receive payment
+    /// @param deliverable Accepted deliverable hash; required non-zero for Bounty/Benchmark
+    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable) external;
+
+    /// @notice Accept N workers at once with explicit share basis points.
+    ///         Valid for modes that support multiple concurrent submissions
+    ///         (Bounty, Benchmark). Shares MUST sum to 10000; fee taken per pair.
+    ///         workers[0] becomes task.worker and deliverables[0] becomes task.deliverable.
+    ///         One TaskCompleted event MUST be emitted per (worker, share) pair.
+    ///         Duplicate worker addresses are allowed; the requester is the authority on
+    ///         who gets paid. MUST revert for modes with a single locked worker.
+    /// @param taskId       Task identifier
+    /// @param workers      Recipient addresses (length >= 1)
+    /// @param shares       Basis-point shares; MUST sum to 10000
+    /// @param deliverables Per-worker content hashes; each MUST be non-zero
+    function acceptRanked(
+        bytes32 taskId,
+        address[] calldata workers,
+        uint16[] calldata shares,
+        bytes32[] calldata deliverables
+    ) external;
 
     /// @notice Record that a worker has submitted deliverable work.
-    ///         The worker is read from the PGTR forwarder via _effectiveSender().
+    ///         The worker is authenticated by the implementation's chosen mechanism.
     ///         Anchors a content hash on-chain for tamper-evident audit trail.
     ///         State change is mode-dependent:
-    ///           Bounty/Benchmark → PendingApproval
-    ///           Claim/Pitch/Auction → no state change (worker already locked)
+    ///           Bounty/Benchmark → emit-only (no deliverable write; multiple submissions allowed)
+    ///           Claim/Pitch/Auction → write task.deliverable; no status change (worker already locked)
     /// @param taskId     Task identifier
     /// @param deliverable Content hash of the work artifact (keccak256, IPFS CID, or ZK commitment)
     function submitWork(bytes32 taskId, bytes32 deliverable) external;
 
     /// @notice Rate a completed task and record feedback via ERC-8004.
-    ///         The requester is read from the PGTR forwarder via _effectiveSender().
+    ///         For Bounty / Benchmark a requester MAY rate each winner separately;
+    ///         each (taskId, worker) pair can only be rated once.
+    ///         For Claim / Pitch / Auction the worker MUST equal task.worker.
     /// @param taskId        Task identifier
+    /// @param worker        Worker being rated
     /// @param rating        Score 0-100
     /// @param workerAgentId ERC-8004 agentId of worker (0 if unknown)
     /// @param raterAgentId  ERC-8004 agentId of the requester giving the rating (0 if unknown)
@@ -174,6 +204,7 @@ interface ITMP is IERC165 {
     /// @param feedbackHash  keccak256 of the feedback document
     function rateTask(
         bytes32 taskId,
+        address worker,
         uint8 rating,
         uint256 workerAgentId,
         uint256 raterAgentId,

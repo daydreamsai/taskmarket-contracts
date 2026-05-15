@@ -165,16 +165,37 @@ contract TaskMarketTest is Test {
         _relay(_worker, 0, abi.encodeCall(market.submitWork, (taskId, deliverable)));
     }
 
+    function _acceptSubmission(bytes32 taskId, address _req, address _worker, bytes32 _deliverable) internal {
+        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker, _deliverable)));
+    }
+
+    /// Back-compat helper: for Claim/Pitch/Auction reads the deliverable from
+    /// task storage (where submitWork wrote it, or zero if submitWork wasn't called).
+    /// For Bounty/Benchmark the contract requires a non-zero deliverable, so the helper
+    /// substitutes keccak256("work") to keep existing test flows working unchanged.
     function _acceptSubmission(bytes32 taskId, address _req, address _worker) internal {
-        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker)));
+        TaskMarket.Task memory _task = market.getTask(taskId);
+        bytes32 _deliverable;
+        if (_task.mode == market.BOUNTY() || _task.mode == market.BENCHMARK()) {
+            _deliverable = keccak256("work");
+        } else {
+            _deliverable = _task.deliverable;
+        }
+        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker, _deliverable)));
     }
 
     function _forfeitAndReopen(bytes32 taskId, address _req) internal {
         _relay(_req, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
     }
 
+    function _rateTask(bytes32 taskId, address _req, address _worker, uint8 _rating, uint256 _waid, uint256 _raid, string memory _uri, bytes32 _hash) internal {
+        _relay(_req, 0, abi.encodeCall(market.rateTask, (taskId, _worker, _rating, _waid, _raid, _uri, _hash)));
+    }
+
+    /// Back-compat helper that defaults worker to task.worker (post-acceptance).
     function _rateTask(bytes32 taskId, address _req, uint8 _rating, uint256 _waid, uint256 _raid, string memory _uri, bytes32 _hash) internal {
-        _relay(_req, 0, abi.encodeCall(market.rateTask, (taskId, _rating, _waid, _raid, _uri, _hash)));
+        address _worker = market.getTask(taskId).worker;
+        _relay(_req, 0, abi.encodeCall(market.rateTask, (taskId, _worker, _rating, _waid, _raid, _uri, _hash)));
     }
 
     function _cancelTask(bytes32 taskId, address _req) internal {
@@ -440,15 +461,15 @@ contract TaskMarketTest is Test {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.warp(block.timestamp + DURATION + 1);
         vm.expectRevert("Task expired");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
     }
 
-    function test_RevertWhen_RateTaskTwice() public {
+    function test_RevertWhen_RateSameWorkerTwice() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _acceptSubmission(taskId, requester, worker1);
         _rateTask(taskId, requester, 5, 0, 0, "", bytes32(0));
-        vm.expectRevert("Already rated");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 4, 0, 0, "", bytes32(0))));
+        vm.expectRevert("Worker already rated");
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 4, 0, 0, "", bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
@@ -483,7 +504,7 @@ contract TaskMarketTest is Test {
 
         vm.prank(alice);
         vm.expectRevert("Not trusted forwarder");
-        market.acceptSubmission(taskId, worker1);
+        market.acceptSubmission(taskId, worker1, keccak256("work"));
     }
 
     function test_RevertWhen_NonServer_ForfeitAndReopen() public {
@@ -503,7 +524,7 @@ contract TaskMarketTest is Test {
 
         vm.prank(alice);
         vm.expectRevert("Not trusted forwarder");
-        market.rateTask(taskId, 5, 0, 0, "", bytes32(0));
+        market.rateTask(taskId, worker1, 5, 0, 0, "", bytes32(0));
     }
 
     // -----------------------------------------------------------------------
@@ -651,7 +672,7 @@ contract TaskMarketTest is Test {
     function test_RevertWhen_AcceptSubmission_WrongRequester() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert("Not requester");
-        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
     }
 
     function test_RevertWhen_ForfeitAndReopen_WrongRequester() public {
@@ -668,7 +689,7 @@ contract TaskMarketTest is Test {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _acceptSubmission(taskId, requester, worker1);
         vm.expectRevert("Not requester");
-        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.rateTask, (taskId, 5, 0, 0, "", bytes32(0))));
+        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 5, 0, 0, "", bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
@@ -698,21 +719,21 @@ contract TaskMarketTest is Test {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, 0);
         vm.expectRevert("Worker must be claimer");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, bytes32(0))));
     }
 
     function test_RevertWhen_AcceptSubmission_Pitch_WrongWorker() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
         _selectWorker(taskId, requester, worker1);
         vm.expectRevert("Worker mismatch");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
     // submitWork
     // -----------------------------------------------------------------------
 
-    function test_SubmitWork_Bounty_SetsPendingApproval() public {
+    function test_SubmitWork_Bounty_EmitOnly() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         bytes32 deliverable = keccak256("my work artifact");
 
@@ -722,19 +743,48 @@ contract TaskMarketTest is Test {
         _submitWork(taskId, worker1, deliverable);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.PendingApproval));
-        assertEq(task.deliverable, deliverable);
+        // Deferred-write model: submitWork in Bounty must NOT change status
+        // or write task.deliverable. Multiple workers may submit.
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open));
+        assertEq(task.deliverable, bytes32(0));
     }
 
-    function test_SubmitWork_Benchmark_SetsPendingApproval() public {
+    function test_SubmitWork_Bounty_MultipleSubmissions_Allowed() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 deliverableA = keccak256("worker A artifact");
+        bytes32 deliverableB = keccak256("worker B artifact");
+        bytes32 deliverableC = keccak256("worker C artifact");
+
+        _submitWork(taskId, worker1, deliverableA);
+        _submitWork(taskId, worker2, deliverableB);
+        _submitWork(taskId, alice,   deliverableC);
+
+        TaskMarket.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open), "3 submissions must not change status");
+        assertEq(task.deliverable, bytes32(0), "task.deliverable must stay zero until acceptance");
+    }
+
+    function test_SubmitWork_Benchmark_EmitOnly() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
         bytes32 deliverable = keccak256("benchmark result");
 
         _submitWork(taskId, worker1, deliverable);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.PendingApproval));
-        assertEq(task.deliverable, deliverable);
+        // Benchmark uses same deferred-write model as Bounty (multi-proof support).
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open));
+        assertEq(task.deliverable, bytes32(0));
+    }
+
+    function test_SubmitWork_Benchmark_MultipleSubmissions_Allowed() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+
+        _submitWork(taskId, worker1, keccak256("proof A"));
+        _submitWork(taskId, worker2, keccak256("proof B"));
+
+        TaskMarket.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open));
+        assertEq(task.deliverable, bytes32(0));
     }
 
     function test_SubmitWork_Claim_NoStateChange() public {
@@ -806,14 +856,14 @@ contract TaskMarketTest is Test {
     function test_RevertWhen_RateTask_NotAccepted() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert("Task not accepted");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 3, 0, 0, "", bytes32(0))));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 3, 0, 0, "", bytes32(0))));
     }
 
     function test_RevertWhen_RateTask_InvalidRating() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _acceptSubmission(taskId, requester, worker1);
         vm.expectRevert("Rating must be 0-100");
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, 101, 0, 0, "", bytes32(0))));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 101, 0, 0, "", bytes32(0))));
     }
 
     // -----------------------------------------------------------------------
@@ -1282,19 +1332,318 @@ contract TaskMarketTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // Storage layout — __gap is now 46 slots after consuming 2 for the new
-    // pitch / proof hash mappings. If a future upgrade reorders or shrinks
-    // gap incorrectly, this read of the last gap slot will fail.
+    // Storage layout — __gap is now 45 slots after consuming 3 for the new
+    // pitch / proof / taskWorkerRated mappings. If a future upgrade reorders
+    // or shrinks gap incorrectly, this read of the last gap slot will fail.
     // -----------------------------------------------------------------------
 
-    function test_StorageGapIs46Slots() public view {
-        // taskPitchHashes is at slot 10, taskProofHashes at 11, gap starts at 12.
-        // The last gap slot is 12 + 46 - 1 = 57; reading slot 58 should be a
-        // brand-new uninitialised slot just past the gap (zero) — and reading
-        // slot 57 should also be zero (the gap is just uint256[46] uninitialised).
-        bytes32 firstGapSlot = vm.load(address(market), bytes32(uint256(12)));
+    function test_StorageGapIs45Slots() public view {
+        // taskPitchHashes at slot 10, taskProofHashes at 11, taskWorkerRated at 12,
+        // __gap starts at slot 13 and spans 45 slots, ending at 13+45-1 = 57.
+        bytes32 firstGapSlot = vm.load(address(market), bytes32(uint256(13)));
         bytes32 lastGapSlot = vm.load(address(market), bytes32(uint256(57)));
         assertEq(firstGapSlot, bytes32(0));
         assertEq(lastGapSlot, bytes32(0));
+    }
+
+    // =======================================================================
+    // Ranked payouts (acceptRanked) + new acceptSubmission semantics + rateTask
+    // multi-winner. New surface added in this PR.
+    // =======================================================================
+
+    function _acceptRanked(
+        bytes32 taskId,
+        address _req,
+        address[] memory workers,
+        uint16[] memory shares,
+        bytes32[] memory deliverables
+    ) internal {
+        _relay(_req, 0, abi.encodeCall(market.acceptRanked, (taskId, workers, shares, deliverables)));
+    }
+
+    function test_AcceptSubmission_Bounty_RequiresNonZeroDeliverable() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.expectRevert("Deliverable required");
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0))));
+    }
+
+    function test_AcceptSubmission_Benchmark_RequiresNonZeroDeliverable() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        vm.expectRevert("Deliverable required");
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0))));
+    }
+
+    function test_AcceptSubmission_LockedWorkerMode_CrossChecksDeliverable() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("the right one"));
+
+        vm.expectRevert("Deliverable mismatch");
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("wrong"))));
+    }
+
+    function test_AcceptRanked_HappyPath_ThreeWinners_Bounty() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+
+        address[] memory workers = new address[](3);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        workers[2] = alice;
+
+        uint16[] memory shares = new uint16[](3);
+        shares[0] = 5000;
+        shares[1] = 3000;
+        shares[2] = 2000;
+
+        bytes32[] memory deliverables = new bytes32[](3);
+        deliverables[0] = keccak256("A");
+        deliverables[1] = keccak256("B");
+        deliverables[2] = keccak256("C");
+
+        uint256 feeBefore = usdc.balanceOf(feeRecipient);
+        uint256 w1Before = usdc.balanceOf(worker1);
+        uint256 w2Before = usdc.balanceOf(worker2);
+        uint256 aliceBefore = usdc.balanceOf(alice);
+
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+
+        TaskMarket.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+        assertEq(task.worker, worker1, "task.worker = workers[0]");
+        assertEq(task.deliverable, keccak256("A"), "task.deliverable = deliverables[0]");
+
+        uint256 pay1 = (REWARD * 5000) / 10000;
+        uint256 pay2 = (REWARD * 3000) / 10000;
+        uint256 pay3 = (REWARD * 2000) / 10000;
+        uint256 fee1 = (pay1 * defaultFeeBps) / 10000;
+        uint256 fee2 = (pay2 * defaultFeeBps) / 10000;
+        uint256 fee3 = (pay3 * defaultFeeBps) / 10000;
+
+        assertEq(usdc.balanceOf(worker1) - w1Before, pay1 - fee1);
+        assertEq(usdc.balanceOf(worker2) - w2Before, pay2 - fee2);
+        assertEq(usdc.balanceOf(alice)   - aliceBefore, pay3 - fee3);
+        assertEq(usdc.balanceOf(feeRecipient) - feeBefore, fee1 + fee2 + fee3, "Fees batched into a single transfer");
+    }
+
+    function test_AcceptRanked_HappyPath_Benchmark() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+
+        address[] memory workers = new address[](2);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 7000;
+        shares[1] = 3000;
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("proof A");
+        deliverables[1] = keccak256("proof B");
+
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+
+        TaskMarket.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+    }
+
+    function test_AcceptRanked_RevertsOnSharesSumMismatch_Under() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](2);
+        workers[0] = worker1; workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 5000; shares[1] = 4000;  // sum 9000
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B");
+
+        vm.expectRevert("Shares must sum to 10000");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_RevertsOnSharesSumMismatch_Over() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](2);
+        workers[0] = worker1; workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 6000; shares[1] = 5000;  // sum 11000
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B");
+
+        vm.expectRevert("Shares must sum to 10000");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_RevertsOnArrayLengthMismatch() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](2);
+        workers[0] = worker1; workers[1] = worker2;
+        uint16[] memory shares = new uint16[](3);
+        shares[0] = 5000; shares[1] = 3000; shares[2] = 2000;
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B");
+
+        vm.expectRevert("Length mismatch");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_RevertsOnEmptyArrays() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](0);
+        uint16[] memory shares = new uint16[](0);
+        bytes32[] memory deliverables = new bytes32[](0);
+
+        vm.expectRevert("No winners");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_RevertsOnZeroDeliverable() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](1);
+        workers[0] = worker1;
+        uint16[] memory shares = new uint16[](1);
+        shares[0] = 10000;
+        bytes32[] memory deliverables = new bytes32[](1);
+        deliverables[0] = bytes32(0);
+
+        vm.expectRevert("Deliverable required");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_RevertsOnLockedWorkerMode_Pitch() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        _selectWorker(taskId, requester, worker1);
+        address[] memory workers = new address[](1);
+        workers[0] = worker1;
+        uint16[] memory shares = new uint16[](1);
+        shares[0] = 10000;
+        bytes32[] memory deliverables = new bytes32[](1);
+        deliverables[0] = keccak256("x");
+
+        vm.expectRevert("Ranked only valid for Bounty/Benchmark");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_RevertsOnLockedWorkerMode_Claim() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _claimTask(taskId, worker1, 0);
+        address[] memory workers = new address[](1);
+        workers[0] = worker1;
+        uint16[] memory shares = new uint16[](1);
+        shares[0] = 10000;
+        bytes32[] memory deliverables = new bytes32[](1);
+        deliverables[0] = keccak256("x");
+
+        vm.expectRevert("Ranked only valid for Bounty/Benchmark");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_SingleWinner_Equivalent() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](1);
+        workers[0] = worker1;
+        uint16[] memory shares = new uint16[](1);
+        shares[0] = 10000;
+        bytes32[] memory deliverables = new bytes32[](1);
+        deliverables[0] = keccak256("the work");
+
+        uint256 w1Before = usdc.balanceOf(worker1);
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+
+        TaskMarket.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+        assertEq(task.worker, worker1);
+        assertEq(task.deliverable, keccak256("the work"));
+        uint256 fee = (REWARD * defaultFeeBps) / 10000;
+        assertEq(usdc.balanceOf(worker1) - w1Before, REWARD - fee);
+    }
+
+    function test_AcceptRanked_AllowsDuplicateWorkers() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](3);
+        workers[0] = worker1;
+        workers[1] = worker1;  // duplicate intentional
+        workers[2] = worker2;
+        uint16[] memory shares = new uint16[](3);
+        shares[0] = 3000; shares[1] = 2000; shares[2] = 5000;
+        bytes32[] memory deliverables = new bytes32[](3);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B"); deliverables[2] = keccak256("C");
+
+        uint256 w1Before = usdc.balanceOf(worker1);
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+
+        uint256 pay1 = (REWARD * 3000) / 10000;
+        uint256 pay2 = (REWARD * 2000) / 10000;
+        uint256 fee1 = (pay1 * defaultFeeBps) / 10000;
+        uint256 fee2 = (pay2 * defaultFeeBps) / 10000;
+        assertEq(usdc.balanceOf(worker1) - w1Before, (pay1 - fee1) + (pay2 - fee2), "duplicate worker accumulates");
+    }
+
+    function test_AcceptRanked_RevertsOnZeroPayoutPerPair() public {
+        // reward small enough that a tiny share rounds payment to 0
+        uint256 tinyReward = 100;  // 100 base units USDC
+        bytes32 taskId = _createTask(requester, tinyReward, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](2);
+        workers[0] = worker1; workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 9999; shares[1] = 1;  // share=1 rounds 100*1/10000 = 0
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B");
+
+        vm.expectRevert("Zero payout per pair");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+    }
+
+    function test_AcceptRanked_FeeMath_FeeZero() public {
+        // override default fee to 0
+        vm.prank(owner);
+        market.setDefaultFeeBps(0);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+
+        address[] memory workers = new address[](2);
+        workers[0] = worker1; workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 5000; shares[1] = 5000;
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B");
+
+        uint256 feeBefore = usdc.balanceOf(feeRecipient);
+        uint256 w1Before = usdc.balanceOf(worker1);
+        uint256 w2Before = usdc.balanceOf(worker2);
+
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+
+        assertEq(usdc.balanceOf(feeRecipient), feeBefore, "no fee when feeBps=0");
+        assertEq(usdc.balanceOf(worker1) - w1Before, REWARD / 2);
+        assertEq(usdc.balanceOf(worker2) - w2Before, REWARD / 2);
+    }
+
+    function test_RateTask_Bounty_PerWinner() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+
+        // accept ranked to set up two winners
+        address[] memory workers = new address[](2);
+        workers[0] = worker1; workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 6000; shares[1] = 4000;
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A"); deliverables[1] = keccak256("B");
+        _acceptRanked(taskId, requester, workers, shares, deliverables);
+
+        // rate both winners independently
+        _rateTask(taskId, requester, worker1, 90, 0, 0, "", bytes32(0));
+        _rateTask(taskId, requester, worker2, 60, 0, 0, "", bytes32(0));
+
+        ITMP.WorkerStats memory s1 = market.getWorkerStats(worker1);
+        ITMP.WorkerStats memory s2 = market.getWorkerStats(worker2);
+        assertEq(s1.ratedTasks, 1);
+        assertEq(s1.totalStars, 90);
+        assertEq(s2.ratedTasks, 1);
+        assertEq(s2.totalStars, 60);
+    }
+
+    function test_RateTask_LockedWorkerMode_RequiresTaskWorker() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
+        _selectWorker(taskId, requester, worker1);
+        _acceptSubmission(taskId, requester, worker1);
+
+        vm.expectRevert("Worker mismatch");
+        _rateTask(taskId, requester, worker2, 50, 0, 0, "", bytes32(0));
     }
 }
