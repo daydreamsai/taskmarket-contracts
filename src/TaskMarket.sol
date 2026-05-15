@@ -114,7 +114,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     // Events
     // -------------------------------------------------------------------------
 
-    // TaskCreated, TaskAccepted, TaskSubmitted, TaskRated, TaskExpired, TaskCancelled
+    // TaskCreated, TaskCompleted, TaskSubmitted, TaskRated, TaskExpired, TaskCancelled
     // are inherited from ITMP.
     // ReputationRegistryUpdated is inherited from ITMPReputation.
 
@@ -623,7 +623,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
             }
         }
 
-        emit TaskAccepted(taskId, requester, worker, workerPayment, fee);
+        emit TaskCompleted(taskId, requester, worker, workerPayment, fee);
     }
 
     /**
@@ -734,7 +734,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
             if (refund > 0) {
                 require(usdcToken.transfer(task.requester, refund), "Requester refund failed");
             }
-            emit TaskAccepted(taskId, task.requester, task.worker, workerPayment, fee);
+            emit TaskCompleted(taskId, task.requester, task.worker, workerPayment, fee);
             return;
         }
 

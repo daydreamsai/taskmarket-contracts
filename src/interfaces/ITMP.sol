@@ -81,7 +81,7 @@ interface ITMP is IERC165 {
     );
 
     /// @notice Emitted when a task is completed and worker is paid.
-    event TaskAccepted(
+    event TaskCompleted(
         bytes32 indexed taskId,
         address indexed requester,
         address indexed worker,
