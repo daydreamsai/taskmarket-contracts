@@ -1,0 +1,11 @@
+{
+  "filter_paths": "lib,test,script",
+  "exclude_informational": false,
+  "exclude_low": false,
+  "exclude_medium": false,
+  "exclude_high": false,
+  "detectors_to_exclude": "naming-convention,unused-state,timestamp,low-level-calls,solc-version",
+  "fail_on": "medium",
+  "checklist": true,
+  "markdown_root": "."
+}

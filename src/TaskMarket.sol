@@ -6,14 +6,18 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {Initializable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
-import {ITMP} from "./interfaces/ITMP.sol";
+import {Ownable2StepUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol";
+import {ITMPCore} from "./interfaces/ITMPCore.sol";
 import {ITMPReputation} from "./interfaces/ITMPReputation.sol";
 import {ITMPFees} from "./interfaces/ITMPFees.sol";
+import {ITMPEvaluator} from "./interfaces/ITMPEvaluator.sol";
+import {ITMPHook} from "./interfaces/ITMPHook.sol";
+import {ITMPRegistry} from "./interfaces/ITMPRegistry.sol";
 import {IPGTRForwarder} from "./interfaces/IPGTRForwarder.sol";
 import {IReputationRegistry} from "./interfaces/IReputationRegistry.sol";
 import {
-    ITMPMode,
+    ITMPModes,
     TMP_BOUNTY,
     TMP_CLAIM,
     TMP_PITCH,
@@ -23,7 +27,7 @@ import {
     TMP_AUCTION_ENGLISH,
     TMP_AUCTION_REVERSE_DUTCH,
     TMP_AUCTION_REVERSE_ENGLISH
-} from "./interfaces/ITMPMode.sol";
+} from "./interfaces/ITMPModes.sol";
 
 /**
  * @title TaskMarket
@@ -44,7 +48,7 @@ import {
  *      Storage layout rule: new state variables MUST be appended after existing ones
  *      and MUST consume slots from __gap. Never insert between existing variables.
  */
-contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, OwnableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
+contract TaskMarket is ITMPCore, ITMPEvaluator, ITMPRegistry, ITMPReputation, ITMPFees, ITMPModes, Initializable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuard, UUPSUpgradeable {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -64,14 +68,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     bytes4 public constant AUCTION_REVERSE_DUTCH   = TMP_AUCTION_REVERSE_DUTCH;
     bytes4 public constant AUCTION_REVERSE_ENGLISH = TMP_AUCTION_REVERSE_ENGLISH;
 
-    // -------------------------------------------------------------------------
-    // Types
-    // -------------------------------------------------------------------------
-
-    struct Bid {
-        address worker;
-        uint256 price;
-    }
+    uint256 public constant MAX_BIDS_PER_TASK = 500;
 
     // -------------------------------------------------------------------------
     // State variables
@@ -105,56 +102,45 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     /// @notice Anchored proof hashes per task. Same commitment pattern as pitches.
     mapping(bytes32 => bytes32[]) public taskProofHashes;
 
-    // Reserve 46 slots for future state variables (was 50; trustedForwarders replaced
-    // authorizedServer at the same logical position, requesterNonce consumed 1,
-    // taskPitchHashes consumed 1, taskProofHashes consumed 1).
-    uint256[46] private __gap;
+    /// @notice Whether a (task, worker) pair has been rated. Prevents inflating
+    ///         workerStats by rating the same worker twice on the same task in
+    ///         multi-winner Bounty / Benchmark flows.
+    mapping(bytes32 => mapping(address => bool)) public taskWorkerRated;
+
+    // ERC-8195: on-chain tags per task (keccak256-hashed at creation).
+    mapping(bytes32 => bytes32[]) public taskTags;
+
+    // ERC-8195: verdicts stored after evaluate() is called.
+    mapping(bytes32 => Verdict) public taskVerdicts;
+
+    // ERC-8195: per-task phase deadline. Serves dual purpose depending on task state:
+    //   Review state:    evaluation deadline (set by submitWork, read by evaluatorTimeout)
+    //   Appealing state: appeal deadline     (overwritten by evaluate, read by appeal/finalizeVerdict)
+    mapping(bytes32 => uint256) public phaseDeadline;
+
+    // ERC-8195 split-struct extension mappings. Separating infrequently-accessed and
+    // mode-specific fields from the core Task struct keeps the getTask() ABI encoder
+    // within Yul stack limits under the coverage compiler (which strips via_ir).
+    mapping(bytes32 => TaskEvaluatorConfig) public taskEvaluatorConfigs;
+    mapping(bytes32 => TaskAuctionConfig)   public taskAuctionConfigs;
+    mapping(bytes32 => TaskMetadata)        public taskMetadata;
+    mapping(bytes32 => TaskPitchConfig)     public taskPitchConfigs;
+
+    // Reserve 38 slots (started at 50; reduced by 12 for state variables added post-deploy).
+    uint256[38] private __gap;
 
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
 
-    // TaskCreated, TaskCompleted, TaskSubmitted, TaskRated, TaskExpired, TaskCancelled
-    // are inherited from ITMP.
-    // ReputationRegistryUpdated is inherited from ITMPReputation.
-
-    event TaskClaimed(bytes32 indexed taskId, address indexed claimer, uint256 stakeAmount);
-    event TaskWorkerSelected(bytes32 indexed taskId, address indexed worker);
-    event StakeForfeited(bytes32 indexed taskId, address indexed claimer, uint256 stakeAmount);
-    event StakeReturned(bytes32 indexed taskId, address indexed claimer, uint256 stakeAmount);
-    event TaskReopened(bytes32 indexed taskId);
-    event FeesUpdated(uint16 newFeeBps);
-    event FeeRecipientUpdated(address newRecipient);
-    event ForwarderUpdated(address indexed forwarder, bool trusted);
-    event BidSubmitted(bytes32 indexed taskId, address indexed worker, uint256 price);
-    event TaskUpdated(bytes32 indexed taskId, uint256 newReward, uint256 newExpiryTime);
-
-    /// @notice Emitted when a worker anchors a pitch hash for a pitch-mode task.
-    event PitchSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 pitchHash);
-
-    /// @notice Emitted when a worker anchors a proof hash for a benchmark-mode task.
-    ///         proofType is the keccak256(typeString) bytes32 selector; metricValue is
-    ///         a free-form numeric score whose meaning is task-specific.
-    event ProofSubmitted(
-        bytes32 indexed taskId,
-        address indexed worker,
-        bytes32 proofHash,
-        bytes32 proofType,
-        uint256 metricValue
-    );
-
-    /// @notice Emitted when a worker accepts a dutch/reverse_dutch auction's clock
-    ///         price. Coexists with the legacy BidSubmitted + TaskWorkerSelected pair
-    ///         emitted by acceptAuction so older indexers keep working; new indexers
-    ///         should prefer this single event for clarity.
-    event AuctionAccepted(bytes32 indexed taskId, address indexed worker, uint256 acceptedPrice);
+    // All events are inherited from ITMPCore, ITMPFees, and ITMPReputation.
 
     // -------------------------------------------------------------------------
     // Modifiers
     // -------------------------------------------------------------------------
 
     modifier onlyTrustedForwarder() {
-        require(trustedForwarders[msg.sender], "Not trusted forwarder");
+        if (!trustedForwarders[msg.sender]) revert NotTrustedForwarder();
         _;
     }
 
@@ -183,8 +169,9 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         uint16 _defaultFeeBps
     ) public initializer {
         __Ownable_init(msg.sender);
-        require(_feeRecipient != address(0), "Invalid fee recipient");
-        require(_defaultFeeBps <= 10000, "Fee BPS too high");
+        __Pausable_init();
+        if (_feeRecipient == address(0)) revert InvalidFeeRecipient();
+        if (_defaultFeeBps > 10000) revert FeeBpsTooHigh();
         usdcToken = IERC20(_usdcToken);
         feeRecipient = _feeRecipient;
         defaultFeeBps = _defaultFeeBps;
@@ -202,14 +189,16 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
 
     /**
      * @notice ERC-165 interface detection.
-     * @dev Returns true for ITMP and IERC165 interface IDs.
+     * @dev Returns true for ITMPCore and IERC165 interface IDs.
      * @param interfaceId 4-byte interface selector to check
      */
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(ITMP).interfaceId
+        return interfaceId == type(ITMPCore).interfaceId
+            || interfaceId == type(ITMPEvaluator).interfaceId
+            || interfaceId == type(ITMPRegistry).interfaceId
             || interfaceId == type(ITMPReputation).interfaceId
             || interfaceId == type(ITMPFees).interfaceId
-            || interfaceId == type(ITMPMode).interfaceId
+            || interfaceId == type(ITMPModes).interfaceId
             || interfaceId == type(IERC165).interfaceId;
     }
 
@@ -218,11 +207,22 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     // -------------------------------------------------------------------------
 
     /**
+     * @notice Halt all state-mutating operations (owner only).
+     *         Stops all attack vectors during an emergency. Unpause after deploying a fix.
+     */
+    function pause() external onlyOwner { _pause(); }
+
+    /**
+     * @notice Restore normal operation after a pause (owner only).
+     */
+    function unpause() external onlyOwner { _unpause(); }
+
+    /**
      * @notice Add a trusted PGTR forwarder (owner only)
      * @param forwarder Address to trust as a forwarder
      */
     function addForwarder(address forwarder) external onlyOwner {
-        require(forwarder != address(0), "Invalid forwarder address");
+        if (forwarder == address(0)) revert InvalidForwarderAddress();
         trustedForwarders[forwarder] = true;
         emit ForwarderUpdated(forwarder, true);
     }
@@ -250,7 +250,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param feeBps New fee in basis points
      */
     function setDefaultFeeBps(uint16 feeBps) external onlyOwner {
-        require(feeBps <= 10000, "Fee BPS too high");
+        if (feeBps > 10000) revert FeeBpsTooHigh();
         defaultFeeBps = feeBps;
         emit FeesUpdated(feeBps);
     }
@@ -260,7 +260,7 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param recipient New fee recipient address
      */
     function setFeeRecipient(address recipient) external onlyOwner {
-        require(recipient != address(0), "Invalid recipient");
+        if (recipient == address(0)) revert InvalidRecipient();
         feeRecipient = recipient;
         emit FeeRecipientUpdated(recipient);
     }
@@ -268,6 +268,44 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * @dev Builds a TaskContext snapshot for hook callbacks.
+     */
+    function _buildContext(bytes32 taskId) internal view returns (TaskContext memory) {
+        Task storage t = tasks[taskId];
+        TaskEvaluatorConfig storage ec = taskEvaluatorConfigs[taskId];
+        return TaskContext({
+            taskId: taskId,
+            requester: t.requester,
+            evaluator: ec.evaluator,
+            paymentToken: address(usdcToken),
+            reward: t.reward,
+            evaluatorStake: ec.evaluatorStake,
+            evaluatorFeeBps: ec.evaluatorFeeBps,
+            submissionDeadline: t.expiryTime,
+            evaluationWindow: ec.evaluationWindow,
+            appealWindow: ec.appealWindow,
+            disputeResolver: ec.disputeResolver,
+            currentState: t.status,
+            mode: t.mode,
+            tags: taskTags[taskId]
+        });
+    }
+
+    /**
+     * @dev Calls an after-hook best-effort (swallows failures).
+     *      Does nothing when hook == address(0).
+     */
+    function _afterHook(address hook, bytes memory data) internal {
+        if (hook == address(0)) return;
+        // on* hooks are fire-and-forget; failures are swallowed so a buggy hook cannot block
+        // fund recovery. Emit HookCallFailed so failures are observable on-chain.
+        // solhint-disable-next-line avoid-low-level-calls
+        // slither-disable-next-line unchecked-lowlevel
+        (bool ok,) = hook.call(data);
+        if (!ok) emit HookCallFailed(hook);
+    }
 
     /**
      * @dev Returns the authenticated actor for this call.
@@ -299,14 +337,17 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      *         before submitting this transaction.
      *         The requester is the authenticated actor from the PGTR forwarder (pgtrSender).
      *         The USDC reward MUST be transferred to this contract by the forwarder before calling.
-     * @param reward        USDC reward (6 decimals); for Auction = max price
-     * @param duration      Task lifetime in seconds
+     * @param reward          USDC reward (6 decimals); for Auction = max price
+     * @param duration        Task lifetime in seconds
      * @param mode            4-byte mode selector (use BOUNTY/CLAIM/PITCH/BENCHMARK/AUCTION)
      * @param pitchDeadline   Seconds from now for pitch window (Pitch mode only, 0 otherwise)
      * @param bidDeadline     Seconds from now for bid window (Auction mode only, 0 otherwise)
      * @param contentHash     Optional keccak256 of off-chain task description (bytes32(0) if unused)
      * @param contentURI      Optional URI pointing to extended task metadata (empty string if unused)
      * @param auctionSubtype  Auction subtype selector (bytes4(0) for non-auction tasks)
+     * @param hookContract    ITMPHook address; address(0) for no hook (ERC-8195)
+     * @param tags            keccak256-hashed classification labels stored on-chain (ERC-8195)
+     * @param hookData        Arbitrary bytes forwarded verbatim to checkFund; use for per-task hook config
      * @return taskId         Contract-generated canonical task identifier
      */
     function createTask(
@@ -317,56 +358,64 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         uint256 bidDeadline,
         bytes32 contentHash,
         string  calldata contentURI,
-        bytes4  auctionSubtype
-    ) external onlyTrustedForwarder returns (bytes32 taskId) {
+        bytes4  auctionSubtype,
+        address hookContract,
+        bytes32[] calldata tags,
+        bytes   calldata hookData
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (bytes32 taskId) {
         address requester = _effectiveSender();
-        require(requester != address(0), "Invalid requester");
-        require(reward > 0, "Reward must be greater than 0");
-        require(duration > 0, "Duration must be greater than 0");
-        require(
-            mode == BOUNTY || mode == CLAIM || mode == PITCH || mode == BENCHMARK || mode == AUCTION,
-            "Invalid mode"
-        );
+        if (requester == address(0)) revert InvalidRequester();
+        if (reward == 0) revert RewardMustBeGreaterThanZero();
+        if (duration == 0) revert DurationMustBeGreaterThanZero();
+        if (!(mode == BOUNTY || mode == CLAIM || mode == PITCH || mode == BENCHMARK || mode == AUCTION)) revert InvalidMode();
         if (mode == AUCTION) {
-            require(
-                auctionSubtype == AUCTION_DUTCH
+            if (!(auctionSubtype == AUCTION_DUTCH
                     || auctionSubtype == AUCTION_ENGLISH
                     || auctionSubtype == AUCTION_REVERSE_DUTCH
-                    || auctionSubtype == AUCTION_REVERSE_ENGLISH,
-                "Invalid auction subtype"
-            );
+                    || auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert InvalidAuctionSubtype();
         }
 
         taskId = keccak256(abi.encode(block.chainid, address(this), requester, requesterNonce[requester]++));
 
         // USDC was transferred to this contract by the forwarder before this call.
 
-        tasks[taskId] = Task({
-            id: taskId,
-            requester: requester,
-            worker: address(0),
-            reward: reward,
-            createdAt: block.timestamp,
-            expiryTime: block.timestamp + duration,
-            status: TaskStatus.Open,
-            rating: 0,
-            mode: mode,
-            stakeAmount: 0,
-            claimer: address(0),
-            claimedAt: 0,
-            pitchDeadline: mode == PITCH ? block.timestamp + pitchDeadline : 0,
-            feeBps: defaultFeeBps,
-            bidDeadline: mode == AUCTION ? block.timestamp + bidDeadline : 0,
-            maxPrice: mode == AUCTION ? reward : 0,
-            deliverable: bytes32(0),
-            contentHash: contentHash,
-            contentURI: contentURI,
-            auctionSubtype: mode == AUCTION ? auctionSubtype : bytes4(0),
-            lowestBidder: address(0),
-            lowestBidPrice: 0
-        });
+        Task storage t = tasks[taskId];
+        t.id         = taskId;
+        t.requester  = requester;
+        t.reward     = reward;
+        t.expiryTime = block.timestamp + duration;
+        t.status     = TaskStatus.Open;
+        t.mode       = mode;
+        t.feeBps     = defaultFeeBps;
+        t.hookContract = hookContract;
 
-        emit TaskCreated(taskId, requester, reward, block.timestamp + duration, mode);
+        TaskMetadata storage meta = taskMetadata[taskId];
+        meta.createdAt   = block.timestamp;
+        meta.contentHash = contentHash;
+        meta.contentURI  = contentURI;
+
+        if (mode == PITCH) taskPitchConfigs[taskId].pitchDeadline = block.timestamp + pitchDeadline;
+        if (mode == AUCTION) {
+            TaskAuctionConfig storage ac = taskAuctionConfigs[taskId];
+            ac.bidDeadline    = block.timestamp + bidDeadline;
+            ac.maxPrice       = reward;
+            ac.auctionSubtype = auctionSubtype;
+        }
+
+        if (tags.length > 0) {
+            taskTags[taskId] = tags;
+        }
+
+        if (hookContract != address(0)) {
+            _checkFundHook(taskId, hookContract, hookData);
+        }
+
+        emit TaskCreated(taskId, requester, reward, mode, block.timestamp + duration);
+    }
+
+    function _checkFundHook(bytes32 taskId, address hookContract, bytes calldata hookData) internal {
+        if (!ITMPHook(hookContract).checkFund(taskId, _buildContext(taskId), hookData)) revert HookCheckFundRejected();
+        emit HookRegistered(taskId, hookContract);
     }
 
     /**
@@ -375,21 +424,26 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param stakeAmount USDC stake amount (0 = no stake required).
      *                    If > 0, the forwarder must transfer the stake to this contract before calling.
      */
-    function claimTask(bytes32 taskId, uint256 stakeAmount) external onlyTrustedForwarder nonReentrant {
+    function claimTask(bytes32 taskId, uint256 stakeAmount) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address worker = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(worker != address(0), "Invalid worker");
-        require(task.mode == CLAIM, "Not a Claim task");
-        require(task.status == TaskStatus.Open, "Task not available");
-        require(block.timestamp <= task.expiryTime, "Task expired");
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (worker == address(0)) revert InvalidWorker();
+        if (task.mode != CLAIM) revert NotAClaimTask();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (block.timestamp > task.expiryTime) revert TaskIsExpired();
 
         // If stakeAmount > 0, the stake was transferred to this contract by the forwarder.
 
-        task.claimer = worker;
-        task.claimedAt = block.timestamp;
+        task.worker = worker;
         task.stakeAmount = stakeAmount;
         task.status = TaskStatus.Claimed;
+        taskMetadata[taskId].claimedAt = block.timestamp;
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkClaim(taskId, _buildContext(taskId), worker)) revert HookCheckClaimRejected();
+        }
 
         emit TaskClaimed(taskId, worker, stakeAmount);
     }
@@ -399,16 +453,21 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param taskId Task identifier
      * @param worker Selected worker address
      */
-    function selectWorker(bytes32 taskId, address worker) external onlyTrustedForwarder {
+    function selectWorker(bytes32 taskId, address worker) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(requester == task.requester, "Not requester");
-        require(task.mode == PITCH, "Not a Pitch task");
-        require(task.status == TaskStatus.Open, "Task not available");
-        require(block.timestamp <= task.pitchDeadline, "Pitch deadline passed");
+        if (requester != task.requester) revert NotRequester();
+        if (task.mode != PITCH) revert NotAPitchTask();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (block.timestamp > taskPitchConfigs[taskId].pitchDeadline) revert PitchDeadlinePassed();
 
         task.worker = worker;
         task.status = TaskStatus.WorkerSelected;
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkSelectWorker(taskId, _buildContext(taskId), worker)) revert HookCheckSelectWorkerRejected();
+        }
 
         emit TaskWorkerSelected(taskId, worker);
     }
@@ -418,19 +477,22 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param taskId Task identifier
      * @param price  Bid price in USDC base units (must be <= maxPrice)
      */
-    function submitBid(bytes32 taskId, uint256 price) external onlyTrustedForwarder {
+    function submitBid(bytes32 taskId, uint256 price) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address worker = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(task.mode == AUCTION, "Not an Auction task");
-        require(task.status == TaskStatus.Open, "Task not open");
-        require(block.timestamp < task.bidDeadline, "Bid deadline passed");
-        require(price <= task.maxPrice, "Bid exceeds max price");
+        TaskAuctionConfig storage auctionCfg = taskAuctionConfigs[taskId];
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (task.mode != AUCTION) revert NotAnAuctionTask();
+        if (!(auctionCfg.auctionSubtype == AUCTION_ENGLISH || auctionCfg.auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert NotABidAuction();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (block.timestamp >= auctionCfg.bidDeadline) revert BidDeadlinePassed();
+        if (price > auctionCfg.maxPrice) revert BidExceedsMaxPrice();
+        if (taskBids[taskId].length >= MAX_BIDS_PER_TASK) revert BidLimitReached();
 
         // Maintain running minimum for O(1) winner selection in selectLowestBidder
-        if (taskBids[taskId].length == 0 || price < task.lowestBidPrice) {
-            task.lowestBidPrice = price;
-            task.lowestBidder = worker;
+        if (taskBids[taskId].length == 0 || price < auctionCfg.lowestBidPrice) {
+            auctionCfg.lowestBidPrice = price;
+            auctionCfg.lowestBidder = worker;
         }
 
         taskBids[taskId].push(Bid({ worker: worker, price: price }));
@@ -443,42 +505,54 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param taskId Task identifier
      * @dev O(1): submitBid() maintains a running minimum in task.lowestBidder/lowestBidPrice.
      */
-    function selectLowestBidder(bytes32 taskId) external onlyTrustedForwarder {
+    function selectLowestBidder(bytes32 taskId) external onlyTrustedForwarder whenNotPaused nonReentrant {
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(task.mode == AUCTION, "Not an Auction task");
-        require(task.status == TaskStatus.Open, "Task not open");
-        require(block.timestamp >= task.bidDeadline, "Bid deadline not passed");
-        require(task.lowestBidder != address(0), "No bids submitted");
+        TaskAuctionConfig storage auctionCfg = taskAuctionConfigs[taskId];
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (task.mode != AUCTION) revert NotAnAuctionTask();
+        if (!(auctionCfg.auctionSubtype == AUCTION_ENGLISH || auctionCfg.auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert NotABidAuction();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (block.timestamp < auctionCfg.bidDeadline) revert BidDeadlineNotPassed();
+        if (auctionCfg.lowestBidder == address(0)) revert NoBidsSubmitted();
 
-        task.worker = task.lowestBidder;
-        task.stakeAmount = task.lowestBidPrice;
+        task.worker = auctionCfg.lowestBidder;
+        task.stakeAmount = auctionCfg.lowestBidPrice;
         task.status = TaskStatus.Claimed;
 
-        emit TaskWorkerSelected(taskId, task.lowestBidder);
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkSelectWorker(taskId, _buildContext(taskId), auctionCfg.lowestBidder)) revert HookCheckSelectWorkerRejected();
+        }
+
+        emit TaskWorkerSelected(taskId, auctionCfg.lowestBidder);
     }
 
     /**
      * @notice Directly award an open auction task to a worker at a given price.
      *         Used by clock-based auction subtypes (dutch, reverse_dutch).
      *         The worker is the authenticated actor (pgtrSender).
+     * @dev Does not enforce MAX_BIDS_PER_TASK; clock subtypes have at most one winner.
      * @param taskId Task identifier
      * @param price  Accepted price in USDC base units (must be <= task.maxPrice)
      */
-    function acceptAuction(bytes32 taskId, uint256 price) external onlyTrustedForwarder {
+    function acceptAuction(bytes32 taskId, uint256 price) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address worker = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(task.mode == AUCTION, "Not an Auction task");
-        require(task.status == TaskStatus.Open, "Task not open");
-        require(price <= task.maxPrice, "Price exceeds max price");
+        TaskAuctionConfig storage auctionCfg = taskAuctionConfigs[taskId];
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (task.mode != AUCTION) revert NotAnAuctionTask();
+        if (!(auctionCfg.auctionSubtype == AUCTION_DUTCH || auctionCfg.auctionSubtype == AUCTION_REVERSE_DUTCH)) revert NotAClockPriceAuction();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (price > auctionCfg.maxPrice) revert PriceExceedsMaxPrice();
         task.worker = worker;
         task.stakeAmount = price;
         task.status = TaskStatus.Claimed;
-        // Legacy event pair, kept for backward compatibility with old indexers.
-        emit BidSubmitted(taskId, worker, price);
-        emit TaskWorkerSelected(taskId, worker);
-        // Dedicated event: new indexers should prefer this single signal.
+
+        address auctionHook = task.hookContract;
+        if (auctionHook != address(0)) {
+            if (!ITMPHook(auctionHook).checkSelectWorker(taskId, _buildContext(taskId), worker)) revert HookCheckSelectWorkerRejected();
+        }
+
         emit AuctionAccepted(taskId, worker, price);
     }
 
@@ -491,15 +565,15 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param taskId    Task identifier
      * @param pitchHash Content hash (typically keccak256(abi.encode(taskId, worker, pitchText)))
      */
-    function submitPitch(bytes32 taskId, bytes32 pitchHash) external onlyTrustedForwarder {
+    function submitPitch(bytes32 taskId, bytes32 pitchHash) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address worker = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(task.mode == PITCH, "Not a Pitch task");
-        require(task.status == TaskStatus.Open, "Task not open");
-        require(block.timestamp <= task.pitchDeadline, "Pitch deadline passed");
-        require(block.timestamp <= task.expiryTime, "Task expired");
-        require(pitchHash != bytes32(0), "Empty pitch hash");
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (task.mode != PITCH) revert NotAPitchTask();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (block.timestamp > taskPitchConfigs[taskId].pitchDeadline) revert PitchDeadlinePassed();
+        if (block.timestamp > task.expiryTime) revert TaskIsExpired();
+        if (pitchHash == bytes32(0)) revert EmptyPitchHash();
 
         taskPitchHashes[taskId].push(pitchHash);
         emit PitchSubmitted(taskId, worker, pitchHash);
@@ -521,14 +595,14 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         bytes32 proofHash,
         bytes32 proofType,
         uint256 metricValue
-    ) external onlyTrustedForwarder {
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address worker = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(task.mode == BENCHMARK, "Not a Benchmark task");
-        require(task.status == TaskStatus.Open, "Task not open");
-        require(block.timestamp <= task.expiryTime, "Task expired");
-        require(proofHash != bytes32(0), "Empty proof hash");
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (task.mode != BENCHMARK) revert NotABenchmarkTask();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (block.timestamp > task.expiryTime) revert TaskIsExpired();
+        if (proofHash == bytes32(0)) revert EmptyProofHash();
 
         taskProofHashes[taskId].push(proofHash);
         emit ProofSubmitted(taskId, worker, proofHash, proofType, metricValue);
@@ -539,32 +613,88 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      *         The worker is the authenticated actor (pgtrSender).
      *         Anchors a content hash on-chain for tamper-evident audit trail.
      *         State change is mode-dependent:
-     *           BOUNTY/BENCHMARK → PendingApproval
+     *           BOUNTY/BENCHMARK → Open → PendingApproval on first submission; stays PendingApproval thereafter
      *           CLAIM/PITCH/AUCTION → no state change (worker already locked)
      * @param taskId      Task identifier
      * @param deliverable Content hash (keccak256, IPFS CID, or ZK commitment)
      */
-    function submitWork(bytes32 taskId, bytes32 deliverable) external onlyTrustedForwarder {
+    // Complexity is inherent: five task modes each require distinct state-transition branches.
+    // solhint-disable-next-line code-complexity
+    function submitWork(bytes32 taskId, bytes32 deliverable) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address worker = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(block.timestamp <= task.expiryTime, "Task expired");
-
-        require(task.deliverable == bytes32(0), "Deliverable already set");
-        task.deliverable = deliverable;
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (block.timestamp > task.expiryTime) revert TaskIsExpired();
 
         if (task.mode == BOUNTY || task.mode == BENCHMARK) {
-            require(task.status == TaskStatus.Open, "Task not open");
-            task.status = TaskStatus.PendingApproval;
+            if (task.status != TaskStatus.Open && task.status != TaskStatus.PendingApproval) revert TaskNotOpen();
+            // Transition Open → PendingApproval on first submission; subsequent
+            // submissions stay in PendingApproval. task.deliverable is not written
+            // here — the requester names the winner at acceptSubmission time.
+            if (task.status == TaskStatus.Open) {
+                task.status = TaskStatus.PendingApproval;
+            }
         } else if (task.mode == CLAIM) {
-            require(task.status == TaskStatus.Claimed, "Task not claimed");
-            require(worker == task.claimer, "Worker must be claimer");
+            if (task.status != TaskStatus.Claimed) revert TaskNotClaimed();
+            if (worker != task.worker) revert WorkerMismatch();
+            if (task.deliverable != bytes32(0)) revert DeliverableAlreadySet();
+            task.deliverable = deliverable;
         } else if (task.mode == PITCH || task.mode == AUCTION) {
-            require(task.status == TaskStatus.WorkerSelected || task.status == TaskStatus.Claimed, "Worker not selected");
-            require(worker == task.worker, "Worker mismatch");
+            if (task.status != TaskStatus.WorkerSelected && task.status != TaskStatus.Claimed) revert WorkerNotSelected();
+            if (worker != task.worker) revert WorkerMismatch();
+            if (task.deliverable != bytes32(0)) revert DeliverableAlreadySet();
+            task.deliverable = deliverable;
+        }
+
+        // When evaluator is assigned and the worker is now locked, transition to Review.
+        // Extend expiryTime to cover the evaluation window so refundExpired cannot fire
+        // while the worker's submission is under active assessment (Fund Recovery Invariant).
+        TaskEvaluatorConfig storage evalCfg = taskEvaluatorConfigs[taskId];
+        if (evalCfg.evaluator != address(0) && (task.mode == CLAIM || task.mode == PITCH || task.mode == AUCTION)) {
+            task.status = TaskStatus.Review;
+            uint256 reviewDeadline = block.timestamp + evalCfg.evaluationWindow;
+            phaseDeadline[taskId] = reviewDeadline;
+            if (reviewDeadline > task.expiryTime) {
+                task.expiryTime = reviewDeadline;
+            }
+        }
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkSubmit(taskId, _buildContext(taskId), worker, deliverable)) revert HookCheckSubmitRejected();
         }
 
         emit TaskSubmitted(taskId, worker, deliverable);
+    }
+
+    // Complexity is inherent: validates four distinct task modes plus evaluator/deliverable variants.
+    // solhint-disable-next-line code-complexity
+    function _validateAcceptSubmission(Task storage task, bytes32 taskId, address worker, bytes32 deliverable) internal {
+        address evaluator = taskEvaluatorConfigs[taskId].evaluator;
+        if (task.mode == CLAIM) {
+            if (evaluator != address(0)) revert UseEvaluate();
+            if (task.status != TaskStatus.Claimed && task.status != TaskStatus.PendingApproval) revert TaskNotClaimed();
+            if (worker != task.worker) revert WorkerMismatch();
+            if (deliverable != task.deliverable) revert DeliverableMismatch();
+        } else if (task.mode == PITCH) {
+            if (evaluator != address(0)) revert UseEvaluate();
+            if (task.status != TaskStatus.WorkerSelected && task.status != TaskStatus.PendingApproval) revert WorkerNotSelected();
+            if (worker != task.worker) revert WorkerMismatch();
+            if (deliverable != task.deliverable) revert DeliverableMismatch();
+        } else if (task.mode == AUCTION) {
+            if (evaluator != address(0)) revert UseEvaluate();
+            if (task.status != TaskStatus.Claimed && task.status != TaskStatus.PendingApproval) revert WinnerNotSelected();
+            if (worker != task.worker) revert WorkerMismatch();
+            if (deliverable != task.deliverable) revert DeliverableMismatch();
+        } else {
+            // BOUNTY or BENCHMARK: deferred-write model. The requester names the
+            // winner and their deliverable here. submitWork didn't write either.
+            if (evaluator != address(0)) revert UseEvaluate();
+            if (task.status != TaskStatus.Open && task.status != TaskStatus.PendingApproval) revert TaskNotOpen();
+            if (worker == address(0)) revert WorkerRequired();
+            if (deliverable == bytes32(0)) revert DeliverableRequired();
+            task.deliverable = deliverable;
+        }
     }
 
     /**
@@ -573,89 +703,222 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param taskId Task identifier
      * @param worker Worker address to pay
      */
-    function acceptSubmission(bytes32 taskId, address worker) external onlyTrustedForwarder nonReentrant {
+    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+    {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(requester == task.requester, "Not requester");
-        require(block.timestamp <= task.expiryTime, "Task expired");
+        if (requester != task.requester) revert NotRequester();
+        if (block.timestamp > task.expiryTime) revert TaskIsExpired();
 
-        if (task.mode == CLAIM) {
-            require(task.status == TaskStatus.Claimed, "Task not claimed");
-            require(worker == task.claimer, "Worker must be claimer");
-        } else if (task.mode == PITCH) {
-            require(task.status == TaskStatus.WorkerSelected, "Worker not selected");
-            require(worker == task.worker, "Worker mismatch");
-        } else if (task.mode == AUCTION) {
-            require(task.status == TaskStatus.Claimed, "Winner not selected");
-            require(worker == task.worker, "Worker mismatch");
-        } else {
-            require(
-                task.status == TaskStatus.Open || task.status == TaskStatus.PendingApproval,
-                "Task not available"
-            );
-        }
+        _validateAcceptSubmission(task, taskId, worker, deliverable);
 
-        task.status = TaskStatus.Accepted;
-        task.worker = worker;
-
-        workerStats[worker].completedTasks++;
+        // Build a simple approval verdict for hook callbacks.
+        Award[] memory awards = new Award[](1);
+        awards[0] = Award({ worker: worker, amount: task.reward, rank: 1 });
+        Verdict memory verdict = Verdict({
+            issued: true,
+            verdictType: VerdictType.APPROVE,
+            score: 1000,
+            confidence: 1000,
+            criteriaFlags: new bytes32[](0),
+            evidenceHash: bytes32(0),
+            awards: awards
+        });
 
         uint256 paymentAmount = task.mode == AUCTION ? task.stakeAmount : task.reward;
         uint256 fee = (paymentAmount * task.feeBps) / 10000;
         uint256 workerPayment = paymentAmount - fee;
 
-        require(usdcToken.transfer(worker, workerPayment), "Worker payment failed");
-
+        task.status = TaskStatus.Accepted;
+        task.worker = worker;
+        workerStats[worker].completedTasks++;
         if (fee > 0) {
-            require(usdcToken.transfer(feeRecipient, fee), "Fee transfer failed");
             totalFeesCollected += fee;
         }
 
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkComplete(taskId, _buildContext(taskId), verdict)) revert HookCheckCompleteRejected();
+        }
+
+        if (!usdcToken.transfer(worker, workerPayment)) revert WorkerPaymentFailed();
+        if (fee > 0) {
+            if (!usdcToken.transfer(feeRecipient, fee)) revert FeeTransferFailed();
+        }
+
         if (task.mode == CLAIM && task.stakeAmount > 0) {
-            require(usdcToken.transfer(task.claimer, task.stakeAmount), "Stake return failed");
-            emit StakeReturned(taskId, task.claimer, task.stakeAmount);
+            if (!usdcToken.transfer(task.worker, task.stakeAmount)) revert StakeReturnFailed();
+            emit StakeReturned(taskId, task.worker, task.stakeAmount);
         }
 
         if (task.mode == AUCTION) {
-            uint256 refund = task.maxPrice - task.stakeAmount;
+            uint256 refund = taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
             if (refund > 0) {
-                require(usdcToken.transfer(task.requester, refund), "Auction refund failed");
+                if (!usdcToken.transfer(task.requester, refund)) revert AuctionRefundFailed();
             }
         }
 
         emit TaskCompleted(taskId, requester, worker, workerPayment, fee);
+
+        if (hook != address(0)) {
+            _afterHook(hook, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId), verdict)));
+        }
     }
 
     /**
-     * @notice Forfeit claimer's stake and reopen Claim task.
+     * @notice Accept N submissions at once with explicit share basis points.
+     *         Valid for modes that support multiple concurrent submissions
+     *         (Bounty, Benchmark). Shares MUST sum to 10000; fee taken per pair.
+     *         workers[0] becomes task.worker and deliverables[0] becomes
+     *         task.deliverable for single-worker-field back-compat.
+     *         Duplicate worker addresses ARE allowed (the requester may
+     *         intentionally pay the same worker via multiple slots).
+     * @param taskId       Task identifier
+     * @param workers      Recipient addresses in rank order
+     * @param shares       Basis-point shares; MUST sum to 10000
+     * @param deliverables Per-worker content hash; each MUST be non-zero
+     */
+    function acceptSubmissions(
+        bytes32 taskId,
+        address[] calldata workers,
+        uint16[] calldata shares,
+        bytes32[] calldata deliverables
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant {
+        address requester = _effectiveSender();
+        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+    }
+
+    // Complexity is inherent: distributes proportional payouts across N winners with per-winner fee, hook, and event branches.
+    // solhint-disable-next-line code-complexity
+    function _acceptSubmissions(
+        bytes32 taskId,
+        address requester,
+        address[] calldata workers,
+        uint16[] calldata shares,
+        bytes32[] calldata deliverables
+    ) internal {
+        Task storage task = tasks[taskId];
+        if (requester != task.requester) revert NotRequester();
+        if (block.timestamp > task.expiryTime) revert TaskIsExpired();
+        if (task.mode != BOUNTY && task.mode != BENCHMARK) revert MultiSubmissionOnlyForBountyBenchmark();
+        if (taskEvaluatorConfigs[taskId].evaluator != address(0)) revert UseEvaluate();
+        if (task.status != TaskStatus.Open && task.status != TaskStatus.PendingApproval) revert TaskNotOpen();
+
+        uint256 n = workers.length;
+        if (n < 1) revert NoWinners();
+        if (shares.length != n || deliverables.length != n) revert LengthMismatch();
+
+        uint256 sumShares = 0;
+        for (uint256 i; i < n; ++i) {
+            if (deliverables[i] == bytes32(0)) revert DeliverableRequired();
+            sumShares += shares[i];
+        }
+        if (sumShares != 10000) revert SharesMustSumTo10000();
+
+        // Build verdict for hook callbacks.
+        Award[] memory awards = new Award[](n);
+        for (uint256 i; i < n; ++i) {
+            awards[i] = Award({ worker: workers[i], amount: (task.reward * shares[i]) / 10000, rank: uint16(i + 1) });
+        }
+        Verdict memory verdict = Verdict({
+            issued: true,
+            verdictType: VerdictType.APPROVE,
+            score: 1000,
+            confidence: 1000,
+            criteriaFlags: new bytes32[](0),
+            evidenceHash: bytes32(0),
+            awards: awards
+        });
+
+        task.status = TaskStatus.Accepted;
+        task.worker = workers[0];
+        task.deliverable = deliverables[0];
+
+        uint256 reward = task.reward;
+        uint16 feeBps = task.feeBps;
+
+        // Pre-compute all per-worker amounts and commit all state before any transfer.
+        uint256[] memory nets = new uint256[](n);
+        uint256[] memory fees = new uint256[](n);
+        uint256 totalFee = 0;
+        for (uint256 i; i < n; ++i) {
+            uint256 pay = (reward * shares[i]) / 10000;
+            if (pay == 0) revert ZeroPayoutPerPair();
+            // Compute fee from the original inputs to avoid divide-before-multiply
+            // precision loss when deriving fee from the already-divided pay value.
+            uint256 fee = (reward * uint256(shares[i]) * uint256(feeBps)) / 100_000_000;
+            nets[i] = pay - fee;
+            fees[i] = fee;
+            totalFee += fee;
+            workerStats[workers[i]].completedTasks++;
+        }
+        if (totalFee > 0) {
+            totalFeesCollected += totalFee;
+        }
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkComplete(taskId, _buildContext(taskId), verdict)) revert HookCheckCompleteRejected();
+        }
+
+        // Multi-winner payouts require iterating recipients; a single batched transfer
+        // is not possible with USDC. State is fully committed before this loop (CEI).
+        // slither-disable-next-line calls-loop
+        for (uint256 i; i < n; ++i) {
+            if (!usdcToken.transfer(workers[i], nets[i])) revert WorkerPaymentFailed();
+            emit TaskCompleted(taskId, requester, workers[i], nets[i], fees[i]);
+        }
+        if (totalFee > 0) {
+            if (!usdcToken.transfer(feeRecipient, totalFee)) revert FeeTransferFailed();
+        }
+
+        if (hook != address(0)) {
+            _afterHook(hook, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId), verdict)));
+        }
+    }
+
+    /**
+     * @notice Forfeit worker's stake and reopen Claim task.
      *         The requester is the authenticated actor (pgtrSender).
      * @param taskId Task identifier
      * @dev Can only be called after the task has expired. Claimer's stake is
      *      transferred to fee recipient as a non-delivery penalty.
      */
-    function forfeitAndReopen(bytes32 taskId) external onlyTrustedForwarder {
+    function forfeitAndReopen(bytes32 taskId) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(requester == task.requester, "Not requester");
-        require(task.mode == CLAIM, "Not a Claim task");
-        require(task.status == TaskStatus.Claimed, "Task not claimed");
-        require(block.timestamp > task.expiryTime, "Task not yet expired");
+        if (requester != task.requester) revert NotRequester();
+        if (task.mode != CLAIM) revert NotAClaimTask();
+        if (task.status != TaskStatus.Claimed) revert TaskNotClaimed();
+        if (block.timestamp <= task.expiryTime) revert TaskNotYetExpired();
 
         uint256 forfeited = task.stakeAmount;
+        address forfeiter = task.worker;
         stakeForfeit[taskId] = forfeited;
 
+        task.status = TaskStatus.Open;
+        task.worker = address(0);
+        task.stakeAmount = 0;
+        taskMetadata[taskId].claimedAt = 0;
         if (forfeited > 0) {
-            require(usdcToken.transfer(feeRecipient, forfeited), "Forfeit transfer failed");
             totalFeesCollected += forfeited;
-            emit StakeForfeited(taskId, task.claimer, forfeited);
         }
 
-        task.status = TaskStatus.Open;
-        task.claimer = address(0);
-        task.claimedAt = 0;
-        task.stakeAmount = 0;
+        if (forfeited > 0) {
+            if (!usdcToken.transfer(feeRecipient, forfeited)) revert ForfeitTransferFailed();
+            emit StakeForfeited(taskId, forfeiter, forfeited);
+        }
 
         emit TaskReopened(taskId);
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            _afterHook(hook, abi.encodeCall(ITMPHook.onForfeit, (taskId, _buildContext(taskId), forfeiter)));
+        }
     }
 
     /**
@@ -670,25 +933,40 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      */
     function rateTask(
         bytes32 taskId,
+        address worker,
         uint8 rating,
         uint256 workerAgentId,
         uint256 raterAgentId,
         string calldata feedbackURI,
         bytes32 feedbackHash
-    ) external onlyTrustedForwarder {
+    ) external onlyTrustedForwarder whenNotPaused {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(requester == task.requester, "Not requester");
-        require(task.status == TaskStatus.Accepted, "Task not accepted");
-        require(rating <= 100, "Rating must be 0-100");
-        require(task.rating == 0, "Already rated");
+        if (requester != task.requester) revert NotRequester();
+        if (task.status != TaskStatus.Accepted) revert TaskNotAccepted();
+        if (rating > 100) revert RatingMustBe0To100();
 
-        task.rating = rating;
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            // Multi-winner: trust the rater's worker choice. No on-chain check
+            // that worker was actually paid; same trust model as accepting.
+            if (worker == address(0)) revert WorkerRequired();
+        } else {
+            // Locked-worker modes: worker must be the on-chain task.worker.
+            if (worker != task.worker) revert WorkerMismatch();
+        }
 
-        workerStats[task.worker].ratedTasks++;
-        workerStats[task.worker].totalStars += rating;
+        if (taskWorkerRated[taskId][worker]) revert WorkerAlreadyRated();
+        taskWorkerRated[taskId][worker] = true;
 
-        emit TaskRated(taskId, task.worker, rating, raterAgentId);
+        // Record the first rating in task.rating for single-worker back-compat.
+        if (task.rating == 0) {
+            task.rating = rating;
+        }
+
+        workerStats[worker].ratedTasks++;
+        workerStats[worker].totalStars += rating;
+
+        emit TaskRated(taskId, worker, rating, raterAgentId);
 
         if (workerAgentId != 0 && reputationRegistry != address(0)) {
             try IReputationRegistry(reputationRegistry).giveFeedback(
@@ -707,48 +985,90 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     /**
      * @notice Refund expired task reward to requester.
      *         NORMATIVE: This function MUST bypass all hooks and extension contracts.
-     *         Funds are ALWAYS recoverable after expiry.
+     *         Funds are recoverable after expiry while the contract is unpaused.
      *         Special case: Auction tasks with a selected winner auto-pay the worker.
      * @param taskId Task identifier
      */
-    function refundExpired(bytes32 taskId) external nonReentrant {
+    // Complexity is inherent: fund recovery must handle every possible task status and mode without hooks.
+    // solhint-disable-next-line code-complexity
+    function refundExpired(bytes32 taskId) external whenNotPaused nonReentrant {
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(block.timestamp > task.expiryTime, "Task not expired");
-        require(task.status != TaskStatus.Accepted, "Task already accepted");
-        require(task.status != TaskStatus.Cancelled, "Task cancelled");
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (block.timestamp <= task.expiryTime) revert TaskNotYetExpired();
+        if (task.status == TaskStatus.Accepted) revert TaskAlreadyAccepted();
+        if (task.status == TaskStatus.Cancelled) revert TaskIsCancelled();
 
         if (task.mode == AUCTION && task.status == TaskStatus.Claimed) {
             uint256 fee = (task.stakeAmount * task.feeBps) / 10000;
             uint256 workerPayment = task.stakeAmount - fee;
             task.status = TaskStatus.Accepted;
             workerStats[task.worker].completedTasks++;
+            if (fee > 0) {
+                totalFeesCollected += fee;
+            }
             if (workerPayment > 0) {
-                require(usdcToken.transfer(task.worker, workerPayment), "Worker payment failed");
+                if (!usdcToken.transfer(task.worker, workerPayment)) revert WorkerPaymentFailed();
             }
             if (fee > 0) {
-                require(usdcToken.transfer(feeRecipient, fee), "Fee transfer failed");
-                totalFeesCollected += fee;
+                if (!usdcToken.transfer(feeRecipient, fee)) revert FeeTransferFailed();
             }
             uint256 refund = task.reward - task.stakeAmount;
             if (refund > 0) {
-                require(usdcToken.transfer(task.requester, refund), "Requester refund failed");
+                if (!usdcToken.transfer(task.requester, refund)) revert RequesterRefundFailed();
             }
             emit TaskCompleted(taskId, task.requester, task.worker, workerPayment, fee);
+            address auctionHook = task.hookContract;
+            if (auctionHook != address(0)) {
+                Award[] memory awards = new Award[](1);
+                awards[0] = Award({ worker: task.worker, amount: task.stakeAmount, rank: 1 });
+                Verdict memory verdict = Verdict({
+                    issued: true,
+                    verdictType: VerdictType.APPROVE,
+                    score: 1000,
+                    confidence: 1000,
+                    criteriaFlags: new bytes32[](0),
+                    evidenceHash: bytes32(0),
+                    awards: awards
+                });
+                _afterHook(auctionHook, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId), verdict)));
+            }
             return;
         }
 
         task.status = TaskStatus.Expired;
         uint256 refundAmount = task.reward;
 
-        require(usdcToken.transfer(task.requester, refundAmount), "Refund failed");
+        // If the task expired while an evaluator was assigned (Review state), forfeit their stake.
+        // The evaluator window was extended by submitWork — reaching here means both the task
+        // expiry and the evaluation window have elapsed without an evaluate() call.
+        TaskEvaluatorConfig storage evalCfg = taskEvaluatorConfigs[taskId];
+        address timedOutEvaluator = evalCfg.evaluator;
+        uint256 evaluatorForfeited = evalCfg.evaluatorStake;
+        if (evaluatorForfeited > 0) {
+            evalCfg.evaluatorStake = 0;
+            evalCfg.evaluator = address(0);
+            totalFeesCollected += evaluatorForfeited;
+        }
+
+        if (!usdcToken.transfer(task.requester, refundAmount)) revert RefundFailed();
 
         if (task.mode == CLAIM && task.stakeAmount > 0) {
-            require(usdcToken.transfer(task.claimer, task.stakeAmount), "Stake return failed");
-            emit StakeReturned(taskId, task.claimer, task.stakeAmount);
+            if (!usdcToken.transfer(task.worker, task.stakeAmount)) revert StakeReturnFailed();
+            emit StakeReturned(taskId, task.worker, task.stakeAmount);
+        }
+
+        if (evaluatorForfeited > 0) {
+            if (!usdcToken.transfer(feeRecipient, evaluatorForfeited)) revert ForfeitTransferFailed();
+            emit EvaluatorTimedOut(taskId, timedOutEvaluator, evaluatorForfeited);
         }
 
         emit TaskExpired(taskId, task.requester, refundAmount);
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch.
+            _afterHook(hook, abi.encodeCall(ITMPHook.onExpire, (taskId, _buildContext(taskId))));
+        }
     }
 
     /**
@@ -757,19 +1077,24 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      *         Auction tasks may only be cancelled if no bids have been submitted.
      * @param taskId Task identifier
      */
-    function cancelTask(bytes32 taskId) external onlyTrustedForwarder nonReentrant {
+    function cancelTask(bytes32 taskId) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(requester == task.requester, "Not requester");
-        require(task.status == TaskStatus.Open, "Task not open");
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (requester != task.requester) revert NotRequester();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
         if (task.mode == AUCTION) {
-            require(taskBids[taskId].length == 0, "Bids exist");
+            if (taskBids[taskId].length != 0) revert BidsExist();
         }
         task.status = TaskStatus.Cancelled;
         uint256 refundAmount = task.reward;
-        require(usdcToken.transfer(task.requester, refundAmount), "Refund failed");
+        if (!usdcToken.transfer(task.requester, refundAmount)) revert RefundFailed();
         emit TaskCancelled(taskId, task.requester, refundAmount);
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            _afterHook(hook, abi.encodeCall(ITMPHook.onCancel, (taskId, _buildContext(taskId))));
+        }
     }
 
     /**
@@ -784,50 +1109,51 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      * @param newBidDeadline   New absolute bid deadline (Auction only, 0 = no change)
      * @param newPitchDeadline New absolute pitch deadline (Pitch only, 0 = no change)
      */
+    // Complexity is inherent: each of the four optional update fields requires independent validation and transfer branches.
+    // solhint-disable-next-line code-complexity
     function updateTask(
         bytes32 taskId,
         uint256 newReward,
         uint256 newExpiryTime,
         uint256 newBidDeadline,
         uint256 newPitchDeadline
-    ) external onlyTrustedForwarder nonReentrant {
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant {
         address requester = _effectiveSender();
         Task storage task = tasks[taskId];
-        require(task.requester != address(0), "Task does not exist");
-        require(requester == task.requester, "Not requester");
-        require(task.status == TaskStatus.Open, "Task not open");
+        if (task.requester == address(0)) revert TaskDoesNotExist();
+        if (requester != task.requester) revert NotRequester();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
         if (task.mode == AUCTION) {
-            require(taskBids[taskId].length == 0, "Bids exist");
+            if (taskBids[taskId].length != 0) revert BidsExist();
         }
 
         uint256 originalReward = task.reward;
         uint256 originalExpiryTime = task.expiryTime;
-        uint256 originalBidDeadline = task.bidDeadline;
-        uint256 originalPitchDeadline = task.pitchDeadline;
+        uint256 originalBidDeadline = taskAuctionConfigs[taskId].bidDeadline;
+        uint256 originalPitchDeadline = taskPitchConfigs[taskId].pitchDeadline;
 
+        uint256 refund = 0;
         if (newReward != 0 && newReward != task.reward) {
-            if (newReward > task.reward) {
-                // Additional USDC was transferred to this contract by the forwarder before this call.
-            } else {
-                uint256 refund = task.reward - newReward;
-                require(usdcToken.transfer(task.requester, refund), "USDC refund failed");
-            }
+            refund = newReward < task.reward ? task.reward - newReward : 0;
             task.reward = newReward;
             if (task.mode == AUCTION) {
-                task.maxPrice = newReward;
+                taskAuctionConfigs[taskId].maxPrice = newReward;
             }
         }
         if (newExpiryTime != 0) {
-            require(newExpiryTime > block.timestamp, "Expiry must be in future");
+            if (newExpiryTime <= block.timestamp) revert ExpiryMustBeInFuture();
             task.expiryTime = newExpiryTime;
         }
         if (newBidDeadline != 0 && task.mode == AUCTION) {
-            require(newBidDeadline > block.timestamp, "Bid deadline must be in future");
-            task.bidDeadline = newBidDeadline;
+            if (newBidDeadline <= block.timestamp) revert BidDeadlineMustBeInFuture();
+            taskAuctionConfigs[taskId].bidDeadline = newBidDeadline;
         }
         if (newPitchDeadline != 0 && task.mode == PITCH) {
-            require(newPitchDeadline > block.timestamp, "Pitch deadline must be in future");
-            task.pitchDeadline = newPitchDeadline;
+            if (newPitchDeadline <= block.timestamp) revert PitchDeadlineMustBeInFuture();
+            taskPitchConfigs[taskId].pitchDeadline = newPitchDeadline;
+        }
+        if (refund > 0) {
+            if (!usdcToken.transfer(task.requester, refund)) revert USDCRefundFailed();
         }
 
         bool changed = (newReward != 0 && newReward != originalReward)
@@ -852,6 +1178,18 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
         return workerStats[worker];
     }
 
+    function getCredibility(address worker) external view returns (uint256) {
+        uint256 n = workerStats[worker].ratedTasks;
+        if (n == 0) return 0;
+        return (n * 1000) / (n + 10);
+    }
+
+    function getAverageRating(address worker) external view returns (uint256) {
+        WorkerStats storage s = workerStats[worker];
+        if (s.ratedTasks == 0) return 0;
+        return (s.totalStars * 10) / s.ratedTasks;
+    }
+
     /**
      * @notice Get task details
      * @param taskId Task identifier
@@ -859,6 +1197,38 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
      */
     function getTask(bytes32 taskId) external view returns (Task memory) {
         return tasks[taskId];
+    }
+
+    /**
+     * @notice Get evaluator configuration for a task
+     * @param taskId Task identifier
+     */
+    function getTaskEvaluatorConfig(bytes32 taskId) external view returns (TaskEvaluatorConfig memory) {
+        return taskEvaluatorConfigs[taskId];
+    }
+
+    /**
+     * @notice Get auction configuration for a task
+     * @param taskId Task identifier
+     */
+    function getTaskAuctionConfig(bytes32 taskId) external view returns (TaskAuctionConfig memory) {
+        return taskAuctionConfigs[taskId];
+    }
+
+    /**
+     * @notice Get write-once metadata for a task (createdAt, claimedAt, content hash/URI)
+     * @param taskId Task identifier
+     */
+    function getTaskMetadata(bytes32 taskId) external view returns (TaskMetadata memory) {
+        return taskMetadata[taskId];
+    }
+
+    /**
+     * @notice Get pitch configuration for a task
+     * @param taskId Task identifier
+     */
+    function getTaskPitchConfig(bytes32 taskId) external view returns (TaskPitchConfig memory) {
+        return taskPitchConfigs[taskId];
     }
 
     /**
@@ -871,18 +1241,20 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     }
 
     /**
-     * @notice Returns the address responsible for evaluating work on a task (ITMPMode).
-     *         For all modes except Benchmark, this is the task requester.
-     *         For Benchmark mode, this is the ERC-8004 Validation Registry.
+     * @notice Returns the evaluator assigned to a task (ITMPEvaluator).
+     *         Returns address(0) if no evaluator is assigned.
      * @param taskId Task identifier
-     * @return evaluator Address that can call acceptSubmission() for this task
      */
-    function evaluatorFor(bytes32 taskId) external view returns (address evaluator) {
-        Task storage task = tasks[taskId];
-        if (task.mode == BENCHMARK) {
-            return reputationRegistry; // Validation Registry (same address for now)
-        }
-        return task.requester;
+    function evaluatorFor(bytes32 taskId) external view returns (address) {
+        return taskEvaluatorConfigs[taskId].evaluator;
+    }
+
+    /**
+     * @notice Returns the mode selector for a task (ITMPModes).
+     * @param taskId Task identifier
+     */
+    function taskMode(bytes32 taskId) external view returns (bytes4 mode) {
+        return tasks[taskId].mode;
     }
 
     /**
@@ -895,8 +1267,310 @@ contract TaskMarket is ITMP, ITMPReputation, ITMPFees, ITMPMode, Initializable, 
     }
 
     // -------------------------------------------------------------------------
+    // ITMPRegistry views
+    // -------------------------------------------------------------------------
+
+    function getTaskState(bytes32 taskId) external view returns (TaskStatus) {
+        return tasks[taskId].status;
+    }
+
+    function getTaskContext(bytes32 taskId) external view returns (TaskContext memory) {
+        return _buildContext(taskId);
+    }
+
+    function getTaskVerdict(bytes32 taskId) external view returns (Verdict memory) {
+        return taskVerdicts[taskId];
+    }
+
+    // -------------------------------------------------------------------------
+    // ITMPEvaluator
+    // -------------------------------------------------------------------------
+
+    /**
+     * @notice Assign an evaluator to an open task.
+     *         Only the requester may call this, only while the task is Open.
+     *         If stakeAmount > 0, the evaluator must have pre-transferred that
+     *         amount to this contract before the forwarder calls this function.
+     */
+    function assignEvaluator(
+        bytes32 taskId,
+        address evaluator,
+        uint256 stakeAmount,
+        uint16  feeBps,
+        uint32  evaluationWindowSecs,
+        uint32  appealWindowSecs,
+        address disputeResolver
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant {
+        address requester = _effectiveSender();
+        Task storage task = tasks[taskId];
+        TaskEvaluatorConfig storage evalCfg = taskEvaluatorConfigs[taskId];
+        if (requester != task.requester) revert NotRequester();
+        if (task.status != TaskStatus.Open) revert TaskNotOpen();
+        if (evaluator == address(0)) revert InvalidEvaluator();
+        if (evalCfg.evaluator != address(0)) revert EvaluatorAlreadyAssigned();
+        if (feeBps > 10000) revert FeeBpsTooHigh();
+
+        evalCfg.evaluator        = evaluator;
+        evalCfg.evaluatorStake   = stakeAmount;
+        evalCfg.evaluatorFeeBps  = feeBps;
+        evalCfg.evaluationWindow = evaluationWindowSecs;
+        evalCfg.appealWindow     = appealWindowSecs;
+        evalCfg.disputeResolver  = disputeResolver;
+
+        if (stakeAmount > 0) {
+            // Pull stake from the requester, not the evaluator parameter. Pulling from
+            // an arbitrary address (evaluator) would let a malicious requester drain any
+            // address that has pre-approved this contract.
+            if (!usdcToken.transferFrom(requester, address(this), stakeAmount)) revert StakeTransferFailed();
+        }
+
+        emit EvaluatorAssigned(taskId, evaluator, stakeAmount);
+    }
+
+    /**
+     * @notice Submit an evaluation verdict.
+     *         Only task.evaluator may call this.
+     *         For CLAIM/PITCH/AUCTION: task must be in Review status.
+     *         For BOUNTY/BENCHMARK: task must be Open.
+     */
+    function evaluate(
+        bytes32          taskId,
+        VerdictType      verdictType,
+        uint16           score,
+        uint16           confidence,
+        bytes32          evidenceHash,
+        Award[] calldata awards
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant {
+        address evaluatorAddr = _effectiveSender();
+        Task storage task = tasks[taskId];
+        TaskEvaluatorConfig storage evalCfg = taskEvaluatorConfigs[taskId];
+        if (evaluatorAddr != evalCfg.evaluator) revert NotEvaluator();
+        if (!(task.status == TaskStatus.Review ||
+            ((task.mode == BOUNTY || task.mode == BENCHMARK) &&
+                (task.status == TaskStatus.Open || task.status == TaskStatus.PendingApproval)))) revert WrongStatusForEvaluation();
+
+        // Store the verdict.
+        Verdict storage v = taskVerdicts[taskId];
+        v.issued      = true;
+        v.verdictType = verdictType;
+        v.score       = score;
+        v.confidence  = confidence;
+        v.evidenceHash = evidenceHash;
+        delete v.awards;
+        for (uint256 i; i < awards.length; ++i) {
+            v.awards.push(awards[i]);
+        }
+
+        // For BOUNTY/BENCHMARK the first award winner is the primary worker for appeal purposes.
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && awards.length > 0) {
+            task.worker = awards[0].worker;
+        }
+
+        uint256 evalFee     = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
+        uint256 stakeReturn = evalCfg.evaluatorStake;
+        evalCfg.evaluatorStake = 0;
+        uint256 appealDeadline = block.timestamp + evalCfg.appealWindow;
+        phaseDeadline[taskId] = appealDeadline;
+        if (appealDeadline > task.expiryTime) {
+            task.expiryTime = appealDeadline;
+        }
+        task.status = TaskStatus.Appealing;
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkEvaluate(taskId, _buildContext(taskId), evaluatorAddr)) revert HookCheckEvaluateRejected();
+        }
+
+        emit TaskEvaluated(taskId, evaluatorAddr, uint8(verdictType), score);
+
+        if (evalFee + stakeReturn > 0) {
+            if (!usdcToken.transfer(evalCfg.evaluator, evalFee + stakeReturn)) revert EvaluatorPaymentFailed();
+        }
+    }
+
+    /**
+     * @notice Appeal the evaluator's verdict.
+     *         Only task.worker may call this while status == Appealing and within the window.
+     */
+    function appeal(bytes32 taskId) external onlyTrustedForwarder whenNotPaused nonReentrant {
+        address worker = _effectiveSender();
+        Task storage task = tasks[taskId];
+        if (worker != task.worker) revert NotWorker();
+        if (task.status != TaskStatus.Appealing) revert NotInAppealingState();
+        if (block.timestamp >= phaseDeadline[taskId]) revert AppealWindowClosed();
+
+        task.status = TaskStatus.Disputed;
+        emit TaskAppealed(taskId, worker);
+        address dr = taskEvaluatorConfigs[taskId].disputeResolver;
+        if (dr != address(0)) {
+            emit TaskDisputed(taskId, dr);
+        }
+    }
+
+    /**
+     * @notice Finalize the verdict after the appeal window has expired.
+     *         Anyone may call this once block.timestamp >= appeal deadline.
+     */
+    function finalizeVerdict(bytes32 taskId) external whenNotPaused nonReentrant {
+        Task storage task = tasks[taskId];
+        if (task.status != TaskStatus.Appealing) revert NotInAppealingState();
+        if (block.timestamp < phaseDeadline[taskId]) revert AppealWindowStillOpen();
+
+        Verdict storage v = taskVerdicts[taskId];
+        if (!v.issued) revert NoVerdictIssued();
+
+        TaskEvaluatorConfig storage evalCfg = taskEvaluatorConfigs[taskId];
+        if (v.verdictType == VerdictType.REJECT) {
+            // Evaluator fee was already paid at evaluate() time.
+            // Refund remaining escrow to requester and reopen.
+            uint256 evalFee = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
+            uint256 refund  = task.reward - evalFee;
+            task.status      = TaskStatus.Open;
+            task.worker      = address(0);
+            task.deliverable = bytes32(0);
+            // Clear evaluator config so the reopened task uses direct acceptance flow.
+            evalCfg.evaluator        = address(0);
+            evalCfg.evaluationWindow = 0;
+            evalCfg.appealWindow     = 0;
+            if (refund > 0) {
+                if (!usdcToken.transfer(task.requester, refund)) revert RefundFailed();
+            }
+        } else {
+            _payAwards(taskId, task, v);
+        }
+    }
+
+    /**
+     * @notice Resolve a disputed task.
+     *         Only task.disputeResolver may call this while status == Disputed.
+     *         Supports direct call or call via trusted forwarder.
+     */
+    function resolveDispute(
+        bytes32          taskId,
+        VerdictType      verdictType,
+        Award[] calldata awards
+    ) external whenNotPaused nonReentrant {
+        Task storage task = tasks[taskId];
+        if (task.status != TaskStatus.Disputed) revert NotInDisputedState();
+        address caller = trustedForwarders[msg.sender] ? _effectiveSender() : msg.sender;
+        if (caller != taskEvaluatorConfigs[taskId].disputeResolver) revert NotDisputeResolver();
+        if (verdictType == VerdictType.REJECT) revert DisputeResolutionMustAwardWorkers();
+        if (awards.length == 0) revert AwardsRequired();
+
+        Verdict storage v = taskVerdicts[taskId];
+        v.verdictType = verdictType;
+        delete v.awards;
+        for (uint256 i; i < awards.length; ++i) {
+            v.awards.push(awards[i]);
+        }
+
+        _payAwards(taskId, task, v);
+    }
+
+    /**
+     * @notice Trigger evaluator timeout after the evaluation window expires.
+     *         Only the requester may call this.
+     *         Forfeits the evaluator stake to the fee recipient and transitions
+     *         the task to PendingApproval so the requester can call acceptSubmission.
+     */
+    function evaluatorTimeout(bytes32 taskId) external onlyTrustedForwarder whenNotPaused nonReentrant {
+        address requester = _effectiveSender();
+        Task storage task = tasks[taskId];
+        if (requester != task.requester) revert NotRequester();
+        if (task.status != TaskStatus.Review) revert NotInReviewState();
+        // phaseDeadline[taskId] holds the evaluation deadline while task is in Review.
+        if (block.timestamp <= phaseDeadline[taskId]) revert EvaluationWindowNotExpired();
+
+        TaskEvaluatorConfig storage evalCfg = taskEvaluatorConfigs[taskId];
+        address timedOutEvaluator = evalCfg.evaluator;
+        uint256 forfeited         = evalCfg.evaluatorStake;
+        evalCfg.evaluatorStake    = 0;
+        evalCfg.evaluator         = address(0);
+        task.status               = TaskStatus.PendingApproval;
+
+        if (forfeited > 0) {
+            totalFeesCollected += forfeited;
+            if (!usdcToken.transfer(feeRecipient, forfeited)) revert ForfeitTransferFailed();
+        }
+
+        emit EvaluatorTimedOut(taskId, timedOutEvaluator, forfeited);
+    }
+
+    // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * @dev Pay workers from escrowed reward per verdict awards.
+     *      Applies platform fee per award and emits TaskCompleted per winner.
+     *      Calls checkComplete and onComplete hooks.
+     *      Awards should sum to (task.reward - evaluatorFee). Any surplus is
+     *      refunded to the requester.
+     */
+    // Complexity is inherent: iterates N winners applying per-winner fee, transfer, hook, and event; handles excess refund.
+    // solhint-disable-next-line code-complexity
+    function _payAwards(bytes32 taskId, Task storage task, Verdict storage v) internal {
+        uint256 evalFee   = (task.reward * taskEvaluatorConfigs[taskId].evaluatorFeeBps) / 10000;
+        uint256 remaining = task.reward - evalFee;
+        uint256 n         = v.awards.length;
+
+        Verdict memory verdictMem = taskVerdicts[taskId];
+
+        task.status = TaskStatus.Accepted;
+        if (n > 0) {
+            task.worker = v.awards[0].worker;
+        }
+
+        // Pre-compute all amounts and commit all state before any transfer.
+        uint16 feeBps = task.feeBps;
+        uint256 totalFee = 0;
+        uint256 totalAwarded = 0;
+        address[] memory workers = new address[](n);
+        uint256[] memory nets = new uint256[](n);
+        uint256[] memory awardFees = new uint256[](n);
+        for (uint256 i; i < n; ++i) {
+            address w   = v.awards[i].worker;
+            uint256 amt = v.awards[i].amount;
+            workers[i] = w;
+            if (amt == 0) continue;
+            totalAwarded += amt;
+            uint256 fee = (amt * feeBps) / 10000;
+            nets[i] = amt - fee;
+            awardFees[i] = fee;
+            totalFee += fee;
+            workerStats[w].completedTasks++;
+        }
+        if (totalAwarded > remaining) revert AwardsExceedEscrow();
+        if (totalFee > 0) {
+            totalFeesCollected += totalFee;
+        }
+
+        address hook = task.hookContract;
+        if (hook != address(0)) {
+            if (!ITMPHook(hook).checkComplete(taskId, _buildContext(taskId), verdictMem)) revert HookCheckCompleteRejected();
+        }
+
+        // Multi-winner payouts require iterating recipients; a single batched transfer
+        // is not possible with USDC. State is fully committed before this loop (CEI).
+        // slither-disable-next-line calls-loop
+        for (uint256 i; i < n; ++i) {
+            if (nets[i] == 0 && awardFees[i] == 0) continue;
+            if (!usdcToken.transfer(workers[i], nets[i])) revert WorkerPaymentFailed();
+            emit TaskCompleted(taskId, task.requester, workers[i], nets[i], awardFees[i]);
+        }
+        if (totalFee > 0) {
+            if (!usdcToken.transfer(feeRecipient, totalFee)) revert FeeTransferFailed();
+        }
+
+        // Refund any unawarded remainder to requester.
+        if (remaining > totalAwarded) {
+            if (!usdcToken.transfer(task.requester, remaining - totalAwarded)) revert ExcessRefundFailed();
+        }
+
+        if (hook != address(0)) {
+            _afterHook(hook, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId), verdictMem)));
+        }
+    }
 
     /// @dev Returns the canonical ERC-8004 tag2 string for a mode selector.
     function _modeName(bytes4 mode) internal pure returns (string memory) {

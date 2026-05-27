@@ -49,11 +49,14 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
     error ReceiptNotYetValid();
     error RelayFailed();
     error UnauthorizedRelayer();
+    error InvalidAddress();
+    error NoActiveForwardedCall();
+    error CalldataTooShort();
 
     constructor(address _usdc, address _taskMarket, address _authorizedRelayer) {
-        require(_usdc != address(0), "Invalid USDC address");
-        require(_taskMarket != address(0), "Invalid TaskMarket address");
-        require(_authorizedRelayer != address(0), "Invalid relayer address");
+        if (_usdc == address(0)) revert InvalidAddress();
+        if (_taskMarket == address(0)) revert InvalidAddress();
+        if (_authorizedRelayer == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
         taskMarket = _taskMarket;
         authorizedRelayer = _authorizedRelayer;
@@ -70,7 +73,7 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
 
     /// @inheritdoc IPGTRForwarder
     function pgtrSender() external view override returns (address) {
-        require(_pgtrSenderStorage != address(0), "No active forwarded call");
+        if (_pgtrSenderStorage == address(0)) revert NoActiveForwardedCall();
         return _pgtrSenderStorage;
     }
 
@@ -116,7 +119,7 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
     ) external nonReentrant {
         if (msg.sender != authorizedRelayer) revert UnauthorizedRelayer();
         if (block.timestamp > validBefore) revert ReceiptExpired();
-        if (data.length < 4) revert("Calldata too short");
+        if (data.length < 4) revert CalldataTooShort();
 
         bytes4 selector = bytes4(data[:4]);
         bytes32 receiptHash = keccak256(abi.encode(
@@ -130,11 +133,19 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
         }
 
         _pgtrSenderStorage = pgtrSenderAddr;
+        // Dynamic calldata delegation — no typed interface possible for arbitrary TaskMarket calls.
+        // solhint-disable-next-line avoid-low-level-calls
         (bool success, bytes memory result) = taskMarket.call(data);
+        // _pgtrSenderStorage must be cleared after the call by design (it is the call context).
+        // Clearing before the call would break pgtrSender() reads inside TaskMarket.
+        // Protected against re-entry by nonReentrant on relay().
+        // slither-disable-next-line reentrancy-benign,reentrancy-no-eth
         _pgtrSenderStorage = address(0);
 
         if (!success) {
             if (result.length == 0) revert RelayFailed();
+            // Bubble up the revert reason verbatim — no Solidity equivalent for this pattern.
+            // solhint-disable-next-line no-inline-assembly
             assembly {
                 revert(add(result, 32), mload(result))
             }

@@ -5,9 +5,9 @@ import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "../src/TaskMarket.sol";
-import "../src/interfaces/ITMP.sol";
+import "../src/interfaces/ITMPCore.sol";
 import "../src/interfaces/IPGTRForwarder.sol";
-import "../src/interfaces/ITMPMode.sol";
+import "../src/interfaces/ITMPModes.sol";
 import "./mocks/MockUSDC.sol";
 
 /// @dev Minimal PGTR forwarder for compliance tests.
@@ -118,7 +118,7 @@ contract ITMPCompliance is Test {
 
     function _createTask(address _req, uint256 _reward, uint256 _dur, bytes4 _mode, uint256 _pd, uint256 _bd, bytes4 _auctionSubtype) internal returns (bytes32) {
         return abi.decode(
-            _relay(_req, _reward, abi.encodeCall(market.createTask, (_reward, _dur, _mode, _pd, _bd, bytes32(0), "", _auctionSubtype))),
+            _relay(_req, _reward, abi.encodeCall(market.createTask, (_reward, _dur, _mode, _pd, _bd, bytes32(0), "", _auctionSubtype, address(0), new bytes32[](0), hex""))),
             (bytes32)
         );
     }
@@ -129,8 +129,8 @@ contract ITMPCompliance is Test {
 
     function test_Compliance_ERC165_ITMP() public view {
         assertTrue(
-            market.supportsInterface(type(ITMP).interfaceId),
-            "Must support ITMP interface"
+            market.supportsInterface(type(ITMPCore).interfaceId),
+            "Must support ITMPCore interface"
         );
     }
 
@@ -194,19 +194,21 @@ contract ITMPCompliance is Test {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open), "Bounty: must start Open");
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open), "Bounty: must start Open");
         assertEq(task.mode, market.BOUNTY());
 
-        // submitWork -> PendingApproval
+        // First submitWork -> Open → PendingApproval (deliverable not written; deferred-write model)
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("deliverable"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.PendingApproval), "Bounty: submitWork must set PendingApproval");
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.PendingApproval), "Bounty: first submitWork must transition to PendingApproval");
+        assertEq(task.deliverable, bytes32(0), "Bounty: submitWork must NOT write deliverable");
 
-        // acceptSubmission -> Accepted
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        // acceptSubmission -> Accepted (deferred-write model: deliverable set here)
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("deliverable"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted), "Bounty: acceptSubmission must set Accepted");
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted), "Bounty: acceptSubmission must set Accepted");
         assertEq(task.worker, worker1);
+        assertEq(task.deliverable, keccak256("deliverable"), "Bounty: deliverable must be written at acceptance");
     }
 
     function test_Compliance_Bounty_Expire() public {
@@ -215,7 +217,7 @@ contract ITMPCompliance is Test {
         market.refundExpired(taskId);
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Expired), "Must be Expired after refundExpired");
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Expired), "Must be Expired after refundExpired");
     }
 
     // -------------------------------------------------------------------------
@@ -228,18 +230,18 @@ contract ITMPCompliance is Test {
         // claim -> Claimed
         _relay(worker1, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
-        assertEq(task.claimer, worker1);
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed));
+        assertEq(task.worker, worker1);
 
         // submitWork -> Claimed (no state change)
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed), "Claim: submitWork must not change state");
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed), "Claim: submitWork must not change state");
 
-        // acceptSubmission -> Accepted
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        // acceptSubmission -> Accepted (Claim: deliverable was set by submitWork)
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
     }
 
     function test_Compliance_Claim_Forfeit_Reopen() public {
@@ -252,8 +254,8 @@ contract ITMPCompliance is Test {
         _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open), "Must reopen to Open after forfeit");
-        assertEq(task.claimer, address(0));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open), "Must reopen to Open after forfeit");
+        assertEq(task.worker, address(0));
         assertEq(task.stakeAmount, 0);
     }
 
@@ -268,18 +270,18 @@ contract ITMPCompliance is Test {
         // selectWorker -> WorkerSelected
         _relay(requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker1)));
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.WorkerSelected));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.WorkerSelected));
         assertEq(task.worker, worker1);
 
         // submitWork -> WorkerSelected (no state change)
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("pitch work"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.WorkerSelected), "Pitch: submitWork must not change state");
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.WorkerSelected), "Pitch: submitWork must not change state");
 
-        // acceptSubmission -> Accepted
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        // acceptSubmission -> Accepted (Pitch: deliverable was set by submitWork)
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("pitch work"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
     }
 
     // -------------------------------------------------------------------------
@@ -289,15 +291,17 @@ contract ITMPCompliance is Test {
     function test_Compliance_Benchmark_FullCycle() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
 
-        // submitWork -> PendingApproval (same as Bounty)
+        // First submitWork -> Open → PendingApproval (deliverable not written; deferred-write model)
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("benchmark result"))));
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.PendingApproval));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.PendingApproval), "Benchmark: first submitWork must transition to PendingApproval");
+        assertEq(task.deliverable, bytes32(0), "Benchmark: submitWork must NOT write deliverable");
 
-        // acceptSubmission -> Accepted
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        // acceptSubmission -> Accepted (deferred-write model)
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("benchmark result"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
+        assertEq(task.deliverable, keccak256("benchmark result"));
     }
 
     // -------------------------------------------------------------------------
@@ -318,19 +322,19 @@ contract ITMPCompliance is Test {
         // selectLowestBidder -> Claimed
         _relay(address(0), 0, abi.encodeCall(market.selectLowestBidder, (taskId)));
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed));
         assertEq(task.worker, worker2, "Lower bidder must win");
         assertEq(task.stakeAmount, 60e6, "Stake must equal winning bid");
 
         // submitWork -> Claimed (no state change)
         _relay(worker2, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("auction work"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed));
 
-        // acceptSubmission -> Accepted
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2)));
+        // acceptSubmission -> Accepted (Auction: deliverable was set by submitWork)
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, keccak256("auction work"))));
         task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Accepted));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
     }
 
     function test_Compliance_Auction_AcceptAuction_ShortCircuit() public {
@@ -339,7 +343,7 @@ contract ITMPCompliance is Test {
         // acceptAuction directly selects winner
         _relay(worker1, 0, abi.encodeCall(market.acceptAuction, (taskId, 50e6)));
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Claimed));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed));
         assertEq(task.worker, worker1);
         assertEq(task.stakeAmount, 50e6);
     }
@@ -350,15 +354,18 @@ contract ITMPCompliance is Test {
 
     function test_Compliance_SubmitWork_DeliverableStored() public {
         bytes32 deliverable = keccak256("ipfs://QmDeliverable");
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        // Use Claim mode so submitWork writes task.deliverable directly.
+        // Bounty/Benchmark use deferred-write — deliverable is set at acceptSubmission.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _relay(worker1, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
 
         vm.expectEmit(true, true, false, true);
-        emit ITMP.TaskSubmitted(taskId, worker1, deliverable);
+        emit ITMPCore.TaskSubmitted(taskId, worker1, deliverable);
 
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, deliverable)));
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(task.deliverable, deliverable, "Deliverable hash must be stored on-chain");
+        assertEq(task.deliverable, deliverable, "Deliverable hash must be stored on-chain (Claim mode)");
     }
 
     // -------------------------------------------------------------------------
@@ -367,25 +374,25 @@ contract ITMPCompliance is Test {
 
     function test_Compliance_RateTask_Range() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
 
-        ITMP.WorkerStats memory before = market.getWorkerStats(worker1);
+        ITMPCore.WorkerStats memory before = market.getWorkerStats(worker1);
 
         // rating=0 is the sentinel value for "unrated" but is still a valid call;
         // ratedTasks increments and totalStars increases by 0.
-        _relay(requester, 0, abi.encodeCall(market.rateTask, (taskId, 0, 0, 0, "", bytes32(0))));
+        _relay(requester, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 0, 0, 0, "", bytes32(0))));
 
-        ITMP.WorkerStats memory after_ = market.getWorkerStats(worker1);
+        ITMPCore.WorkerStats memory after_ = market.getWorkerStats(worker1);
         assertEq(after_.ratedTasks,  before.ratedTasks + 1, "ratedTasks must increment");
         assertEq(after_.totalStars,  before.totalStars,     "totalStars must not change for rating=0");
     }
 
     function test_Compliance_RateTask_WorkerStatsUpdated() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1)));
-        _relay(requester, 0, abi.encodeCall(market.rateTask, (taskId, 80, 0, 0, "", bytes32(0))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 80, 0, 0, "", bytes32(0))));
 
-        ITMP.WorkerStats memory ws = market.getWorkerStats(worker1);
+        ITMPCore.WorkerStats memory ws = market.getWorkerStats(worker1);
         assertEq(ws.ratedTasks, 1);
         assertEq(ws.totalStars, 80);
     }
@@ -456,7 +463,7 @@ contract ITMPCompliance is Test {
         bytes32 taskId1 = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
 
         bytes32 taskId2 = abi.decode(
-            fwd2.relay(address(market), requester, REWARD, abi.encodeCall(market.createTask, (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0)))),
+            fwd2.relay(address(market), requester, REWARD, abi.encodeCall(market.createTask, (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex""))),
             (bytes32)
         );
 
@@ -469,8 +476,8 @@ contract ITMPCompliance is Test {
 
         assertFalse(market.trustedForwarders(address(fwd)));
 
-        bytes memory data = abi.encodeCall(market.createTask, (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0)));
-        vm.expectRevert("Not trusted forwarder");
+        bytes memory data = abi.encodeCall(market.createTask, (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex""));
+        vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
         fwd.relay(address(market), requester, REWARD, data);
     }
 
@@ -496,7 +503,7 @@ contract ITMPCompliance is Test {
         );
 
         TaskMarket.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMP.TaskStatus.Open));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open));
         assertEq(task.mode, mode);
         assertEq(task.reward, REWARD);
     }

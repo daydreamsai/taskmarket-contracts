@@ -1,15 +1,15 @@
 {
   "storage": [
     {
-      "astId": 2007,
+      "astId": 2316,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "usdcToken",
       "offset": 0,
       "slot": "0",
-      "type": "t_contract(IERC20)1095"
+      "type": "t_contract(IERC20)1392"
     },
     {
-      "astId": 2012,
+      "astId": 2321,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "trustedForwarders",
       "offset": 0,
@@ -17,23 +17,23 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 2017,
+      "astId": 2326,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "tasks",
       "offset": 0,
       "slot": "2",
-      "type": "t_mapping(t_bytes32,t_struct(Task)4795_storage)"
+      "type": "t_mapping(t_bytes32,t_struct(Task)8377_storage)"
     },
     {
-      "astId": 2022,
+      "astId": 2331,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "workerStats",
       "offset": 0,
       "slot": "3",
-      "type": "t_mapping(t_address,t_struct(WorkerStats)4803_storage)"
+      "type": "t_mapping(t_address,t_struct(WorkerStats)8385_storage)"
     },
     {
-      "astId": 2026,
+      "astId": 2335,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "stakeForfeit",
       "offset": 0,
@@ -41,15 +41,15 @@
       "type": "t_mapping(t_bytes32,t_uint256)"
     },
     {
-      "astId": 2032,
+      "astId": 2341,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "taskBids",
       "offset": 0,
       "slot": "5",
-      "type": "t_mapping(t_bytes32,t_array(t_struct(Bid)2004_storage)dyn_storage)"
+      "type": "t_mapping(t_bytes32,t_array(t_struct(Bid)8391_storage)dyn_storage)"
     },
     {
-      "astId": 2034,
+      "astId": 2343,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "defaultFeeBps",
       "offset": 0,
@@ -57,7 +57,7 @@
       "type": "t_uint16"
     },
     {
-      "astId": 2036,
+      "astId": 2345,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "feeRecipient",
       "offset": 2,
@@ -65,7 +65,7 @@
       "type": "t_address"
     },
     {
-      "astId": 2038,
+      "astId": 2347,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "totalFeesCollected",
       "offset": 0,
@@ -73,7 +73,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 2040,
+      "astId": 2349,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "reputationRegistry",
       "offset": 0,
@@ -81,7 +81,7 @@
       "type": "t_address"
     },
     {
-      "astId": 2045,
+      "astId": 2354,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "requesterNonce",
       "offset": 0,
@@ -89,7 +89,7 @@
       "type": "t_mapping(t_address,t_uint256)"
     },
     {
-      "astId": 2051,
+      "astId": 2360,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "taskPitchHashes",
       "offset": 0,
@@ -97,7 +97,7 @@
       "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)"
     },
     {
-      "astId": 2057,
+      "astId": 2366,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "taskProofHashes",
       "offset": 0,
@@ -105,12 +105,76 @@
       "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)"
     },
     {
-      "astId": 2061,
+      "astId": 2373,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskWorkerRated",
+      "offset": 0,
+      "slot": "12",
+      "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))"
+    },
+    {
+      "astId": 2378,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskTags",
+      "offset": 0,
+      "slot": "13",
+      "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)"
+    },
+    {
+      "astId": 2383,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskVerdicts",
+      "offset": 0,
+      "slot": "14",
+      "type": "t_mapping(t_bytes32,t_struct(Verdict)8278_storage)"
+    },
+    {
+      "astId": 2387,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "phaseDeadline",
+      "offset": 0,
+      "slot": "15",
+      "type": "t_mapping(t_bytes32,t_uint256)"
+    },
+    {
+      "astId": 2392,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskEvaluatorConfigs",
+      "offset": 0,
+      "slot": "16",
+      "type": "t_mapping(t_bytes32,t_struct(TaskEvaluatorConfig)8324_storage)"
+    },
+    {
+      "astId": 2397,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskAuctionConfigs",
+      "offset": 0,
+      "slot": "17",
+      "type": "t_mapping(t_bytes32,t_struct(TaskAuctionConfig)8336_storage)"
+    },
+    {
+      "astId": 2402,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskMetadata",
+      "offset": 0,
+      "slot": "18",
+      "type": "t_mapping(t_bytes32,t_struct(TaskMetadata)8346_storage)"
+    },
+    {
+      "astId": 2407,
+      "contract": "src/TaskMarket.sol:TaskMarket",
+      "label": "taskPitchConfigs",
+      "offset": 0,
+      "slot": "19",
+      "type": "t_mapping(t_bytes32,t_struct(TaskPitchConfig)8350_storage)"
+    },
+    {
+      "astId": 2411,
       "contract": "src/TaskMarket.sol:TaskMarket",
       "label": "__gap",
       "offset": 0,
-      "slot": "12",
-      "type": "t_array(t_uint256)46_storage"
+      "slot": "20",
+      "type": "t_array(t_uint256)38_storage"
     }
   ],
   "types": {
@@ -125,16 +189,22 @@
       "numberOfBytes": "32",
       "base": "t_bytes32"
     },
-    "t_array(t_struct(Bid)2004_storage)dyn_storage": {
+    "t_array(t_struct(Award)8258_storage)dyn_storage": {
       "encoding": "dynamic_array",
-      "label": "struct TaskMarket.Bid[]",
+      "label": "struct ITMPCore.Award[]",
       "numberOfBytes": "32",
-      "base": "t_struct(Bid)2004_storage"
+      "base": "t_struct(Award)8258_storage"
     },
-    "t_array(t_uint256)46_storage": {
+    "t_array(t_struct(Bid)8391_storage)dyn_storage": {
+      "encoding": "dynamic_array",
+      "label": "struct ITMPCore.Bid[]",
+      "numberOfBytes": "32",
+      "base": "t_struct(Bid)8391_storage"
+    },
+    "t_array(t_uint256)38_storage": {
       "encoding": "inplace",
-      "label": "uint256[46]",
-      "numberOfBytes": "1472",
+      "label": "uint256[38]",
+      "numberOfBytes": "1216",
       "base": "t_uint256"
     },
     "t_bool": {
@@ -152,14 +222,19 @@
       "label": "bytes4",
       "numberOfBytes": "4"
     },
-    "t_contract(IERC20)1095": {
+    "t_contract(IERC20)1392": {
       "encoding": "inplace",
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_enum(TaskStatus)4748": {
+    "t_enum(TaskStatus)8245": {
       "encoding": "inplace",
-      "label": "enum ITMP.TaskStatus",
+      "label": "enum ITMPCore.TaskStatus",
+      "numberOfBytes": "1"
+    },
+    "t_enum(VerdictType)8250": {
+      "encoding": "inplace",
+      "label": "enum ITMPCore.VerdictType",
       "numberOfBytes": "1"
     },
     "t_mapping(t_address,t_bool)": {
@@ -169,12 +244,12 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_struct(WorkerStats)4803_storage)": {
+    "t_mapping(t_address,t_struct(WorkerStats)8385_storage)": {
       "encoding": "mapping",
       "key": "t_address",
-      "label": "mapping(address => struct ITMP.WorkerStats)",
+      "label": "mapping(address => struct ITMPCore.WorkerStats)",
       "numberOfBytes": "32",
-      "value": "t_struct(WorkerStats)4803_storage"
+      "value": "t_struct(WorkerStats)8385_storage"
     },
     "t_mapping(t_address,t_uint256)": {
       "encoding": "mapping",
@@ -190,19 +265,61 @@
       "numberOfBytes": "32",
       "value": "t_array(t_bytes32)dyn_storage"
     },
-    "t_mapping(t_bytes32,t_array(t_struct(Bid)2004_storage)dyn_storage)": {
+    "t_mapping(t_bytes32,t_array(t_struct(Bid)8391_storage)dyn_storage)": {
       "encoding": "mapping",
       "key": "t_bytes32",
-      "label": "mapping(bytes32 => struct TaskMarket.Bid[])",
+      "label": "mapping(bytes32 => struct ITMPCore.Bid[])",
       "numberOfBytes": "32",
-      "value": "t_array(t_struct(Bid)2004_storage)dyn_storage"
+      "value": "t_array(t_struct(Bid)8391_storage)dyn_storage"
     },
-    "t_mapping(t_bytes32,t_struct(Task)4795_storage)": {
+    "t_mapping(t_bytes32,t_mapping(t_address,t_bool))": {
       "encoding": "mapping",
       "key": "t_bytes32",
-      "label": "mapping(bytes32 => struct ITMP.Task)",
+      "label": "mapping(bytes32 => mapping(address => bool))",
       "numberOfBytes": "32",
-      "value": "t_struct(Task)4795_storage"
+      "value": "t_mapping(t_address,t_bool)"
+    },
+    "t_mapping(t_bytes32,t_struct(Task)8377_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct ITMPCore.Task)",
+      "numberOfBytes": "32",
+      "value": "t_struct(Task)8377_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskAuctionConfig)8336_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct ITMPCore.TaskAuctionConfig)",
+      "numberOfBytes": "32",
+      "value": "t_struct(TaskAuctionConfig)8336_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskEvaluatorConfig)8324_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct ITMPCore.TaskEvaluatorConfig)",
+      "numberOfBytes": "32",
+      "value": "t_struct(TaskEvaluatorConfig)8324_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskMetadata)8346_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct ITMPCore.TaskMetadata)",
+      "numberOfBytes": "32",
+      "value": "t_struct(TaskMetadata)8346_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskPitchConfig)8350_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct ITMPCore.TaskPitchConfig)",
+      "numberOfBytes": "32",
+      "value": "t_struct(TaskPitchConfig)8350_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(Verdict)8278_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct ITMPCore.Verdict)",
+      "numberOfBytes": "32",
+      "value": "t_struct(Verdict)8278_storage"
     },
     "t_mapping(t_bytes32,t_uint256)": {
       "encoding": "mapping",
@@ -216,13 +333,13 @@
       "label": "string",
       "numberOfBytes": "32"
     },
-    "t_struct(Bid)2004_storage": {
+    "t_struct(Award)8258_storage": {
       "encoding": "inplace",
-      "label": "struct TaskMarket.Bid",
-      "numberOfBytes": "64",
+      "label": "struct ITMPCore.Award",
+      "numberOfBytes": "96",
       "members": [
         {
-          "astId": 2001,
+          "astId": 8253,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "worker",
           "offset": 0,
@@ -230,7 +347,38 @@
           "type": "t_address"
         },
         {
-          "astId": 2003,
+          "astId": 8255,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "amount",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 8257,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "rank",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint16"
+        }
+      ]
+    },
+    "t_struct(Bid)8391_storage": {
+      "encoding": "inplace",
+      "label": "struct ITMPCore.Bid",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 8388,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "worker",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_address"
+        },
+        {
+          "astId": 8390,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "price",
           "offset": 0,
@@ -239,13 +387,13 @@
         }
       ]
     },
-    "t_struct(Task)4795_storage": {
+    "t_struct(Task)8377_storage": {
       "encoding": "inplace",
-      "label": "struct ITMP.Task",
-      "numberOfBytes": "608",
+      "label": "struct ITMPCore.Task",
+      "numberOfBytes": "288",
       "members": [
         {
-          "astId": 4751,
+          "astId": 8353,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "id",
           "offset": 0,
@@ -253,7 +401,7 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 4753,
+          "astId": 8355,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "requester",
           "offset": 0,
@@ -261,7 +409,7 @@
           "type": "t_address"
         },
         {
-          "astId": 4755,
+          "astId": 8357,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "worker",
           "offset": 0,
@@ -269,7 +417,23 @@
           "type": "t_address"
         },
         {
-          "astId": 4757,
+          "astId": 8360,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "status",
+          "offset": 20,
+          "slot": "2",
+          "type": "t_enum(TaskStatus)8245"
+        },
+        {
+          "astId": 8362,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "mode",
+          "offset": 21,
+          "slot": "2",
+          "type": "t_bytes4"
+        },
+        {
+          "astId": 8364,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "reward",
           "offset": 0,
@@ -277,158 +441,281 @@
           "type": "t_uint256"
         },
         {
-          "astId": 4759,
+          "astId": 8366,
           "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "createdAt",
+          "label": "expiryTime",
           "offset": 0,
           "slot": "4",
           "type": "t_uint256"
         },
         {
-          "astId": 4761,
+          "astId": 8368,
           "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "expiryTime",
+          "label": "stakeAmount",
           "offset": 0,
           "slot": "5",
           "type": "t_uint256"
         },
         {
-          "astId": 4764,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "status",
-          "offset": 0,
-          "slot": "6",
-          "type": "t_enum(TaskStatus)4748"
-        },
-        {
-          "astId": 4766,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "rating",
-          "offset": 1,
-          "slot": "6",
-          "type": "t_uint8"
-        },
-        {
-          "astId": 4768,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "mode",
-          "offset": 2,
-          "slot": "6",
-          "type": "t_bytes4"
-        },
-        {
-          "astId": 4770,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "stakeAmount",
-          "offset": 0,
-          "slot": "7",
-          "type": "t_uint256"
-        },
-        {
-          "astId": 4772,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "claimer",
-          "offset": 0,
-          "slot": "8",
-          "type": "t_address"
-        },
-        {
-          "astId": 4774,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "claimedAt",
-          "offset": 0,
-          "slot": "9",
-          "type": "t_uint256"
-        },
-        {
-          "astId": 4776,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "pitchDeadline",
-          "offset": 0,
-          "slot": "10",
-          "type": "t_uint256"
-        },
-        {
-          "astId": 4778,
+          "astId": 8370,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "feeBps",
           "offset": 0,
-          "slot": "11",
+          "slot": "6",
           "type": "t_uint16"
         },
         {
-          "astId": 4780,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "bidDeadline",
-          "offset": 0,
-          "slot": "12",
-          "type": "t_uint256"
-        },
-        {
-          "astId": 4782,
-          "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "maxPrice",
-          "offset": 0,
-          "slot": "13",
-          "type": "t_uint256"
-        },
-        {
-          "astId": 4784,
+          "astId": 8372,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "deliverable",
           "offset": 0,
-          "slot": "14",
+          "slot": "7",
           "type": "t_bytes32"
         },
         {
-          "astId": 4786,
+          "astId": 8374,
           "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "contentHash",
+          "label": "rating",
           "offset": 0,
-          "slot": "15",
-          "type": "t_bytes32"
+          "slot": "8",
+          "type": "t_uint8"
         },
         {
-          "astId": 4788,
+          "astId": 8376,
           "contract": "src/TaskMarket.sol:TaskMarket",
-          "label": "contentURI",
+          "label": "hookContract",
+          "offset": 1,
+          "slot": "8",
+          "type": "t_address"
+        }
+      ]
+    },
+    "t_struct(TaskAuctionConfig)8336_storage": {
+      "encoding": "inplace",
+      "label": "struct ITMPCore.TaskAuctionConfig",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 8327,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "bidDeadline",
           "offset": 0,
-          "slot": "16",
-          "type": "t_string_storage"
+          "slot": "0",
+          "type": "t_uint256"
         },
         {
-          "astId": 4790,
+          "astId": 8329,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "maxPrice",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 8331,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "auctionSubtype",
           "offset": 0,
-          "slot": "17",
+          "slot": "2",
           "type": "t_bytes4"
         },
         {
-          "astId": 4792,
+          "astId": 8333,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "lowestBidder",
           "offset": 4,
-          "slot": "17",
+          "slot": "2",
           "type": "t_address"
         },
         {
-          "astId": 4794,
+          "astId": 8335,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "lowestBidPrice",
           "offset": 0,
-          "slot": "18",
+          "slot": "3",
           "type": "t_uint256"
         }
       ]
     },
-    "t_struct(WorkerStats)4803_storage": {
+    "t_struct(TaskEvaluatorConfig)8324_storage": {
       "encoding": "inplace",
-      "label": "struct ITMP.WorkerStats",
+      "label": "struct ITMPCore.TaskEvaluatorConfig",
       "numberOfBytes": "96",
       "members": [
         {
-          "astId": 4798,
+          "astId": 8313,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "evaluator",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_address"
+        },
+        {
+          "astId": 8315,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "evaluatorStake",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 8317,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "evaluatorFeeBps",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 8319,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "evaluationWindow",
+          "offset": 2,
+          "slot": "2",
+          "type": "t_uint32"
+        },
+        {
+          "astId": 8321,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "appealWindow",
+          "offset": 6,
+          "slot": "2",
+          "type": "t_uint32"
+        },
+        {
+          "astId": 8323,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "disputeResolver",
+          "offset": 10,
+          "slot": "2",
+          "type": "t_address"
+        }
+      ]
+    },
+    "t_struct(TaskMetadata)8346_storage": {
+      "encoding": "inplace",
+      "label": "struct ITMPCore.TaskMetadata",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 8339,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "createdAt",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 8341,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "claimedAt",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 8343,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "contentHash",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_bytes32"
+        },
+        {
+          "astId": 8345,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "contentURI",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_string_storage"
+        }
+      ]
+    },
+    "t_struct(TaskPitchConfig)8350_storage": {
+      "encoding": "inplace",
+      "label": "struct ITMPCore.TaskPitchConfig",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 8349,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "pitchDeadline",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint256"
+        }
+      ]
+    },
+    "t_struct(Verdict)8278_storage": {
+      "encoding": "inplace",
+      "label": "struct ITMPCore.Verdict",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 8261,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "issued",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_bool"
+        },
+        {
+          "astId": 8264,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "verdictType",
+          "offset": 1,
+          "slot": "0",
+          "type": "t_enum(VerdictType)8250"
+        },
+        {
+          "astId": 8266,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "score",
+          "offset": 2,
+          "slot": "0",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 8268,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "confidence",
+          "offset": 4,
+          "slot": "0",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 8271,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "criteriaFlags",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_array(t_bytes32)dyn_storage"
+        },
+        {
+          "astId": 8273,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "evidenceHash",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_bytes32"
+        },
+        {
+          "astId": 8277,
+          "contract": "src/TaskMarket.sol:TaskMarket",
+          "label": "awards",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_array(t_struct(Award)8258_storage)dyn_storage"
+        }
+      ]
+    },
+    "t_struct(WorkerStats)8385_storage": {
+      "encoding": "inplace",
+      "label": "struct ITMPCore.WorkerStats",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "astId": 8380,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "completedTasks",
           "offset": 0,
@@ -436,7 +723,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 4800,
+          "astId": 8382,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "ratedTasks",
           "offset": 0,
@@ -444,7 +731,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 4802,
+          "astId": 8384,
           "contract": "src/TaskMarket.sol:TaskMarket",
           "label": "totalStars",
           "offset": 0,
@@ -462,6 +749,11 @@
       "encoding": "inplace",
       "label": "uint256",
       "numberOfBytes": "32"
+    },
+    "t_uint32": {
+      "encoding": "inplace",
+      "label": "uint32",
+      "numberOfBytes": "4"
     },
     "t_uint8": {
       "encoding": "inplace",

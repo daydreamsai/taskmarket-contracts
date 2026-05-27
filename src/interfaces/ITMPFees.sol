@@ -9,6 +9,12 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         implement this interface and return true from
 ///         supportsInterface(type(ITMPFees).interfaceId).
 interface ITMPFees is IERC165 {
+    /// @notice Emitted when the default platform fee is updated.
+    event FeesUpdated(uint16 newFeeBps);
+
+    /// @notice Emitted when the fee recipient address is updated.
+    event FeeRecipientUpdated(address newRecipient);
+
     /// @notice Platform fee in basis points deducted from reward on task completion.
     ///         Example: 500 = 5%.
     function defaultFeeBps() external view returns (uint16);

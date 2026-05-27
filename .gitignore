@@ -3,6 +3,9 @@ cache/
 out/
 broadcast/
 
+# Static analysis reports
+reports/
+
 # IDE
 .vscode/
 .idea/

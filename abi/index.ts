@@ -1,1 +1,3 @@
-export { default as TaskMarketABI } from './TaskMarket.json';
+import abi from './TaskMarket.json';
+
+export const TaskMarketABI = abi;

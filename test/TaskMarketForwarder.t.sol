@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "../src/TaskMarket.sol";
 import "../src/TaskMarketForwarder.sol";
 import "../src/interfaces/IPGTRForwarder.sol";
-import "../src/interfaces/ITMP.sol";
+import "../src/interfaces/ITMPCore.sol";
 import "./mocks/MockUSDC.sol";
 
 // ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ contract TaskMarketForwarderTest is Test {
 
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         _relay(requester, REWARD, data, _nonce(0));
     }
@@ -125,7 +125,7 @@ contract TaskMarketForwarderTest is Test {
     // -----------------------------------------------------------------------
 
     function test_PgtrSender_Reverts_OutsideRelay() public {
-        vm.expectRevert("No active forwarded call");
+        vm.expectRevert(TaskMarketForwarder.NoActiveForwardedCall.selector);
         forwarder.pgtrSender();
     }
 
@@ -162,7 +162,7 @@ contract TaskMarketForwarderTest is Test {
     function test_Relay_EmitsPaymentGatedCall() public {
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         bytes4 expectedSelector = market.createTask.selector;
 
@@ -179,7 +179,7 @@ contract TaskMarketForwarderTest is Test {
     function test_Relay_Replay_Reverts() public {
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         bytes32 nonce = _nonce(99);
 
@@ -196,7 +196,7 @@ contract TaskMarketForwarderTest is Test {
     function test_ConsumedReceipts_Stored() public {
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         bytes32 nonce = _nonce(100);
         bytes4 selector = market.createTask.selector;
@@ -219,7 +219,7 @@ contract TaskMarketForwarderTest is Test {
     function test_Relay_Expired_Reverts() public {
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         uint256 expiredBefore = block.timestamp - 1;
 
@@ -231,7 +231,7 @@ contract TaskMarketForwarderTest is Test {
     function test_Relay_ExactlyAtDeadline_Succeeds() public {
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         // validBefore == block.timestamp (inclusive, <= check)
         vm.prank(server);
@@ -245,7 +245,7 @@ contract TaskMarketForwarderTest is Test {
     function test_PgtrSender_ResetAfterRelay() public {
         _createTask();
         // pgtrSender must revert outside of an active relay
-        vm.expectRevert("No active forwarded call");
+        vm.expectRevert(TaskMarketForwarder.NoActiveForwardedCall.selector);
         forwarder.pgtrSender();
     }
 
@@ -257,10 +257,10 @@ contract TaskMarketForwarderTest is Test {
         // createTask with reward=0 must revert with the TaskMarket error
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (0, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (0, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         vm.prank(server);
-        vm.expectRevert("Reward must be greater than 0");
+        vm.expectRevert(ITMPCore.RewardMustBeGreaterThanZero.selector);
         forwarder.relay(requester, 0, _validBefore, _nonce(300), data);
     }
 
@@ -275,7 +275,7 @@ contract TaskMarketForwarderTest is Test {
 
         bytes memory createData = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.CLAIM(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.CLAIM(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         _relay(requester, REWARD, createData, _nonce(0));
 
@@ -296,7 +296,7 @@ contract TaskMarketForwarderTest is Test {
     function test_Relay_UnauthorizedCaller_Reverts() public {
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0))
+            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
         );
         vm.prank(attacker);
         vm.expectRevert(TaskMarketForwarder.UnauthorizedRelayer.selector);
