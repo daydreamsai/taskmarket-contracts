@@ -12,12 +12,12 @@ import { IPGTRForwarder } from "./interfaces/IPGTRForwarder.sol";
  * @notice PGTR forwarder for TaskMarket (ERC-8194).
  *
  *         This contract is the single trusted entry point for the TaskMarket
- *         backend server. It implements IPGTRForwarder so that TaskMarket can
+ *         relay server. It implements IPGTRForwarder so that TaskMarket can
  *         read the authenticated actor via pgtrSender() rather than relying on
  *         explicit calldata parameters.
  *
  *         Flow for each operation:
- *         1. Backend server (msg.sender) calls relay(pgtrSender, paymentAmount, data).
+ *         1. Relay server (msg.sender) calls relay(pgtrSender, paymentAmount, data).
  *         2. If paymentAmount > 0, the forwarder pulls USDC from msg.sender directly
  *            into TaskMarket using transferFrom (server must have approved this contract).
  *         3. The forwarder sets _pgtrSenderStorage = pgtrSender for the duration of
