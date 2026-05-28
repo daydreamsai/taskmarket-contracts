@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {IPGTRForwarder} from "./interfaces/IPGTRForwarder.sol";
+import { IPGTRForwarder } from "./interfaces/IPGTRForwarder.sol";
 
 /**
  * @title TaskMarketForwarder
@@ -92,8 +92,7 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
     // -------------------------------------------------------------------------
 
     function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
-        return interfaceId == type(IPGTRForwarder).interfaceId
-            || interfaceId == type(IERC165).interfaceId;
+        return interfaceId == type(IPGTRForwarder).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
     // -------------------------------------------------------------------------
@@ -122,9 +121,9 @@ contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
         if (data.length < 4) revert CalldataTooShort();
 
         bytes4 selector = bytes4(data[:4]);
-        bytes32 receiptHash = keccak256(abi.encode(
-            block.chainid, pgtrSenderAddr, paymentAmount, receiptNonce, validBefore, taskMarket, selector
-        ));
+        bytes32 receiptHash = keccak256(
+            abi.encode(block.chainid, pgtrSenderAddr, paymentAmount, receiptNonce, validBefore, taskMarket, selector)
+        );
         if (consumedReceipts[receiptHash]) revert ReceiptAlreadyConsumed();
         consumedReceipts[receiptHash] = true;
 

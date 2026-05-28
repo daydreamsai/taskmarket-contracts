@@ -2,19 +2,19 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
-import "../src/TaskMarket.sol";
+import { AdminFacet } from "../src/facets/AdminFacet.sol";
 
 contract AddForwarder is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
-        address taskMarket = vm.envAddress("CONTRACT_ADDRESS");
+        address diamond = vm.envAddress("CONTRACT_ADDRESS");
         address forwarder = vm.envAddress("FORWARDER_ADDRESS");
 
         vm.startBroadcast(deployerPrivateKey);
-        TaskMarket(taskMarket).addForwarder(forwarder);
+        AdminFacet(diamond).addForwarder(forwarder);
         vm.stopBroadcast();
 
         console.log("Added forwarder:", forwarder);
-        console.log("To TaskMarket:", taskMarket);
+        console.log("To Diamond:", diamond);
     }
 }

@@ -20,7 +20,6 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///       is implementation-defined (direct msg.sender, ERC-2771, ERC-4337, ERC-8194 PGTR,
 ///       x402 settlement callback, etc.). The reference implementation uses ERC-8194 PGTR.
 interface ITMPCore is IERC165 {
-
     // -------------------------------------------------------------------------
     // Errors
     // -------------------------------------------------------------------------
@@ -97,11 +96,14 @@ interface ITMPCore is IERC165 {
 
     // Config / params
     error InvalidFeeRecipient();
+    error InvalidUSDCToken();
     error InvalidRecipient();
     error InvalidForwarderAddress();
     error FeeBpsTooHigh();
     error RewardMustBeGreaterThanZero();
     error DurationMustBeGreaterThanZero();
+    error PitchDeadlineMustBeGreaterThanZero();
+    error BidDeadlineMustBeGreaterThanZero();
     error EmptyPitchHash();
     error EmptyProofHash();
     error RatingMustBe0To100();
@@ -152,43 +154,47 @@ interface ITMPCore is IERC165 {
     }
 
     /// @notice Verdict classification issued by an evaluator.
-    enum VerdictType { APPROVE, REJECT, PARTIAL }
+    enum VerdictType {
+        APPROVE,
+        REJECT,
+        PARTIAL
+    }
 
     /// @notice Single-winner payout record within a Verdict.
     struct Award {
         address worker;
         uint256 amount;
-        uint16  rank;
+        uint16 rank;
     }
 
     /// @notice Evaluation outcome stored on-chain.
     ///         issued = false until evaluate() is called.
     struct Verdict {
-        bool        issued;
+        bool issued;
         VerdictType verdictType;
-        uint16      score;
-        uint16      confidence;
-        bytes32[]   criteriaFlags;
-        bytes32     evidenceHash;
-        Award[]     awards;
+        uint16 score;
+        uint16 confidence;
+        bytes32[] criteriaFlags;
+        bytes32 evidenceHash;
+        Award[] awards;
     }
 
     /// @notice Snapshot of task state passed to ITMPHook callbacks.
     struct TaskContext {
-        bytes32    taskId;
-        address    requester;
-        address    evaluator;
-        address    paymentToken;
-        uint256    reward;
-        uint256    evaluatorStake;
-        uint256    evaluatorFeeBps;
-        uint256    submissionDeadline;
-        uint256    evaluationWindow;
-        uint256    appealWindow;
-        address    disputeResolver;
+        bytes32 taskId;
+        address requester;
+        address evaluator;
+        address paymentToken;
+        uint256 reward;
+        uint256 evaluatorStake;
+        uint256 evaluatorFeeBps;
+        uint256 submissionDeadline;
+        uint256 evaluationWindow;
+        uint256 appealWindow;
+        address disputeResolver;
         TaskStatus currentState;
-        bytes4     mode;
-        bytes32[]  tags;
+        bytes4 mode;
+        bytes32[] tags;
     }
 
     /// @notice Evaluator configuration for a task. Stored separately from the core Task
@@ -197,9 +203,9 @@ interface ITMPCore is IERC165 {
     struct TaskEvaluatorConfig {
         address evaluator;
         uint256 evaluatorStake;
-        uint16  evaluatorFeeBps;
-        uint32  evaluationWindow;
-        uint32  appealWindow;
+        uint16 evaluatorFeeBps;
+        uint32 evaluationWindow;
+        uint32 appealWindow;
         address disputeResolver;
     }
 
@@ -208,7 +214,7 @@ interface ITMPCore is IERC165 {
     struct TaskAuctionConfig {
         uint256 bidDeadline;
         uint256 maxPrice;
-        bytes4  auctionSubtype;
+        bytes4 auctionSubtype;
         address lowestBidder;
         uint256 lowestBidPrice;
     }
@@ -220,7 +226,7 @@ interface ITMPCore is IERC165 {
         uint256 createdAt;
         uint256 claimedAt;
         bytes32 contentHash;
-        string  contentURI;
+        string contentURI;
     }
 
     /// @notice Pitch-mode scheduling config. Zero for non-pitch tasks.
@@ -233,18 +239,18 @@ interface ITMPCore is IERC165 {
     ///         data lives in taskEvaluatorConfigs(), taskAuctionConfigs(), and
     ///         taskPitchConfigs(). This keeps the ABI encoder within Yul stack limits.
     struct Task {
-        bytes32    id;
-        address    requester;
-        address    worker;
+        bytes32 id;
+        address requester;
+        address worker;
         TaskStatus status;
-        bytes4     mode;
-        uint256    reward;
-        uint256    expiryTime;
-        uint256    stakeAmount;
-        uint16     feeBps;
-        bytes32    deliverable;
-        uint8      rating;
-        address    hookContract;
+        bytes4 mode;
+        uint256 reward;
+        uint256 expiryTime;
+        uint256 stakeAmount;
+        uint16 feeBps;
+        bytes32 deliverable;
+        uint8 rating;
+        address hookContract;
     }
 
     /// @notice Worker performance statistics.
@@ -279,11 +285,7 @@ interface ITMPCore is IERC165 {
 
     /// @notice Emitted when a task is created and reward is escrowed.
     event TaskCreated(
-        bytes32 indexed taskId,
-        address indexed requester,
-        uint256 reward,
-        bytes4  indexed mode,
-        uint256 expiryTime
+        bytes32 indexed taskId, address indexed requester, uint256 reward, bytes4 indexed mode, uint256 expiryTime
     );
 
     /// @notice Emitted when a task is completed and worker is paid.
@@ -296,32 +298,20 @@ interface ITMPCore is IERC165 {
     );
 
     /// @notice Emitted when a worker submits work (deliverable hash anchored on-chain).
-    event TaskSubmitted(
-        bytes32 indexed taskId,
-        address indexed worker,
-        bytes32 deliverable
-    );
+    event TaskSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 deliverable);
 
     /// @notice Emitted when a task expires and the reward is refunded.
-    event TaskExpired(
-        bytes32 indexed taskId,
-        address indexed requester,
-        uint256 refundAmount
-    );
+    event TaskExpired(bytes32 indexed taskId, address indexed requester, uint256 refundAmount);
 
     /// @notice Emitted when a requester cancels an open task and receives a refund.
-    event TaskCancelled(
-        bytes32 indexed taskId,
-        address indexed requester,
-        uint256 refundAmount
-    );
+    event TaskCancelled(bytes32 indexed taskId, address indexed requester, uint256 refundAmount);
 
     /// @notice Emitted when a requester rates a completed task.
     event TaskRated(
         bytes32 indexed taskId,
         address indexed worker,
-        uint8           rating,
-        uint256         raterAgentId   // ERC-8004 agent ID of the requester (0 if unregistered)
+        uint8 rating,
+        uint256 raterAgentId // ERC-8004 agent ID of the requester (0 if unregistered)
     );
 
     /// @notice Emitted when a Claim-mode task is claimed by a worker.
@@ -355,11 +345,7 @@ interface ITMPCore is IERC165 {
     /// @notice Emitted when a worker anchors a proof hash for a Benchmark-mode task.
     ///         proofType is keccak256(typeString); metricValue is a task-specific score.
     event ProofSubmitted(
-        bytes32 indexed taskId,
-        address indexed worker,
-        bytes32 proofHash,
-        bytes32 proofType,
-        uint256 metricValue
+        bytes32 indexed taskId, address indexed worker, bytes32 proofHash, bytes32 proofType, uint256 metricValue
     );
 
     // -------------------------------------------------------------------------
@@ -386,15 +372,15 @@ interface ITMPCore is IERC165 {
     function createTask(
         uint256 reward,
         uint256 duration,
-        bytes4  mode,
+        bytes4 mode,
         uint256 pitchDeadline,
         uint256 bidDeadline,
         bytes32 contentHash,
-        string  calldata contentURI,
-        bytes4  auctionSubtype,
+        string calldata contentURI,
+        bytes4 auctionSubtype,
         address hookContract,
         bytes32[] calldata tags,
-        bytes   calldata hookData
+        bytes calldata hookData
     ) external returns (bytes32 taskId);
 
     /// @notice Accept a worker's submission and release escrowed payment.
@@ -448,12 +434,7 @@ interface ITMPCore is IERC165 {
     /// @param proofHash   Domain-separated commitment over (taskId, worker, proofData)
     /// @param proofType   bytes32(keccak256(proofTypeString)) identifying the proof scheme
     /// @param metricValue Claimed numeric result of the benchmark
-    function submitProof(
-        bytes32 taskId,
-        bytes32 proofHash,
-        bytes32 proofType,
-        uint256 metricValue
-    ) external;
+    function submitProof(bytes32 taskId, bytes32 proofHash, bytes32 proofType, uint256 metricValue) external;
 
     /// @notice Rate a completed task and record feedback via ERC-8004.
     ///         For Bounty / Benchmark a requester MAY rate each winner separately;

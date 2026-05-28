@@ -17,11 +17,11 @@
     "doc": "forge doc --out docs/natspec",
     "lint": "solhint 'src/**/*.sol'",
     "lint:check": "solhint 'src/**/*.sol'",
-    "fmt": "forge fmt",
-    "fmt:check": "forge fmt --check",
+    "format:check": "forge fmt --check",
+    "format:write": "forge fmt",
     "audit": "slither . --config-file slither.config.json",
-    "deploy:local": "forge script script/Deploy.s.sol --rpc-url localhost --broadcast",
-    "deploy:base-sepolia": "forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast --verify",
+    "deploy:local": "forge script script/DiamondDeploy.s.sol:DiamondDeploy --rpc-url localhost --broadcast",
+    "deploy:base-sepolia": "forge script script/DiamondDeploy.s.sol:DiamondDeploy --rpc-url base_sepolia --broadcast --verify",
     "clean": "forge clean"
   },
   "devDependencies": {

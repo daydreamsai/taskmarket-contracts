@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ITMPHook} from "../../src/interfaces/ITMPHook.sol";
-import {ITMPCore} from "../../src/interfaces/ITMPCore.sol";
+import { ITMPHook } from "../../src/interfaces/ITMPHook.sol";
+import { ITMPCore } from "../../src/interfaces/ITMPCore.sol";
 
 /// @dev Configurable mock for ITMPHook.
 ///      Each check* function can be configured to revert or return false.
@@ -14,10 +14,15 @@ contract MockTaskHook is ITMPHook {
     bool public revertOnCheckFund;
     bool public rejectOnCheckFund;
     bool public revertOnCheckClaim;
+    bool public rejectOnCheckClaim;
     bool public revertOnCheckSelectWorker;
+    bool public rejectOnCheckSelectWorker;
     bool public revertOnCheckSubmit;
+    bool public rejectOnCheckSubmit;
     bool public revertOnCheckEvaluate;
+    bool public rejectOnCheckEvaluate;
     bool public revertOnCheckComplete;
+    bool public rejectOnCheckComplete;
 
     uint256 public checkFundCalls;
     uint256 public checkClaimCalls;
@@ -34,15 +39,57 @@ contract MockTaskHook is ITMPHook {
     uint8 public lastSeenStatusOnCheckComplete;
     address public taskMarketAddress;
 
-    function setTaskMarket(address tm) external { taskMarketAddress = tm; }
+    function setTaskMarket(address tm) external {
+        taskMarketAddress = tm;
+    }
 
-    function setRevertOnCheckFund(bool v) external { revertOnCheckFund = v; }
-    function setRejectOnCheckFund(bool v) external { rejectOnCheckFund = v; }
-    function setRevertOnCheckClaim(bool v) external { revertOnCheckClaim = v; }
-    function setRevertOnCheckSelectWorker(bool v) external { revertOnCheckSelectWorker = v; }
-    function setRevertOnCheckSubmit(bool v) external { revertOnCheckSubmit = v; }
-    function setRevertOnCheckEvaluate(bool v) external { revertOnCheckEvaluate = v; }
-    function setRevertOnCheckComplete(bool v) external { revertOnCheckComplete = v; }
+    function setRevertOnCheckFund(bool v) external {
+        revertOnCheckFund = v;
+    }
+
+    function setRejectOnCheckFund(bool v) external {
+        rejectOnCheckFund = v;
+    }
+
+    function setRevertOnCheckClaim(bool v) external {
+        revertOnCheckClaim = v;
+    }
+
+    function setRejectOnCheckClaim(bool v) external {
+        rejectOnCheckClaim = v;
+    }
+
+    function setRevertOnCheckSelectWorker(bool v) external {
+        revertOnCheckSelectWorker = v;
+    }
+
+    function setRejectOnCheckSelectWorker(bool v) external {
+        rejectOnCheckSelectWorker = v;
+    }
+
+    function setRevertOnCheckSubmit(bool v) external {
+        revertOnCheckSubmit = v;
+    }
+
+    function setRejectOnCheckSubmit(bool v) external {
+        rejectOnCheckSubmit = v;
+    }
+
+    function setRevertOnCheckEvaluate(bool v) external {
+        revertOnCheckEvaluate = v;
+    }
+
+    function setRejectOnCheckEvaluate(bool v) external {
+        rejectOnCheckEvaluate = v;
+    }
+
+    function setRevertOnCheckComplete(bool v) external {
+        revertOnCheckComplete = v;
+    }
+
+    function setRejectOnCheckComplete(bool v) external {
+        rejectOnCheckComplete = v;
+    }
 
     function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
         return interfaceId == type(ITMPHook).interfaceId || interfaceId == type(IERC165).interfaceId;
@@ -57,28 +104,32 @@ contract MockTaskHook is ITMPHook {
     function checkClaim(bytes32, ITMPCore.TaskContext calldata, address) external override returns (bool) {
         checkClaimCalls++;
         if (revertOnCheckClaim) revert("MockTaskHook: checkClaim reverted");
-        return true;
+        return !rejectOnCheckClaim;
     }
 
     function checkSelectWorker(bytes32, ITMPCore.TaskContext calldata, address) external override returns (bool) {
         checkSelectWorkerCalls++;
         if (revertOnCheckSelectWorker) revert("MockTaskHook: checkSelectWorker reverted");
-        return true;
+        return !rejectOnCheckSelectWorker;
     }
 
     function checkSubmit(bytes32, ITMPCore.TaskContext calldata, address, bytes32) external override returns (bool) {
         checkSubmitCalls++;
         if (revertOnCheckSubmit) revert("MockTaskHook: checkSubmit reverted");
-        return true;
+        return !rejectOnCheckSubmit;
     }
 
     function checkEvaluate(bytes32, ITMPCore.TaskContext calldata, address) external override returns (bool) {
         checkEvaluateCalls++;
         if (revertOnCheckEvaluate) revert("MockTaskHook: checkEvaluate reverted");
-        return true;
+        return !rejectOnCheckEvaluate;
     }
 
-    function checkComplete(bytes32 taskId, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external override returns (bool) {
+    function checkComplete(bytes32 taskId, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata)
+        external
+        override
+        returns (bool)
+    {
         checkCompleteCalls++;
         // Record task status to verify CEI order: state must be committed before hook fires.
         if (taskMarketAddress != address(0)) {
@@ -86,7 +137,7 @@ contract MockTaskHook is ITMPHook {
             lastSeenStatusOnCheckComplete = uint8(t.status);
         }
         if (revertOnCheckComplete) revert("MockTaskHook: checkComplete reverted");
-        return true;
+        return !rejectOnCheckComplete;
     }
 
     function onComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external override {

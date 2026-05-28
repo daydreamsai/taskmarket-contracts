@@ -4,7 +4,7 @@
   "exclude_low": false,
   "exclude_medium": false,
   "exclude_high": false,
-  "detectors_to_exclude": "naming-convention,unused-state,timestamp,low-level-calls,solc-version",
+  "detectors_to_exclude": "naming-convention,unused-state,timestamp,low-level-calls,solc-version,controlled-delegatecall",
   "fail_on": "medium",
   "checklist": true,
   "markdown_root": "."

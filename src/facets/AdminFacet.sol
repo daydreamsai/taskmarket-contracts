@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Initializable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
+import { LibDiamond } from "../libraries/LibDiamond.sol";
+import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { ITMPCore } from "../interfaces/ITMPCore.sol";
+import { ITMPFees } from "../interfaces/ITMPFees.sol";
+import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
+
+/// @title AdminFacet — owner-only admin operations and proxy initialization
+/// @notice Handles initialization, pause/unpause, fee settings, forwarder registry,
+///         and 2-step ownership transfer (delegated to LibDiamond).
+contract AdminFacet is Initializable {
+    event Paused(address account);
+    event Unpaused(address account);
+
+    modifier onlyOwner() {
+        LibDiamond.enforceIsContractOwner();
+        _;
+    }
+
+    // -------------------------------------------------------------------------
+    // Initialization
+    // -------------------------------------------------------------------------
+
+    /// @notice Initialize the Diamond proxy.
+    ///         Called via delegatecall during the initial diamondCut.
+    ///         Ownership is set by the Diamond constructor before this runs.
+    /// @param _usdcToken    USDC token address on Base
+    /// @param _feeRecipient Address to receive platform fees
+    /// @param _defaultFeeBps Default platform fee in basis points (500 = 5%)
+    function initialize(address _usdcToken, address _feeRecipient, uint16 _defaultFeeBps) external initializer {
+        AppStorage storage s = LibAppStorage.appStorage();
+        if (_usdcToken == address(0)) revert ITMPCore.InvalidUSDCToken();
+        if (_feeRecipient == address(0)) revert ITMPCore.InvalidFeeRecipient();
+        if (_defaultFeeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
+        s.usdcToken = IERC20(_usdcToken);
+        s.feeRecipient = _feeRecipient;
+        s.defaultFeeBps = _defaultFeeBps;
+        s.reentrancyStatus = LibTaskMarket.NOT_ENTERED;
+    }
+
+    // -------------------------------------------------------------------------
+    // Pause
+    // -------------------------------------------------------------------------
+
+    /// @notice Returns true if the contract is currently paused.
+    function paused() external view returns (bool) {
+        return LibAppStorage.appStorage().paused;
+    }
+
+    /// @notice Halt all state-mutating operations (owner only).
+    function pause() external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        s.paused = true;
+        emit Paused(msg.sender);
+    }
+
+    /// @notice Restore normal operation (owner only).
+    function unpause() external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        s.paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    // -------------------------------------------------------------------------
+    // Ownership (2-step via LibDiamond)
+    // -------------------------------------------------------------------------
+
+    /// @notice Initiate ownership transfer to newOwner (owner only).
+    ///         newOwner must call acceptOwnership() to complete.
+    function transferOwnership(address newOwner) external onlyOwner {
+        LibDiamond.transferOwnership(newOwner);
+    }
+
+    /// @notice Complete ownership transfer. Must be called by pendingOwner.
+    function acceptOwnership() external {
+        LibDiamond.acceptOwnership();
+    }
+
+    /// @notice Returns the current contract owner.
+    function owner() external view returns (address) {
+        return LibDiamond.diamondStorage().contractOwner;
+    }
+
+    /// @notice Returns the pending owner awaiting acceptOwnership().
+    function pendingOwner() external view returns (address) {
+        return LibDiamond.diamondStorage().pendingOwner;
+    }
+
+    // -------------------------------------------------------------------------
+    // Forwarder registry
+    // -------------------------------------------------------------------------
+
+    /// @notice Add a trusted PGTR forwarder (owner only).
+    function addForwarder(address forwarder) external onlyOwner {
+        if (forwarder == address(0)) revert ITMPCore.InvalidForwarderAddress();
+        AppStorage storage s = LibAppStorage.appStorage();
+        s.trustedForwarders[forwarder] = true;
+        emit ITMPCore.ForwarderUpdated(forwarder, true);
+    }
+
+    /// @notice Remove a trusted PGTR forwarder (owner only).
+    function removeForwarder(address forwarder) external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        s.trustedForwarders[forwarder] = false;
+        emit ITMPCore.ForwarderUpdated(forwarder, false);
+    }
+
+    /// @notice Returns true if addr is a trusted PGTR forwarder (ERC-8194).
+    function isTrustedForwarder(address addr) external view returns (bool) {
+        return LibAppStorage.appStorage().trustedForwarders[addr];
+    }
+
+    // -------------------------------------------------------------------------
+    // Fee settings
+    // -------------------------------------------------------------------------
+
+    /// @notice Set default platform fee (owner only).
+    function setDefaultFeeBps(uint16 feeBps) external onlyOwner {
+        if (feeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
+        AppStorage storage s = LibAppStorage.appStorage();
+        s.defaultFeeBps = feeBps;
+        emit ITMPFees.FeesUpdated(feeBps);
+    }
+
+    /// @notice Set fee recipient (owner only).
+    function setFeeRecipient(address recipient) external onlyOwner {
+        if (recipient == address(0)) revert ITMPCore.InvalidRecipient();
+        AppStorage storage s = LibAppStorage.appStorage();
+        s.feeRecipient = recipient;
+        emit ITMPFees.FeeRecipientUpdated(recipient);
+    }
+
+    // -------------------------------------------------------------------------
+    // Reputation registry
+    // -------------------------------------------------------------------------
+
+    /// @notice Set the ERC-8004 reputation registry address (owner only).
+    function setReputationRegistry(address registry) external onlyOwner {
+        LibAppStorage.appStorage().reputationRegistry = registry;
+        emit ITMPReputation.ReputationRegistryUpdated(registry);
+    }
+}

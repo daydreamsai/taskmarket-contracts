@@ -1,39 +1,43 @@
 # TaskMarket Contract Architecture
 
-Developer reference for non-obvious technical decisions in `TaskMarket.sol` and `ITMP.sol`.
+Developer reference for non-obvious technical decisions in the Diamond proxy and facet design.
 
 ---
 
-## UUPS Upgradeable Proxy
+## Diamond Proxy (EIP-2535)
 
-`TaskMarket.sol` uses the UUPS (ERC-1967) upgradeable proxy pattern. The proxy address is
-permanent — it is what gets deployed on-chain, listed in the UI, and what users interact with.
-The implementation address changes on each upgrade.
+TaskMarket uses the Diamond proxy pattern. The proxy address is permanent — it is what gets
+deployed on-chain, listed in the UI, and what users interact with. Logic is split across
+nine facet contracts, each well under the EIP-170 24,576-byte limit. Facets are upgradeable
+individually via `diamondCut` without redeploying the proxy.
 
-**Consequence**: storage layout is immutable between upgrades. New state variables must always
-be appended after existing ones and must consume from `__gap`. Never insert, reorder, rename,
-or remove existing variables.
+All calls enter through `Diamond.fallback()`, which looks up the target facet address in
+`LibDiamond.DiamondStorage` using the 4-byte selector, then delegates via `delegatecall`.
+All facets execute in the Diamond's storage context, sharing `AppStorage`.
 
-`__gap` started at 50 slots. Current value and consumers:
+---
 
-| Mapping / variable         | Slots consumed |
-|----------------------------|---------------|
-| `trustedForwarders`        | 1             |
-| `requesterNonce`           | 1             |
-| `taskTags`                 | 1             |
-| `taskVerdicts`             | 1             |
-| `phaseDeadline`            | 1             |
-| `taskEvaluatorConfigs`     | 1             |
-| `taskAuctionConfigs`       | 1             |
-| `taskMetadata`             | 1             |
-| `taskPitchConfigs`         | 1             |
-| **Remaining `__gap`**      | **38**        |
+## AppStorage
+
+All state is unified in `AppStorage`, a struct stored at a deterministic slot:
+
+```solidity
+bytes32 constant APPSTORAGE_SLOT = keccak256("taskmarket.appstorage.v1");
+```
+
+Every facet accesses it via `LibAppStorage.appStorage()`. The struct is defined in
+`src/libraries/LibAppStorage.sol`.
+
+**Adding new state**: append to the END of the struct. Never insert between existing fields.
+No `__gap` is needed: the struct lives at a fixed `keccak256` slot and appending is always
+safe. New fields zero-initialise by default; use lazy-init in the facet function body if a
+non-zero default is needed.
 
 ---
 
 ## Task Struct Split
 
-The `Task` struct in `ITMP.sol` has 12 fields. This is a hard ceiling, not a style preference.
+The `Task` struct in `ITMPCore` has 12 fields. This is a hard ceiling, not a style preference.
 
 ### Why
 
@@ -62,8 +66,8 @@ unusable.
 ### Rule for new fields
 
 Do not add fields to the core `Task` struct. New task-related fields go into an existing
-extension mapping if they fit the same concern, or into a new mapping (consuming one `__gap`
-slot) if they represent a new concern.
+extension mapping if they fit the same concern, or into a new mapping appended to `AppStorage`
+if they represent a new concern.
 
 ---
 
@@ -78,21 +82,27 @@ slot) if they represent a new concern.
   transitions to `Appealing`. Read by `appeal()` (must be before deadline) and
   `finalizeVerdict()` (must be at or after deadline).
 
-This dual use avoids a separate mapping slot. The invariant is safe because a task can only
+This dual use avoids a separate AppStorage field. The invariant is safe because a task can only
 be in one of these states at a time.
 
 ---
 
 ## PGTR-Only Mutating Functions
 
-All state-mutating functions carry `onlyTrustedForwarder`. Direct calls from EOAs or
-non-registered contracts will revert. The PGTR forwarder (`TaskMarketForwarder.sol`) is the
-only supported entry point.
+User-facing task-flow functions call `LibTaskMarket._requireForwarder(s)`. Direct calls from
+EOAs or non-registered contracts will revert. The following functions are explicitly exempt
+and may be called without a PGTR forwarder:
 
-`_effectiveSender()` returns `IPGTRForwarder(msg.sender).pgtrSender()` when the caller is a
-trusted forwarder, otherwise `msg.sender`. The `msg.sender` branch is unreachable in normal
-operation (all mutating paths are gated) but is retained as a defensive fallback for view
-contexts and any future non-forwarded extensions.
+- `refundExpired` — fund-recovery invariant; must always be callable once a task expires
+- `finalizeVerdict` — permissionless after appeal window closes
+- `resolveDispute` — callable by the designated dispute resolver address only
+- All `AdminFacet` functions — owner-only via `LibDiamond.enforceIsContractOwner`
+- `diamondCut` — owner-only
+
+`LibTaskMarket._effectiveSender(s)` returns `IPGTRForwarder(msg.sender).pgtrSender()` when
+the caller is a trusted forwarder, otherwise `msg.sender`. The `msg.sender` branch is
+unreachable for PGTR-gated functions in normal operation but is retained as a defensive
+fallback for the exempt paths above.
 
 ---
 
@@ -110,25 +120,37 @@ while the submission is under active assessment.
 
 ---
 
-## Upgrade Initialization
+## Upgrade Mechanism
 
-`initialize()` uses the `initializer` modifier (equivalent to `reinitializer(1)`). On
-first deploy this fires once and initializes all state including `__Ownable_init` and
-`__Pausable_init`. These two calls MUST NOT appear in any subsequent reinitializer —
-they write fixed owner/pause state that is already set.
+Upgrades use `diamondCut(FacetCut[], address init, bytes calldata data)`:
 
-When an upgrade introduces new state variables, the new implementation MUST add a function
-with `reinitializer(N)` where N increments by 1 per upgrade that uses this mechanism.
-The upgrade transaction calls `upgradeToAndCall(newImpl, calldata)` where `calldata`
-encodes the reinitializer call. Upgrades with no new state pass empty calldata.
+- `Add`: register new selectors pointing to a new facet address
+- `Replace`: reroute existing selectors to a new facet implementation
+- `Remove`: unregister selectors (calls to them revert)
+
+Only the contract owner may call `diamondCut`. Post-upgrade initialisation, if needed, is
+passed as the `init`/`data` arguments. There is no reinitializer pattern — new AppStorage
+fields zero-initialise by default.
 
 ---
 
-## ReentrancyGuard Choice
+## Ownership
 
-`ReentrancyGuardUpgradeable` does not exist in OpenZeppelin v5. The contract uses
-`ReentrancyGuard` from `@openzeppelin/contracts/utils/ReentrancyGuard.sol` instead, which
-uses namespaced storage and is safe with the UUPS proxy pattern.
+Ownership lives in `LibDiamond.DiamondStorage` (separate from `AppStorage`). Two-step transfer:
+
+- `AdminFacet.transferOwnership(address)` — sets `pendingOwner`
+- `AdminFacet.acceptOwnership()` — promotes `pendingOwner` to `contractOwner`
+
+`LibDiamond.enforceIsContractOwner()` is called by `DiamondCutFacet` and `AdminFacet`.
+
+---
+
+## ReentrancyGuard
+
+The reentrancy guard uses `AppStorage.reentrancyStatus` directly (not OpenZeppelin's
+`ReentrancyGuard`) because all facets run via `delegatecall` into the Diamond's storage.
+`LibTaskMarket._nonReentrantBefore` and `_nonReentrantAfter` wrap every state-mutating
+function body.
 
 ---
 

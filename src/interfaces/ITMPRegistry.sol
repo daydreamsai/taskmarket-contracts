@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ITMPCore} from "./ITMPCore.sol";
+import { ITMPCore } from "./ITMPCore.sol";
 
 /// @title ITMPRegistry — ERC-8195 task registry view interface
 /// @notice Provides composable read-only access to task state, context, and verdict.

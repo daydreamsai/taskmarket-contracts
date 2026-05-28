@@ -2,6 +2,7 @@
 cache/
 out/
 broadcast/
+lcov.info
 
 # Static analysis reports
 reports/

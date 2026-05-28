@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ITMPCore} from "./ITMPCore.sol";
+import { ITMPCore } from "./ITMPCore.sol";
 
 /// @title ITMPHook — ERC-8195 task lifecycle hook interface
 /// @notice Implemented by external contracts that wish to observe or gate task
@@ -24,12 +24,20 @@ import {ITMPCore} from "./ITMPCore.sol";
 ///         checkEvaluate is wired to evaluate() calls (ITMPEvaluator). Hook contracts
 ///         MAY implement it as a no-op if they do not care about evaluation events.
 interface ITMPHook is IERC165 {
-    function checkFund(bytes32 taskId, ITMPCore.TaskContext calldata ctx, bytes calldata hookData) external returns (bool);
+    function checkFund(bytes32 taskId, ITMPCore.TaskContext calldata ctx, bytes calldata hookData)
+        external
+        returns (bool);
     function checkClaim(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker) external returns (bool);
-    function checkSelectWorker(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker) external returns (bool);
-    function checkSubmit(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker, bytes32 deliverableHash) external returns (bool);
+    function checkSelectWorker(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker)
+        external
+        returns (bool);
+    function checkSubmit(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker, bytes32 deliverableHash)
+        external
+        returns (bool);
     function checkEvaluate(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address evaluator) external returns (bool);
-    function checkComplete(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict) external returns (bool);
+    function checkComplete(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict)
+        external
+        returns (bool);
     function onComplete(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict) external;
     function onForfeit(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker) external;
     function onCancel(bytes32 taskId, ITMPCore.TaskContext calldata ctx) external;

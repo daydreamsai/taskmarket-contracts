@@ -14,15 +14,6 @@ line_length = 120
 tab_width = 4
 bracket_spacing = true
 
-# Coverage profile: viaIR with minimal optimization to avoid stack-too-deep
-# while still compiling the contract. Coverage accuracy is slightly reduced
-# vs. a fully unoptimized build but this is the only workable option for
-# a contract of this complexity.
-[profile.coverage]
-via_ir = true
-optimizer = true
-optimizer_runs = 1
-
 # CI profile: more fuzz runs, fail fast on first error.
 [profile.ci]
 fuzz = { runs = 1024 }

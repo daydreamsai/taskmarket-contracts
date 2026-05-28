@@ -8,32 +8,32 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 ///         New modes can be introduced by any implementer without breaking existing tooling.
 
 /// @dev bytes4(keccak256("TMP.mode.bounty"))
-bytes4 constant TMP_BOUNTY    = bytes4(keccak256("TMP.mode.bounty"));
+bytes4 constant TMP_BOUNTY = bytes4(keccak256("TMP.mode.bounty"));
 
 /// @dev bytes4(keccak256("TMP.mode.claim"))
-bytes4 constant TMP_CLAIM     = bytes4(keccak256("TMP.mode.claim"));
+bytes4 constant TMP_CLAIM = bytes4(keccak256("TMP.mode.claim"));
 
 /// @dev bytes4(keccak256("TMP.mode.pitch"))
-bytes4 constant TMP_PITCH     = bytes4(keccak256("TMP.mode.pitch"));
+bytes4 constant TMP_PITCH = bytes4(keccak256("TMP.mode.pitch"));
 
 /// @dev bytes4(keccak256("TMP.mode.benchmark"))
 bytes4 constant TMP_BENCHMARK = bytes4(keccak256("TMP.mode.benchmark"));
 
 /// @dev bytes4(keccak256("TMP.mode.auction"))
-bytes4 constant TMP_AUCTION   = bytes4(keccak256("TMP.mode.auction"));
+bytes4 constant TMP_AUCTION = bytes4(keccak256("TMP.mode.auction"));
 
 // ---------------------------------------------------------------------------
 // Auction subtype selectors
 // ---------------------------------------------------------------------------
 
 /// @dev bytes4(keccak256("TMP.auction.dutch"))
-bytes4 constant TMP_AUCTION_DUTCH           = bytes4(keccak256("TMP.auction.dutch"));
+bytes4 constant TMP_AUCTION_DUTCH = bytes4(keccak256("TMP.auction.dutch"));
 
 /// @dev bytes4(keccak256("TMP.auction.english"))
-bytes4 constant TMP_AUCTION_ENGLISH         = bytes4(keccak256("TMP.auction.english"));
+bytes4 constant TMP_AUCTION_ENGLISH = bytes4(keccak256("TMP.auction.english"));
 
 /// @dev bytes4(keccak256("TMP.auction.reverse_dutch"))
-bytes4 constant TMP_AUCTION_REVERSE_DUTCH   = bytes4(keccak256("TMP.auction.reverse_dutch"));
+bytes4 constant TMP_AUCTION_REVERSE_DUTCH = bytes4(keccak256("TMP.auction.reverse_dutch"));
 
 /// @dev bytes4(keccak256("TMP.auction.reverse_english"))
 bytes4 constant TMP_AUCTION_REVERSE_ENGLISH = bytes4(keccak256("TMP.auction.reverse_english"));

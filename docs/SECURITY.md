@@ -26,12 +26,12 @@ CI fails on any medium or high finding (`fail_on: medium`). The following detect
 | Detector | Reason for exclusion |
 |---|---|
 | `naming-convention` | Informational style rule; `forge fmt` + `solhint` handle naming conventions |
-| `unused-state` | `__gap` storage is intentionally reserved for UUPS upgrade slots — not dead code |
+| `unused-state` | AppStorage fields are intentionally reserved for use by facets via delegatecall — not dead code |
 | `timestamp` | `block.timestamp` is required for all deadline checks; `not-rely-on-time` is also off in solhint for the same reason |
 | `low-level-calls` | Informational detector for any `.call()` usage; both call sites are handled explicitly (see inline suppressions) |
 | `solc-version` | 0.8.24 is intentional — it adds transient storage opcodes and improved error messages; Slither recommends 0.8.18 |
 
-Any suppression that applies to a specific line rather than the whole project uses an inline `// slither-disable-next-line` comment with a rationale comment above it. See `_afterHook` in `TaskMarket.sol` and `relay` in `TaskMarketForwarder.sol`.
+Any suppression that applies to a specific line rather than the whole project uses an inline `// slither-disable-next-line` comment with a rationale comment above it. The `controlled-delegatecall` detector is excluded project-wide because `Diamond.fallback` performs a selector-gated `delegatecall` to registered facets only — not to arbitrary addresses. See `relay` in `TaskMarketForwarder.sol` for inline suppressions.
 
 ### Linting — Solhint
 
@@ -74,16 +74,24 @@ Evaluator stakes are pulled in via `transferFrom` at assignment time and returne
 
 ### Upgradability
 
-The contract is UUPS upgradeable. The proxy address is permanent; only the implementation changes on upgrade. Storage layout is protected by:
+The contract uses the Diamond proxy pattern (EIP-2535). The proxy address is permanent; individual
+facets are upgraded via `diamondCut`. Storage layout is protected by:
 
-- An append-only rule: new state variables must be added after all existing ones and consume slots from `__gap`
-- A committed `storage-layout.before.json` snapshot checked against the post-build layout in CI via `scripts/verify-storage-layout.ts`
+- An append-only rule: new state variables are appended to the end of `AppStorage` in `LibAppStorage.sol`; no insertions between existing fields
+- `AppStorage` is stored at a deterministic `keccak256("taskmarket.appstorage.v1")` slot; field offsets are stable across upgrades
+
+Only the contract owner may call `diamondCut`. The owner must be a multisig or timelock in
+production to prevent a single compromised key from upgrading to a malicious facet.
+
+`diamondCut` accepts an optional `init`/`data` pair for post-upgrade initialisation. There is no
+reinitializer version counter — new `AppStorage` fields zero-initialise by default; non-zero
+defaults use lazy-init in the facet function body.
 
 ### Access Control
 
 All mutating functions require a call via a trusted PGTR forwarder (ERC-8194). The forwarder verifies x402 payment receipts and extracts the authenticated actor via `pgtrSender()`. `resolveDispute` additionally accepts direct calls from the registered dispute resolver address.
 
-Owner-only functions (fee configuration, forwarder registration, upgrade authorization, pause/unpause) are restricted to the contract owner via OpenZeppelin's `Ownable2StepUpgradeable`. The two-step pattern requires the incoming owner to call `acceptOwnership()` before the transfer completes, preventing irrecoverable ownership loss from a mistyped address.
+Owner-only functions (fee configuration, forwarder registration, `diamondCut`, pause/unpause) are restricted to the contract owner via `LibDiamond.enforceIsContractOwner()`. The two-step pattern requires the incoming owner to call `acceptOwnership()` before the transfer completes, preventing irrecoverable ownership loss from a mistyped address.
 
 ### Emergency Pause
 
@@ -92,7 +100,7 @@ control over all attack vectors during an emergency — a bug could exist in any
 including fund recovery paths, so no exceptions are carved out. All user funds remain
 safe in the contract; they are not accessible to any party (including the owner) while
 paused. The owner MUST unpause promptly once the emergency is resolved (deploy a fix via
-UUPS upgrade, then unpause). Task expiry windows are measured in days, so a short pause
+`diamondCut`, then unpause). Task expiry windows are measured in days, so a short pause
 does not permanently strand funds.
 
 Admin operations: `make contract pause` / `make contract unpause`.

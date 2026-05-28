@@ -36,9 +36,6 @@ interface IPGTRForwarder is IERC165 {
     /// @param selector      4-byte function selector of the relayed call
     /// @param paymentAmount USDC amount paid (6 decimals)
     event PaymentGatedCall(
-        address indexed payer,
-        address indexed target,
-        bytes4  indexed selector,
-        uint256         paymentAmount
+        address indexed payer, address indexed target, bytes4 indexed selector, uint256 paymentAmount
     );
 }

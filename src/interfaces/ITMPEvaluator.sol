@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ITMPCore} from "./ITMPCore.sol";
+import { ITMPCore } from "./ITMPCore.sol";
 
 /// @title ITMPEvaluator — ERC-8195 evaluator extension interface
 /// @notice Optional evaluator role for tasks requiring third-party assessment.
@@ -13,7 +13,6 @@ import {ITMPCore} from "./ITMPCore.sol";
 ///         All functions MUST be gated to tasks that have an evaluator assigned.
 ///         Tasks without an evaluator follow the standard ITMPCore acceptance flow unchanged.
 interface ITMPEvaluator is IERC165 {
-
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
@@ -48,9 +47,9 @@ interface ITMPEvaluator is IERC165 {
         bytes32 taskId,
         address evaluator,
         uint256 stakeAmount,
-        uint16  feeBps,
-        uint32  evaluationWindowSecs,
-        uint32  appealWindowSecs,
+        uint16 feeBps,
+        uint32 evaluationWindowSecs,
+        uint32 appealWindowSecs,
         address disputeResolver
     ) external;
 
@@ -60,11 +59,11 @@ interface ITMPEvaluator is IERC165 {
     ///         For BOUNTY/BENCHMARK: task must be Open (evaluator selects winners via awards).
     ///         Transitions the task to Appealing and starts the appeal window.
     function evaluate(
-        bytes32                   taskId,
-        ITMPCore.VerdictType      verdictType,
-        uint16                    score,
-        uint16                    confidence,
-        bytes32                   evidenceHash,
+        bytes32 taskId,
+        ITMPCore.VerdictType verdictType,
+        uint16 score,
+        uint16 confidence,
+        bytes32 evidenceHash,
         ITMPCore.Award[] calldata awards
     ) external;
 
@@ -83,11 +82,7 @@ interface ITMPEvaluator is IERC165 {
     /// @notice Resolve a disputed task.
     ///         Only task.disputeResolver may call this while status == Disputed.
     ///         Pays workers per the provided awards and transitions to Accepted.
-    function resolveDispute(
-        bytes32                   taskId,
-        ITMPCore.VerdictType      verdictType,
-        ITMPCore.Award[] calldata awards
-    ) external;
+    function resolveDispute(bytes32 taskId, ITMPCore.VerdictType verdictType, ITMPCore.Award[] calldata awards) external;
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
     ///         Only the requester may call this.

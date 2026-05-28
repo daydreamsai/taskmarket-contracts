@@ -2,20 +2,20 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import "../src/TaskMarket.sol";
 import "../src/TaskMarketForwarder.sol";
 import "../src/interfaces/IPGTRForwarder.sol";
 import "../src/interfaces/ITMPCore.sol";
 import "./mocks/MockUSDC.sol";
+import "./helpers/DiamondTestHelper.sol";
+import "./helpers/ITaskMarketFull.sol";
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-contract TaskMarketForwarderTest is Test {
-    TaskMarket public market;
+contract TaskMarketForwarderTest is DiamondTestHelper {
+    ITaskMarketFull public market;
     TaskMarketForwarder public forwarder;
     MockUSDC public usdc;
 
@@ -37,10 +37,7 @@ contract TaskMarketForwarderTest is Test {
 
         usdc = new MockUSDC();
 
-        // Deploy TaskMarket via UUPS proxy (msg.sender == owner -> sets ownable)
-        address impl = address(new TaskMarket());
-        bytes memory init = abi.encodeCall(TaskMarket.initialize, (address(usdc), owner, 500));
-        market = TaskMarket(address(new ERC1967Proxy(impl, init)));
+        market = deployDiamond(owner, address(usdc), owner, 500);
 
         // Deploy TaskMarketForwarder and register it
         forwarder = new TaskMarketForwarder(address(usdc), address(market), server);
@@ -66,12 +63,7 @@ contract TaskMarketForwarderTest is Test {
     }
 
     // Relay helper: server relays a call on behalf of pgtrSender
-    function _relay(
-        address pgtrSenderAddr,
-        uint256 paymentAmount,
-        bytes memory data,
-        bytes32 nonce
-    ) internal {
+    function _relay(address pgtrSenderAddr, uint256 paymentAmount, bytes memory data, bytes32 nonce) internal {
         vm.prank(server);
         forwarder.relay(pgtrSenderAddr, paymentAmount, _validBefore, nonce, data);
     }
@@ -200,9 +192,8 @@ contract TaskMarketForwarderTest is Test {
         );
         bytes32 nonce = _nonce(100);
         bytes4 selector = market.createTask.selector;
-        bytes32 receiptHash = keccak256(
-            abi.encode(block.chainid, requester, REWARD, nonce, _validBefore, address(market), selector)
-        );
+        bytes32 receiptHash =
+            keccak256(abi.encode(block.chainid, requester, REWARD, nonce, _validBefore, address(market), selector));
 
         assertFalse(forwarder.consumedReceipts(receiptHash));
 
