@@ -30,6 +30,7 @@ struct AppStorage {
     mapping(bytes32 => ITMPCore.TaskPitchConfig) taskPitchConfigs;
     uint256 reentrancyStatus;
     bool paused;
+    mapping(bytes32 => bool) taskHasSubmissions;
 }
 
 library LibAppStorage {

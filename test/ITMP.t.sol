@@ -210,14 +210,10 @@ contract ITMPCompliance is DiamondTestHelper {
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open), "Bounty: must start Open");
         assertEq(task.mode, market.BOUNTY());
 
-        // First submitWork -> Open → PendingApproval (deliverable not written; deferred-write model)
+        // submitWork keeps the open contest Open (deliverable not written; deferred-write model)
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("deliverable"))));
         task = market.getTask(taskId);
-        assertEq(
-            uint256(task.status),
-            uint256(ITMPCore.TaskStatus.PendingApproval),
-            "Bounty: first submitWork must transition to PendingApproval"
-        );
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open), "Bounty: submitWork must keep the task Open");
         assertEq(task.deliverable, bytes32(0), "Bounty: submitWork must NOT write deliverable");
 
         // acceptSubmission -> Accepted (deferred-write model: deliverable set here)
@@ -312,13 +308,11 @@ contract ITMPCompliance is DiamondTestHelper {
     function test_Compliance_Benchmark_FullCycle() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
 
-        // First submitWork -> Open → PendingApproval (deliverable not written; deferred-write model)
+        // submitWork keeps the open contest Open (deliverable not written; deferred-write model)
         _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("benchmark result"))));
         ITMPCore.Task memory task = market.getTask(taskId);
         assertEq(
-            uint256(task.status),
-            uint256(ITMPCore.TaskStatus.PendingApproval),
-            "Benchmark: first submitWork must transition to PendingApproval"
+            uint256(task.status), uint256(ITMPCore.TaskStatus.Open), "Benchmark: submitWork must keep the task Open"
         );
         assertEq(task.deliverable, bytes32(0), "Benchmark: submitWork must NOT write deliverable");
 

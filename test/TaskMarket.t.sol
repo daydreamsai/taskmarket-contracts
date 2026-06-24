@@ -595,8 +595,20 @@ contract TaskMarketTest is DiamondTestHelper {
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
     }
 
-    function test_RevertWhen_AcceptExpiredTask() public {
+    function test_AcceptExpiredBounty_WithSubmission_Succeeds() public {
+        // Bounty expiryTime closes the submission window but not the acceptance window.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.warp(block.timestamp + DURATION + 1);
+        _acceptSubmission(taskId, requester, worker1);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+    }
+
+    function test_RevertWhen_AcceptExpiredTask_Claim() public {
+        // Claim still enforces expiryTime on acceptSubmission.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
         vm.warp(block.timestamp + DURATION + 1);
         vm.expectRevert(ITMPCore.TaskIsExpired.selector);
         forwarder.relay(
@@ -897,12 +909,13 @@ contract TaskMarketTest is DiamondTestHelper {
     // selectWorker additional reverts
     // -----------------------------------------------------------------------
 
-    function test_RevertWhen_SelectWorker_DeadlinePassed() public {
+    function test_SelectWorker_AfterPitchDeadline_Succeeds() public {
+        // pitchDeadline closes new pitch submissions but does not block worker selection;
+        // the requester may review received pitches and select after the window closes.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 1 days, 0);
         vm.warp(block.timestamp + 1 days + 1);
-
-        vm.expectRevert(ITMPCore.PitchDeadlinePassed.selector);
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker1)));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.WorkerSelected));
     }
 
     function test_RevertWhen_SelectWorker_NotOpen() public {
@@ -938,7 +951,7 @@ contract TaskMarketTest is DiamondTestHelper {
     // submitWork
     // -----------------------------------------------------------------------
 
-    function test_SubmitWork_Bounty_TransitionsToPendingApproval() public {
+    function test_SubmitWork_Bounty_StaysOpen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         bytes32 deliverable = keccak256("my work artifact");
 
@@ -948,9 +961,11 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitWork(taskId, worker1, deliverable);
 
         ITMPCore.Task memory task = market.getTask(taskId);
-        // First submission transitions Open → PendingApproval.
+        // Bounty is an open contest: submitting does NOT flip the status. The task
+        // stays Open until the requester accepts a winner (or it expires), so the
+        // requester is never locked out of cancel/update.
         // task.deliverable stays zero until acceptSubmission (deferred-write model).
-        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.PendingApproval));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open));
         assertEq(task.deliverable, bytes32(0));
     }
 
@@ -965,22 +980,18 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitWork(taskId, alice, deliverableC);
 
         ITMPCore.Task memory task = market.getTask(taskId);
-        assertEq(
-            uint256(task.status),
-            uint256(ITMPCore.TaskStatus.PendingApproval),
-            "subsequent submissions must stay PendingApproval"
-        );
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open), "bounty stays Open across submissions");
         assertEq(task.deliverable, bytes32(0), "task.deliverable must stay zero until acceptance");
     }
 
-    function test_SubmitWork_Benchmark_TransitionsToPendingApproval() public {
+    function test_SubmitWork_Benchmark_StaysOpen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
         bytes32 deliverable = keccak256("benchmark result");
 
         _submitWork(taskId, worker1, deliverable);
 
         ITMPCore.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.PendingApproval));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open));
         assertEq(task.deliverable, bytes32(0));
     }
 
@@ -991,26 +1002,45 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitWork(taskId, worker2, keccak256("proof B"));
 
         ITMPCore.Task memory task = market.getTask(taskId);
-        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.PendingApproval));
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open));
         assertEq(task.deliverable, bytes32(0));
     }
 
-    function test_RevertWhen_UpdateTask_BountyInPendingApproval() public {
+    function test_UpdateTask_BountyWithSubmissions_StillOpen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _submitWork(taskId, worker1, keccak256("work"));
-        vm.expectRevert(ITMPCore.TaskNotOpen.selector);
-        _updateTask(taskId, requester, 0, REWARD * 2, 0, 0, 0);
+        // Bounty stays Open after a submission, so the requester can still extend the
+        // expiry and raise the reward while the contest is live.
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
+
+        uint256 newExpiry = block.timestamp + DURATION * 2;
+        _updateTask(taskId, requester, 0, 0, newExpiry, 0, 0);
+        assertEq(market.getTask(taskId).expiryTime, newExpiry);
+
+        uint256 newReward = REWARD * 2;
+        _updateTask(taskId, requester, newReward - REWARD, newReward, 0, 0, 0);
+        assertEq(market.getTask(taskId).reward, newReward);
     }
 
-    function test_RefundExpired_PendingApproval_Bounty() public {
+    function test_UpdateTask_BenchmarkWithSubmissions_StillOpen() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("proof"));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
+
+        uint256 newExpiry = block.timestamp + DURATION * 2;
+        _updateTask(taskId, requester, 0, 0, newExpiry, 0, 0);
+        assertEq(market.getTask(taskId).expiryTime, newExpiry);
+    }
+
+    function test_RefundExpired_OpenBountyWithSubmissions_Reverts() public {
+        // Once submissions exist the escrow is locked; auto-refund is blocked to protect workers.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _submitWork(taskId, worker1, keccak256("work"));
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.PendingApproval));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
 
         vm.warp(block.timestamp + DURATION + 1);
-        uint256 before = usdc.balanceOf(requester);
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
         market.refundExpired(taskId);
-        assertGt(usdc.balanceOf(requester), before);
     }
 
     function test_SubmitWork_Claim_NoStateChange() public {
@@ -1482,6 +1512,25 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         ITMPCore.Task memory task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    function test_CancelTask_OpenBountyWithSubmissions_Reverts() public {
+        // Once a submission exists the escrow is locked; cancel is blocked to protect workers.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
+
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+    }
+
+    function test_CancelTask_OpenBenchmarkWithSubmissions_Reverts() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("proof"));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
+
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
     }
 
     function test_CancelTask_Claim() public {
@@ -2478,7 +2527,8 @@ contract TaskMarketTest is DiamondTestHelper {
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
         _submitWork(taskId, worker1, keccak256("work1"));
 
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.PendingApproval));
+        // Bounty stays Open after submit; the evaluator can still evaluate from Open.
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Open));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });

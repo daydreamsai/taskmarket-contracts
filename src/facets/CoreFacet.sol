@@ -169,7 +169,8 @@ contract CoreFacet {
         if (task.mode != PITCH) revert ITMPCore.NotAPitchTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
-        if (block.timestamp > s.taskPitchConfigs[taskId].pitchDeadline) revert ITMPCore.PitchDeadlinePassed();
+        // pitchDeadline closes new submissions but does not block worker selection;
+        // the requester may review and select from received pitches after the window closes.
 
         task.worker = worker;
         task.status = ITMPCore.TaskStatus.WorkerSelected;
@@ -252,12 +253,13 @@ contract CoreFacet {
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
 
         if (task.mode == BOUNTY || task.mode == BENCHMARK) {
-            if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
-                revert ITMPCore.TaskNotOpen();
-            }
-            if (task.status == ITMPCore.TaskStatus.Open) {
-                task.status = ITMPCore.TaskStatus.PendingApproval;
-            }
+            // Bounty and Benchmark are open contests: the task stays Open and keeps
+            // accepting submissions until the requester accepts one (which moves it to
+            // Accepted) or it expires. There is no status flip on submit.
+            if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
+            // Track on-chain that at least one submission exists. Used to protect workers
+            // by blocking cancelTask and refundExpired once work has been submitted.
+            s.taskHasSubmissions[taskId] = true;
         } else if (task.mode == CLAIM) {
             if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();
@@ -350,6 +352,11 @@ contract CoreFacet {
         if (task.mode == AUCTION) {
             if (s.taskBids[taskId].length != 0) revert ITMPCore.BidsExist();
         }
+        // Bounty/Benchmark: once workers have submitted, the requester must accept
+        // a winner -- cancelling to recover escrow after work was done is not permitted.
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskHasSubmissions[taskId]) {
+            revert ITMPCore.SubmissionsExist();
+        }
 
         task.status = ITMPCore.TaskStatus.Cancelled;
         uint256 refundAmount = task.reward;
@@ -440,6 +447,11 @@ contract CoreFacet {
         if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
         if (task.status == ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskAlreadyAccepted();
         if (task.status == ITMPCore.TaskStatus.Cancelled) revert ITMPCore.TaskIsCancelled();
+        // Bounty/Benchmark: if submissions exist the requester must explicitly accept.
+        // refundExpired is blocked so workers are guaranteed their work will be evaluated.
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskHasSubmissions[taskId]) {
+            revert ITMPCore.SubmissionsExist();
+        }
 
         if (task.mode == AUCTION && task.status == ITMPCore.TaskStatus.Claimed) {
             _refundAuctionClaimed(taskId, task, s);

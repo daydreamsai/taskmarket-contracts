@@ -93,6 +93,7 @@ interface ITMPCore is IERC165 {
     error ExpiryMustBeInFuture();
     error BidDeadlineMustBeInFuture();
     error PitchDeadlineMustBeInFuture();
+    error SubmissionsExist();
 
     // Config / params
     error InvalidFeeRecipient();

@@ -29,7 +29,6 @@ contract AcceptanceFacet {
         address requester = LibTaskMarket._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
-        if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
 
         _validateAcceptSubmission(task, taskId, worker, deliverable, s);
 
@@ -119,6 +118,11 @@ contract AcceptanceFacet {
         bytes32 deliverable,
         AppStorage storage s
     ) private {
+        // Bounty/Benchmark: expiryTime is the submission window deadline only; acceptance
+        // is open-ended once submissions exist. Claim/Pitch/Auction: expiryTime still applies.
+        if (task.mode != BOUNTY && task.mode != BENCHMARK) {
+            if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
+        }
         address evaluator = s.taskEvaluatorConfigs[taskId].evaluator;
         if (task.mode == CLAIM) {
             if (evaluator != address(0)) revert ITMPCore.UseEvaluate();
@@ -166,7 +170,6 @@ contract AcceptanceFacet {
     ) private {
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
-        if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.MultiSubmissionOnlyForBountyBenchmark();
         if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) revert ITMPCore.UseEvaluate();
         if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {

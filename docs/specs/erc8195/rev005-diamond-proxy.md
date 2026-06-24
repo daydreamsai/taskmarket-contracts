@@ -75,6 +75,7 @@ AppStorage storage s = LibAppStorage.appStorage();
 | 20 | taskPitchConfigs | mapping(bytes32 => ITMPCore.TaskPitchConfig) |
 | 21 | reentrancyStatus | uint256 |
 | 22 | paused | bool |
+| 23 | taskHasSubmissions | mapping(bytes32 => bool) | Added in rev006: set on first `submitWork` for Bounty/Benchmark; blocks cancel/refund once submissions exist |
 
 ### Adding new state
 
