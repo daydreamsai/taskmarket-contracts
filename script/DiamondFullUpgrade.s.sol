@@ -42,7 +42,7 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet = address(new RatingFacet());
         address regFacet = address(new RegistryFacet());
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
 
         // DiamondCutFacet
         bytes4[] memory cutSelectors = new bytes4[](1);
@@ -75,43 +75,46 @@ contract DiamondFullUpgrade is Script {
         adminSelectors[12] = AdminFacet.setReputationRegistry.selector;
         cuts[2] = IDiamondCut.FacetCut(adminFacet, IDiamondCut.FacetCutAction.Replace, adminSelectors);
 
-        // CoreFacet
-        bytes4[] memory coreSelectors = new bytes4[](21);
-        coreSelectors[0] = bytes4(keccak256("BOUNTY()"));
-        coreSelectors[1] = bytes4(keccak256("CLAIM()"));
-        coreSelectors[2] = bytes4(keccak256("PITCH()"));
-        coreSelectors[3] = bytes4(keccak256("BENCHMARK()"));
-        coreSelectors[4] = bytes4(keccak256("AUCTION()"));
-        coreSelectors[5] = bytes4(keccak256("AUCTION_DUTCH()"));
-        coreSelectors[6] = bytes4(keccak256("AUCTION_ENGLISH()"));
-        coreSelectors[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
-        coreSelectors[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
-        coreSelectors[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-        coreSelectors[10] = CoreFacet.createTask.selector;
-        coreSelectors[11] = CoreFacet.claimTask.selector;
-        coreSelectors[12] = CoreFacet.selectWorker.selector;
-        coreSelectors[13] = CoreFacet.submitPitch.selector;
-        coreSelectors[14] = CoreFacet.submitProof.selector;
-        coreSelectors[15] = CoreFacet.submitWork.selector;
-        coreSelectors[16] = CoreFacet.rejectSubmission.selector;
-        coreSelectors[17] = CoreFacet.forfeitAndReopen.selector;
-        coreSelectors[18] = CoreFacet.cancelTask.selector;
-        coreSelectors[19] = CoreFacet.updateTask.selector;
-        coreSelectors[20] = CoreFacet.refundExpired.selector;
-        cuts[3] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, coreSelectors);
+        // CoreFacet — Replace existing selectors, then Add new rejectSubmission selector
+        bytes4[] memory coreReplaceSelectors = new bytes4[](20);
+        coreReplaceSelectors[0] = bytes4(keccak256("BOUNTY()"));
+        coreReplaceSelectors[1] = bytes4(keccak256("CLAIM()"));
+        coreReplaceSelectors[2] = bytes4(keccak256("PITCH()"));
+        coreReplaceSelectors[3] = bytes4(keccak256("BENCHMARK()"));
+        coreReplaceSelectors[4] = bytes4(keccak256("AUCTION()"));
+        coreReplaceSelectors[5] = bytes4(keccak256("AUCTION_DUTCH()"));
+        coreReplaceSelectors[6] = bytes4(keccak256("AUCTION_ENGLISH()"));
+        coreReplaceSelectors[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
+        coreReplaceSelectors[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
+        coreReplaceSelectors[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
+        coreReplaceSelectors[10] = CoreFacet.createTask.selector;
+        coreReplaceSelectors[11] = CoreFacet.claimTask.selector;
+        coreReplaceSelectors[12] = CoreFacet.selectWorker.selector;
+        coreReplaceSelectors[13] = CoreFacet.submitPitch.selector;
+        coreReplaceSelectors[14] = CoreFacet.submitProof.selector;
+        coreReplaceSelectors[15] = CoreFacet.submitWork.selector;
+        coreReplaceSelectors[16] = CoreFacet.forfeitAndReopen.selector;
+        coreReplaceSelectors[17] = CoreFacet.cancelTask.selector;
+        coreReplaceSelectors[18] = CoreFacet.updateTask.selector;
+        coreReplaceSelectors[19] = CoreFacet.refundExpired.selector;
+        cuts[3] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, coreReplaceSelectors);
+
+        bytes4[] memory coreAddSelectors = new bytes4[](1);
+        coreAddSelectors[0] = CoreFacet.rejectSubmission.selector;
+        cuts[4] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, coreAddSelectors);
 
         // AuctionFacet
         bytes4[] memory auctionSelectors = new bytes4[](3);
         auctionSelectors[0] = AuctionFacet.submitBid.selector;
         auctionSelectors[1] = AuctionFacet.selectLowestBidder.selector;
         auctionSelectors[2] = AuctionFacet.acceptAuction.selector;
-        cuts[4] = IDiamondCut.FacetCut(auctionFacet, IDiamondCut.FacetCutAction.Replace, auctionSelectors);
+        cuts[5] = IDiamondCut.FacetCut(auctionFacet, IDiamondCut.FacetCutAction.Replace, auctionSelectors);
 
         // AcceptanceFacet
         bytes4[] memory acceptSelectors = new bytes4[](2);
         acceptSelectors[0] = AcceptanceFacet.acceptSubmission.selector;
         acceptSelectors[1] = AcceptanceFacet.acceptSubmissions.selector;
-        cuts[5] = IDiamondCut.FacetCut(acceptFacet, IDiamondCut.FacetCutAction.Replace, acceptSelectors);
+        cuts[6] = IDiamondCut.FacetCut(acceptFacet, IDiamondCut.FacetCutAction.Replace, acceptSelectors);
 
         // EvaluatorFacet
         bytes4[] memory evalSelectors = new bytes4[](6);
@@ -121,14 +124,14 @@ contract DiamondFullUpgrade is Script {
         evalSelectors[3] = EvaluatorFacet.finalizeVerdict.selector;
         evalSelectors[4] = EvaluatorFacet.resolveDispute.selector;
         evalSelectors[5] = EvaluatorFacet.evaluatorTimeout.selector;
-        cuts[6] = IDiamondCut.FacetCut(evalFacet, IDiamondCut.FacetCutAction.Replace, evalSelectors);
+        cuts[7] = IDiamondCut.FacetCut(evalFacet, IDiamondCut.FacetCutAction.Replace, evalSelectors);
 
         // RatingFacet
         bytes4[] memory ratingSelectors = new bytes4[](3);
         ratingSelectors[0] = RatingFacet.rateTask.selector;
         ratingSelectors[1] = RatingFacet.getCredibility.selector;
         ratingSelectors[2] = RatingFacet.getAverageRating.selector;
-        cuts[7] = IDiamondCut.FacetCut(ratingFacet, IDiamondCut.FacetCutAction.Replace, ratingSelectors);
+        cuts[8] = IDiamondCut.FacetCut(ratingFacet, IDiamondCut.FacetCutAction.Replace, ratingSelectors);
 
         // RegistryFacet
         bytes4[] memory regSelectors = new bytes4[](21);
@@ -153,7 +156,7 @@ contract DiamondFullUpgrade is Script {
         regSelectors[18] = RegistryFacet.usdcToken.selector;
         regSelectors[19] = RegistryFacet.taskPitchHashes.selector;
         regSelectors[20] = RegistryFacet.taskProofHashes.selector;
-        cuts[8] = IDiamondCut.FacetCut(regFacet, IDiamondCut.FacetCutAction.Replace, regSelectors);
+        cuts[9] = IDiamondCut.FacetCut(regFacet, IDiamondCut.FacetCutAction.Replace, regSelectors);
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
