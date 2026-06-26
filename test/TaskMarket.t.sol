@@ -307,6 +307,10 @@ contract TaskMarketTest is DiamondTestHelper {
         _relay(_req, 0, abi.encodeCall(market.cancelTask, (taskId)));
     }
 
+    function _rejectSubmission(bytes32 taskId, address _req, address _worker) internal {
+        _relay(_req, 0, abi.encodeCall(market.rejectSubmission, (taskId, _worker)));
+    }
+
     function _updateTask(
         bytes32 taskId,
         address _req,
@@ -1586,6 +1590,74 @@ contract TaskMarketTest is DiamondTestHelper {
     function test_RevertWhen_CancelTask_DoesNotExist() public {
         vm.expectRevert(ITMPCore.TaskDoesNotExist.selector);
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (keccak256("nonexistent"))));
+    }
+
+    // -----------------------------------------------------------------------
+    // rejectSubmission tests
+    // -----------------------------------------------------------------------
+
+    function test_rejectSubmission_allowsCancelWhenAllRejected() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work1"));
+        _submitWork(taskId, worker2, keccak256("work2"));
+
+        // One submission rejected; the other is still active => cancel must still revert.
+        _rejectSubmission(taskId, requester, worker1);
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+
+        // Reject the remaining submission; now cancel must succeed and return escrow.
+        uint256 balanceBefore = usdc.balanceOf(requester);
+        _rejectSubmission(taskId, requester, worker2);
+        _cancelTask(taskId, requester);
+
+        assertEq(usdc.balanceOf(requester), balanceBefore + REWARD);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    function test_rejectSubmission_blocksWorkerFromResubmitting() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work1"));
+        _rejectSubmission(taskId, requester, worker1);
+
+        vm.expectRevert(ITMPCore.SubmissionAlreadyRejected.selector);
+        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work2"))));
+    }
+
+    function test_rejectSubmission_revertsIfAlreadyRejected() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work1"));
+        _rejectSubmission(taskId, requester, worker1);
+
+        vm.expectRevert(ITMPCore.SubmissionAlreadyRejected.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rejectSubmission, (taskId, worker1)));
+    }
+
+    function test_rejectSubmission_revertsIfNotRequester() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work1"));
+
+        vm.expectRevert(ITMPCore.NotRequester.selector);
+        forwarder.relay(address(market), worker2, 0, abi.encodeCall(market.rejectSubmission, (taskId, worker1)));
+    }
+
+    function test_rejectSubmission_revertsIfNotBountyBenchmark() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+
+        vm.expectRevert(ITMPCore.InvalidMode.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rejectSubmission, (taskId, worker1)));
+    }
+
+    function test_cancelTask_stillBlockedWhenActiveSubmissionsRemain() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work1"));
+        _submitWork(taskId, worker2, keccak256("work2"));
+
+        // Reject only worker1; worker2's submission is still active.
+        _rejectSubmission(taskId, requester, worker1);
+
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
     }
 
     // -----------------------------------------------------------------------

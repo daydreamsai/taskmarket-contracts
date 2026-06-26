@@ -257,9 +257,11 @@ contract CoreFacet {
             // accepting submissions until the requester accepts one (which moves it to
             // Accepted) or it expires. There is no status flip on submit.
             if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
+            if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
             // Track on-chain that at least one submission exists. Used to protect workers
             // by blocking cancelTask and refundExpired once work has been submitted.
             s.taskHasSubmissions[taskId] = true;
+            s.taskActiveSubmissionCount[taskId]++;
         } else if (task.mode == CLAIM) {
             if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();
@@ -292,6 +294,34 @@ contract CoreFacet {
         }
 
         emit ITMPCore.TaskSubmitted(taskId, worker, deliverable);
+        LibTaskMarket._nonReentrantAfter(s);
+    }
+
+    /// @notice Reject a submission from a worker on a bounty or benchmark task.
+    ///         The requester is the authenticated actor (pgtrSender).
+    ///         Costs the standard relay fee as anti-spam. Once all active submissions
+    ///         are rejected, cancelTask becomes available.
+    function rejectSubmission(bytes32 taskId, address worker) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibTaskMarket._requireForwarder(s);
+        LibTaskMarket._requireNotPaused(s);
+        LibTaskMarket._nonReentrantBefore(s);
+
+        address requester = LibTaskMarket._effectiveSender(s);
+        ITMPCore.Task storage task = s.tasks[taskId];
+        if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        if (requester != task.requester) revert ITMPCore.NotRequester();
+        if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.InvalidMode();
+        if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
+            revert ITMPCore.TaskNotOpen();
+        }
+        if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
+        if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
+
+        s.taskRejectedWorkers[taskId][worker] = true;
+        s.taskActiveSubmissionCount[taskId]--;
+
+        emit ITMPCore.SubmissionRejected(taskId, worker);
         LibTaskMarket._nonReentrantAfter(s);
     }
 
@@ -352,9 +382,10 @@ contract CoreFacet {
         if (task.mode == AUCTION) {
             if (s.taskBids[taskId].length != 0) revert ITMPCore.BidsExist();
         }
-        // Bounty/Benchmark: once workers have submitted, the requester must accept
+        // Bounty/Benchmark: once workers have active submissions, the requester must accept
         // a winner -- cancelling to recover escrow after work was done is not permitted.
-        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskHasSubmissions[taskId]) {
+        // Active submission count drops to zero when all submissions have been rejected.
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskActiveSubmissionCount[taskId] > 0) {
             revert ITMPCore.SubmissionsExist();
         }
 
@@ -447,9 +478,10 @@ contract CoreFacet {
         if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
         if (task.status == ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskAlreadyAccepted();
         if (task.status == ITMPCore.TaskStatus.Cancelled) revert ITMPCore.TaskIsCancelled();
-        // Bounty/Benchmark: if submissions exist the requester must explicitly accept.
+        // Bounty/Benchmark: if active submissions exist the requester must explicitly accept.
         // refundExpired is blocked so workers are guaranteed their work will be evaluated.
-        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskHasSubmissions[taskId]) {
+        // Active submission count drops to zero when all submissions have been rejected.
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskActiveSubmissionCount[taskId] > 0) {
             revert ITMPCore.SubmissionsExist();
         }
 

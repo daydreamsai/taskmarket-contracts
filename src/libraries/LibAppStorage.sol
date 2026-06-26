@@ -31,6 +31,8 @@ struct AppStorage {
     uint256 reentrancyStatus;
     bool paused;
     mapping(bytes32 => bool) taskHasSubmissions;
+    mapping(bytes32 => mapping(address => bool)) taskRejectedWorkers;
+    mapping(bytes32 => uint256) taskActiveSubmissionCount;
 }
 
 library LibAppStorage {

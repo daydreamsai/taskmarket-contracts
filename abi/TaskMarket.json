@@ -593,6 +593,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidUSDCToken",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotInitializing",
     "inputs": []
   },
@@ -863,6 +868,24 @@
         "name": "taskId",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rejectSubmission",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -1154,6 +1177,25 @@
   },
   {
     "type": "event",
+    "name": "SubmissionRejected",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TaskCancelled",
     "inputs": [
       {
@@ -1385,6 +1427,11 @@
   },
   {
     "type": "error",
+    "name": "BidDeadlineMustBeGreaterThanZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BidDeadlineMustBeInFuture",
     "inputs": []
   },
@@ -1475,6 +1522,11 @@
   },
   {
     "type": "error",
+    "name": "NoActiveSubmissions",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotABenchmarkTask",
     "inputs": []
   },
@@ -1496,6 +1548,11 @@
   {
     "type": "error",
     "name": "NotTrustedForwarder",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PitchDeadlineMustBeGreaterThanZero",
     "inputs": []
   },
   {
@@ -1531,6 +1588,16 @@
   {
     "type": "error",
     "name": "StakeReturnFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SubmissionAlreadyRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SubmissionsExist",
     "inputs": []
   },
   {

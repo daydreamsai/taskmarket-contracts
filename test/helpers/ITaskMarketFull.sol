@@ -40,6 +40,7 @@ interface ITaskMarketFull {
     function submitPitch(bytes32 taskId, bytes32 pitchHash) external;
     function submitProof(bytes32 taskId, bytes32 proofHash, bytes32 proofType, uint256 metricValue) external;
     function submitWork(bytes32 taskId, bytes32 deliverable) external;
+    function rejectSubmission(bytes32 taskId, address worker) external;
     function forfeitAndReopen(bytes32 taskId) external;
     function cancelTask(bytes32 taskId) external;
     function updateTask(

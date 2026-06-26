@@ -76,7 +76,7 @@ contract DiamondFullUpgrade is Script {
         cuts[2] = IDiamondCut.FacetCut(adminFacet, IDiamondCut.FacetCutAction.Replace, adminSelectors);
 
         // CoreFacet
-        bytes4[] memory coreSelectors = new bytes4[](20);
+        bytes4[] memory coreSelectors = new bytes4[](21);
         coreSelectors[0] = bytes4(keccak256("BOUNTY()"));
         coreSelectors[1] = bytes4(keccak256("CLAIM()"));
         coreSelectors[2] = bytes4(keccak256("PITCH()"));
@@ -93,10 +93,11 @@ contract DiamondFullUpgrade is Script {
         coreSelectors[13] = CoreFacet.submitPitch.selector;
         coreSelectors[14] = CoreFacet.submitProof.selector;
         coreSelectors[15] = CoreFacet.submitWork.selector;
-        coreSelectors[16] = CoreFacet.forfeitAndReopen.selector;
-        coreSelectors[17] = CoreFacet.cancelTask.selector;
-        coreSelectors[18] = CoreFacet.updateTask.selector;
-        coreSelectors[19] = CoreFacet.refundExpired.selector;
+        coreSelectors[16] = CoreFacet.rejectSubmission.selector;
+        coreSelectors[17] = CoreFacet.forfeitAndReopen.selector;
+        coreSelectors[18] = CoreFacet.cancelTask.selector;
+        coreSelectors[19] = CoreFacet.updateTask.selector;
+        coreSelectors[20] = CoreFacet.refundExpired.selector;
         cuts[3] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, coreSelectors);
 
         // AuctionFacet

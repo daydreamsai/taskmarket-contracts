@@ -82,7 +82,7 @@ abstract contract DiamondTestHelper is Test {
     }
 
     function _coreSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = bytes4(keccak256("BOUNTY()"));
         s[1] = bytes4(keccak256("CLAIM()"));
         s[2] = bytes4(keccak256("PITCH()"));
@@ -99,10 +99,11 @@ abstract contract DiamondTestHelper is Test {
         s[13] = CoreFacet.submitPitch.selector;
         s[14] = CoreFacet.submitProof.selector;
         s[15] = CoreFacet.submitWork.selector;
-        s[16] = CoreFacet.forfeitAndReopen.selector;
-        s[17] = CoreFacet.cancelTask.selector;
-        s[18] = CoreFacet.updateTask.selector;
-        s[19] = CoreFacet.refundExpired.selector;
+        s[16] = CoreFacet.rejectSubmission.selector;
+        s[17] = CoreFacet.forfeitAndReopen.selector;
+        s[18] = CoreFacet.cancelTask.selector;
+        s[19] = CoreFacet.updateTask.selector;
+        s[20] = CoreFacet.refundExpired.selector;
     }
 
     function _auctionSelectors() internal pure returns (bytes4[] memory s) {

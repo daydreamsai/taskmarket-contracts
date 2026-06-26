@@ -94,6 +94,8 @@ interface ITMPCore is IERC165 {
     error BidDeadlineMustBeInFuture();
     error PitchDeadlineMustBeInFuture();
     error SubmissionsExist();
+    error SubmissionAlreadyRejected();
+    error NoActiveSubmissions();
 
     // Config / params
     error InvalidFeeRecipient();
@@ -301,6 +303,9 @@ interface ITMPCore is IERC165 {
     /// @notice Emitted when a worker submits work (deliverable hash anchored on-chain).
     event TaskSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 deliverable);
 
+    /// @notice Emitted when a requester rejects a worker's submission on a bounty or benchmark task.
+    event SubmissionRejected(bytes32 indexed taskId, address indexed worker);
+
     /// @notice Emitted when a task expires and the reward is refunded.
     event TaskExpired(bytes32 indexed taskId, address indexed requester, uint256 refundAmount);
 
@@ -412,6 +417,12 @@ interface ITMPCore is IERC165 {
         uint16[] calldata shares,
         bytes32[] calldata deliverables
     ) external;
+
+    /// @notice Reject a worker's submission on a Bounty or Benchmark task.
+    ///         Once all active submissions are rejected, cancelTask becomes available.
+    /// @param taskId Task identifier
+    /// @param worker Worker whose submission is being rejected
+    function rejectSubmission(bytes32 taskId, address worker) external;
 
     /// @notice Record that a worker has submitted deliverable work.
     ///         The worker is authenticated by the implementation's chosen mechanism.
