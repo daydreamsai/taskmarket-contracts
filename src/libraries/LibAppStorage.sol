@@ -34,6 +34,8 @@ struct AppStorage {
     mapping(bytes32 => mapping(address => bool)) taskRejectedWorkers;
     mapping(bytes32 => uint256) taskActiveSubmissionCount;
     mapping(bytes32 => mapping(address => bytes32[])) taskSubmissionHashes;
+    // O(1) existence check for taskSubmissionHashes; set alongside every push in submitWork.
+    mapping(bytes32 => mapping(address => mapping(bytes32 => bool))) taskSubmissionHashExists;
 }
 
 library LibAppStorage {

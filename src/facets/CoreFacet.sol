@@ -265,6 +265,7 @@ contract CoreFacet {
             s.taskActiveSubmissionCount[taskId]++;
             // Append to version history so AcceptanceFacet can verify the hash was committed.
             s.taskSubmissionHashes[taskId][worker].push(deliverable);
+            s.taskSubmissionHashExists[taskId][worker][deliverable] = true;
         } else if (task.mode == CLAIM) {
             if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();

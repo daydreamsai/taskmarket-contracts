@@ -86,20 +86,22 @@ contract AcceptanceFacet {
         if (worker == requester) {
             emit ITMPCore.SelfAward(taskId, requester, worker);
         }
-        emit ITMPCore.RequesterReputation(
-            taskId,
-            requester,
-            keccak256("completed"),
-            task.reward,
-            uint32(s.taskActiveSubmissionCount[taskId]),
-            worker == requester
-        );
-        if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
-            try IReputationRegistry(s.reputationRegistry)
-                .giveFeedback(
-                    requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
-                ) { }
-                catch { }
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            emit ITMPCore.RequesterReputation(
+                taskId,
+                requester,
+                keccak256("completed"),
+                task.reward,
+                uint32(s.taskActiveSubmissionCount[taskId]),
+                worker == requester
+            );
+            if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+                try IReputationRegistry(s.reputationRegistry)
+                    .giveFeedback(
+                        requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
+                    ) { }
+                    catch { }
+            }
         }
 
         if (hook != address(0)) {
@@ -180,15 +182,7 @@ contract AcceptanceFacet {
             }
             if (worker == address(0)) revert ITMPCore.WorkerRequired();
             if (deliverable == bytes32(0)) revert ITMPCore.DeliverableRequired();
-            bytes32[] storage submitted = s.taskSubmissionHashes[taskId][worker];
-            bool found = false;
-            for (uint256 i = 0; i < submitted.length; ++i) {
-                if (submitted[i] == deliverable) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) revert ITMPCore.SubmissionNotFound();
+            if (!s.taskSubmissionHashExists[taskId][worker][deliverable]) revert ITMPCore.SubmissionNotFound();
             task.deliverable = deliverable;
         }
     }
