@@ -5,6 +5,7 @@ import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
+import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title AcceptanceFacet — single and multi-winner submission acceptance with payouts
@@ -17,10 +18,13 @@ contract AcceptanceFacet {
 
     /// @notice Accept submission and release payment to worker.
     ///         The requester is the authenticated actor (pgtrSender).
-    /// @param taskId      Task identifier
-    /// @param worker      Worker address to pay
-    /// @param deliverable Accepted content hash
-    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable) external {
+    /// @param taskId           Task identifier
+    /// @param worker           Worker address to pay
+    /// @param deliverable      Accepted content hash; must have been committed by submitWork for Bounty/Benchmark
+    /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
+    // Complexity is inherent: handles four modes × payment/stake/auction/hook/event branches.
+    // solhint-disable-next-line code-complexity
+    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
         LibTaskMarket._requireNotPaused(s);
@@ -79,6 +83,25 @@ contract AcceptanceFacet {
 
         emit ITMPCore.TaskCompleted(taskId, requester, worker, workerPayment, fee);
 
+        if (worker == requester) {
+            emit ITMPCore.SelfAward(taskId, requester, worker);
+        }
+        emit ITMPCore.RequesterReputation(
+            taskId,
+            requester,
+            keccak256("completed"),
+            task.reward,
+            uint32(s.taskActiveSubmissionCount[taskId]),
+            worker == requester
+        );
+        if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+            try IReputationRegistry(s.reputationRegistry)
+                .giveFeedback(
+                    requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
+                ) { }
+                catch { }
+        }
+
         if (hook != address(0)) {
             LibTaskMarket._afterHook(
                 hook, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
@@ -89,15 +112,18 @@ contract AcceptanceFacet {
 
     /// @notice Accept N submissions at once with explicit share basis points.
     ///         Valid for Bounty and Benchmark modes. Shares MUST sum to 10000.
-    /// @param taskId       Task identifier
-    /// @param workers      Recipient addresses in rank order
-    /// @param shares       Basis-point shares; MUST sum to 10000
-    /// @param deliverables Per-worker content hash; each MUST be non-zero
+    ///         Each worker's deliverable is resolved from the latest entry in
+    ///         taskSubmissionHashes[taskId][worker]. Reverts SubmissionNotFound if
+    ///         any winner has no prior submitWork call.
+    /// @param taskId           Task identifier
+    /// @param workers          Recipient addresses in rank order
+    /// @param shares           Basis-point shares; MUST sum to 10000
+    /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
     function acceptSubmissions(
         bytes32 taskId,
         address[] calldata workers,
         uint16[] calldata shares,
-        bytes32[] calldata deliverables
+        uint256 requesterAgentId
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
@@ -105,7 +131,7 @@ contract AcceptanceFacet {
         LibTaskMarket._nonReentrantBefore(s);
 
         address requester = LibTaskMarket._effectiveSender(s);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables, s);
+        _acceptSubmissions(taskId, requester, workers, shares, requesterAgentId, s);
         LibTaskMarket._nonReentrantAfter(s);
     }
 
@@ -147,13 +173,22 @@ contract AcceptanceFacet {
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();
             if (deliverable != task.deliverable) revert ITMPCore.DeliverableMismatch();
         } else {
-            // BOUNTY or BENCHMARK: deferred-write model
+            // BOUNTY or BENCHMARK: verify the deliverable was committed on-chain by submitWork.
             if (evaluator != address(0)) revert ITMPCore.UseEvaluate();
             if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
                 revert ITMPCore.TaskNotOpen();
             }
             if (worker == address(0)) revert ITMPCore.WorkerRequired();
             if (deliverable == bytes32(0)) revert ITMPCore.DeliverableRequired();
+            bytes32[] storage submitted = s.taskSubmissionHashes[taskId][worker];
+            bool found = false;
+            for (uint256 i = 0; i < submitted.length; ++i) {
+                if (submitted[i] == deliverable) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) revert ITMPCore.SubmissionNotFound();
             task.deliverable = deliverable;
         }
     }
@@ -165,7 +200,7 @@ contract AcceptanceFacet {
         address requester,
         address[] calldata workers,
         uint16[] calldata shares,
-        bytes32[] calldata deliverables,
+        uint256 requesterAgentId,
         AppStorage storage s
     ) private {
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -178,12 +213,16 @@ contract AcceptanceFacet {
 
         uint256 n = workers.length;
         if (n < 1) revert ITMPCore.NoWinners();
-        if (shares.length != n || deliverables.length != n) revert ITMPCore.LengthMismatch();
+        if (shares.length != n) revert ITMPCore.LengthMismatch();
 
+        // Resolve deliverables from on-chain submission history and validate shares sum.
+        bytes32[] memory deliverables = new bytes32[](n);
         uint256 sumShares = 0;
         for (uint256 i; i < n; ++i) {
             if (workers[i] == address(0)) revert ITMPCore.WorkerRequired();
-            if (deliverables[i] == bytes32(0)) revert ITMPCore.DeliverableRequired();
+            bytes32[] storage submitted = s.taskSubmissionHashes[taskId][workers[i]];
+            if (submitted.length == 0) revert ITMPCore.SubmissionNotFound();
+            deliverables[i] = submitted[submitted.length - 1];
             sumShares += shares[i];
         }
         if (sumShares != 10000) revert ITMPCore.SharesMustSumTo10000();
@@ -205,7 +244,7 @@ contract AcceptanceFacet {
 
         task.status = ITMPCore.TaskStatus.Accepted;
         task.worker = workers[0];
-        task.deliverable = deliverables[0];
+        task.deliverable = deliverables[0]; // latest hash from on-chain submission history
 
         uint256 reward = task.reward;
         uint16 feeBps = task.feeBps;
@@ -233,12 +272,33 @@ contract AcceptanceFacet {
 
         // Multi-winner payouts require iterating recipients. State fully committed before this loop (CEI).
         // slither-disable-next-line calls-loop
+        bool anySelfAward = false;
         for (uint256 i; i < n; ++i) {
             if (!s.usdcToken.transfer(workers[i], nets[i])) revert ITMPCore.WorkerPaymentFailed();
             emit ITMPCore.TaskCompleted(taskId, requester, workers[i], nets[i], fees[i]);
+            if (workers[i] == requester) {
+                emit ITMPCore.SelfAward(taskId, requester, workers[i]);
+                anySelfAward = true;
+            }
         }
         if (totalFee > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
+        }
+
+        emit ITMPCore.RequesterReputation(
+            taskId,
+            requester,
+            keccak256("completed"),
+            task.reward,
+            uint32(s.taskActiveSubmissionCount[taskId]),
+            anySelfAward
+        );
+        if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+            try IReputationRegistry(s.reputationRegistry)
+                .giveFeedback(
+                    requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
+                ) { }
+                catch { }
         }
 
         if (hook != address(0)) {
@@ -246,5 +306,14 @@ contract AcceptanceFacet {
                 hook, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
             );
         }
+    }
+
+    function _modeName(bytes4 mode) private pure returns (string memory) {
+        if (mode == BOUNTY) return "tmp.mode.bounty";
+        if (mode == CLAIM) return "tmp.mode.claim";
+        if (mode == PITCH) return "tmp.mode.pitch";
+        if (mode == BENCHMARK) return "tmp.mode.benchmark";
+        if (mode == AUCTION) return "tmp.mode.auction";
+        return "";
     }
 }

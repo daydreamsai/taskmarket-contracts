@@ -42,7 +42,7 @@ interface ITaskMarketFull {
     function submitWork(bytes32 taskId, bytes32 deliverable) external;
     function rejectSubmission(bytes32 taskId, address worker) external;
     function forfeitAndReopen(bytes32 taskId) external;
-    function cancelTask(bytes32 taskId) external;
+    function cancelTask(bytes32 taskId, uint256 requesterAgentId) external;
     function updateTask(
         bytes32 taskId,
         uint256 newReward,
@@ -50,7 +50,7 @@ interface ITaskMarketFull {
         uint256 newBidDeadline,
         uint256 newPitchDeadline
     ) external;
-    function refundExpired(bytes32 taskId) external;
+    function refundExpired(bytes32 taskId, uint256 requesterAgentId) external;
 
     // -------------------------------------------------------------------------
     // AuctionFacet
@@ -62,13 +62,14 @@ interface ITaskMarketFull {
     // -------------------------------------------------------------------------
     // AcceptanceFacet
     // -------------------------------------------------------------------------
-    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable) external;
+    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external;
     function acceptSubmissions(
         bytes32 taskId,
         address[] calldata workers,
         uint16[] calldata shares,
-        bytes32[] calldata deliverables
+        uint256 requesterAgentId
     ) external;
+    function taskSubmissionHashes(bytes32 taskId, address worker) external view returns (bytes32[] memory);
 
     // -------------------------------------------------------------------------
     // EvaluatorFacet

@@ -217,7 +217,7 @@ contract ITMPCompliance is DiamondTestHelper {
         assertEq(task.deliverable, bytes32(0), "Bounty: submitWork must NOT write deliverable");
 
         // acceptSubmission -> Accepted (deferred-write model: deliverable set here)
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("deliverable"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("deliverable"), 0)));
         task = market.getTask(taskId);
         assertEq(
             uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted), "Bounty: acceptSubmission must set Accepted"
@@ -229,7 +229,7 @@ contract ITMPCompliance is DiamondTestHelper {
     function test_Compliance_Bounty_Expire() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.warp(block.timestamp + DURATION + 1);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         ITMPCore.Task memory task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Expired), "Must be Expired after refundExpired");
@@ -254,7 +254,7 @@ contract ITMPCompliance is DiamondTestHelper {
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed), "Claim: submitWork must not change state");
 
         // acceptSubmission -> Accepted (Claim: deliverable was set by submitWork)
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0)));
         task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
     }
@@ -296,7 +296,7 @@ contract ITMPCompliance is DiamondTestHelper {
         );
 
         // acceptSubmission -> Accepted (Pitch: deliverable was set by submitWork)
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("pitch work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("pitch work"), 0)));
         task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
     }
@@ -317,7 +317,9 @@ contract ITMPCompliance is DiamondTestHelper {
         assertEq(task.deliverable, bytes32(0), "Benchmark: submitWork must NOT write deliverable");
 
         // acceptSubmission -> Accepted (deferred-write model)
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("benchmark result"))));
+        _relay(
+            requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("benchmark result"), 0))
+        );
         task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
         assertEq(task.deliverable, keccak256("benchmark result"));
@@ -352,7 +354,7 @@ contract ITMPCompliance is DiamondTestHelper {
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Claimed));
 
         // acceptSubmission -> Accepted (Auction: deliverable was set by submitWork)
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, keccak256("auction work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, keccak256("auction work"), 0)));
         task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
     }
@@ -394,7 +396,8 @@ contract ITMPCompliance is DiamondTestHelper {
 
     function test_Compliance_RateTask_Range() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
+        _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0)));
 
         ITMPCore.WorkerStats memory before = market.getWorkerStats(worker1);
 
@@ -409,7 +412,8 @@ contract ITMPCompliance is DiamondTestHelper {
 
     function test_Compliance_RateTask_WorkerStatsUpdated() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"))));
+        _relay(worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0)));
         _relay(requester, 0, abi.encodeCall(market.rateTask, (taskId, worker1, 80, 0, 0, "", bytes32(0))));
 
         ITMPCore.WorkerStats memory ws = market.getWorkerStats(worker1);
@@ -426,7 +430,7 @@ contract ITMPCompliance is DiamondTestHelper {
         vm.warp(block.timestamp + DURATION + 1);
 
         uint256 before = usdc.balanceOf(requester);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertEq(usdc.balanceOf(requester), before + REWARD, "Requester must recover funds after expiry");
     }
 
@@ -440,7 +444,7 @@ contract ITMPCompliance is DiamondTestHelper {
         uint256 requesterBefore = usdc.balanceOf(requester);
         uint256 worker1Before = usdc.balanceOf(worker1);
 
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "Requester recovers reward");
         assertEq(usdc.balanceOf(worker1), worker1Before + stake, "Claimer recovers stake");

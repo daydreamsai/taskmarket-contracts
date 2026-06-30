@@ -96,6 +96,7 @@ interface ITMPCore is IERC165 {
     error SubmissionsExist();
     error SubmissionAlreadyRejected();
     error NoActiveSubmissions();
+    error SubmissionNotFound();
 
     // Config / params
     error InvalidFeeRecipient();
@@ -354,6 +355,27 @@ interface ITMPCore is IERC165 {
         bytes32 indexed taskId, address indexed worker, bytes32 proofHash, bytes32 proofType, uint256 metricValue
     );
 
+    /// @notice Emitted when the accepting worker address equals the task requester address.
+    ///         No slashing — immutable signal for off-chain reputation indexers.
+    event SelfAward(bytes32 indexed taskId, address indexed requester, address indexed worker);
+
+    /// @notice Emitted at every bounty/benchmark terminal state to record requester behaviour.
+    ///         event_: keccak256 of one of:
+    ///           "completed"                   — task paid out
+    ///           "cancelled_after_submissions" — requester cancelled after all submissions were rejected
+    ///           "expired_no_action"           — task expired with no submissions ever
+    ///           "expired_after_rejections"    — task expired after all submissions were rejected
+    ///         submissionCount is 0 for cancelled/expired-after-rejection (rejectSubmission decrements
+    ///         taskActiveSubmissionCount; the event_ field is the authoritative discriminator).
+    event RequesterReputation(
+        bytes32 indexed taskId,
+        address indexed requester,
+        bytes32 event_,
+        uint256 reward,
+        uint32 submissionCount,
+        bool selfAward
+    );
+
     // -------------------------------------------------------------------------
     // Required functions
     // -------------------------------------------------------------------------
@@ -392,30 +414,34 @@ interface ITMPCore is IERC165 {
     /// @notice Accept a worker's submission and release escrowed payment.
     ///         The requester is authenticated by the implementation's chosen mechanism.
     ///         Payment is atomic with status update (nonReentrant required).
-    ///         For Bounty / Benchmark modes the deliverable is written here (deferred-write
-    ///         model — submitWork only emits the event). For Claim / Pitch / Auction the
-    ///         deliverable was already written by submitWork; the param is cross-checked.
-    /// @param taskId      Task identifier
-    /// @param worker      Worker address to receive payment
-    /// @param deliverable Accepted deliverable hash; required non-zero for Bounty/Benchmark
-    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable) external;
+    ///         For Bounty / Benchmark modes the deliverable must have been committed on-chain
+    ///         by a prior submitWork call — the contract verifies the hash exists in
+    ///         taskSubmissionHashes[taskId][worker]. Reverts SubmissionNotFound if not found.
+    ///         For Claim / Pitch / Auction the deliverable was already written by submitWork;
+    ///         the param is cross-checked against task.deliverable.
+    /// @param taskId           Task identifier
+    /// @param worker           Worker address to receive payment
+    /// @param deliverable      Accepted deliverable hash; must have been committed by submitWork
+    /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
+    function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external;
 
     /// @notice Accept N submissions at once with explicit share basis points.
-    ///         Valid for modes that support multiple concurrent submissions
-    ///         (Bounty, Benchmark). Shares MUST sum to 10000; fee taken per pair.
-    ///         workers[0] becomes task.worker and deliverables[0] becomes task.deliverable.
+    ///         Valid for Bounty and Benchmark modes. Shares MUST sum to 10000; fee taken per pair.
+    ///         workers[0] becomes task.worker; each worker's deliverable is resolved from the
+    ///         latest entry in taskSubmissionHashes[taskId][worker]. Reverts SubmissionNotFound
+    ///         if any winner has no prior submitWork call.
     ///         One TaskCompleted event MUST be emitted per (worker, share) pair.
-    ///         Duplicate worker addresses are allowed; the requester is the authority on
-    ///         who gets paid. MUST revert for modes with a single locked worker.
-    /// @param taskId       Task identifier
-    /// @param workers      Recipient addresses (length >= 1)
-    /// @param shares       Basis-point shares; MUST sum to 10000
-    /// @param deliverables Per-worker content hashes; each MUST be non-zero
+    ///         Duplicate worker addresses are allowed; the requester is the authority on who gets paid.
+    ///         MUST revert for modes with a single locked worker.
+    /// @param taskId           Task identifier
+    /// @param workers          Recipient addresses (length >= 1)
+    /// @param shares           Basis-point shares; MUST sum to 10000
+    /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
     function acceptSubmissions(
         bytes32 taskId,
         address[] calldata workers,
         uint16[] calldata shares,
-        bytes32[] calldata deliverables
+        uint256 requesterAgentId
     ) external;
 
     /// @notice Reject a worker's submission on a Bounty or Benchmark task.
@@ -473,8 +499,11 @@ interface ITMPCore is IERC165 {
     ///         MUST bypass all hooks and extension contracts.
     ///         This is a normative security requirement — funds MUST always
     ///         be recoverable after expiry regardless of extension state.
-    /// @param taskId Task identifier
-    function refundExpired(bytes32 taskId) external;
+    ///         For Bounty/Benchmark, emits RequesterReputation with event_ =
+    ///         keccak256("expired_no_action") or keccak256("expired_after_rejections").
+    /// @param taskId           Task identifier
+    /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
+    function refundExpired(bytes32 taskId, uint256 requesterAgentId) external;
 
     /// @notice Forfeit a claimed worker's stake and reopen the task for new claims.
     ///         Only callable by the requester. Task MUST be in Claimed status and

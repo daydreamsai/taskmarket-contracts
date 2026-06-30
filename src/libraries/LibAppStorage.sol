@@ -33,6 +33,7 @@ struct AppStorage {
     mapping(bytes32 => bool) taskHasSubmissions;
     mapping(bytes32 => mapping(address => bool)) taskRejectedWorkers;
     mapping(bytes32 => uint256) taskActiveSubmissionCount;
+    mapping(bytes32 => mapping(address => bytes32[])) taskSubmissionHashes;
 }
 
 library LibAppStorage {

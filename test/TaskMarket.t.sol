@@ -254,22 +254,22 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     function _acceptSubmission(bytes32 taskId, address _req, address _worker, bytes32 _deliverable) internal {
-        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker, _deliverable)));
+        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker, _deliverable, 0)));
     }
 
-    /// Back-compat helper: for Claim/Pitch/Auction reads the deliverable from
-    /// task storage (where submitWork wrote it, or zero if submitWork wasn't called).
-    /// For Bounty/Benchmark the contract requires a non-zero deliverable, so the helper
-    /// substitutes keccak256("work") to keep existing test flows working unchanged.
+    /// Back-compat helper: for Claim/Pitch/Auction reads the deliverable from task storage.
+    /// For Bounty/Benchmark, submits keccak256("work") via submitWork first (required by
+    /// hash verification), then accepts it — keeps existing test flows working unchanged.
     function _acceptSubmission(bytes32 taskId, address _req, address _worker) internal {
         ITMPCore.Task memory _task = market.getTask(taskId);
         bytes32 _deliverable;
         if (_task.mode == market.BOUNTY() || _task.mode == market.BENCHMARK()) {
             _deliverable = keccak256("work");
+            _submitWork(taskId, _worker, _deliverable);
         } else {
             _deliverable = _task.deliverable;
         }
-        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker, _deliverable)));
+        _relay(_req, 0, abi.encodeCall(market.acceptSubmission, (taskId, _worker, _deliverable, 0)));
     }
 
     function _forfeitAndReopen(bytes32 taskId, address _req) internal {
@@ -304,7 +304,7 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     function _cancelTask(bytes32 taskId, address _req) internal {
-        _relay(_req, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        _relay(_req, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     function _rejectSubmission(bytes32 taskId, address _req, address _worker) internal {
@@ -540,7 +540,7 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + DURATION + 1);
 
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
 
         ITMPCore.Task memory task = market.getTask(taskId);
@@ -604,7 +604,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _submitWork(taskId, worker1, keccak256("work"));
         vm.warp(block.timestamp + DURATION + 1);
-        _acceptSubmission(taskId, requester, worker1);
+        _acceptSubmission(taskId, requester, worker1, keccak256("work"));
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
     }
 
@@ -616,7 +616,10 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + DURATION + 1);
         vm.expectRevert(ITMPCore.TaskIsExpired.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work")))
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0))
         );
     }
 
@@ -664,7 +667,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.prank(alice);
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
-        market.acceptSubmission(taskId, worker1, keccak256("work"));
+        market.acceptSubmission(taskId, worker1, keccak256("work"), 0);
     }
 
     function test_RevertWhen_NonServer_ForfeitAndReopen() public {
@@ -886,7 +889,10 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert(ITMPCore.NotRequester.selector);
         forwarder.relay(
-            address(market), worker2, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work")))
+            address(market),
+            worker2,
+            0,
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0))
         );
     }
 
@@ -938,7 +944,7 @@ contract TaskMarketTest is DiamondTestHelper {
         _claimTask(taskId, worker1, 0);
         vm.expectRevert(ITMPCore.WorkerMismatch.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, bytes32(0), 0))
         );
     }
 
@@ -947,7 +953,7 @@ contract TaskMarketTest is DiamondTestHelper {
         _selectWorker(taskId, requester, worker1);
         vm.expectRevert(ITMPCore.WorkerMismatch.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker2, bytes32(0), 0))
         );
     }
 
@@ -1044,7 +1050,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.warp(block.timestamp + DURATION + 1);
         vm.expectRevert(ITMPCore.SubmissionsExist.selector);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     function test_SubmitWork_Claim_NoStateChange() public {
@@ -1137,12 +1143,12 @@ contract TaskMarketTest is DiamondTestHelper {
     function test_RevertWhen_RefundExpired_NotYetExpired() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     function test_RevertWhen_RefundExpired_TaskDoesNotExist() public {
         vm.expectRevert(ITMPCore.TaskDoesNotExist.selector);
-        market.refundExpired(keccak256("nonexistent"));
+        market.refundExpired(keccak256("nonexistent"), 0);
     }
 
     function test_RevertWhen_RefundExpired_AlreadyAccepted() public {
@@ -1152,7 +1158,7 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + DURATION + 1);
 
         vm.expectRevert(ITMPCore.TaskAlreadyAccepted.selector);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     function test_RefundExpired_Claim_ReturnsStake() public {
@@ -1165,7 +1171,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 worker1BalanceBefore = usdc.balanceOf(worker1);
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
 
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + stakeAmount);
@@ -1202,7 +1208,7 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.expectEmit(true, true, false, true);
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, evaluator, stakeAmount);
 
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         assertEq(
             usdc.balanceOf(feeRecipient), feeRecipientBefore + stakeAmount, "evaluator stake forfeited to fee recipient"
@@ -1442,7 +1448,7 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + DURATION + 1);
 
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
         ITMPCore.Task memory task = market.getTask(taskId);
@@ -1466,7 +1472,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.expectEmit(true, true, true, true);
         emit ITMPCore.TaskCompleted(taskId, requester, worker1, expectedWorkerPayment, fee);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + expectedWorkerPayment);
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + expectedRequesterRefund);
@@ -1491,7 +1497,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 worker1BalanceBefore = usdc.balanceOf(worker1);
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
 
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + expectedWorkerPayment);
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore);
@@ -1525,7 +1531,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
 
         vm.expectRevert(ITMPCore.SubmissionsExist.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     function test_CancelTask_OpenBenchmarkWithSubmissions_Reverts() public {
@@ -1534,7 +1540,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
 
         vm.expectRevert(ITMPCore.SubmissionsExist.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     function test_CancelTask_Claim() public {
@@ -1563,20 +1569,20 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_ENGLISH());
         _submitBid(taskId, worker1, REWARD / 2);
         vm.expectRevert(ITMPCore.BidsExist.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     function test_RevertWhen_CancelTask_NotOpen_Claimed() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, 0);
         vm.expectRevert(ITMPCore.TaskNotOpen.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     function test_RevertWhen_CancelTask_WrongRequester() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert(ITMPCore.NotRequester.selector);
-        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     function test_RevertWhen_CancelTask_NonServer() public {
@@ -1584,12 +1590,12 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.prank(alice);
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
-        market.cancelTask(taskId);
+        market.cancelTask(taskId, 0);
     }
 
     function test_RevertWhen_CancelTask_DoesNotExist() public {
         vm.expectRevert(ITMPCore.TaskDoesNotExist.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (keccak256("nonexistent"))));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (keccak256("nonexistent"), 0)));
     }
 
     // -----------------------------------------------------------------------
@@ -1604,7 +1610,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // One submission rejected; the other is still active => cancel must still revert.
         _rejectSubmission(taskId, requester, worker1);
         vm.expectRevert(ITMPCore.SubmissionsExist.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
 
         // Reject the remaining submission; now cancel must succeed and return escrow.
         uint256 balanceBefore = usdc.balanceOf(requester);
@@ -1657,7 +1663,7 @@ contract TaskMarketTest is DiamondTestHelper {
         _rejectSubmission(taskId, requester, worker1);
 
         vm.expectRevert(ITMPCore.SubmissionsExist.selector);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
     // -----------------------------------------------------------------------
@@ -1919,14 +1925,18 @@ contract TaskMarketTest is DiamondTestHelper {
         uint16[] memory shares,
         bytes32[] memory deliverables
     ) internal {
-        _relay(_req, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, deliverables)));
+        // Submit work for each worker first (required by on-chain hash verification).
+        for (uint256 i = 0; i < workers.length; i++) {
+            _submitWork(taskId, workers[i], deliverables[i]);
+        }
+        _relay(_req, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0)));
     }
 
     function test_AcceptSubmission_Bounty_RequiresNonZeroDeliverable() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.expectRevert(ITMPCore.DeliverableRequired.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0), 0))
         );
     }
 
@@ -1934,7 +1944,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
         vm.expectRevert(ITMPCore.DeliverableRequired.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0), 0))
         );
     }
 
@@ -1948,7 +1958,7 @@ contract TaskMarketTest is DiamondTestHelper {
             address(market),
             requester,
             0,
-            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("wrong")))
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("wrong"), 0))
         );
     }
 
@@ -2022,12 +2032,13 @@ contract TaskMarketTest is DiamondTestHelper {
         uint16[] memory shares = new uint16[](2);
         shares[0] = 5000; // sum 9000
         shares[1] = 4000;
-        bytes32[] memory deliverables = new bytes32[](2);
-        deliverables[0] = keccak256("A");
-        deliverables[1] = keccak256("B");
+        _submitWork(taskId, worker1, keccak256("A"));
+        _submitWork(taskId, worker2, keccak256("B"));
 
         vm.expectRevert(ITMPCore.SharesMustSumTo10000.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_RevertsOnSharesSumMismatch_Over() public {
@@ -2038,12 +2049,13 @@ contract TaskMarketTest is DiamondTestHelper {
         uint16[] memory shares = new uint16[](2);
         shares[0] = 6000; // sum 11000
         shares[1] = 5000;
-        bytes32[] memory deliverables = new bytes32[](2);
-        deliverables[0] = keccak256("A");
-        deliverables[1] = keccak256("B");
+        _submitWork(taskId, worker1, keccak256("A"));
+        _submitWork(taskId, worker2, keccak256("B"));
 
         vm.expectRevert(ITMPCore.SharesMustSumTo10000.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_RevertsOnArrayLengthMismatch() public {
@@ -2055,12 +2067,11 @@ contract TaskMarketTest is DiamondTestHelper {
         shares[0] = 5000;
         shares[1] = 3000;
         shares[2] = 2000;
-        bytes32[] memory deliverables = new bytes32[](2);
-        deliverables[0] = keccak256("A");
-        deliverables[1] = keccak256("B");
 
         vm.expectRevert(ITMPCore.LengthMismatch.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_RevertsOnEmptyArrays() public {
@@ -2073,17 +2084,17 @@ contract TaskMarketTest is DiamondTestHelper {
         _acceptSubmissions(taskId, requester, workers, shares, deliverables);
     }
 
-    function test_AcceptSubmissions_RevertsOnZeroDeliverable() public {
+    function test_AcceptSubmissions_RevertsOnNoSubmission() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         address[] memory workers = new address[](1);
         workers[0] = worker1;
         uint16[] memory shares = new uint16[](1);
         shares[0] = 10000;
-        bytes32[] memory deliverables = new bytes32[](1);
-        deliverables[0] = bytes32(0);
 
-        vm.expectRevert(ITMPCore.DeliverableRequired.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        vm.expectRevert(ITMPCore.SubmissionNotFound.selector);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_RevertsOnLockedWorkerMode_Pitch() public {
@@ -2093,11 +2104,11 @@ contract TaskMarketTest is DiamondTestHelper {
         workers[0] = worker1;
         uint16[] memory shares = new uint16[](1);
         shares[0] = 10000;
-        bytes32[] memory deliverables = new bytes32[](1);
-        deliverables[0] = keccak256("x");
 
         vm.expectRevert(ITMPCore.MultiSubmissionOnlyForBountyBenchmark.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_RevertsOnLockedWorkerMode_Claim() public {
@@ -2107,11 +2118,11 @@ contract TaskMarketTest is DiamondTestHelper {
         workers[0] = worker1;
         uint16[] memory shares = new uint16[](1);
         shares[0] = 10000;
-        bytes32[] memory deliverables = new bytes32[](1);
-        deliverables[0] = keccak256("x");
 
         vm.expectRevert(ITMPCore.MultiSubmissionOnlyForBountyBenchmark.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_SingleWinner_Equivalent() public {
@@ -2169,12 +2180,13 @@ contract TaskMarketTest is DiamondTestHelper {
         uint16[] memory shares = new uint16[](2);
         shares[0] = 9999; // share=1 rounds 100*1/10000 = 0
         shares[1] = 1;
-        bytes32[] memory deliverables = new bytes32[](2);
-        deliverables[0] = keccak256("A");
-        deliverables[1] = keccak256("B");
+        _submitWork(taskId, worker1, keccak256("A"));
+        _submitWork(taskId, worker2, keccak256("B"));
 
         vm.expectRevert(ITMPCore.ZeroPayoutPerPair.selector);
-        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
     }
 
     function test_AcceptSubmissions_FeeMath_FeeZero() public {
@@ -2318,7 +2330,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
         vm.warp(block.timestamp + DURATION + 1);
         uint256 before = usdc.balanceOf(requester);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertGt(usdc.balanceOf(requester), before);
         assertEq(hook.onExpireCalls(), 1);
     }
@@ -2552,7 +2564,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.warp(block.timestamp + DURATION + 1);
         assertEq(hook.onCompleteCalls(), 0);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
         assertEq(hook.onCompleteCalls(), 1);
         // onExpire must NOT have been called — this is a completion, not an expiry.
@@ -2589,7 +2601,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.warp(block.timestamp + DURATION + 1);
         assertEq(hook.onExpireCalls(), 0);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Expired));
         assertEq(hook.onExpireCalls(), 1);
     }
@@ -2688,7 +2700,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // Warp past the original expiryTime but still inside the evaluation window.
         vm.warp(block.timestamp + 2 hours);
         vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     function test_RefundExpired_DuringReview_AfterExtendedExpiry() public {
@@ -2702,7 +2714,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // Warp past both the original expiryTime and the evaluationWindow extension.
         vm.warp(block.timestamp + DURATION + evalWindow + 1);
         uint256 before = usdc.balanceOf(requester);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertGt(usdc.balanceOf(requester), before);
     }
 
@@ -2720,7 +2732,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // Still inside the appeal window (phaseDeadline), which is also the new expiryTime.
         vm.warp(block.timestamp + 1 days);
         vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     function test_RefundExpired_DuringAppealing_AfterExtendedExpiry() public {
@@ -2741,7 +2753,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // Warp past the appeal window extension.
         vm.warp(block.timestamp + appealWindow + 1);
         uint256 before = usdc.balanceOf(requester);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
         assertGt(usdc.balanceOf(requester), before);
     }
 
@@ -2769,7 +2781,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // Still inside the appeal window extension — must not be refundable.
         vm.warp(block.timestamp + 2 hours);
         vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     // -------------------------------------------------------------------------
@@ -3493,7 +3505,7 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.prank(owner);
         market.pause();
         vm.expectRevert();
-        market.refundExpired(taskId);
+        market.refundExpired(taskId, 0);
     }
 
     function test_WhenUnpaused_CreateTask_Succeeds() public {
@@ -3682,7 +3694,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         vm.expectRevert(ITMPCore.TaskNotClaimed.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0), 0))
         );
     }
 
@@ -3690,7 +3702,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
         vm.expectRevert(ITMPCore.WorkerNotSelected.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0), 0))
         );
     }
 
@@ -3698,7 +3710,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         vm.expectRevert(ITMPCore.WinnerNotSelected.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0)))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, bytes32(0), 0))
         );
     }
 
@@ -3710,7 +3722,7 @@ contract TaskMarketTest is DiamondTestHelper {
             address(market),
             requester,
             0,
-            abi.encodeCall(market.acceptSubmission, (taskId, worker2, keccak256("work2")))
+            abi.encodeCall(market.acceptSubmission, (taskId, worker2, keccak256("work2"), 0))
         );
     }
 
@@ -3726,20 +3738,21 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.expectRevert(ITMPCore.TaskNotOpen.selector);
         forwarder.relay(
-            address(market),
-            requester,
-            0,
-            abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, deliverables))
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
         );
     }
 
     function test_AcceptSubmission_Hook_CheckComplete_Rejected_Reverts() public {
         MockTaskHook hook = new MockTaskHook();
         bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+        _submitWork(taskId, worker1, keccak256("work"));
         hook.setRejectOnCheckComplete(true);
         vm.expectRevert(ITMPCore.HookCheckCompleteRejected.selector);
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work")))
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0))
         );
     }
 
@@ -3936,7 +3949,10 @@ contract TaskMarketTest is DiamondTestHelper {
         hook.setRevertOnCheckComplete(true);
         vm.expectRevert();
         forwarder.relay(
-            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work")))
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0))
         );
     }
 
@@ -3944,5 +3960,337 @@ contract TaskMarketTest is DiamondTestHelper {
         MockTaskHook hook = new MockTaskHook();
         assertTrue(hook.supportsInterface(type(ITMPHook).interfaceId));
         assertFalse(hook.supportsInterface(bytes4(0xdeadbeef)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Submission integrity — TDD tests (written before implementation)
+    // -----------------------------------------------------------------------
+
+    // --- SubmissionNotFound / hash verification ---
+
+    function test_AcceptSubmission_Bounty_WithoutSubmit_Reverts() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.expectRevert(ITMPCore.SubmissionNotFound.selector);
+        forwarder.relay(
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), 0))
+        );
+    }
+
+    function test_AcceptSubmission_Benchmark_WithoutSubmit_Reverts() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        vm.expectRevert(ITMPCore.SubmissionNotFound.selector);
+        forwarder.relay(
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("proof"), 0))
+        );
+    }
+
+    function test_AcceptSubmission_Bounty_WrongDeliverable_Reverts() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hashA = keccak256("hashA");
+        bytes32 hashB = keccak256("hashB");
+        _submitWork(taskId, worker1, hashA);
+        vm.expectRevert(ITMPCore.SubmissionNotFound.selector);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hashB, 0))
+        );
+    }
+
+    function test_AcceptSubmission_Bounty_CorrectDeliverable_Succeeds() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("myWork");
+        _submitWork(taskId, worker1, hash);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 0))
+        );
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+    }
+
+    function test_AcceptSubmission_Bounty_OlderVersionStillAcceptable() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hashV1 = keccak256("v1");
+        bytes32 hashV2 = keccak256("v2");
+        _submitWork(taskId, worker1, hashV1);
+        _submitWork(taskId, worker1, hashV2);
+        // accept the older v1, not the latest v2
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hashV1, 0))
+        );
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+        assertEq(market.getTask(taskId).deliverable, hashV1);
+    }
+
+    function test_AcceptSubmissions_MultiWinner_NoSubmit_Reverts() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        address[] memory workers = new address[](2);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 6000;
+        shares[1] = 4000;
+        // worker1 submitted but worker2 did not
+        _submitWork(taskId, worker1, keccak256("w1work"));
+        vm.expectRevert(ITMPCore.SubmissionNotFound.selector);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
+    }
+
+    function test_AcceptSubmissions_MultiWinner_AllCorrect_Succeeds() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("w1work"));
+        _submitWork(taskId, worker2, keccak256("w2work"));
+        address[] memory workers = new address[](2);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 6000;
+        shares[1] = 4000;
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+    }
+
+    // --- SelfAward event ---
+
+    function test_SelfAward_EmitsWhenWorkerIsRequester() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("selfWork");
+        _submitWork(taskId, requester, hash);
+        vm.expectEmit(true, true, true, false);
+        emit ITMPCore.SelfAward(taskId, requester, requester);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, requester, hash, 0))
+        );
+    }
+
+    function test_SelfAward_NotEmittedWhenWorkerDiffers() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("w1work");
+        _submitWork(taskId, worker1, hash);
+        vm.recordLogs();
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 0))
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 selfAwardTopic = keccak256("SelfAward(bytes32,address,address)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], selfAwardTopic, "SelfAward should not be emitted");
+        }
+    }
+
+    function test_SelfAward_MultiWinner_EmitsPerSelfAwardWinner() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, requester, keccak256("selfWork"));
+        _submitWork(taskId, worker1, keccak256("w1work"));
+        address[] memory workers = new address[](2);
+        workers[0] = requester;
+        workers[1] = worker1;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 5000;
+        shares[1] = 5000;
+        vm.expectEmit(true, true, true, false);
+        emit ITMPCore.SelfAward(taskId, requester, requester);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
+    }
+
+    // --- RequesterReputation event ---
+
+    function test_RequesterReputation_OnComplete_Emitted() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("completed"), REWARD, 1, false);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 0))
+        );
+    }
+
+    function test_RequesterReputation_OnComplete_SelfAwardFlag() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("selfWork");
+        _submitWork(taskId, requester, hash);
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("completed"), REWARD, 1, true);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, requester, hash, 0))
+        );
+    }
+
+    function test_RequesterReputation_CancelAfterRejections_Emitted() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _rejectSubmission(taskId, requester, worker1);
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("cancelled_after_submissions"), REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+    }
+
+    function test_RequesterReputation_CleanCancel_NotEmitted() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.recordLogs();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 repTopic = keccak256("RequesterReputation(bytes32,address,bytes32,uint256,uint32,bool)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], repTopic, "RequesterReputation should not be emitted on clean cancel");
+        }
+    }
+
+    function test_RequesterReputation_ExpiredNoAction_Emitted() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_no_action"), REWARD, 0, false);
+        market.refundExpired(taskId, 0);
+    }
+
+    function test_RequesterReputation_ExpiredAfterRejections_Emitted() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _rejectSubmission(taskId, requester, worker1);
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_after_rejections"), REWARD, 0, false);
+        market.refundExpired(taskId, 0);
+    }
+
+    // --- requesterAgentId passthrough ---
+
+    function test_AcceptSubmission_ZeroAgentId_NoRegistryCall() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+        // requesterAgentId = 0 — no registry call, must not revert
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 0))
+        );
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+    }
+
+    function test_CancelTask_WithAgentId_NoRevert() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        // requesterAgentId = 42, no registry configured — must not revert
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    // --- AcceptanceFacet: requesterAgentId registry path and _modeName branches ---
+
+    function test_AcceptSubmission_WithRegistry_BountyMode() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 42))
+        );
+        assertEq(reg.calls(), 1);
+        assertEq(reg.lastTag2(), "tmp.mode.bounty");
+    }
+
+    function test_AcceptSubmission_WithRegistry_BenchmarkMode() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+        // _modeName(BENCHMARK): traverses BOUNTY=false, CLAIM=false, PITCH=false, BENCHMARK=true
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 42))
+        );
+        assertEq(reg.calls(), 1);
+        assertEq(reg.lastTag2(), "tmp.mode.benchmark");
+    }
+
+    function test_AcceptSubmissions_WithRegistry() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("w1"));
+        _submitWork(taskId, worker2, keccak256("w2"));
+        address[] memory workers = new address[](2);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 6000;
+        shares[1] = 4000;
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 42))
+        );
+        assertEq(reg.calls(), 1);
+    }
+
+    function test_AcceptSubmissions_WithHook_CheckComplete() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+        _submitWork(taskId, worker1, keccak256("work"));
+        address[] memory workers = new address[](1);
+        workers[0] = worker1;
+        uint16[] memory shares = new uint16[](1);
+        shares[0] = 10000;
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, 0))
+        );
+        assertGt(hook.checkCompleteCalls(), 0);
+        assertGt(hook.onCompleteCalls(), 0);
+    }
+
+    // --- CoreFacet: cancelTask with registry after rejections (_modeName branches) ---
+
+    function test_CancelTask_WithRegistry_Bounty_AfterRejections() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _rejectSubmission(taskId, requester, worker1);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(reg.calls(), 1);
+        assertEq(reg.lastTag2(), "tmp.mode.bounty");
+    }
+
+    function test_CancelTask_WithRegistry_Benchmark_AfterRejections() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _rejectSubmission(taskId, requester, worker1);
+        // _modeName(BENCHMARK) in CoreFacet: BOUNTY=false, CLAIM=false, PITCH=false, BENCHMARK=true
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(reg.calls(), 1);
+        assertEq(reg.lastTag2(), "tmp.mode.benchmark");
+    }
+
+    // --- CoreFacet: refundExpired with registry ---
+
+    function test_RefundExpired_WithRegistry_Bounty() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+        market.refundExpired(taskId, 42);
+        assertEq(reg.calls(), 1);
     }
 }

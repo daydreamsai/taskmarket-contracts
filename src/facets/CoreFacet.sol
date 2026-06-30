@@ -6,6 +6,7 @@ import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
+import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
 import {
     TMP_BOUNTY,
     TMP_CLAIM,
@@ -262,6 +263,8 @@ contract CoreFacet {
             // by blocking cancelTask and refundExpired once work has been submitted.
             s.taskHasSubmissions[taskId] = true;
             s.taskActiveSubmissionCount[taskId]++;
+            // Append to version history so AcceptanceFacet can verify the hash was committed.
+            s.taskSubmissionHashes[taskId][worker].push(deliverable);
         } else if (task.mode == CLAIM) {
             if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();
@@ -368,7 +371,7 @@ contract CoreFacet {
 
     /// @notice Cancel an open task and refund escrowed reward.
     ///         The requester is the authenticated actor (pgtrSender).
-    function cancelTask(bytes32 taskId) external {
+    function cancelTask(bytes32 taskId, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
         LibTaskMarket._requireNotPaused(s);
@@ -393,6 +396,26 @@ contract CoreFacet {
         uint256 refundAmount = task.reward;
         address requesterAddr = task.requester;
         if (!s.usdcToken.transfer(requesterAddr, refundAmount)) revert ITMPCore.RefundFailed();
+
+        // Emit requester reputation signal when cancelling after all submissions were rejected.
+        // Clean cancellations (no submissions ever) are reputation-neutral and do not emit.
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskHasSubmissions[taskId]) {
+            emit ITMPCore.RequesterReputation(
+                taskId,
+                requesterAddr,
+                keccak256("cancelled_after_submissions"),
+                refundAmount,
+                uint32(s.taskActiveSubmissionCount[taskId]),
+                false
+            );
+            if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+                try IReputationRegistry(s.reputationRegistry)
+                    .giveFeedback(
+                        requesterAgentId, -50, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
+                    ) { }
+                    catch { }
+            }
+        }
 
         address hook = task.hookContract;
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refundAmount);
@@ -468,7 +491,7 @@ contract CoreFacet {
     ///         Special case: Auction tasks with a selected winner auto-pay the worker.
     // Complexity is inherent: fund recovery must handle every possible task status and mode without hooks.
     // solhint-disable-next-line code-complexity
-    function refundExpired(bytes32 taskId) external {
+    function refundExpired(bytes32 taskId, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireNotPaused(s);
         LibTaskMarket._nonReentrantBefore(s);
@@ -488,7 +511,7 @@ contract CoreFacet {
         if (task.mode == AUCTION && task.status == ITMPCore.TaskStatus.Claimed) {
             _refundAuctionClaimed(taskId, task, s);
         } else {
-            _refundExpiredNormal(taskId, task, s);
+            _refundExpiredNormal(taskId, task, s, requesterAgentId);
         }
         LibTaskMarket._nonReentrantAfter(s);
     }
@@ -530,7 +553,12 @@ contract CoreFacet {
         }
     }
 
-    function _refundExpiredNormal(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
+    function _refundExpiredNormal(
+        bytes32 taskId,
+        ITMPCore.Task storage task,
+        AppStorage storage s,
+        uint256 requesterAgentId
+    ) private {
         task.status = ITMPCore.TaskStatus.Expired;
         uint256 refundAmount = task.reward;
 
@@ -557,6 +585,20 @@ contract CoreFacet {
 
         emit ITMPCore.TaskExpired(taskId, task.requester, refundAmount);
 
+        // Emit requester reputation signal for bounty/benchmark expired tasks.
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            bytes32 event_ =
+                s.taskHasSubmissions[taskId] ? keccak256("expired_after_rejections") : keccak256("expired_no_action");
+            emit ITMPCore.RequesterReputation(taskId, task.requester, event_, refundAmount, 0, false);
+            if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+                try IReputationRegistry(s.reputationRegistry)
+                    .giveFeedback(
+                        requesterAgentId, -50, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
+                    ) { }
+                    catch { }
+            }
+        }
+
         address hook = task.hookContract;
         if (hook != address(0)) {
             // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch.
@@ -564,5 +606,14 @@ contract CoreFacet {
                 hook, abi.encodeCall(ITMPHook.onExpire, (taskId, LibTaskMarket._buildContext(taskId, s)))
             );
         }
+    }
+
+    function _modeName(bytes4 mode) private pure returns (string memory) {
+        if (mode == BOUNTY) return "tmp.mode.bounty";
+        if (mode == CLAIM) return "tmp.mode.claim";
+        if (mode == PITCH) return "tmp.mode.pitch";
+        if (mode == BENCHMARK) return "tmp.mode.benchmark";
+        if (mode == AUCTION) return "tmp.mode.auction";
+        return "";
     }
 }

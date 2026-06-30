@@ -139,4 +139,9 @@ contract RegistryFacet {
     function taskProofHashes(bytes32 taskId, uint256 index) external view returns (bytes32) {
         return LibAppStorage.appStorage().taskProofHashes[taskId][index];
     }
+
+    /// @notice Returns all deliverable hashes committed by a worker via submitWork for a given task.
+    function taskSubmissionHashes(bytes32 taskId, address worker) external view returns (bytes32[] memory) {
+        return LibAppStorage.appStorage().taskSubmissionHashes[taskId][worker];
+    }
 }

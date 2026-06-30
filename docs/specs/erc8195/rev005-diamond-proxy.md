@@ -8,6 +8,34 @@ this the correct moment to adopt the Diamond proxy pattern (EIP-2535): the proxy
 permanent from first deploy, and logic is split across multiple facet contracts each well under the
 size limit.
 
+---
+
+## Problems
+
+### Problem 1 — EIP-170 size limit breach
+
+`TaskMarket.sol` compiled to a runtime bytecode size of 31,208 bytes, exceeding the EIP-170
+deploy limit of 24,576 bytes by 6,632 bytes. The contract could not be deployed as-is on any
+EVM-compatible network. Optimizer tuning (increasing `runs`, inlining tweaks, removing dead
+branches) recovered fewer than 300 bytes — not nearly enough to close the gap.
+
+### Problem 2 — No upgrade path that preserves the address
+
+The monolithic contract was under active development pre-mainnet. A non-upgradeable rewrite
+would require migrating all state and re-issuing the contract address to all off-chain consumers
+on every significant change. A proxy was required so that the public-facing address remains
+stable across future upgrades.
+
+### Problem 3 — Monolithic upgrade surface
+
+A UUPS or Transparent proxy would solve the size limit by splitting proxy from implementation,
+but the entire implementation would still be upgraded atomically. Any change to one facet's logic
+requires redeploying and re-verifying the full combined implementation. Per-facet granularity was
+preferable given the expected rate of change across the different concern areas (core, acceptance,
+auction, evaluator, registry).
+
+---
+
 ## Architecture
 
 ```
@@ -149,6 +177,29 @@ Helpers used by more than one facet live in `src/libraries/LibTaskMarket.sol`:
 
 Helpers used by only one facet remain `private` within that facet.
 
+## Rationale
+
+**Why not UUPS proxy?**
+
+UUPS (EIP-1822) places the upgrade function in the implementation contract, keeping the proxy
+thin. It solves the size limit by splitting proxy and implementation into separate deploys, and
+it preserves the proxy address across upgrades. However, the implementation is still a single
+monolithic contract: one `upgradeToAndCall` call replaces everything. Per-facet upgrades are not
+possible, meaning any change to, say, `AuctionFacet` requires redeploying and re-verifying the
+entire combined contract. The Diamond pattern was chosen specifically to enable targeted,
+per-facet upgrades.
+
+**Why Diamond over Transparent proxy?**
+
+A Transparent proxy (EIP-1967) shares the monolithic-upgrade drawback of UUPS. Additionally, it
+introduces an admin address that must be excluded from all proxied calls (the "admin slot
+conflict"), which complicates ownership management. The Diamond pattern has no such conflict: the
+owner calls `diamondCut` directly through the same fallback as any other function, gated only by
+`LibDiamond.enforceIsContractOwner`. The Diamond also has no practical size limit on the
+aggregate logic surface because each facet is independently sized and deployed.
+
+---
+
 ## Changes from UUPS (rev004)
 
 | Before | After |
@@ -161,3 +212,30 @@ Helpers used by only one facet remain `private` within that facet.
 | `__gap[N]` slot budget | append-only `AppStorage` struct |
 | `Deploy.s.sol` / `DeployTestnet.s.sol` | `DiamondDeploy.s.sol` |
 | `Upgrade.s.sol` | `DiamondUpgrade.s.sol` |
+
+---
+
+## Affected Files
+
+| File | Change |
+|------|--------|
+| `packages/contracts/src/Diamond.sol` | New Diamond proxy contract; `fallback()` delegates by selector |
+| `packages/contracts/src/libraries/LibDiamond.sol` | Diamond storage, selector registry, `enforceIsContractOwner`, two-step ownership transfer |
+| `packages/contracts/src/libraries/LibAppStorage.sol` | New: defines `AppStorage` struct at `keccak256("taskmarket.appstorage.v1")` slot; replaces per-contract `storage` declarations |
+| `packages/contracts/src/libraries/LibTaskMarket.sol` | New: shared helpers extracted from monolith (`_requireForwarder`, `_nonReentrant*`, `_buildContext`, hook dispatch) |
+| `packages/contracts/src/facets/DiamondCutFacet.sol` | New: implements `diamondCut`; gated by `enforceIsContractOwner` |
+| `packages/contracts/src/facets/DiamondLoupeFacet.sol` | New: `facets()`, `facetFunctionSelectors()`, `supportsInterface()` |
+| `packages/contracts/src/facets/AdminFacet.sol` | New: pause, fee config, forwarder management, `transferOwnership`, `acceptOwnership`, `initialize` |
+| `packages/contracts/src/facets/CoreFacet.sol` | New: task lifecycle — create, claim, select, submit, cancel, update, forfeit, refund |
+| `packages/contracts/src/facets/AuctionFacet.sol` | New: `submitBid`, `selectLowestBidder`, `acceptAuction` |
+| `packages/contracts/src/facets/AcceptanceFacet.sol` | New: `acceptSubmission`, `acceptSubmissions` (ranked payouts) |
+| `packages/contracts/src/facets/EvaluatorFacet.sol` | New: assign, evaluate, appeal, finalizeVerdict, resolveDispute, evaluatorTimeout |
+| `packages/contracts/src/facets/RatingFacet.sol` | New: `rateTask`, `IReputationRegistry` call, `WorkerStats` updates |
+| `packages/contracts/src/facets/RegistryFacet.sol` | New: all view/getter functions |
+| `packages/contracts/src/TaskMarket.sol` | Deleted (replaced by Diamond + facets) |
+| `packages/contracts/script/DiamondDeploy.s.sol` | New deploy script; replaces `Deploy.s.sol` / `DeployTestnet.s.sol` |
+| `packages/contracts/script/DiamondUpgrade.s.sol` | New upgrade script; replaces `Upgrade.s.sol` |
+| `packages/contracts/abi/TaskMarket.json` | Rebuilt: 207 entries merged from all 9 facets (75 functions, 33 events, 99 errors) |
+| `apps/backend/src/services/contract.ts` | Updated to target Diamond ABI and proxy address |
+| `test/TaskMarket.t.sol` | Updated for Diamond deploy fixture; all 234 core tests updated |
+| `test/DiamondTest.t.sol` | New: 26 Diamond-specific tests (cut, loupe, ownership) |

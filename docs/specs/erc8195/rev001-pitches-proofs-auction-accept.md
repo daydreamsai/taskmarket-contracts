@@ -1,32 +1,85 @@
-# ERC-8195 spec update — Rev 001 — on-chain pitches, proofs, and dedicated auction-accept event
-
-Pushing the first tracked revision to the ERC-8195 draft to bring the spec in line with the reference implementation. Status remains `Draft`.
+# ERC-8195 Revision 001 — On-Chain Pitches, Proofs, and Auction Accept
 
 **Revision:** 001
 **Date:** 2026-05-14
 **PRs:** https://github.com/daydreamsai/taskmarket-contracts/pull/2, https://github.com/daydreamsai/taskmarket-contracts/pull/4
 
-## Summary of changes
+## Motivation
 
-### 1. Three new normative events
+The initial ERC-8195 draft described Pitch mode, Benchmark mode, and Dutch/reverse-Dutch
+auction acceptance as first-class task flows, but left all three without any on-chain trace.
+Pitch submissions, benchmark proof submissions, and dutch auction acceptances occurred entirely
+off-chain, making it impossible for third parties to verify worker activity, detect front-running,
+or build indexers that reflect the true state of a task. This revision promotes all three flows
+to normative on-chain status and fixes a confusing event naming inconsistency in the process.
 
-Previously, pitch submission, benchmark proof submission, and dutch/reverse-dutch auction acceptance were all off-chain flows with no on-chain trace. These are now first-class events in the ITMPCore interface:
+---
 
-- `PitchSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 pitchHash)` — emitted by `submitPitch`; anchors the pitch content commitment on-chain.
-- `ProofSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 proofHash, bytes32 proofType, uint256 metricValue)` — emitted by `submitProof`; anchors the benchmark proof commitment and claimed metric value.
-- `AuctionAccepted(bytes32 indexed taskId, address indexed worker, uint256 acceptedPrice)` — emitted by `acceptAuction` for Dutch / reverse-Dutch flows. Coexists with the legacy `BidSubmitted + TaskWorkerSelected` pair so existing indexers keep working; new indexers should prefer this single event.
+## Problem 1 — Pitch and benchmark flows had no on-chain evidence
 
-### 2. Two new normative functions
+`submitPitch` and `submitProof` were described in the spec but not normative. No events were
+required. A pitch could be submitted off-chain, attributed to any worker, and repudiated or
+replayed across tasks without detection. Benchmark proofs claimed metric values with no
+tamper-evident anchor. Any third party relying on off-chain content had to trust the operator
+entirely.
 
-`submitPitch` and `submitProof` anchor content hashes on-chain. The pitch text and proof data themselves stay off-chain; the hash is a tamper-evident commitment that any third party can verify against operator-served content.
+## Problem 2 — Dutch/reverse-Dutch auction acceptance produced ambiguous events
+
+`acceptAuction` emitted the legacy pair `BidSubmitted + TaskWorkerSelected` to signal acceptance.
+These two events were designed for bid-based flows; repurposing them for clock-price acceptance
+forced indexers to interpret a `BidSubmitted` event that did not represent a bid. New indexers
+had no clean signal to distinguish a price-clock acceptance from a bid submission.
+
+## Problem 3 — Hash commitments lacked domain separation
+
+Without a normative encoding rule, implementations could compute pitch and proof hashes
+inconsistently. A hash computed without binding the task ID and worker address could be
+replayed: a pitch submitted to one task would match the on-chain hash for another, or content
+could be attributed to the wrong worker.
+
+## Problem 4 — `TaskAccepted` event name misrepresented the terminal state
+
+The terminal success event was named `TaskAccepted`, matching the `TaskStatus.Accepted` enum
+value. However, "accepted" is a mid-flow term in Pitch and Auction modes — the worker is
+accepted, not the task outcome. The event name created confusion between the ongoing status
+and the completed state.
+
+---
+
+## Changes
+
+### 1. Three new normative events added to `ITMPCore`
 
 ```solidity
-function submitPitch(bytes32 taskId, bytes32 pitchHash) external;
+// Before (rev000 — not present)
+// No events for pitch, proof, or auction acceptance.
+
+// After (rev001)
+event PitchSubmitted(bytes32 indexed taskId, address indexed worker, bytes32 pitchHash);
+event ProofSubmitted(
+    bytes32 indexed taskId,
+    address indexed worker,
+    bytes32 proofHash,
+    bytes32 proofType,
+    uint256 metricValue
+);
+event AuctionAccepted(bytes32 indexed taskId, address indexed worker, uint256 acceptedPrice);
 ```
 
-Valid for Pitch-mode tasks in `Open` status before `pitchDeadline`. The worker is the authenticated actor.
+`PitchSubmitted` is emitted by `submitPitch` and anchors the pitch content commitment on-chain.
+`ProofSubmitted` is emitted by `submitProof` and anchors the benchmark proof commitment and
+claimed metric value. `AuctionAccepted` is emitted by `acceptAuction` for Dutch and reverse-Dutch
+flows. It coexists with the legacy `BidSubmitted + TaskWorkerSelected` pair so existing indexers
+keep working; new indexers should prefer this single event.
+
+### 2. Two new normative functions added to `ITMPCore`
 
 ```solidity
+// Before (rev000 — not present)
+
+// After (rev001)
+function submitPitch(bytes32 taskId, bytes32 pitchHash) external;
+
 function submitProof(
     bytes32 taskId,
     bytes32 proofHash,
@@ -35,67 +88,124 @@ function submitProof(
 ) external;
 ```
 
-Valid for Benchmark-mode tasks. `proofType` is `bytes32(keccak256(typeString))` (e.g. `"tlsn"`, `"zk"`, `"eval"`). `metricValue` is the claimed benchmark result as a task-specific integer.
+`submitPitch` is valid for Pitch-mode tasks in `Open` status before `pitchDeadline`. The worker
+is the authenticated actor. `submitProof` is valid for Benchmark-mode tasks. `proofType` is
+`bytes32(keccak256(typeString))` (e.g. `"tlsn"`, `"zk"`, `"eval"`). `metricValue` is the
+claimed benchmark result as a task-specific integer.
 
-Both functions append to per-task lists (`taskPitchHashes`, `taskProofHashes`) rather than writing a single slot, so multiple workers may submit concurrently without overwriting each other.
+Both functions append to per-task arrays rather than writing a single slot, so multiple workers
+may submit concurrently without overwriting each other:
 
-### 3. Domain separation (normative)
-
-Hash commitments MUST be domain-separated to prevent replay across tasks or workers. Compliant backends MUST compute:
-
-```text
-pitchHash = keccak256(abi.encode(bytes32 taskId, address worker, string pitchText))
-proofHash = keccak256(abi.encode(bytes32 taskId, address worker, string proofData))
+```solidity
+// Storage additions (append-only, consuming from __gap)
+mapping(bytes32 => bytes32[]) public taskPitchHashes;  // slot 10
+mapping(bytes32 => bytes32[]) public taskProofHashes;  // slot 11
+// __gap shrunk from 48 -> 46
 ```
 
-Using `abi.encode` (not `abi.encodePacked`) avoids length ambiguity on variable-length strings. This binding ensures a pitch submitted to one task cannot match the on-chain hash for another, and prevents operators from attributing content to the wrong worker.
+### 3. Domain-separation rule (normative)
 
-### 4. State-machine clarifications
+```solidity
+// Before (rev000) — no encoding rule; implementations varied
 
-**Pitch Mode:** The previous diagram annotation `--[submitPitch*]----> Open (pitch recorded off-chain)` was inaccurate — pitches were never strictly off-chain in compliant implementations. Updated to reflect that pitch hashes are anchored on-chain via `PitchSubmitted`.
+// After (rev001) — compliant backends MUST compute:
+// pitchHash = keccak256(abi.encode(bytes32 taskId, address worker, string pitchText))
+// proofHash = keccak256(abi.encode(bytes32 taskId, address worker, string proofData))
+```
 
-**Benchmark Mode:** `submitProof*` is added as a first-class transition. Validation Registry acceptance remains a supported alternative acceptance path for automated benchmark evaluation.
+`abi.encode` (not `abi.encodePacked`) is required to avoid length ambiguity on variable-length
+strings. This binding ensures a pitch submitted to one task cannot match the on-chain hash for
+another and prevents operators from attributing content to the wrong worker.
 
-**Auction Mode:** `acceptAuction*` is added for Dutch / reverse-Dutch flows. The legacy `BidSubmitted + TaskWorkerSelected` event pair from `acceptAuction` is documented as OPTIONAL for backward compatibility; new indexers should use `AuctionAccepted`.
+### 4. `TaskAccepted` event renamed to `TaskCompleted`
 
-### 5. Part IV renamed: "Deliverable Anchoring" → "Content Anchoring"
+```solidity
+// Before (rev000)
+event TaskAccepted(bytes32 indexed taskId, address indexed worker, bytes32 deliverable);
 
-Generalized to cover all three anchor types (deliverable, pitch, proof) with a shared normative section on domain separation and a table mapping each anchor to its function, storage location, and event.
+// After (rev001)
+event TaskCompleted(bytes32 indexed taskId, address indexed worker, bytes32 deliverable);
+```
 
-### 6. Event rename: TaskAccepted → TaskCompleted
+The new name reflects the terminal success state unambiguously and avoids confusion with
+mid-flow "accepted" semantics in Pitch and Auction modes.
 
-The `TaskAccepted` event was renamed to `TaskCompleted` to better reflect the terminal success state and align with the `TaskStatus.Accepted` → `Accepted` terminology used throughout the spec. This is a breaking change for indexers consuming the old event name.
+### 5. State-machine annotations updated
+
+**Pitch Mode:** The previous annotation `--[submitPitch*]----> Open (pitch recorded off-chain)`
+was inaccurate. Updated to reflect that pitch hashes are anchored on-chain via `PitchSubmitted`.
+
+**Benchmark Mode:** `submitProof*` is added as a first-class transition. Validation Registry
+acceptance remains a supported alternative acceptance path for automated benchmark evaluation.
+
+**Auction Mode:** `acceptAuction*` is added for Dutch and reverse-Dutch flows. The legacy
+`BidSubmitted + TaskWorkerSelected` event pair is documented as OPTIONAL for backward
+compatibility; new indexers should use `AuctionAccepted`.
+
+### 6. Part IV renamed: "Deliverable Anchoring" to "Content Anchoring"
+
+Generalized to cover all three anchor types (deliverable, pitch, proof) with a shared normative
+section on domain separation and a table mapping each anchor to its function, storage location,
+and event.
 
 ### 7. Indexer event requirements extended
 
-Part VIII now requires the three new events with their full argument lists. Specifically: `PitchSubmitted` MUST include `taskId`, `worker`, and `pitchHash`; `ProofSubmitted` MUST include all five fields; `AuctionAccepted` MUST include `taskId`, `worker`, and `acceptedPrice`.
+Part VIII now requires the three new events with their full argument lists. `PitchSubmitted`
+MUST include `taskId`, `worker`, and `pitchHash`. `ProofSubmitted` MUST include all five fields.
+`AuctionAccepted` MUST include `taskId`, `worker`, and `acceptedPrice`.
 
-## Storage layout (UUPS-safe, append-only)
+---
 
-Two new state variables appended after existing slots, consuming from `__gap`:
+## Rationale
 
-- `taskPitchHashes` — `mapping(bytes32 => bytes32[])` — slot 10
-- `taskProofHashes` — `mapping(bytes32 => bytes32[])` — slot 11
-- `__gap` shrunk from 48 → 46
+**Why not enforce domain separation in-contract by accepting `string content` calldata?**
 
-Storage layout before/after snapshots committed alongside; `scripts/verify-storage-layout.ts` diffs the two and asserts all 11 existing non-gap slots are unchanged.
+Requiring the contract to recompute the hash from raw content would make the hash derivation
+trustless but doubles calldata cost for large pitch texts and proof strings. The current approach
+keeps content off-chain (cheaper) while providing a backend-level invariant any third party can
+verify against operator-served content. If in-contract enforcement becomes necessary for a
+specific deployment, it can be layered on top via a hook without a spec change.
 
-## Backwards-compatibility posture
+**Why should `submitPitch` and `submitProof` be REQUIRED rather than OPTIONAL?**
 
-`submitPitch` and `submitProof` are additive — implementations that pre-date this revision do not need to be redeployed to remain compliant, though they will lack on-chain pitch/proof anchoring. New implementations MUST emit the new events.
+Marking them optional would allow compliant implementations to omit on-chain anchoring entirely,
+making third-party verification impossible and defeating the purpose of this revision. Modes that
+do not use these functions (e.g. Claim, Auction) simply never call them; the interface overhead
+is two function selectors. Implementations that support Pitch or Benchmark MUST emit the events.
 
-`AuctionAccepted` is additive alongside the legacy event pair. Indexers consuming `BidSubmitted + TaskWorkerSelected` continue to work unchanged.
+**Why add `AuctionAccepted` alongside the legacy event pair instead of replacing it?**
 
-`TaskCompleted` (renamed from `TaskAccepted`) is a breaking change for indexers. Implementations should update event consumers before deploying.
+Replacing `BidSubmitted + TaskWorkerSelected` in the Dutch/reverse-Dutch path would break all
+existing indexers consuming those events. The additive approach gives new implementations a clean
+signal without forcing a breaking migration on deployed consumers.
 
-## Reference implementation status
+**Why rename `TaskAccepted` to `TaskCompleted`?**
 
-Deployed at proxy address `0x436C05C6059D6974608c6123E98B94cC388949a6` on Base Sepolia (implementation `0x738088D288B2D20C528bB2123a5BA4aC1F002AeD`). Storage layout verifier confirms 11 existing slots unchanged.
+"Accepted" describes a state transition (a worker or submission is accepted) rather than the
+terminal outcome. Indexers that treat the event as a task-lifecycle signal need a name that
+unambiguously means "this task is done." `TaskCompleted` is unambiguous; `TaskAccepted` was
+overloaded.
 
-- `forge test` — 149 passing
-- `forge build` — clean, 91 ABI entries
+---
 
-## Feedback welcome
+## API Changes
 
-- Whether `submitPitch` and `submitProof` should be marked OPTIONAL (only required for implementations that support those modes) or unconditionally REQUIRED in the interface.
-- Whether the domain-separation construction should be enforced in-contract (e.g. by the contract recomputing the hash from a `string content` calldata arg) or left as a backend-level invariant verifiable by third parties (current approach).
+- `TaskAccepted` event removed; `TaskCompleted` replaces it. Indexers consuming `TaskAccepted`
+  must update their event filter. This is a **breaking change**.
+- `PitchSubmitted`, `ProofSubmitted`, and `AuctionAccepted` events added. Indexers MUST subscribe
+  to these events to track pitch, proof, and Dutch auction acceptance activity.
+- `submitPitch(bytes32, bytes32)` and `submitProof(bytes32, bytes32, bytes32, uint256)` added to
+  `ITMPCore`. Implementations that pre-date this revision remain compliant but will lack on-chain
+  pitch and proof anchoring.
+
+---
+
+## Affected Files
+
+| File | Change |
+|------|--------|
+| `src/interfaces/ITMPCore.sol` | Add `PitchSubmitted`, `ProofSubmitted`, `AuctionAccepted` events; rename `TaskAccepted` to `TaskCompleted`; add `submitPitch` and `submitProof` function signatures |
+| `src/TaskMarket.sol` | Implement `submitPitch` and `submitProof`; emit `AuctionAccepted` from `acceptAuction`; emit `TaskCompleted` in place of `TaskAccepted` |
+| `src/storage/TaskMarketStorage.sol` | Append `taskPitchHashes` (slot 10) and `taskProofHashes` (slot 11); shrink `__gap` from 48 to 46 |
+| `docs/specs/erc8195/erc-8195.md` | Update Pitch/Benchmark/Auction state machine diagrams; update Part IV to "Content Anchoring"; extend Part VIII indexer event requirements |
+| `test/TaskMarket.t.sol` | Add tests for `submitPitch`, `submitProof`, `AuctionAccepted`; update event assertions from `TaskAccepted` to `TaskCompleted` |
