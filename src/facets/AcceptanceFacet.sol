@@ -34,6 +34,7 @@ contract AcceptanceFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
 
+        bytes4 mode = task.mode;
         _validateAcceptSubmission(task, taskId, worker, deliverable, s);
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
@@ -48,7 +49,7 @@ contract AcceptanceFacet {
             awards: awards
         });
 
-        uint256 paymentAmount = task.mode == AUCTION ? task.stakeAmount : task.reward;
+        uint256 paymentAmount = mode == AUCTION ? task.stakeAmount : task.reward;
         uint256 fee = (paymentAmount * task.feeBps) / 10000;
         uint256 workerPayment = paymentAmount - fee;
 
@@ -69,12 +70,12 @@ contract AcceptanceFacet {
             if (!s.usdcToken.transfer(s.feeRecipient, fee)) revert ITMPCore.FeeTransferFailed();
         }
 
-        if (task.mode == CLAIM && task.stakeAmount > 0) {
+        if (mode == CLAIM && task.stakeAmount > 0) {
             if (!s.usdcToken.transfer(task.worker, task.stakeAmount)) revert ITMPCore.StakeReturnFailed();
             emit ITMPCore.StakeReturned(taskId, task.worker, task.stakeAmount);
         }
 
-        if (task.mode == AUCTION) {
+        if (mode == AUCTION) {
             uint256 refund = s.taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
             if (refund > 0) {
                 if (!s.usdcToken.transfer(task.requester, refund)) revert ITMPCore.AuctionRefundFailed();
@@ -86,7 +87,7 @@ contract AcceptanceFacet {
         if (worker == requester) {
             emit ITMPCore.SelfAward(taskId, requester, worker);
         }
-        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+        if (mode == BOUNTY || mode == BENCHMARK) {
             emit ITMPCore.RequesterReputation(
                 taskId,
                 requester,
@@ -98,7 +99,7 @@ contract AcceptanceFacet {
             if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
-                        requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
+                        requesterAgentId, 100, 0, "tmp.task.requester", _modeName(mode), "", "", bytes32(0)
                     ) { }
                     catch { }
             }
