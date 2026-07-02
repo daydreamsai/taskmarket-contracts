@@ -323,7 +323,14 @@ contract CoreFacet {
         if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
 
         s.taskRejectedWorkers[taskId][worker] = true;
-        s.taskActiveSubmissionCount[taskId]--;
+        // Decrement by the worker's full submission count so that workers who submitted
+        // multiple times don't leave a phantom count that blocks cancelTask/refundExpired.
+        // Falls back to 1 for pre-rejection (worker hasn't submitted yet) and for
+        // submissions made before taskSubmissionHashes tracking was introduced.
+        uint256 workerCount = s.taskSubmissionHashes[taskId][worker].length;
+        uint256 decrement = workerCount > 0 ? workerCount : 1;
+        uint256 active = s.taskActiveSubmissionCount[taskId];
+        s.taskActiveSubmissionCount[taskId] = active > decrement ? active - decrement : 0;
 
         emit ITMPCore.SubmissionRejected(taskId, worker);
         LibTaskMarket._nonReentrantAfter(s);

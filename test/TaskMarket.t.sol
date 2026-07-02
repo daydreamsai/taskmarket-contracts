@@ -1666,6 +1666,47 @@ contract TaskMarketTest is DiamondTestHelper {
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
+    function test_rejectSubmission_multiSubmitSingleWorker_clearFullCount() public {
+        // Worker submits three times; a single rejectSubmission must clear all three
+        // counts so cancelTask becomes available. Regression for the bug where
+        // rejectSubmission decremented by 1 regardless of how many times the worker
+        // had submitted, permanently locking escrow when count > 1.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work v1"));
+        _submitWork(taskId, worker1, keccak256("work v2"));
+        _submitWork(taskId, worker1, keccak256("work v3"));
+
+        uint256 balanceBefore = usdc.balanceOf(requester);
+        _rejectSubmission(taskId, requester, worker1);
+        _cancelTask(taskId, requester);
+
+        assertEq(usdc.balanceOf(requester), balanceBefore + REWARD);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    function test_rejectSubmission_multiSubmitMixedWorkers_cancelUnblocked() public {
+        // worker1 submits once; worker2 submits three times. Rejecting both once
+        // must fully drain the active count (1 + 3 = 4 total, all cleared by 2 rejects).
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("w1 v1"));
+        _submitWork(taskId, worker2, keccak256("w2 v1"));
+        _submitWork(taskId, worker2, keccak256("w2 v2"));
+        _submitWork(taskId, worker2, keccak256("w2 v3"));
+
+        // Reject worker1 only — 3 of worker2's submissions still active.
+        _rejectSubmission(taskId, requester, worker1);
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+
+        // Reject worker2 — all 3 of their submissions cleared in one call.
+        uint256 balanceBefore = usdc.balanceOf(requester);
+        _rejectSubmission(taskId, requester, worker2);
+        _cancelTask(taskId, requester);
+
+        assertEq(usdc.balanceOf(requester), balanceBefore + REWARD);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
     // -----------------------------------------------------------------------
     // updateTask tests
     // -----------------------------------------------------------------------
