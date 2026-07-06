@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "./helpers/DiamondTestHelper.sol";
-import "./helpers/ITaskMarketFull.sol";
+import "../src/interfaces/ITMPDiamond.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { Diamond } from "../src/Diamond.sol";
@@ -34,7 +34,7 @@ contract MockRevertingInit {
 
 /// @title DiamondTest — tests for Diamond proxy routing, diamondCut, ownership, and ERC-165.
 contract DiamondTest is DiamondTestHelper {
-    ITaskMarketFull public diamond;
+    ITMPDiamond public diamond;
     MockUSDC public usdc;
 
     address public owner = address(0x1);

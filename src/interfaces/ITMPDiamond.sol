@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { ITMPCore } from "../../src/interfaces/ITMPCore.sol";
+import { ITMPCore } from "./ITMPCore.sol";
 
-/// @dev Combined interface for Diamond proxy test helpers.
-///      Every function routes through Diamond.fallback to the correct facet.
-///      Only functions actually called by the test suite are listed.
-interface ITaskMarketFull {
+/// @notice Combined interface for the TaskMarket Diamond proxy.
+///         Every function call routes through Diamond.fallback to the correct facet.
+///         Use this interface when calling the Diamond from external contracts or tests
+///         to avoid per-facet casting.
+interface ITMPDiamond {
     // -------------------------------------------------------------------------
     // CoreFacet — mode constants and task lifecycle
     // -------------------------------------------------------------------------
+    // solhint-disable func-name-mixedcase
     function BOUNTY() external pure returns (bytes4);
     function CLAIM() external pure returns (bytes4);
     function PITCH() external pure returns (bytes4);
@@ -20,6 +22,7 @@ interface ITaskMarketFull {
     function AUCTION_REVERSE_DUTCH() external pure returns (bytes4);
     function AUCTION_REVERSE_ENGLISH() external pure returns (bytes4);
     function MAX_BIDS_PER_TASK() external pure returns (uint256);
+    // solhint-enable func-name-mixedcase
 
     function createTask(
         uint256 reward,
@@ -63,12 +66,18 @@ interface ITaskMarketFull {
     // AcceptanceFacet
     // -------------------------------------------------------------------------
     function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external;
+
+    /// @notice Accept N submissions with explicit share basis points.
+    ///         Pass an empty deliverables array to auto-resolve each winner's latest submission.
+    ///         Pass a same-length deliverables array to pin specific versions (bytes32(0) = auto for that slot).
     function acceptSubmissions(
         bytes32 taskId,
         address[] calldata workers,
         uint16[] calldata shares,
+        bytes32[] calldata deliverables,
         uint256 requesterAgentId
     ) external;
+
     function taskSubmissionHashes(bytes32 taskId, address worker) external view returns (bytes32[] memory);
 
     // -------------------------------------------------------------------------
@@ -95,9 +104,7 @@ interface ITaskMarketFull {
 
     function appeal(bytes32 taskId) external;
     function finalizeVerdict(bytes32 taskId) external;
-
     function resolveDispute(bytes32 taskId, ITMPCore.VerdictType verdictType, ITMPCore.Award[] calldata awards) external;
-
     function evaluatorTimeout(bytes32 taskId) external;
 
     // -------------------------------------------------------------------------

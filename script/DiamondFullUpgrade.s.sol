@@ -31,12 +31,15 @@ import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
 ///      ones atomically. If the diamond is already on the new selectors it uses Replace.
 ///      Detection is via the loupe: presence of cancelTask(bytes32) means old state.
 contract DiamondFullUpgrade is Script {
-    // Old selectors that were changed in the submission-integrity upgrade.
+    // Old selectors from the submission-integrity upgrade (rev007: removed deliverables, added requesterAgentId).
     bytes4 private constant OLD_CANCEL_TASK = bytes4(keccak256("cancelTask(bytes32)"));
     bytes4 private constant OLD_REFUND_EXPIRED = bytes4(keccak256("refundExpired(bytes32)"));
     bytes4 private constant OLD_ACCEPT_SUBMISSION = bytes4(keccak256("acceptSubmission(bytes32,address,bytes32)"));
     bytes4 private constant OLD_ACCEPT_SUBMISSIONS =
         bytes4(keccak256("acceptSubmissions(bytes32,address[],uint16[],bytes32[])"));
+    // Selector from the submission-integrity era (rev007) — present on any diamond between rev007 and rev009.
+    bytes4 private constant PREV_ACCEPT_SUBMISSIONS =
+        bytes4(keccak256("acceptSubmissions(bytes32,address[],uint16[],uint256)"));
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -188,7 +191,9 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet,
         address regFacet
     ) private {
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        // acceptSubmissions gained a deliverables parameter (rev009): selector changed, must Remove+Add.
+        // Total cuts: 9 facets - 1 merged acceptance + 1 extra Remove + 1 extra Add = 11.
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
 
         cuts[0] = _replaceCut(cutFacet, _cutSelectors());
         cuts[1] = _replaceCut(loupeFacet, _loupeSelectors());
@@ -196,17 +201,27 @@ contract DiamondFullUpgrade is Script {
         cuts[3] = _replaceCut(coreFacet, _coreAllSelectors());
         cuts[4] = _replaceCut(auctionFacet, _auctionSelectors());
 
-        bytes4[] memory acceptSelectors = new bytes4[](2);
-        acceptSelectors[0] = AcceptanceFacet.acceptSubmission.selector;
-        acceptSelectors[1] = AcceptanceFacet.acceptSubmissions.selector;
-        cuts[5] = _replaceCut(acceptFacet, acceptSelectors);
+        // Replace acceptSubmission (unchanged selector) separately from the changed one.
+        bytes4[] memory acceptUnchanged = new bytes4[](1);
+        acceptUnchanged[0] = AcceptanceFacet.acceptSubmission.selector;
+        cuts[5] = _replaceCut(acceptFacet, acceptUnchanged);
 
-        cuts[6] = _replaceCut(evalFacet, _evalSelectors());
-        cuts[7] = _replaceCut(ratingFacet, _ratingSelectors());
-        cuts[8] = _replaceCut(regFacet, _regAllSelectors());
+        // Remove old 4-param acceptSubmissions selector.
+        bytes4[] memory oldAcceptPlural = new bytes4[](1);
+        oldAcceptPlural[0] = PREV_ACCEPT_SUBMISSIONS;
+        cuts[6] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, oldAcceptPlural);
+
+        // Add new 5-param acceptSubmissions selector.
+        bytes4[] memory newAcceptPlural = new bytes4[](1);
+        newAcceptPlural[0] = AcceptanceFacet.acceptSubmissions.selector;
+        cuts[7] = IDiamondCut.FacetCut(acceptFacet, IDiamondCut.FacetCutAction.Add, newAcceptPlural);
+
+        cuts[8] = _replaceCut(evalFacet, _evalSelectors());
+        cuts[9] = _replaceCut(ratingFacet, _ratingSelectors());
+        cuts[10] = _replaceCut(regFacet, _regAllSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Replace path: all selectors already on new signatures.");
+        console.log("Replace path: migrated acceptSubmissions to 5-param pinning signature.");
     }
 
     function _replaceCut(address facet, bytes4[] memory selectors) private pure returns (IDiamondCut.FacetCut memory) {

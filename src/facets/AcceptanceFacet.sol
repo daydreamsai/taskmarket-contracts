@@ -115,17 +115,21 @@ contract AcceptanceFacet {
 
     /// @notice Accept N submissions at once with explicit share basis points.
     ///         Valid for Bounty and Benchmark modes. Shares MUST sum to 10000.
-    ///         Each worker's deliverable is resolved from the latest entry in
-    ///         taskSubmissionHashes[taskId][worker]. Reverts SubmissionNotFound if
-    ///         any winner has no prior submitWork call.
+    ///         Pass an empty deliverables array to auto-resolve each worker's latest
+    ///         on-chain submission hash. Pass a same-length array to pin specific
+    ///         hashes (bytes32(0) in a slot = auto-resolve that slot).
+    ///         Reverts SubmissionNotFound if any winner has no prior submitWork call
+    ///         or a pinned hash was never submitted by that worker.
     /// @param taskId           Task identifier
     /// @param workers          Recipient addresses in rank order
     /// @param shares           Basis-point shares; MUST sum to 10000
+    /// @param deliverables     Per-winner hash overrides; empty = auto-resolve all
     /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
     function acceptSubmissions(
         bytes32 taskId,
         address[] calldata workers,
         uint16[] calldata shares,
+        bytes32[] calldata deliverables,
         uint256 requesterAgentId
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
@@ -134,7 +138,7 @@ contract AcceptanceFacet {
         LibTaskMarket._nonReentrantBefore(s);
 
         address requester = LibTaskMarket._effectiveSender(s);
-        _acceptSubmissions(taskId, requester, workers, shares, requesterAgentId, s);
+        _acceptSubmissions(taskId, requester, workers, shares, deliverables, requesterAgentId, s);
         LibTaskMarket._nonReentrantAfter(s);
     }
 
@@ -195,6 +199,7 @@ contract AcceptanceFacet {
         address requester,
         address[] calldata workers,
         uint16[] calldata shares,
+        bytes32[] calldata pinnedDeliverables,
         uint256 requesterAgentId,
         AppStorage storage s
     ) private {
@@ -209,15 +214,22 @@ contract AcceptanceFacet {
         uint256 n = workers.length;
         if (n < 1) revert ITMPCore.NoWinners();
         if (shares.length != n) revert ITMPCore.LengthMismatch();
+        if (pinnedDeliverables.length != 0 && pinnedDeliverables.length != n) revert ITMPCore.LengthMismatch();
 
-        // Resolve deliverables from on-chain submission history and validate shares sum.
+        // Resolve deliverables: pin a specific hash if provided, else use the latest.
         bytes32[] memory deliverables = new bytes32[](n);
         uint256 sumShares = 0;
         for (uint256 i; i < n; ++i) {
             if (workers[i] == address(0)) revert ITMPCore.WorkerRequired();
-            bytes32[] storage submitted = s.taskSubmissionHashes[taskId][workers[i]];
-            if (submitted.length == 0) revert ITMPCore.SubmissionNotFound();
-            deliverables[i] = submitted[submitted.length - 1];
+            bytes32 pinned = (pinnedDeliverables.length > 0) ? pinnedDeliverables[i] : bytes32(0);
+            if (pinned != bytes32(0)) {
+                if (!s.taskSubmissionHashExists[taskId][workers[i]][pinned]) revert ITMPCore.SubmissionNotFound();
+                deliverables[i] = pinned;
+            } else {
+                bytes32[] storage submitted = s.taskSubmissionHashes[taskId][workers[i]];
+                if (submitted.length == 0) revert ITMPCore.SubmissionNotFound();
+                deliverables[i] = submitted[submitted.length - 1];
+            }
             sumShares += shares[i];
         }
         if (sumShares != 10000) revert ITMPCore.SharesMustSumTo10000();

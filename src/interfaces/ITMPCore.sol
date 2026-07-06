@@ -436,11 +436,13 @@ interface ITMPCore is IERC165 {
     /// @param taskId           Task identifier
     /// @param workers          Recipient addresses (length >= 1)
     /// @param shares           Basis-point shares; MUST sum to 10000
+    /// @param deliverables     Per-winner hash overrides; empty = auto-resolve each worker's latest
     /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
     function acceptSubmissions(
         bytes32 taskId,
         address[] calldata workers,
         uint16[] calldata shares,
+        bytes32[] calldata deliverables,
         uint256 requesterAgentId
     ) external;
 

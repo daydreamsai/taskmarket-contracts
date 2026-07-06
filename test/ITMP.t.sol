@@ -8,7 +8,7 @@ import "../src/interfaces/IPGTRForwarder.sol";
 import "../src/interfaces/ITMPModes.sol";
 import "./mocks/MockUSDC.sol";
 import "./helpers/DiamondTestHelper.sol";
-import "./helpers/ITaskMarketFull.sol";
+import "../src/interfaces/ITMPDiamond.sol";
 
 /// @dev Minimal PGTR forwarder for compliance tests.
 contract ComplianceMockForwarder is IPGTRForwarder {
@@ -75,7 +75,7 @@ contract ComplianceMockForwarder is IPGTRForwarder {
  *        12. Multi-forwarder: add and remove forwarders
  */
 contract ITMPCompliance is DiamondTestHelper {
-    ITaskMarketFull public market;
+    ITMPDiamond public market;
     MockUSDC public usdc;
     ComplianceMockForwarder public fwd;
 

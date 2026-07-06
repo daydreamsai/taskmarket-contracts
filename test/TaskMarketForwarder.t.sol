@@ -8,14 +8,14 @@ import "../src/interfaces/IPGTRForwarder.sol";
 import "../src/interfaces/ITMPCore.sol";
 import "./mocks/MockUSDC.sol";
 import "./helpers/DiamondTestHelper.sol";
-import "./helpers/ITaskMarketFull.sol";
+import "../src/interfaces/ITMPDiamond.sol";
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 contract TaskMarketForwarderTest is DiamondTestHelper {
-    ITaskMarketFull public market;
+    ITMPDiamond public market;
     TaskMarketForwarder public forwarder;
     MockUSDC public usdc;
 

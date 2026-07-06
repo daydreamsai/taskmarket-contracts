@@ -13,15 +13,15 @@ import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
-import { ITaskMarketFull } from "./ITaskMarketFull.sol";
+import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 
 /// @dev Shared Diamond deploy helper for test setUp functions.
 ///      Call deployDiamond(owner, usdc, feeRecipient, feeBps) and get back
-///      an ITaskMarketFull-typed proxy that routes all calls to the correct facet.
+///      an ITMPDiamond-typed proxy that routes all calls to the correct facet.
 abstract contract DiamondTestHelper is Test {
     function deployDiamond(address _owner, address _usdc, address _feeRecipient, uint16 _feeBps)
         internal
-        returns (ITaskMarketFull)
+        returns (ITMPDiamond)
     {
         // Deploy facet implementations
         DiamondCutFacet cutFacet = new DiamondCutFacet();
@@ -47,7 +47,7 @@ abstract contract DiamondTestHelper is Test {
 
         bytes memory initData = abi.encodeCall(AdminFacet.initialize, (_usdc, _feeRecipient, _feeBps));
         Diamond diamond = new Diamond(_owner, cuts, address(adminFacet), initData);
-        return ITaskMarketFull(address(diamond));
+        return ITMPDiamond(address(diamond));
     }
 
     function _cutSelectors() internal pure returns (bytes4[] memory s) {
