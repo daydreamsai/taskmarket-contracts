@@ -36,6 +36,9 @@ struct AppStorage {
     mapping(bytes32 => mapping(address => bytes32[])) taskSubmissionHashes;
     // O(1) existence check for taskSubmissionHashes; set alongside every push in submitWork.
     mapping(bytes32 => mapping(address => mapping(bytes32 => bool))) taskSubmissionHashExists;
+    // Rev008: multi-hook support
+    address[] defaultHooks;
+    mapping(bytes32 => address[]) taskHooks;
 }
 
 library LibAppStorage {

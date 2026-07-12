@@ -273,6 +273,19 @@
   },
   {
     "type": "function",
+    "name": "getDefaultHooks",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "initialize",
     "inputs": [
       {
@@ -387,6 +400,19 @@
   },
   {
     "type": "function",
+    "name": "setDefaultHooks",
+    "inputs": [
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setFeeRecipient",
     "inputs": [
       {
@@ -430,6 +456,19 @@
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "DefaultHooksSet",
+    "inputs": [
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -568,6 +607,11 @@
   },
   {
     "type": "error",
+    "name": "DuplicateHookAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeBpsTooHigh",
     "inputs": []
   },
@@ -579,6 +623,11 @@
   {
     "type": "error",
     "name": "InvalidForwarderAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidHookAddress",
     "inputs": []
   },
   {
@@ -616,6 +665,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "TooManyHooks",
+    "inputs": []
   },
   {
     "type": "function",
@@ -813,34 +867,48 @@
         "internalType": "uint256"
       },
       {
-        "name": "contentHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "contentURI",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
         "name": "auctionSubtype",
         "type": "bytes4",
         "internalType": "bytes4"
       },
       {
-        "name": "hookContract",
-        "type": "address",
-        "internalType": "address"
+        "name": "hookConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.HookConfig",
+        "components": [
+          {
+            "name": "contracts",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       },
       {
-        "name": "tags",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "hookData",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "content",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskContent",
+        "components": [
+          {
+            "name": "contentHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "contentURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "tags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -1535,22 +1603,7 @@
   },
   {
     "type": "error",
-    "name": "HookCheckClaimRejected",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HookCheckFundRejected",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "HookCheckSelectWorkerRejected",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "HookCheckSubmitRejected",
     "inputs": []
   },
   {
@@ -1900,6 +1953,11 @@
         "internalType": "uint16[]"
       },
       {
+        "name": "deliverables",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
         "name": "requesterAgentId",
         "type": "uint256",
         "internalType": "uint256"
@@ -1950,7 +2008,7 @@
   },
   {
     "type": "error",
-    "name": "HookCheckCompleteRejected",
+    "name": "DuplicateAwardWorker",
     "inputs": []
   },
   {
@@ -2316,7 +2374,7 @@
   },
   {
     "type": "error",
-    "name": "HookCheckEvaluateRejected",
+    "name": "InvalidAwardRecipient",
     "inputs": []
   },
   {
@@ -2862,6 +2920,25 @@
   },
   {
     "type": "function",
+    "name": "getTaskHooks",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTaskMetadata",
     "inputs": [
       {
@@ -3057,6 +3134,30 @@
   },
   {
     "type": "function",
+    "name": "hasWorkerRated",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "reputationRegistry",
     "inputs": [],
     "outputs": [
@@ -3083,6 +3184,63 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "stakeForfeit",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "taskActiveSubmissionCount",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "taskHasSubmissions",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -3150,6 +3308,59 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "taskRejectedWorkers",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "taskSubmissionHashExists",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

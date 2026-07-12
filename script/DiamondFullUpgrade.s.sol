@@ -24,22 +24,33 @@ import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
 ///      make upgrade testnet
 ///      make upgrade mainnet
 ///
-/// @dev Selector-change handling (submission-integrity upgrade):
-///      Four function signatures gained a requesterAgentId parameter and changed selectors.
-///      A new taskSubmissionHashes getter was added to RegistryFacet.
-///      If the diamond still has the OLD selectors the script removes them and adds the new
-///      ones atomically. If the diamond is already on the new selectors it uses Replace.
-///      Detection is via the loupe: presence of cancelTask(bytes32) means old state.
+/// @dev Three upgrade paths — detected automatically via the loupe:
+///
+///      Path A (_runWithMigration): pre-submission-integrity diamond (has old cancelTask(bytes32)).
+///        Removes old selector set and adds new ones atomically, plus all rev010 additions.
+///
+///      Path B (_runRev010Migration): post-submission-integrity, pre-rev010 diamond
+///        (no old cancelTask, but setDefaultHooks is absent). This is the common testnet state
+///        when upgrading from any rev007–rev009 deployment to the hook-enabled contracts.
+///        Removes old createTask, adds new one; adds new AdminFacet and RegistryFacet functions.
+///        Also removes PREV_ACCEPT_SUBMISSIONS if still present.
+///
+///      Path C (_runReplace): steady-state (post-rev010). All current selectors exist.
+///        Pure Replace — no Remove or Add needed.
 contract DiamondFullUpgrade is Script {
-    // Old selectors from the submission-integrity upgrade (rev007: removed deliverables, added requesterAgentId).
+    // rev007 selectors — present on pre-submission-integrity diamonds.
     bytes4 private constant OLD_CANCEL_TASK = bytes4(keccak256("cancelTask(bytes32)"));
     bytes4 private constant OLD_REFUND_EXPIRED = bytes4(keccak256("refundExpired(bytes32)"));
     bytes4 private constant OLD_ACCEPT_SUBMISSION = bytes4(keccak256("acceptSubmission(bytes32,address,bytes32)"));
     bytes4 private constant OLD_ACCEPT_SUBMISSIONS =
         bytes4(keccak256("acceptSubmissions(bytes32,address[],uint16[],bytes32[])"));
-    // Selector from the submission-integrity era (rev007) — present on any diamond between rev007 and rev009.
+    // rev009 selector — present on rev007–rev008 diamonds (5-param acceptSubmissions not yet added).
     bytes4 private constant PREV_ACCEPT_SUBMISSIONS =
         bytes4(keccak256("acceptSubmissions(bytes32,address[],uint16[],uint256)"));
+    // rev010 selector — old createTask before hook config struct refactor.
+    bytes4 private constant OLD_CREATE_TASK = bytes4(
+        keccak256("createTask(uint256,uint256,bytes4,uint256,uint256,bytes32,string,bytes4,address,bytes32[],bytes)")
+    );
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -47,14 +58,16 @@ contract DiamondFullUpgrade is Script {
             ? vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET")
             : vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
 
-        // Detect whether this diamond still has the old cancelTask(bytes32) selector.
-        // If it does, we must Remove the old selectors and Add the new ones.
-        // If not, the diamond is already on new selectors and we can Replace directly.
+        // Path A: very old diamond — still has pre-submission-integrity selectors.
         bool needsMigration = IDiamondLoupe(diamond).facetAddress(OLD_CANCEL_TASK) != address(0);
+        // Path B: post-submission-integrity but pre-rev010 — setDefaultHooks not yet added.
+        bool needsRev010Migration =
+            !needsMigration && IDiamondLoupe(diamond).facetAddress(AdminFacet.setDefaultHooks.selector) == address(0);
+        // Rev009 leftover: PREV_ACCEPT_SUBMISSIONS may still be present on some diamonds.
+        bool hasPrevAcceptSubs = IDiamondLoupe(diamond).facetAddress(PREV_ACCEPT_SUBMISSIONS) != address(0);
 
         vm.startBroadcast(ownerKey);
 
-        // Deploy fresh implementations for all facets
         address cutFacet = address(new DiamondCutFacet());
         address loupeFacet = address(new DiamondLoupeFacet());
         address adminFacet = address(new AdminFacet());
@@ -77,6 +90,20 @@ contract DiamondFullUpgrade is Script {
                 evalFacet,
                 ratingFacet,
                 regFacet
+            );
+        } else if (needsRev010Migration) {
+            _runRev010Migration(
+                diamond,
+                cutFacet,
+                loupeFacet,
+                adminFacet,
+                coreFacet,
+                auctionFacet,
+                acceptFacet,
+                evalFacet,
+                ratingFacet,
+                regFacet,
+                hasPrevAcceptSubs
             );
         } else {
             _runReplace(
@@ -107,8 +134,12 @@ contract DiamondFullUpgrade is Script {
         console.log("RegistryFacet:    ", regFacet);
     }
 
-    /// @dev Used when the diamond is in the pre-submission-integrity state.
-    ///      Removes old changed selectors atomically with the Replace of everything else.
+    // -------------------------------------------------------------------------
+    // Path A: pre-submission-integrity diamonds
+    // -------------------------------------------------------------------------
+
+    /// @dev Removes rev007 old selectors and adds new ones, plus all rev010 additions.
+    ///      14 cuts total.
     function _runWithMigration(
         address diamond,
         address cutFacet,
@@ -121,64 +152,128 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet,
         address regFacet
     ) private {
-        // DiamondCutFacet, DiamondLoupeFacet, AdminFacet (Replace) = 3
-        // Remove old Core changed selectors + Replace unchanged Core + Add new Core changed = 3
-        // AuctionFacet (Replace) = 1
-        // Remove old Acceptance changed + Add new Acceptance changed = 2
-        // EvaluatorFacet, RatingFacet (Replace) = 2
-        // Replace existing RegistryFacet selectors + Add taskSubmissionHashes = 2
-        // Total = 13
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
 
         cuts[0] = _replaceCut(cutFacet, _cutSelectors());
         cuts[1] = _replaceCut(loupeFacet, _loupeSelectors());
-        cuts[2] = _replaceCut(adminFacet, _adminSelectors());
 
-        // Remove old CoreFacet selectors that changed (cancelTask, refundExpired)
-        bytes4[] memory oldCoreChanged = new bytes4[](2);
+        // AdminFacet: Replace 13 existing, Add 2 new (setDefaultHooks, getDefaultHooks).
+        cuts[2] = _replaceCut(adminFacet, _adminExistingSelectors());
+        cuts[3] = _addCut(adminFacet, _adminNewSelectors());
+
+        // CoreFacet: Remove 3 old changed selectors, Replace 18 unchanged, Add 3 new.
+        bytes4[] memory oldCoreChanged = new bytes4[](3);
         oldCoreChanged[0] = OLD_CANCEL_TASK;
         oldCoreChanged[1] = OLD_REFUND_EXPIRED;
-        cuts[3] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, oldCoreChanged);
-
-        // Replace the 19 CoreFacet selectors that did not change
-        cuts[4] = _replaceCut(coreFacet, _coreUnchangedSelectors());
-
-        // Add the 2 new CoreFacet selectors
-        bytes4[] memory newCoreChanged = new bytes4[](2);
+        oldCoreChanged[2] = OLD_CREATE_TASK;
+        cuts[4] = _removeCut(oldCoreChanged);
+        cuts[5] = _replaceCut(coreFacet, _coreRevIntegrityUnchangedSelectors());
+        bytes4[] memory newCoreChanged = new bytes4[](3);
         newCoreChanged[0] = CoreFacet.cancelTask.selector;
         newCoreChanged[1] = CoreFacet.refundExpired.selector;
-        cuts[5] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCoreChanged);
+        newCoreChanged[2] = CoreFacet.createTask.selector;
+        cuts[6] = _addCut(coreFacet, newCoreChanged);
 
-        cuts[6] = _replaceCut(auctionFacet, _auctionSelectors());
+        cuts[7] = _replaceCut(auctionFacet, _auctionSelectors());
 
-        // Remove old AcceptanceFacet selectors that changed
+        // AcceptanceFacet: Remove old 2 selectors, Add new 2.
         bytes4[] memory oldAcceptChanged = new bytes4[](2);
         oldAcceptChanged[0] = OLD_ACCEPT_SUBMISSION;
         oldAcceptChanged[1] = OLD_ACCEPT_SUBMISSIONS;
-        cuts[7] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, oldAcceptChanged);
-
-        // Add new AcceptanceFacet selectors
+        cuts[8] = _removeCut(oldAcceptChanged);
         bytes4[] memory newAcceptChanged = new bytes4[](2);
         newAcceptChanged[0] = AcceptanceFacet.acceptSubmission.selector;
         newAcceptChanged[1] = AcceptanceFacet.acceptSubmissions.selector;
-        cuts[8] = IDiamondCut.FacetCut(acceptFacet, IDiamondCut.FacetCutAction.Add, newAcceptChanged);
+        cuts[9] = _addCut(acceptFacet, newAcceptChanged);
 
-        cuts[9] = _replaceCut(evalFacet, _evalSelectors());
-        cuts[10] = _replaceCut(ratingFacet, _ratingSelectors());
+        cuts[10] = _replaceCut(evalFacet, _evalSelectors());
+        cuts[11] = _replaceCut(ratingFacet, _ratingSelectors());
 
-        // Replace the 21 RegistryFacet selectors that already exist
-        cuts[11] = _replaceCut(regFacet, _regExistingSelectors());
-
-        // Add the new taskSubmissionHashes getter
-        bytes4[] memory newRegSelector = new bytes4[](1);
-        newRegSelector[0] = RegistryFacet.taskSubmissionHashes.selector;
-        cuts[12] = IDiamondCut.FacetCut(regFacet, IDiamondCut.FacetCutAction.Add, newRegSelector);
+        // RegistryFacet: Replace 21 pre-sub-integrity selectors, Add taskSubmissionHashes + 7 new.
+        cuts[12] = _replaceCut(regFacet, _regPreIntegritySelectors());
+        cuts[13] = _addCut(regFacet, _regAllNewSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Migration path: removed old selectors, added new selectors.");
+        console.log("Path A: removed pre-submission-integrity selectors, applied rev010 additions.");
     }
 
-    /// @dev Used when the diamond is already on new selectors — Replace everything.
+    // -------------------------------------------------------------------------
+    // Path B: post-submission-integrity, pre-rev010 diamonds (common testnet state)
+    // -------------------------------------------------------------------------
+
+    /// @dev Removes old createTask selector, adds new one; adds new AdminFacet and RegistryFacet
+    ///      functions; handles PREV_ACCEPT_SUBMISSIONS if still present.
+    ///      13 cuts (hasPrevAcceptSubs=false) or 15 cuts (hasPrevAcceptSubs=true).
+    function _runRev010Migration(
+        address diamond,
+        address cutFacet,
+        address loupeFacet,
+        address adminFacet,
+        address coreFacet,
+        address auctionFacet,
+        address acceptFacet,
+        address evalFacet,
+        address ratingFacet,
+        address regFacet,
+        bool hasPrevAcceptSubs
+    ) private {
+        uint256 cutCount = hasPrevAcceptSubs ? 15 : 13;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](cutCount);
+        uint256 i = 0;
+
+        cuts[i++] = _replaceCut(cutFacet, _cutSelectors());
+        cuts[i++] = _replaceCut(loupeFacet, _loupeSelectors());
+
+        // AdminFacet: Replace 13 existing, Add 2 new.
+        cuts[i++] = _replaceCut(adminFacet, _adminExistingSelectors());
+        cuts[i++] = _addCut(adminFacet, _adminNewSelectors());
+
+        // CoreFacet: Remove old createTask, Replace 20 existing (without createTask), Add new createTask.
+        bytes4[] memory oldCreateTask = new bytes4[](1);
+        oldCreateTask[0] = OLD_CREATE_TASK;
+        cuts[i++] = _removeCut(oldCreateTask);
+        cuts[i++] = _replaceCut(coreFacet, _coreExistingSelectors());
+        bytes4[] memory newCreateTask = new bytes4[](1);
+        newCreateTask[0] = CoreFacet.createTask.selector;
+        cuts[i++] = _addCut(coreFacet, newCreateTask);
+
+        cuts[i++] = _replaceCut(auctionFacet, _auctionSelectors());
+
+        if (hasPrevAcceptSubs) {
+            // Replace acceptSubmission (selector unchanged), Remove PREV_ACCEPT_SUBMISSIONS, Add new acceptSubmissions.
+            bytes4[] memory acceptUnchanged = new bytes4[](1);
+            acceptUnchanged[0] = AcceptanceFacet.acceptSubmission.selector;
+            cuts[i++] = _replaceCut(acceptFacet, acceptUnchanged);
+            bytes4[] memory prevAccept = new bytes4[](1);
+            prevAccept[0] = PREV_ACCEPT_SUBMISSIONS;
+            cuts[i++] = _removeCut(prevAccept);
+            bytes4[] memory newAcceptPlural = new bytes4[](1);
+            newAcceptPlural[0] = AcceptanceFacet.acceptSubmissions.selector;
+            cuts[i++] = _addCut(acceptFacet, newAcceptPlural);
+        } else {
+            // Both acceptance selectors are already at final signatures — Replace both together.
+            bytes4[] memory acceptBoth = new bytes4[](2);
+            acceptBoth[0] = AcceptanceFacet.acceptSubmission.selector;
+            acceptBoth[1] = AcceptanceFacet.acceptSubmissions.selector;
+            cuts[i++] = _replaceCut(acceptFacet, acceptBoth);
+        }
+
+        cuts[i++] = _replaceCut(evalFacet, _evalSelectors());
+        cuts[i++] = _replaceCut(ratingFacet, _ratingSelectors());
+
+        // RegistryFacet: Replace 22 existing (including taskSubmissionHashes), Add 7 new.
+        cuts[i++] = _replaceCut(regFacet, _regRev009Selectors());
+        cuts[i++] = _addCut(regFacet, _regRev010NewSelectors());
+
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        console.log("Path B: applied rev010 migration (new createTask, admin hooks, registry views).");
+    }
+
+    // -------------------------------------------------------------------------
+    // Path C: steady-state (post-rev010) — pure Replace
+    // -------------------------------------------------------------------------
+
+    /// @dev All selectors at current signatures — Replace everything in 9 cuts.
     function _runReplace(
         address diamond,
         address cutFacet,
@@ -191,41 +286,36 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet,
         address regFacet
     ) private {
-        // acceptSubmissions gained a deliverables parameter (rev009): selector changed, must Remove+Add.
-        // Total cuts: 9 facets - 1 merged acceptance + 1 extra Remove + 1 extra Add = 11.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
 
         cuts[0] = _replaceCut(cutFacet, _cutSelectors());
         cuts[1] = _replaceCut(loupeFacet, _loupeSelectors());
-        cuts[2] = _replaceCut(adminFacet, _adminSelectors());
+        cuts[2] = _replaceCut(adminFacet, _adminAllSelectors());
         cuts[3] = _replaceCut(coreFacet, _coreAllSelectors());
         cuts[4] = _replaceCut(auctionFacet, _auctionSelectors());
-
-        // Replace acceptSubmission (unchanged selector) separately from the changed one.
-        bytes4[] memory acceptUnchanged = new bytes4[](1);
-        acceptUnchanged[0] = AcceptanceFacet.acceptSubmission.selector;
-        cuts[5] = _replaceCut(acceptFacet, acceptUnchanged);
-
-        // Remove old 4-param acceptSubmissions selector.
-        bytes4[] memory oldAcceptPlural = new bytes4[](1);
-        oldAcceptPlural[0] = PREV_ACCEPT_SUBMISSIONS;
-        cuts[6] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, oldAcceptPlural);
-
-        // Add new 5-param acceptSubmissions selector.
-        bytes4[] memory newAcceptPlural = new bytes4[](1);
-        newAcceptPlural[0] = AcceptanceFacet.acceptSubmissions.selector;
-        cuts[7] = IDiamondCut.FacetCut(acceptFacet, IDiamondCut.FacetCutAction.Add, newAcceptPlural);
-
-        cuts[8] = _replaceCut(evalFacet, _evalSelectors());
-        cuts[9] = _replaceCut(ratingFacet, _ratingSelectors());
-        cuts[10] = _replaceCut(regFacet, _regAllSelectors());
+        cuts[5] = _replaceCut(acceptFacet, _acceptAllSelectors());
+        cuts[6] = _replaceCut(evalFacet, _evalSelectors());
+        cuts[7] = _replaceCut(ratingFacet, _ratingSelectors());
+        cuts[8] = _replaceCut(regFacet, _regAllSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-        console.log("Replace path: migrated acceptSubmissions to 5-param pinning signature.");
+        console.log("Path C: steady-state replace, all facets updated in place.");
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     function _replaceCut(address facet, bytes4[] memory selectors) private pure returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut(facet, IDiamondCut.FacetCutAction.Replace, selectors);
+    }
+
+    function _addCut(address facet, bytes4[] memory selectors) private pure returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(facet, IDiamondCut.FacetCutAction.Add, selectors);
+    }
+
+    function _removeCut(bytes4[] memory selectors) private pure returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, selectors);
     }
 
     function _cutSelectors() private pure returns (bytes4[] memory s) {
@@ -242,7 +332,8 @@ contract DiamondFullUpgrade is Script {
         s[4] = DiamondLoupeFacet.supportsInterface.selector;
     }
 
-    function _adminSelectors() private pure returns (bytes4[] memory s) {
+    /// @dev 13 AdminFacet selectors present before rev010.
+    function _adminExistingSelectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](13);
         s[0] = AdminFacet.paused.selector;
         s[1] = AdminFacet.pause.selector;
@@ -259,10 +350,37 @@ contract DiamondFullUpgrade is Script {
         s[12] = AdminFacet.setReputationRegistry.selector;
     }
 
-    /// @dev The 19 CoreFacet selectors whose signatures did NOT change.
-    ///      cancelTask and refundExpired are excluded — they changed selectors.
-    function _coreUnchangedSelectors() private pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+    /// @dev 2 new AdminFacet selectors added in rev010.
+    function _adminNewSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = AdminFacet.setDefaultHooks.selector;
+        s[1] = AdminFacet.getDefaultHooks.selector;
+    }
+
+    /// @dev All 15 AdminFacet selectors — used in steady-state Replace path.
+    function _adminAllSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](15);
+        s[0] = AdminFacet.paused.selector;
+        s[1] = AdminFacet.pause.selector;
+        s[2] = AdminFacet.unpause.selector;
+        s[3] = AdminFacet.transferOwnership.selector;
+        s[4] = AdminFacet.acceptOwnership.selector;
+        s[5] = AdminFacet.owner.selector;
+        s[6] = AdminFacet.pendingOwner.selector;
+        s[7] = AdminFacet.addForwarder.selector;
+        s[8] = AdminFacet.removeForwarder.selector;
+        s[9] = AdminFacet.isTrustedForwarder.selector;
+        s[10] = AdminFacet.setDefaultFeeBps.selector;
+        s[11] = AdminFacet.setFeeRecipient.selector;
+        s[12] = AdminFacet.setReputationRegistry.selector;
+        s[13] = AdminFacet.setDefaultHooks.selector;
+        s[14] = AdminFacet.getDefaultHooks.selector;
+    }
+
+    /// @dev 18 CoreFacet selectors unchanged across both rev007 and rev010.
+    ///      Excludes cancelTask, refundExpired (changed in rev007) and createTask (changed in rev010).
+    function _coreRevIntegrityUnchangedSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](18);
         s[0] = bytes4(keccak256("BOUNTY()"));
         s[1] = bytes4(keccak256("CLAIM()"));
         s[2] = bytes4(keccak256("PITCH()"));
@@ -273,18 +391,43 @@ contract DiamondFullUpgrade is Script {
         s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-        s[10] = CoreFacet.createTask.selector;
-        s[11] = CoreFacet.claimTask.selector;
-        s[12] = CoreFacet.selectWorker.selector;
-        s[13] = CoreFacet.submitPitch.selector;
-        s[14] = CoreFacet.submitProof.selector;
-        s[15] = CoreFacet.submitWork.selector;
-        s[16] = CoreFacet.forfeitAndReopen.selector;
-        s[17] = CoreFacet.updateTask.selector;
-        s[18] = CoreFacet.rejectSubmission.selector;
+        s[10] = CoreFacet.claimTask.selector;
+        s[11] = CoreFacet.selectWorker.selector;
+        s[12] = CoreFacet.submitPitch.selector;
+        s[13] = CoreFacet.submitProof.selector;
+        s[14] = CoreFacet.submitWork.selector;
+        s[15] = CoreFacet.forfeitAndReopen.selector;
+        s[16] = CoreFacet.updateTask.selector;
+        s[17] = CoreFacet.rejectSubmission.selector;
     }
 
-    /// @dev All 21 CoreFacet selectors — used in the steady-state Replace path.
+    /// @dev 20 CoreFacet selectors present after rev007 but before rev010 (excludes createTask).
+    ///      Used in the rev010 migration path Replace cut.
+    function _coreExistingSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](20);
+        s[0] = bytes4(keccak256("BOUNTY()"));
+        s[1] = bytes4(keccak256("CLAIM()"));
+        s[2] = bytes4(keccak256("PITCH()"));
+        s[3] = bytes4(keccak256("BENCHMARK()"));
+        s[4] = bytes4(keccak256("AUCTION()"));
+        s[5] = bytes4(keccak256("AUCTION_DUTCH()"));
+        s[6] = bytes4(keccak256("AUCTION_ENGLISH()"));
+        s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
+        s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
+        s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
+        s[10] = CoreFacet.claimTask.selector;
+        s[11] = CoreFacet.selectWorker.selector;
+        s[12] = CoreFacet.submitPitch.selector;
+        s[13] = CoreFacet.submitProof.selector;
+        s[14] = CoreFacet.submitWork.selector;
+        s[15] = CoreFacet.forfeitAndReopen.selector;
+        s[16] = CoreFacet.updateTask.selector;
+        s[17] = CoreFacet.rejectSubmission.selector;
+        s[18] = CoreFacet.cancelTask.selector;
+        s[19] = CoreFacet.refundExpired.selector;
+    }
+
+    /// @dev All 21 CoreFacet selectors — used in steady-state Replace path.
     function _coreAllSelectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](21);
         s[0] = bytes4(keccak256("BOUNTY()"));
@@ -317,6 +460,13 @@ contract DiamondFullUpgrade is Script {
         s[2] = AuctionFacet.acceptAuction.selector;
     }
 
+    /// @dev Both AcceptanceFacet selectors at current (post-rev009) signatures.
+    function _acceptAllSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = AcceptanceFacet.acceptSubmission.selector;
+        s[1] = AcceptanceFacet.acceptSubmissions.selector;
+    }
+
     function _evalSelectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](6);
         s[0] = EvaluatorFacet.assignEvaluator.selector;
@@ -334,9 +484,8 @@ contract DiamondFullUpgrade is Script {
         s[2] = RatingFacet.getAverageRating.selector;
     }
 
-    /// @dev The 21 RegistryFacet selectors that existed before this upgrade.
-    ///      Used in the migration path to Replace existing selectors before Adding taskSubmissionHashes.
-    function _regExistingSelectors() private pure returns (bytes4[] memory s) {
+    /// @dev 21 RegistryFacet selectors present before the submission-integrity upgrade (rev007).
+    function _regPreIntegritySelectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](21);
         s[0] = RegistryFacet.getTask.selector;
         s[1] = RegistryFacet.getWorkerStats.selector;
@@ -361,8 +510,23 @@ contract DiamondFullUpgrade is Script {
         s[20] = RegistryFacet.taskProofHashes.selector;
     }
 
-    /// @dev All 22 RegistryFacet selectors — used in the steady-state Replace path.
-    function _regAllSelectors() private pure returns (bytes4[] memory s) {
+    /// @dev 8 new RegistryFacet selectors added across rev007–rev010 (taskSubmissionHashes + 7 rev010 views).
+    ///      Used in Path A to add everything new in one cut.
+    function _regAllNewSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = RegistryFacet.taskSubmissionHashes.selector;
+        s[1] = RegistryFacet.hasWorkerRated.selector;
+        s[2] = RegistryFacet.stakeForfeit.selector;
+        s[3] = RegistryFacet.taskSubmissionHashExists.selector;
+        s[4] = RegistryFacet.taskActiveSubmissionCount.selector;
+        s[5] = RegistryFacet.taskHasSubmissions.selector;
+        s[6] = RegistryFacet.taskRejectedWorkers.selector;
+        s[7] = RegistryFacet.getTaskHooks.selector;
+    }
+
+    /// @dev 22 RegistryFacet selectors present after rev007 (includes taskSubmissionHashes).
+    ///      Used in Path B as the Replace cut.
+    function _regRev009Selectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](22);
         s[0] = RegistryFacet.getTask.selector;
         s[1] = RegistryFacet.getWorkerStats.selector;
@@ -386,5 +550,52 @@ contract DiamondFullUpgrade is Script {
         s[19] = RegistryFacet.taskPitchHashes.selector;
         s[20] = RegistryFacet.taskProofHashes.selector;
         s[21] = RegistryFacet.taskSubmissionHashes.selector;
+    }
+
+    /// @dev 7 new RegistryFacet selectors added in rev010.
+    ///      Used in Path B as the Add cut.
+    function _regRev010NewSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = RegistryFacet.hasWorkerRated.selector;
+        s[1] = RegistryFacet.stakeForfeit.selector;
+        s[2] = RegistryFacet.taskSubmissionHashExists.selector;
+        s[3] = RegistryFacet.taskActiveSubmissionCount.selector;
+        s[4] = RegistryFacet.taskHasSubmissions.selector;
+        s[5] = RegistryFacet.taskRejectedWorkers.selector;
+        s[6] = RegistryFacet.getTaskHooks.selector;
+    }
+
+    /// @dev All 29 RegistryFacet selectors — used in steady-state Replace path.
+    function _regAllSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](29);
+        s[0] = RegistryFacet.getTask.selector;
+        s[1] = RegistryFacet.getWorkerStats.selector;
+        s[2] = RegistryFacet.requesterNonce.selector;
+        s[3] = RegistryFacet.getTaskState.selector;
+        s[4] = RegistryFacet.getTaskContext.selector;
+        s[5] = RegistryFacet.getTaskVerdict.selector;
+        s[6] = RegistryFacet.evaluatorFor.selector;
+        s[7] = RegistryFacet.taskMode.selector;
+        s[8] = RegistryFacet.defaultFeeBps.selector;
+        s[9] = RegistryFacet.feeRecipient.selector;
+        s[10] = RegistryFacet.totalFeesCollected.selector;
+        s[11] = RegistryFacet.feeForTask.selector;
+        s[12] = RegistryFacet.reputationRegistry.selector;
+        s[13] = RegistryFacet.getTaskEvaluatorConfig.selector;
+        s[14] = RegistryFacet.getTaskAuctionConfig.selector;
+        s[15] = RegistryFacet.getTaskMetadata.selector;
+        s[16] = RegistryFacet.getTaskPitchConfig.selector;
+        s[17] = RegistryFacet.getBids.selector;
+        s[18] = RegistryFacet.usdcToken.selector;
+        s[19] = RegistryFacet.taskPitchHashes.selector;
+        s[20] = RegistryFacet.taskProofHashes.selector;
+        s[21] = RegistryFacet.taskSubmissionHashes.selector;
+        s[22] = RegistryFacet.hasWorkerRated.selector;
+        s[23] = RegistryFacet.stakeForfeit.selector;
+        s[24] = RegistryFacet.taskSubmissionHashExists.selector;
+        s[25] = RegistryFacet.taskActiveSubmissionCount.selector;
+        s[26] = RegistryFacet.taskHasSubmissions.selector;
+        s[27] = RegistryFacet.taskRejectedWorkers.selector;
+        s[28] = RegistryFacet.getTaskHooks.selector;
     }
 }

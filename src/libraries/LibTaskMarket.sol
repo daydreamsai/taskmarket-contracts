@@ -60,7 +60,7 @@ library LibTaskMarket {
     }
 
     // -------------------------------------------------------------------------
-    // Hook helpers
+    // Hook helpers — low-level
     // -------------------------------------------------------------------------
 
     /// @notice Builds a TaskContext snapshot for hook callbacks.
@@ -85,25 +85,122 @@ library LibTaskMarket {
         });
     }
 
-    /// @notice Calls an after-hook best-effort (swallows failures).
-    ///         Does nothing when hook == address(0).
-    function _afterHook(address hook, bytes memory data) internal {
-        if (hook == address(0)) return;
-        // on* hooks are fire-and-forget; failures are swallowed so a buggy hook cannot block
-        // fund recovery. HookCallFailed makes failures observable on-chain.
-        // slither-disable-next-line unchecked-lowlevel
-        // solhint-disable-next-line avoid-low-level-calls
-        (bool ok,) = hook.call(data);
-        if (!ok) emit ITMPCore.HookCallFailed(hook);
+    /// @notice Returns the hook list for a task (Rev008).
+    ///         task.hookContract is deprecated dead storage; taskHooks is authoritative.
+    function _resolveHooks(bytes32 taskId, AppStorage storage s) internal view returns (address[] memory) {
+        return s.taskHooks[taskId];
     }
 
-    /// @notice Calls checkFund on a hook contract, reverts if rejected.
-    function _checkFundHook(bytes32 taskId, address hookContract, bytes calldata hookData, AppStorage storage s)
+    /// @notice Calls check* on every hook in order. Reverts with errSelector if any hook rejects.
+    function _dispatchCheckHooks(address[] memory hooks, bytes memory callData, bytes4 errSelector) internal {
+        for (uint256 i; i < hooks.length; i++) {
+            // solhint-disable-next-line avoid-low-level-calls
+            (bool ok, bytes memory ret) = hooks[i].call(callData);
+            if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) {
+                assembly {
+                    mstore(0x00, errSelector)
+                    revert(0x00, 0x04)
+                }
+            }
+        }
+    }
+
+    /// @notice Calls on* on every hook in order. Failures are swallowed individually.
+    function _dispatchAfterHooks(address[] memory hooks, bytes memory callData) internal {
+        for (uint256 i; i < hooks.length; i++) {
+            // slither-disable-next-line unchecked-lowlevel
+            // solhint-disable-next-line avoid-low-level-calls
+            (bool ok,) = hooks[i].call(callData);
+            if (!ok) emit ITMPCore.HookCallFailed(hooks[i]);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Hook helpers — typed dispatch (keep abi.encodeCall out of facet stack frames)
+    // -------------------------------------------------------------------------
+
+    /// @notice Calls checkFund on all hooks, reverts if any reject. Emits HookRegistered per hook.
+    function _checkFundHooks(bytes32 taskId, address[] memory hooks, bytes calldata hookData, AppStorage storage s)
         internal
     {
-        if (!ITMPHook(hookContract).checkFund(taskId, _buildContext(taskId, s), hookData)) {
-            revert ITMPCore.HookCheckFundRejected();
+        bytes memory callData = abi.encodeCall(ITMPHook.checkFund, (taskId, _buildContext(taskId, s), hookData));
+        for (uint256 i; i < hooks.length; i++) {
+            // solhint-disable-next-line avoid-low-level-calls
+            (bool ok, bytes memory ret) = hooks[i].call(callData);
+            if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) {
+                revert ITMPCore.HookCheckFundRejected();
+            }
+            emit ITMPCore.HookRegistered(taskId, hooks[i]);
         }
-        emit ITMPCore.HookRegistered(taskId, hookContract);
+    }
+
+    function _checkClaimHooks(bytes32 taskId, address worker, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        if (hooks.length == 0) return;
+        _dispatchCheckHooks(
+            hooks,
+            abi.encodeCall(ITMPHook.checkClaim, (taskId, _buildContext(taskId, s), worker)),
+            ITMPCore.HookCheckClaimRejected.selector
+        );
+    }
+
+    function _checkSelectWorkerHooks(bytes32 taskId, address worker, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        if (hooks.length == 0) return;
+        _dispatchCheckHooks(
+            hooks,
+            abi.encodeCall(ITMPHook.checkSelectWorker, (taskId, _buildContext(taskId, s), worker)),
+            ITMPCore.HookCheckSelectWorkerRejected.selector
+        );
+    }
+
+    function _checkSubmitHooks(bytes32 taskId, address worker, bytes32 deliverable, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        if (hooks.length == 0) return;
+        _dispatchCheckHooks(
+            hooks,
+            abi.encodeCall(ITMPHook.checkSubmit, (taskId, _buildContext(taskId, s), worker, deliverable)),
+            ITMPCore.HookCheckSubmitRejected.selector
+        );
+    }
+
+    function _checkEvaluateHooks(bytes32 taskId, address evaluator, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        if (hooks.length == 0) return;
+        _dispatchCheckHooks(
+            hooks,
+            abi.encodeCall(ITMPHook.checkEvaluate, (taskId, _buildContext(taskId, s), evaluator)),
+            ITMPCore.HookCheckEvaluateRejected.selector
+        );
+    }
+
+    function _checkCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        if (hooks.length == 0) return;
+        _dispatchCheckHooks(
+            hooks,
+            abi.encodeCall(ITMPHook.checkComplete, (taskId, _buildContext(taskId, s), verdict)),
+            ITMPCore.HookCheckCompleteRejected.selector
+        );
+    }
+
+    function _onCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId, s), verdict)));
+    }
+
+    function _onForfeitHooks(bytes32 taskId, address forfeiter, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onForfeit, (taskId, _buildContext(taskId, s), forfeiter)));
+    }
+
+    function _onCancelHooks(bytes32 taskId, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onCancel, (taskId, _buildContext(taskId, s))));
+    }
+
+    function _onExpireHooks(bytes32 taskId, AppStorage storage s) internal {
+        address[] memory hooks = _resolveHooks(taskId, s);
+        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onExpire, (taskId, _buildContext(taskId, s))));
     }
 }

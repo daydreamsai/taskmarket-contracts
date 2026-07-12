@@ -102,6 +102,7 @@ interface ITMPCore is IERC165 {
     error InvalidFeeRecipient();
     error InvalidUSDCToken();
     error InvalidRecipient();
+    error InvalidHookAddress();
     error InvalidForwarderAddress();
     error FeeBpsTooHigh();
     error RewardMustBeGreaterThanZero();
@@ -137,6 +138,12 @@ interface ITMPCore is IERC165 {
     error HookCheckSubmitRejected();
     error HookCheckCompleteRejected();
     error HookCheckEvaluateRejected();
+    error DuplicateHookAddress();
+    error TooManyHooks();
+
+    // Awards
+    error InvalidAwardRecipient();
+    error DuplicateAwardWorker();
 
     // -------------------------------------------------------------------------
     // Types
@@ -271,6 +278,23 @@ interface ITMPCore is IERC165 {
         uint256 price;
     }
 
+    /// @notice Hook configuration passed to createTask (Rev008).
+    ///         Packs hookContracts and hookData into one calldata pointer to stay
+    ///         within the 16-slot Yul stack limit.
+    struct HookConfig {
+        address[] contracts;
+        bytes data;
+    }
+
+    /// @notice Content and classification metadata passed to createTask.
+    ///         Packs contentHash, contentURI, and tags into one calldata pointer
+    ///         to reduce stack depth under the legacy coverage codegen.
+    struct TaskContent {
+        bytes32 contentHash;
+        string contentURI;
+        bytes32[] tags;
+    }
+
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
@@ -282,6 +306,9 @@ interface ITMPCore is IERC165 {
 
     /// @notice Emitted when a hook contract is registered for a task.
     event HookRegistered(bytes32 indexed taskId, address hookContract);
+
+    /// @notice Emitted when the protocol default hook list is replaced.
+    event DefaultHooksSet(address[] hooks);
 
     /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy
     ///         hook cannot block fund recovery; this event makes failures observable on-chain.
@@ -390,12 +417,9 @@ interface ITMPCore is IERC165 {
     /// @param mode            4-byte mode selector (see ITMPModes for canonical values)
     /// @param pitchDeadline   Seconds from now for pitch acceptance (Pitch mode only, 0 otherwise)
     /// @param bidDeadline     Seconds from now for bid submission (Auction mode only, 0 otherwise)
-    /// @param contentHash     Optional keccak256 of off-chain task description (bytes32(0) if unused)
-    /// @param contentURI      Optional URI pointing to extended task metadata (empty string if unused)
     /// @param auctionSubtype  Auction subtype selector (see ITMPModes; bytes4(0) for non-auction tasks)
-    /// @param hookContract    ITMPHook address; address(0) for no hook (ERC-8195)
-    /// @param tags            keccak256-hashed classification labels stored on-chain (ERC-8195)
-    /// @param hookData        Arbitrary bytes forwarded verbatim to checkFund; use for per-task hook config
+    /// @param hookConfig      Hook contracts and per-task hookData (Rev008).
+    /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     /// @return taskId         Contract-generated canonical task identifier
     function createTask(
         uint256 reward,
@@ -403,12 +427,9 @@ interface ITMPCore is IERC165 {
         bytes4 mode,
         uint256 pitchDeadline,
         uint256 bidDeadline,
-        bytes32 contentHash,
-        string calldata contentURI,
         bytes4 auctionSubtype,
-        address hookContract,
-        bytes32[] calldata tags,
-        bytes calldata hookData
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content
     ) external returns (bytes32 taskId);
 
     /// @notice Accept a worker's submission and release escrowed payment.

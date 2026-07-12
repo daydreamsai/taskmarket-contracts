@@ -1,4 +1,4 @@
-# ERC-8195 Revision 009 — Multi-Submission Rejection Count Fix
+# ERC-8195 Revision 008 — Multi-Submission Rejection Count Fix
 
 ## Motivation
 

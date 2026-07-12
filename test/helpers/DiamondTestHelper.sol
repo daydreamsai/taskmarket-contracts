@@ -65,7 +65,7 @@ abstract contract DiamondTestHelper is Test {
     }
 
     function _adminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](15);
         s[0] = AdminFacet.paused.selector;
         s[1] = AdminFacet.pause.selector;
         s[2] = AdminFacet.unpause.selector;
@@ -79,6 +79,8 @@ abstract contract DiamondTestHelper is Test {
         s[10] = AdminFacet.setDefaultFeeBps.selector;
         s[11] = AdminFacet.setFeeRecipient.selector;
         s[12] = AdminFacet.setReputationRegistry.selector;
+        s[13] = AdminFacet.setDefaultHooks.selector;
+        s[14] = AdminFacet.getDefaultHooks.selector;
     }
 
     function _coreSelectors() internal pure returns (bytes4[] memory s) {
@@ -137,7 +139,7 @@ abstract contract DiamondTestHelper is Test {
     }
 
     function _registrySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         s[0] = RegistryFacet.getTask.selector;
         s[1] = RegistryFacet.getWorkerStats.selector;
         s[2] = RegistryFacet.requesterNonce.selector;
@@ -159,5 +161,6 @@ abstract contract DiamondTestHelper is Test {
         s[18] = RegistryFacet.usdcToken.selector;
         s[19] = RegistryFacet.taskPitchHashes.selector;
         s[20] = RegistryFacet.taskProofHashes.selector;
+        s[21] = RegistryFacet.getTaskHooks.selector;
     }
 }

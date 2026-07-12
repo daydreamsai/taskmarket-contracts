@@ -19,18 +19,8 @@ import { ITMPFees } from "../src/interfaces/ITMPFees.sol";
 import { ITMPReputation } from "../src/interfaces/ITMPReputation.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "./mocks/MockUSDC.sol";
-
-contract MockPingFacet {
-    function ping() external pure returns (bytes32) {
-        return keccak256("pong");
-    }
-}
-
-contract MockRevertingInit {
-    function initialize() external pure {
-        revert("MockRevertingInit: intentional revert");
-    }
-}
+import "./mocks/MockPingFacet.sol";
+import "./mocks/MockRevertingInit.sol";
 
 /// @title DiamondTest — tests for Diamond proxy routing, diamondCut, ownership, and ERC-165.
 contract DiamondTest is DiamondTestHelper {

@@ -21,6 +21,11 @@ contract RegistryFacet {
         return LibAppStorage.appStorage().workerStats[worker];
     }
 
+    /// @notice True if a worker has already rated a task.
+    function hasWorkerRated(bytes32 taskId, address worker) external view returns (bool) {
+        return LibAppStorage.appStorage().taskWorkerRated[taskId][worker];
+    }
+
     /// @notice Returns the current nonce for task ID pre-computation.
     function requesterNonce(address requester) external view returns (uint256) {
         return LibAppStorage.appStorage().requesterNonce[requester];
@@ -125,10 +130,19 @@ contract RegistryFacet {
         return LibAppStorage.appStorage().taskBids[taskId];
     }
 
+    /// @notice Amount of stake locked as forfeit for a task (Claim mode).
+    function stakeForfeit(bytes32 taskId) external view returns (uint256) {
+        return LibAppStorage.appStorage().stakeForfeit[taskId];
+    }
+
     /// @notice The USDC token used for payments and escrow.
     function usdcToken() external view returns (address) {
         return address(LibAppStorage.appStorage().usdcToken);
     }
+
+    // -------------------------------------------------------------------------
+    // Submission state views
+    // -------------------------------------------------------------------------
 
     /// @notice Returns one pitch hash submitted for a task, by index.
     function taskPitchHashes(bytes32 taskId, uint256 index) external view returns (bytes32) {
@@ -143,5 +157,35 @@ contract RegistryFacet {
     /// @notice Returns all deliverable hashes committed by a worker via submitWork for a given task.
     function taskSubmissionHashes(bytes32 taskId, address worker) external view returns (bytes32[] memory) {
         return LibAppStorage.appStorage().taskSubmissionHashes[taskId][worker];
+    }
+
+    /// @notice True if a specific deliverable hash was committed by a worker via submitWork.
+    function taskSubmissionHashExists(bytes32 taskId, address worker, bytes32 hash) external view returns (bool) {
+        return LibAppStorage.appStorage().taskSubmissionHashExists[taskId][worker][hash];
+    }
+
+    /// @notice Number of active (non-rejected) submissions for a task.
+    function taskActiveSubmissionCount(bytes32 taskId) external view returns (uint256) {
+        return LibAppStorage.appStorage().taskActiveSubmissionCount[taskId];
+    }
+
+    /// @notice True if any submission was ever made on a task.
+    function taskHasSubmissions(bytes32 taskId) external view returns (bool) {
+        return LibAppStorage.appStorage().taskHasSubmissions[taskId];
+    }
+
+    /// @notice True if a worker has been rejected on a task.
+    function taskRejectedWorkers(bytes32 taskId, address worker) external view returns (bool) {
+        return LibAppStorage.appStorage().taskRejectedWorkers[taskId][worker];
+    }
+
+    // -------------------------------------------------------------------------
+    // Hook views
+    // -------------------------------------------------------------------------
+
+    /// @notice Returns the hook list stored for a task. Hooks are committed at creation
+    ///         time with protocol default hooks prepended before any requester-supplied hooks.
+    function getTaskHooks(bytes32 taskId) external view returns (address[] memory) {
+        return LibTaskMarket._resolveHooks(taskId, LibAppStorage.appStorage());
     }
 }

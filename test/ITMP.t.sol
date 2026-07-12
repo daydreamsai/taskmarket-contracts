@@ -137,12 +137,9 @@ contract ITMPCompliance is DiamondTestHelper {
                         _mode,
                         _pd,
                         _bd,
-                        bytes32(0),
-                        "",
                         _auctionSubtype,
-                        address(0),
-                        new bytes32[](0),
-                        hex""
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
                 )
             ),
@@ -499,12 +496,9 @@ contract ITMPCompliance is DiamondTestHelper {
                         market.BOUNTY(),
                         0,
                         0,
-                        bytes32(0),
-                        "",
                         bytes4(0),
-                        address(0),
-                        new bytes32[](0),
-                        hex""
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
                 )
             ),
@@ -522,7 +516,16 @@ contract ITMPCompliance is DiamondTestHelper {
 
         bytes memory data = abi.encodeCall(
             market.createTask,
-            (REWARD, DURATION, market.BOUNTY(), 0, 0, bytes32(0), "", bytes4(0), address(0), new bytes32[](0), hex"")
+            (
+                REWARD,
+                DURATION,
+                market.BOUNTY(),
+                0,
+                0,
+                bytes4(0),
+                ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+            )
         );
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
         fwd.relay(address(market), requester, REWARD, data);

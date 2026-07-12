@@ -22,8 +22,6 @@ contract AcceptanceFacet {
     /// @param worker           Worker address to pay
     /// @param deliverable      Accepted content hash; must have been committed by submitWork for Bounty/Benchmark
     /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
-    // Complexity is inherent: handles four modes × payment/stake/auction/hook/event branches.
-    // solhint-disable-next-line code-complexity
     function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
@@ -49,20 +47,42 @@ contract AcceptanceFacet {
             awards: awards
         });
 
-        uint256 paymentAmount = mode == AUCTION ? task.stakeAmount : task.reward;
-        uint256 fee = (paymentAmount * task.feeBps) / 10000;
-        uint256 workerPayment = paymentAmount - fee;
-
         task.status = ITMPCore.TaskStatus.Accepted;
         task.worker = worker;
         s.workerStats[worker].completedTasks++;
+
+        // Fee computation, transfers, events, and hook dispatch are isolated in a separate
+        // frame to keep this function's local count under the --ir-minimum stack limit.
+        _completeAcceptance(taskId, task, worker, requester, requesterAgentId, mode, verdict, s);
+
+        LibTaskMarket._nonReentrantAfter(s);
+    }
+
+    // Complexity is inherent: handles four modes × payment/stake/auction/hook/event branches.
+    // Isolated from acceptSubmission to reduce stack depth under --ir-minimum coverage compilation.
+    // solhint-disable-next-line code-complexity
+    function _completeAcceptance(
+        bytes32 taskId,
+        ITMPCore.Task storage task,
+        address worker,
+        address requester,
+        uint256 requesterAgentId,
+        bytes4 mode,
+        ITMPCore.Verdict memory verdict,
+        AppStorage storage s
+    ) private {
+        uint256 paymentAmount = mode == AUCTION ? task.stakeAmount : task.reward;
+        uint256 fee = (paymentAmount * task.feeBps) / 10000;
+        uint256 workerPayment = paymentAmount - fee;
         if (fee > 0) s.totalFeesCollected += fee;
 
-        address hook = task.hookContract;
-        if (hook != address(0)) {
-            if (!ITMPHook(hook).checkComplete(taskId, LibTaskMarket._buildContext(taskId, s), verdict)) {
-                revert ITMPCore.HookCheckCompleteRejected();
-            }
+        address[] memory hooks = LibTaskMarket._resolveHooks(taskId, s);
+        if (hooks.length > 0) {
+            LibTaskMarket._dispatchCheckHooks(
+                hooks,
+                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict)),
+                ITMPCore.HookCheckCompleteRejected.selector
+            );
         }
 
         if (!s.usdcToken.transfer(worker, workerPayment)) revert ITMPCore.WorkerPaymentFailed();
@@ -105,12 +125,9 @@ contract AcceptanceFacet {
             }
         }
 
-        if (hook != address(0)) {
-            LibTaskMarket._afterHook(
-                hook, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
-            );
-        }
-        LibTaskMarket._nonReentrantAfter(s);
+        LibTaskMarket._dispatchAfterHooks(
+            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
+        );
     }
 
     /// @notice Accept N submissions at once with explicit share basis points.
@@ -192,7 +209,9 @@ contract AcceptanceFacet {
         }
     }
 
-    // Complexity is inherent: distributes proportional payouts across N winners with per-winner fee, hook, and event branches.
+    // Validates, resolves deliverables, and builds the awards array before delegating
+    // payment/hooks/events to _payMultiAwards. Split to stay under the --ir-minimum stack limit:
+    // workers/shares calldata each consume two stack slots (offset + length) in viaIR mode.
     // solhint-disable-next-line code-complexity
     function _acceptSubmissions(
         bytes32 taskId,
@@ -216,29 +235,34 @@ contract AcceptanceFacet {
         if (shares.length != n) revert ITMPCore.LengthMismatch();
         if (pinnedDeliverables.length != 0 && pinnedDeliverables.length != n) revert ITMPCore.LengthMismatch();
 
-        // Resolve deliverables: pin a specific hash if provided, else use the latest.
-        bytes32[] memory deliverables = new bytes32[](n);
-        uint256 sumShares = 0;
-        for (uint256 i; i < n; ++i) {
-            if (workers[i] == address(0)) revert ITMPCore.WorkerRequired();
-            bytes32 pinned = (pinnedDeliverables.length > 0) ? pinnedDeliverables[i] : bytes32(0);
-            if (pinned != bytes32(0)) {
-                if (!s.taskSubmissionHashExists[taskId][workers[i]][pinned]) revert ITMPCore.SubmissionNotFound();
-                deliverables[i] = pinned;
-            } else {
-                bytes32[] storage submitted = s.taskSubmissionHashes[taskId][workers[i]];
-                if (submitted.length == 0) revert ITMPCore.SubmissionNotFound();
-                deliverables[i] = submitted[submitted.length - 1];
-            }
-            sumShares += shares[i];
-        }
-        if (sumShares != 10000) revert ITMPCore.SharesMustSumTo10000();
+        bytes32[] memory deliverables = _resolveDeliverables(taskId, workers, shares, pinnedDeliverables, s);
 
+        uint256 reward = task.reward;
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](n);
         for (uint256 i; i < n; ++i) {
             awards[i] =
-                ITMPCore.Award({ worker: workers[i], amount: (task.reward * shares[i]) / 10000, rank: uint16(i + 1) });
+                ITMPCore.Award({ worker: workers[i], amount: (reward * shares[i]) / 10000, rank: uint16(i + 1) });
         }
+
+        task.status = ITMPCore.TaskStatus.Accepted;
+        task.worker = workers[0];
+        task.deliverable = deliverables[0];
+
+        // Verdict building, fee computation, hook dispatch, transfers and events are isolated in a
+        // separate frame so workers/shares calldata slots do not overlap with payment temporaries.
+        _payMultiAwards(taskId, task, requester, requesterAgentId, awards, s);
+    }
+
+    // Complexity is inherent: computes per-winner fees, dispatches hooks, transfers, emits events.
+    // solhint-disable-next-line code-complexity
+    function _payMultiAwards(
+        bytes32 taskId,
+        ITMPCore.Task storage task,
+        address requester,
+        uint256 requesterAgentId,
+        ITMPCore.Award[] memory awards,
+        AppStorage storage s
+    ) private {
         ITMPCore.Verdict memory verdict = ITMPCore.Verdict({
             issued: true,
             verdictType: ITMPCore.VerdictType.APPROVE,
@@ -249,42 +273,34 @@ contract AcceptanceFacet {
             awards: awards
         });
 
-        task.status = ITMPCore.TaskStatus.Accepted;
-        task.worker = workers[0];
-        task.deliverable = deliverables[0]; // latest hash from on-chain submission history
-
-        uint256 reward = task.reward;
-        uint16 feeBps = task.feeBps;
-
-        uint256[] memory nets = new uint256[](n);
-        uint256[] memory fees = new uint256[](n);
+        // First pass: update stats and accumulate totalFee (all state changes before any transfer).
         uint256 totalFee = 0;
-        for (uint256 i; i < n; ++i) {
-            uint256 pay = (reward * shares[i]) / 10000;
-            if (pay == 0) revert ITMPCore.ZeroPayoutPerPair();
-            uint256 fee = (reward * uint256(shares[i]) * uint256(feeBps)) / 100_000_000;
-            nets[i] = pay - fee;
-            fees[i] = fee;
-            totalFee += fee;
-            s.workerStats[workers[i]].completedTasks++;
+        for (uint256 i; i < awards.length; ++i) {
+            if (awards[i].amount == 0) revert ITMPCore.ZeroPayoutPerPair();
+            totalFee += (awards[i].amount * uint256(task.feeBps)) / 10000;
+            s.workerStats[awards[i].worker].completedTasks++;
         }
         if (totalFee > 0) s.totalFeesCollected += totalFee;
 
-        address hook = task.hookContract;
-        if (hook != address(0)) {
-            if (!ITMPHook(hook).checkComplete(taskId, LibTaskMarket._buildContext(taskId, s), verdict)) {
-                revert ITMPCore.HookCheckCompleteRejected();
-            }
+        address[] memory hooks = LibTaskMarket._resolveHooks(taskId, s);
+        if (hooks.length > 0) {
+            LibTaskMarket._dispatchCheckHooks(
+                hooks,
+                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict)),
+                ITMPCore.HookCheckCompleteRejected.selector
+            );
         }
 
-        // Multi-winner payouts require iterating recipients. State fully committed before this loop (CEI).
+        // Second pass: transfers and events. fee/net computed inline to avoid nets[]/fees[] arrays.
         // slither-disable-next-line calls-loop
         bool anySelfAward = false;
-        for (uint256 i; i < n; ++i) {
-            if (!s.usdcToken.transfer(workers[i], nets[i])) revert ITMPCore.WorkerPaymentFailed();
-            emit ITMPCore.TaskCompleted(taskId, requester, workers[i], nets[i], fees[i]);
-            if (workers[i] == requester) {
-                emit ITMPCore.SelfAward(taskId, requester, workers[i]);
+        for (uint256 i; i < awards.length; ++i) {
+            uint256 fee = (awards[i].amount * uint256(task.feeBps)) / 10000;
+            uint256 net = awards[i].amount - fee;
+            if (!s.usdcToken.transfer(awards[i].worker, net)) revert ITMPCore.WorkerPaymentFailed();
+            emit ITMPCore.TaskCompleted(taskId, requester, awards[i].worker, net, fee);
+            if (awards[i].worker == requester) {
+                emit ITMPCore.SelfAward(taskId, requester, awards[i].worker);
                 anySelfAward = true;
             }
         }
@@ -308,11 +324,38 @@ contract AcceptanceFacet {
                 catch { }
         }
 
-        if (hook != address(0)) {
-            LibTaskMarket._afterHook(
-                hook, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
-            );
+        LibTaskMarket._dispatchAfterHooks(
+            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
+        );
+    }
+
+    function _resolveDeliverables(
+        bytes32 taskId,
+        address[] calldata workers,
+        uint16[] calldata shares,
+        bytes32[] calldata pinnedDeliverables,
+        AppStorage storage s
+    ) private view returns (bytes32[] memory deliverables) {
+        uint256 n = workers.length;
+        deliverables = new bytes32[](n);
+        uint256 sumShares = 0;
+        for (uint256 i; i < n; ++i) {
+            if (workers[i] == address(0)) revert ITMPCore.WorkerRequired();
+            for (uint256 j; j < i; ++j) {
+                if (workers[j] == workers[i]) revert ITMPCore.DuplicateAwardWorker();
+            }
+            bytes32 pinned = (pinnedDeliverables.length > 0) ? pinnedDeliverables[i] : bytes32(0);
+            if (pinned != bytes32(0)) {
+                if (!s.taskSubmissionHashExists[taskId][workers[i]][pinned]) revert ITMPCore.SubmissionNotFound();
+                deliverables[i] = pinned;
+            } else {
+                bytes32[] storage submitted = s.taskSubmissionHashes[taskId][workers[i]];
+                if (submitted.length == 0) revert ITMPCore.SubmissionNotFound();
+                deliverables[i] = submitted[submitted.length - 1];
+            }
+            sumShares += shares[i];
         }
+        if (sumShares != 10000) revert ITMPCore.SharesMustSumTo10000();
     }
 
     function _modeName(bytes4 mode) private pure returns (string memory) {
