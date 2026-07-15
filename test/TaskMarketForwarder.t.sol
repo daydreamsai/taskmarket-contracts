@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "../src/TaskMarketForwarder.sol";
 import "../src/interfaces/IPGTRForwarder.sol";
 import "../src/interfaces/ITMPCore.sol";
-import "./mocks/MockUSDC.sol";
+import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
 

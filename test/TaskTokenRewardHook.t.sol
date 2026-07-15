@@ -10,7 +10,7 @@ import { EpochBudget } from "../src/hooks/EpochBudget.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import "./mocks/MockPGTRForwarder.sol";
-import "./mocks/MockUSDC.sol";
+import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 // ─────────────────────────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────────────────────────

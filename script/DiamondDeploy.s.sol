@@ -150,7 +150,7 @@ contract DiamondDeploy is Script {
     }
 
     function _coreFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         // public constant getters — must use keccak256; .selector syntax does not apply to constants
         s[0] = bytes4(keccak256("BOUNTY()"));
         s[1] = bytes4(keccak256("CLAIM()"));
@@ -173,6 +173,9 @@ contract DiamondDeploy is Script {
         s[17] = CoreFacet.cancelTask.selector;
         s[18] = CoreFacet.updateTask.selector;
         s[19] = CoreFacet.refundExpired.selector;
+        // Must stay in sync with DiamondFullUpgrade.s.sol's _coreAllSelectors(), the real
+        // testnet/mainnet diamond's steady-state selector set.
+        s[20] = CoreFacet.rejectSubmission.selector;
     }
 
     function _auctionFacetSelectors() internal pure returns (bytes4[] memory s) {

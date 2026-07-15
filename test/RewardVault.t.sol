@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import { RewardVault } from "../src/hooks/RewardVault.sol";
-import "./mocks/MockUSDC.sol";
+import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 
 /// @dev Unit tests for RewardVault, exercising every guard and revert branch.
 contract RewardVaultTest is Test {

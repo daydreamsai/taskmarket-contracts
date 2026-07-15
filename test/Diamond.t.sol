@@ -18,7 +18,7 @@ import { ITMPModes } from "../src/interfaces/ITMPModes.sol";
 import { ITMPFees } from "../src/interfaces/ITMPFees.sol";
 import { ITMPReputation } from "../src/interfaces/ITMPReputation.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import "./mocks/MockUSDC.sol";
+import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./mocks/MockPingFacet.sol";
 import "./mocks/MockRevertingInit.sol";
 
