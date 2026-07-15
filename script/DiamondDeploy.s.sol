@@ -133,7 +133,7 @@ contract DiamondDeploy is Script {
 
     function _adminFacetSelectors() internal pure returns (bytes4[] memory s) {
         // initialize is NOT included — it is called once via Diamond constructor _init delegatecall
-        s = new bytes4[](13);
+        s = new bytes4[](15);
         s[0] = AdminFacet.paused.selector;
         s[1] = AdminFacet.pause.selector;
         s[2] = AdminFacet.unpause.selector;
@@ -147,6 +147,12 @@ contract DiamondDeploy is Script {
         s[10] = AdminFacet.setDefaultFeeBps.selector;
         s[11] = AdminFacet.setFeeRecipient.selector;
         s[12] = AdminFacet.setReputationRegistry.selector;
+        // Added post-launch (rev010, see DiamondFullUpgrade.s.sol's Path B) -- a fresh
+        // deploy should include the current AdminFacet interface from day one rather than
+        // needing a follow-up upgrade just to reach parity with what upgraded diamonds
+        // already have.
+        s[13] = AdminFacet.setDefaultHooks.selector;
+        s[14] = AdminFacet.getDefaultHooks.selector;
     }
 
     function _coreFacetSelectors() internal pure returns (bytes4[] memory s) {
