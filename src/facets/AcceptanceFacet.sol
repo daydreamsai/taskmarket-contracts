@@ -6,6 +6,7 @@ import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
+import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title AcceptanceFacet — single and multi-winner submission acceptance with payouts
@@ -121,7 +122,9 @@ contract AcceptanceFacet {
                     .giveFeedback(
                         requesterAgentId, 100, 0, "tmp.task.requester", _modeName(mode), "", "", bytes32(0)
                     ) { }
-                    catch { }
+                catch {
+                    emit ITMPReputation.ReputationFeedbackFailed(taskId, requesterAgentId);
+                }
             }
         }
 
@@ -321,7 +324,9 @@ contract AcceptanceFacet {
                 .giveFeedback(
                     requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
                 ) { }
-                catch { }
+            catch {
+                emit ITMPReputation.ReputationFeedbackFailed(taskId, requesterAgentId);
+            }
         }
 
         LibTaskMarket._dispatchAfterHooks(
