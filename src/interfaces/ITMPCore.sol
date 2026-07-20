@@ -145,6 +145,9 @@ interface ITMPCore is IERC165 {
     error InvalidAwardRecipient();
     error DuplicateAwardWorker();
 
+    // Diamond (Rev011)
+    error DiamondVersionNotIncreasing();
+
     // -------------------------------------------------------------------------
     // Types
     // -------------------------------------------------------------------------

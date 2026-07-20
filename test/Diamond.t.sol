@@ -21,6 +21,7 @@ import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./mocks/MockPingFacet.sol";
 import "./mocks/MockRevertingInit.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 
 /// @title DiamondTest — tests for Diamond proxy routing, diamondCut, ownership, and ERC-165.
 contract DiamondTest is DiamondTestHelper {
@@ -294,7 +295,7 @@ contract DiamondTest is DiamondTestHelper {
 
         // Replace RegistryFacet.
         RegistryFacet newReg = new RegistryFacet();
-        bytes4[] memory sels = _registrySelectors();
+        bytes4[] memory sels = FacetSelectors.registryFacetSelectors();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(newReg), IDiamondCut.FacetCutAction.Replace, sels);
 

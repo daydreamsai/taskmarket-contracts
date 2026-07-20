@@ -41,6 +41,9 @@ contract AdminFacet is Initializable {
         s.feeRecipient = _feeRecipient;
         s.defaultFeeBps = _defaultFeeBps;
         s.reentrancyStatus = LibTaskMarket.NOT_ENTERED;
+        // Rev011: a fresh deploy already includes today's full steady-state selector set
+        // (FacetSelectors.sol), so it starts at the current revision rather than 0.
+        s.diamondVersion = 11;
     }
 
     // -------------------------------------------------------------------------
@@ -171,5 +174,26 @@ contract AdminFacet is Initializable {
     /// @notice Return the current protocol default hook list.
     function getDefaultHooks() external view returns (address[] memory) {
         return LibAppStorage.appStorage().defaultHooks;
+    }
+
+    // -------------------------------------------------------------------------
+    // Diamond version (Rev011)
+    // -------------------------------------------------------------------------
+
+    /// @notice Return the diamond's current upgrade-step version.
+    ///         Zero on any diamond deployed before version tracking existed.
+    function diamondVersion() external view returns (uint256) {
+        return LibAppStorage.appStorage().diamondVersion;
+    }
+
+    /// @notice Set the diamond's upgrade-step version (owner only).
+    ///         Called by upgrade step scripts after applying their delta -- never by end users.
+    ///         Monotonic: reverts if newVersion would move the counter backwards, so a step
+    ///         cannot be applied out of order. Re-applying the same target version (e.g. running
+    ///         `make upgrade` again against an already-current diamond) is a no-op, not an error.
+    function setDiamondVersion(uint256 newVersion) external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        if (newVersion < s.diamondVersion) revert ITMPCore.DiamondVersionNotIncreasing();
+        s.diamondVersion = newVersion;
     }
 }

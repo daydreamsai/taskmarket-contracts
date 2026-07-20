@@ -13,6 +13,7 @@ import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
+import { FacetSelectors } from "./lib/FacetSelectors.sol";
 
 /// @title DiamondDeploy — deploy TaskMarket Diamond proxy + all facets
 /// @dev Required env vars:
@@ -106,136 +107,15 @@ contract DiamondDeploy is Script {
         address registry
     ) internal pure returns (IDiamondCut.FacetCut[] memory cuts) {
         cuts = new IDiamondCut.FacetCut[](9);
-        cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, _cutFacetSelectors());
-        cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, _loupeFacetSelectors());
-        cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, _adminFacetSelectors());
-        cuts[3] = IDiamondCut.FacetCut(core, IDiamondCut.FacetCutAction.Add, _coreFacetSelectors());
-        cuts[4] = IDiamondCut.FacetCut(auction, IDiamondCut.FacetCutAction.Add, _auctionFacetSelectors());
-        cuts[5] = IDiamondCut.FacetCut(accept, IDiamondCut.FacetCutAction.Add, _acceptFacetSelectors());
-        cuts[6] = IDiamondCut.FacetCut(eval, IDiamondCut.FacetCutAction.Add, _evalFacetSelectors());
-        cuts[7] = IDiamondCut.FacetCut(rating, IDiamondCut.FacetCutAction.Add, _ratingFacetSelectors());
-        cuts[8] = IDiamondCut.FacetCut(registry, IDiamondCut.FacetCutAction.Add, _registryFacetSelectors());
-    }
-
-    function _cutFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
-        s[0] = DiamondCutFacet.diamondCut.selector;
-    }
-
-    function _loupeFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = DiamondLoupeFacet.facets.selector;
-        s[1] = DiamondLoupeFacet.facetFunctionSelectors.selector;
-        s[2] = DiamondLoupeFacet.facetAddresses.selector;
-        s[3] = DiamondLoupeFacet.facetAddress.selector;
-        s[4] = DiamondLoupeFacet.supportsInterface.selector;
-    }
-
-    function _adminFacetSelectors() internal pure returns (bytes4[] memory s) {
-        // initialize is NOT included — it is called once via Diamond constructor _init delegatecall
-        s = new bytes4[](15);
-        s[0] = AdminFacet.paused.selector;
-        s[1] = AdminFacet.pause.selector;
-        s[2] = AdminFacet.unpause.selector;
-        s[3] = AdminFacet.transferOwnership.selector;
-        s[4] = AdminFacet.acceptOwnership.selector;
-        s[5] = AdminFacet.owner.selector;
-        s[6] = AdminFacet.pendingOwner.selector;
-        s[7] = AdminFacet.addForwarder.selector;
-        s[8] = AdminFacet.removeForwarder.selector;
-        s[9] = AdminFacet.isTrustedForwarder.selector;
-        s[10] = AdminFacet.setDefaultFeeBps.selector;
-        s[11] = AdminFacet.setFeeRecipient.selector;
-        s[12] = AdminFacet.setReputationRegistry.selector;
-        // Added post-launch (rev010, see DiamondFullUpgrade.s.sol's Path B) -- a fresh
-        // deploy should include the current AdminFacet interface from day one rather than
-        // needing a follow-up upgrade just to reach parity with what upgraded diamonds
-        // already have.
-        s[13] = AdminFacet.setDefaultHooks.selector;
-        s[14] = AdminFacet.getDefaultHooks.selector;
-    }
-
-    function _coreFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
-        // public constant getters — must use keccak256; .selector syntax does not apply to constants
-        s[0] = bytes4(keccak256("BOUNTY()"));
-        s[1] = bytes4(keccak256("CLAIM()"));
-        s[2] = bytes4(keccak256("PITCH()"));
-        s[3] = bytes4(keccak256("BENCHMARK()"));
-        s[4] = bytes4(keccak256("AUCTION()"));
-        s[5] = bytes4(keccak256("AUCTION_DUTCH()"));
-        s[6] = bytes4(keccak256("AUCTION_ENGLISH()"));
-        s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
-        s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
-        s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-        // Core task functions
-        s[10] = CoreFacet.createTask.selector;
-        s[11] = CoreFacet.claimTask.selector;
-        s[12] = CoreFacet.selectWorker.selector;
-        s[13] = CoreFacet.submitPitch.selector;
-        s[14] = CoreFacet.submitProof.selector;
-        s[15] = CoreFacet.submitWork.selector;
-        s[16] = CoreFacet.forfeitAndReopen.selector;
-        s[17] = CoreFacet.cancelTask.selector;
-        s[18] = CoreFacet.updateTask.selector;
-        s[19] = CoreFacet.refundExpired.selector;
-        // Must stay in sync with DiamondFullUpgrade.s.sol's _coreAllSelectors(), the real
-        // testnet/mainnet diamond's steady-state selector set.
-        s[20] = CoreFacet.rejectSubmission.selector;
-    }
-
-    function _auctionFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
-        s[0] = AuctionFacet.submitBid.selector;
-        s[1] = AuctionFacet.selectLowestBidder.selector;
-        s[2] = AuctionFacet.acceptAuction.selector;
-    }
-
-    function _acceptFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
-        s[0] = AcceptanceFacet.acceptSubmission.selector;
-        s[1] = AcceptanceFacet.acceptSubmissions.selector;
-    }
-
-    function _evalFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
-        s[0] = EvaluatorFacet.assignEvaluator.selector;
-        s[1] = EvaluatorFacet.evaluate.selector;
-        s[2] = EvaluatorFacet.appeal.selector;
-        s[3] = EvaluatorFacet.finalizeVerdict.selector;
-        s[4] = EvaluatorFacet.resolveDispute.selector;
-        s[5] = EvaluatorFacet.evaluatorTimeout.selector;
-    }
-
-    function _ratingFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
-        s[0] = RatingFacet.rateTask.selector;
-        s[1] = RatingFacet.getCredibility.selector;
-        s[2] = RatingFacet.getAverageRating.selector;
-    }
-
-    function _registryFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
-        s[0] = RegistryFacet.getTask.selector;
-        s[1] = RegistryFacet.getWorkerStats.selector;
-        s[2] = RegistryFacet.requesterNonce.selector;
-        s[3] = RegistryFacet.getTaskState.selector;
-        s[4] = RegistryFacet.getTaskContext.selector;
-        s[5] = RegistryFacet.getTaskVerdict.selector;
-        s[6] = RegistryFacet.evaluatorFor.selector;
-        s[7] = RegistryFacet.taskMode.selector;
-        s[8] = RegistryFacet.defaultFeeBps.selector;
-        s[9] = RegistryFacet.feeRecipient.selector;
-        s[10] = RegistryFacet.totalFeesCollected.selector;
-        s[11] = RegistryFacet.feeForTask.selector;
-        s[12] = RegistryFacet.reputationRegistry.selector;
-        s[13] = RegistryFacet.getTaskEvaluatorConfig.selector;
-        s[14] = RegistryFacet.getTaskAuctionConfig.selector;
-        s[15] = RegistryFacet.getTaskMetadata.selector;
-        s[16] = RegistryFacet.getTaskPitchConfig.selector;
-        s[17] = RegistryFacet.getBids.selector;
-        s[18] = RegistryFacet.usdcToken.selector;
-        s[19] = RegistryFacet.taskPitchHashes.selector;
-        s[20] = RegistryFacet.taskProofHashes.selector;
+        cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
+        cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors());
+        cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors());
+        cuts[3] = IDiamondCut.FacetCut(core, IDiamondCut.FacetCutAction.Add, FacetSelectors.coreFacetSelectors());
+        cuts[4] = IDiamondCut.FacetCut(auction, IDiamondCut.FacetCutAction.Add, FacetSelectors.auctionFacetSelectors());
+        cuts[5] = IDiamondCut.FacetCut(accept, IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectors());
+        cuts[6] = IDiamondCut.FacetCut(eval, IDiamondCut.FacetCutAction.Add, FacetSelectors.evalFacetSelectors());
+        cuts[7] = IDiamondCut.FacetCut(rating, IDiamondCut.FacetCutAction.Add, FacetSelectors.ratingFacetSelectors());
+        cuts[8] =
+            IDiamondCut.FacetCut(registry, IDiamondCut.FacetCutAction.Add, FacetSelectors.registryFacetSelectors());
     }
 }

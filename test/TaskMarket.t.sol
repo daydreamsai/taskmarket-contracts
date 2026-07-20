@@ -19,6 +19,7 @@ import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { Diamond } from "../src/Diamond.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock USDC", "USDC") {
@@ -738,7 +739,9 @@ contract TaskMarketTest is DiamondTestHelper {
         // Build the cuts array using the same selectors as setUp.
         AdminFacet adminFacet = new AdminFacet();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(adminFacet), IDiamondCut.FacetCutAction.Add, _adminSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            address(adminFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors()
+        );
         bytes memory badInit = abi.encodeCall(AdminFacet.initialize, (address(usdc), address(0), defaultFeeBps));
         vm.expectRevert(ITMPCore.InvalidFeeRecipient.selector);
         new Diamond(owner, cuts, address(adminFacet), badInit);
@@ -747,7 +750,9 @@ contract TaskMarketTest is DiamondTestHelper {
     function test_RevertWhen_Constructor_FeeBpsTooHigh() public {
         AdminFacet adminFacet = new AdminFacet();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(adminFacet), IDiamondCut.FacetCutAction.Add, _adminSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            address(adminFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors()
+        );
         bytes memory badInit = abi.encodeCall(AdminFacet.initialize, (address(usdc), feeRecipient, 10001));
         vm.expectRevert(ITMPCore.FeeBpsTooHigh.selector);
         new Diamond(owner, cuts, address(adminFacet), badInit);

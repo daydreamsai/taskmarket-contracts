@@ -39,6 +39,12 @@ struct AppStorage {
     // Rev008: multi-hook support
     address[] defaultHooks;
     mapping(bytes32 => address[]) taskHooks;
+    // Rev011: explicit upgrade-step counter, tracking the same revision numbering already used
+    // throughout this codebase's comments (rev007, rev008, ...). Zero on every diamond deployed
+    // before this field existed; the one-time transition into version tracking still relies on
+    // the legacy selector-presence detection in DiamondFullUpgrade.s.sol. Bumped by each
+    // versioned upgrade step script after it applies its delta.
+    uint256 diamondVersion;
 }
 
 library LibAppStorage {
