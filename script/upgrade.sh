@@ -16,10 +16,17 @@
 # Adding a new revision requires no changes to this script or the Makefile: drop a new
 # script/upgrades/RevNNNUpgrade.s.sol file (contract name RevNNNUpgrade) and it is picked up
 # automatically on the next `make upgrade` run.
+#
+# Set DRY_RUN=1 to simulate against live chain state without broadcasting (forge script's
+# normal dry-run behavior when --broadcast is omitted). Only the first pending step is
+# simulated: a dry run never actually advances diamondVersion on-chain, so any step after the
+# first would simulate against the same pre-upgrade state and fail its own precondition check
+# -- each step can only be meaningfully previewed once the one before it has actually broadcast.
 set -euo pipefail
 
 NETWORK="$1"
 REV="${2:-}"
+DRY_RUN="${DRY_RUN:-0}"
 
 if [ "$NETWORK" = "testnet" ]; then
   RPC_URL="base_sepolia"
@@ -33,7 +40,11 @@ else
 fi
 
 run_script() {
-  forge script "$1" --rpc-url "$RPC_URL" --broadcast --verify
+  if [ "$DRY_RUN" = "1" ]; then
+    forge script "$1" --rpc-url "$RPC_URL"
+  else
+    forge script "$1" --rpc-url "$RPC_URL" --broadcast --verify
+  fi
 }
 
 current_version() {
@@ -52,6 +63,10 @@ VERSION="$(current_version)"
 if [ -z "$VERSION" ] || [ "$VERSION" = "0" ]; then
   echo "diamondVersion is untracked (pre-rev011) -- running legacy bootstrap..."
   run_script "script/DiamondFullUpgrade.s.sol:DiamondFullUpgrade"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "Dry run: stopping after the first pending step (bootstrap) -- later steps can't be simulated until this one actually broadcasts."
+    exit 0
+  fi
   VERSION="$(current_version)"
 fi
 
@@ -62,6 +77,10 @@ for f in $(printf '%s\n' script/upgrades/Rev*Upgrade.s.sol | sort); do
   if [ "$TARGET" -gt "$VERSION" ]; then
     echo "Applying $NAME (target rev $TARGET, current rev $VERSION)..."
     run_script "script/upgrades/${NAME}.s.sol:${NAME}"
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "Dry run: stopping after the first pending step ($NAME) -- later steps can't be simulated until this one actually broadcasts."
+      exit 0
+    fi
     VERSION="$(current_version)"
   fi
 done
