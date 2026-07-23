@@ -301,12 +301,14 @@ contract CoreFacet {
         s.taskRejectedWorkers[taskId][worker] = true;
         // Decrement by the worker's full submission count so that workers who submitted
         // multiple times don't leave a phantom count that blocks cancelTask/refundExpired.
-        // Falls back to 1 for pre-rejection (worker hasn't submitted yet) and for
-        // submissions made before taskSubmissionHashes tracking was introduced.
+        // A worker with zero recorded submissions has nothing to decrement -- crediting a
+        // decrement for them would let a requester phantom-clear this guard against a
+        // real, still-live submission from a different worker.
         uint256 workerCount = s.taskSubmissionHashes[taskId][worker].length;
-        uint256 decrement = workerCount > 0 ? workerCount : 1;
-        uint256 active = s.taskActiveSubmissionCount[taskId];
-        s.taskActiveSubmissionCount[taskId] = active > decrement ? active - decrement : 0;
+        if (workerCount > 0) {
+            uint256 active = s.taskActiveSubmissionCount[taskId];
+            s.taskActiveSubmissionCount[taskId] = active > workerCount ? active - workerCount : 0;
+        }
 
         emit ITMPCore.SubmissionRejected(taskId, worker);
         LibTaskMarket._nonReentrantAfter(s);
@@ -432,7 +434,20 @@ contract CoreFacet {
 
         uint256 refund = 0;
         if (newReward != 0 && newReward != task.reward) {
-            refund = newReward < task.reward ? task.reward - newReward : 0;
+            if (newReward < task.reward) {
+                refund = task.reward - newReward;
+            } else {
+                // Defense-in-depth: the forwarder is expected to have funded this increase
+                // via paymentAmount before this call executes (mirroring createTask's
+                // funding model). This does not prove this specific increase was funded --
+                // escrow is one pooled balance across every task -- but it catches the
+                // acute failure mode where no funding transfer happened at all (e.g. a
+                // relayed paymentAmount of 0 due to a backend bug), instead of silently
+                // promising a reward the Diamond cannot pay. See ADR 0025.
+                if (s.usdcToken.balanceOf(address(this)) < newReward) {
+                    revert ITMPCore.RewardIncreaseNotFunded();
+                }
+            }
             task.reward = newReward;
             if (task.mode == AUCTION) s.taskAuctionConfigs[taskId].maxPrice = newReward;
         }
@@ -518,6 +533,40 @@ contract CoreFacet {
     }
 
     function _refundAuctionClaimed(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
+        if (task.deliverable == bytes32(0)) {
+            // Worker claimed but never submitted a deliverable -- treat expiry as a full
+            // refund to the requester, matching the non-auction _refundExpiredNormal path,
+            // instead of auto-paying the claimed stake for work that was never delivered.
+            task.status = ITMPCore.TaskStatus.Expired;
+            uint256 refundAmount = task.reward;
+            address requesterAddr = task.requester;
+
+            // An evaluator can be assigned to an auction task while it's still Open. Since
+            // the task never reaches Review without a deliverable, evaluate() never runs and
+            // never returns the evaluator's stake -- forfeit it here (mirroring the same
+            // evaluator-never-acted forfeiture _refundExpiredNormal already applies) instead
+            // of leaving it stranded in escrow with no path back to anyone.
+            ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
+            address timedOutEvaluator = evalCfg.evaluator;
+            uint256 evaluatorForfeited = evalCfg.evaluatorStake;
+            if (evaluatorForfeited > 0) {
+                evalCfg.evaluatorStake = 0;
+                evalCfg.evaluator = address(0);
+                s.totalFeesCollected += evaluatorForfeited;
+            }
+
+            if (!s.usdcToken.transfer(requesterAddr, refundAmount)) revert ITMPCore.RefundFailed();
+
+            if (evaluatorForfeited > 0) {
+                if (!s.usdcToken.transfer(s.feeRecipient, evaluatorForfeited)) revert ITMPCore.ForfeitTransferFailed();
+                emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, evaluatorForfeited);
+            }
+
+            emit ITMPCore.TaskExpired(taskId, requesterAddr, refundAmount);
+            LibTaskMarket._onExpireHooks(taskId, s);
+            return;
+        }
+
         uint256 fee = (task.stakeAmount * task.feeBps) / 10000;
         uint256 workerPayment = task.stakeAmount - fee;
         task.status = ITMPCore.TaskStatus.Accepted;
@@ -554,10 +603,23 @@ contract CoreFacet {
         AppStorage storage s,
         uint256 requesterAgentId
     ) private {
-        task.status = ITMPCore.TaskStatus.Expired;
-        uint256 refundAmount = task.reward;
-
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
+
+        // If evaluate() already ran (status Appealing/Disputed), it paid out
+        // evalFee = task.reward * evaluatorFeeBps / 10000 to the evaluator immediately.
+        // That amount is no longer part of this task's outstanding liability, so it
+        // must not be refunded again here on top of the full original reward.
+        uint256 evalFeeAlreadyPaid = 0;
+        if (
+            (task.status == ITMPCore.TaskStatus.Appealing || task.status == ITMPCore.TaskStatus.Disputed)
+                && evalCfg.evaluatorFeeBps > 0
+        ) {
+            evalFeeAlreadyPaid = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
+        }
+
+        task.status = ITMPCore.TaskStatus.Expired;
+        uint256 refundAmount = task.reward - evalFeeAlreadyPaid;
+
         address timedOutEvaluator = evalCfg.evaluator;
         uint256 evaluatorForfeited = evalCfg.evaluatorStake;
         if (evaluatorForfeited > 0) {

@@ -144,7 +144,20 @@ contract EvaluatorFacet {
 
         address worker = LibTaskMarket._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (worker != task.worker) revert ITMPCore.NotWorker();
+        // Bounty/Benchmark verdicts issued with an empty awards array leave task.worker
+        // unset even though real submitters exist in taskSubmissionHashes (populated by
+        // submitWork independently of task.worker). Fall back to that per-worker record
+        // so an empty-awards verdict is still appealable by whoever actually submitted,
+        // instead of being permanently unappealable by construction. Gated on task.worker
+        // still being unset: once a verdict has awarded someone, only that worker may
+        // appeal -- otherwise any other past submitter (including one already rejected
+        // pre-evaluation) could appeal a verdict they were never part of, stalling a
+        // legitimately-awarded worker's payout.
+        bool authorized = worker == task.worker;
+        if (!authorized && task.worker == address(0) && (task.mode == BOUNTY || task.mode == BENCHMARK)) {
+            authorized = s.taskSubmissionHashes[taskId][worker].length > 0;
+        }
+        if (!authorized) revert ITMPCore.NotWorker();
         if (task.status != ITMPCore.TaskStatus.Appealing) revert ITMPCore.NotInAppealingState();
         if (block.timestamp >= s.phaseDeadline[taskId]) revert ITMPCore.AppealWindowClosed();
 

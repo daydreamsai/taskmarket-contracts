@@ -1468,6 +1468,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 acceptPrice = 40 * 10 ** 6;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         _acceptAuction(taskId, worker1, acceptPrice);
+        _submitWork(taskId, worker1, keccak256("work"));
 
         vm.warp(block.timestamp + DURATION + 1);
 
@@ -1497,6 +1498,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 acceptPrice = REWARD;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         _acceptAuction(taskId, worker1, acceptPrice);
+        _submitWork(taskId, worker1, keccak256("work"));
 
         vm.warp(block.timestamp + DURATION + 1);
 
@@ -1513,6 +1515,72 @@ contract TaskMarketTest is DiamondTestHelper {
 
         ITMPCore.Task memory task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Accepted));
+    }
+
+    function test_RefundExpired_Auction_ClaimedNoDeliverable_FullRefundNoWorkerPayment() public {
+        // Worker claims the auction but never submits any deliverable. On expiry,
+        // refundExpired must NOT auto-pay the claimed stake -- it must fully refund
+        // the requester instead, matching the non-auction expiry path.
+        uint256 acceptPrice = 40 * 10 ** 6;
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
+        _acceptAuction(taskId, worker1, acceptPrice);
+
+        vm.warp(block.timestamp + DURATION + 1);
+
+        uint256 worker1BalanceBefore = usdc.balanceOf(worker1);
+        uint256 requesterBalanceBefore = usdc.balanceOf(requester);
+
+        market.refundExpired(taskId, 0);
+
+        assertEq(usdc.balanceOf(worker1), worker1BalanceBefore, "worker must not be paid without a deliverable");
+        assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD, "requester must get the full reward back");
+
+        ITMPCore.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_RefundExpired_Auction_ClaimedNoDeliverable_ForfeitsEvaluatorStake() public {
+        // An evaluator can be assigned to an auction task while it's still Open (assignEvaluator
+        // only requires TaskStatus.Open, not a particular mode). If the worker then claims the
+        // auction but never submits, the task never reaches Review -- evaluate() never runs, so
+        // the evaluator's stake is never returned. The no-deliverable refund path must forfeit
+        // it (matching the existing Review-state precedent) instead of leaving it stranded.
+        uint256 stakeAmount = REWARD / 10;
+        uint256 acceptPrice = 40 * 10 ** 6;
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
+
+        usdc.mint(requester, stakeAmount);
+        vm.prank(requester);
+        usdc.approve(address(market), stakeAmount);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, stakeAmount, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+
+        _acceptAuction(taskId, worker1, acceptPrice);
+
+        vm.warp(block.timestamp + DURATION + 1);
+
+        uint256 worker1BalanceBefore = usdc.balanceOf(worker1);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
+
+        vm.expectEmit(true, true, false, true);
+        emit ITMPEvaluator.EvaluatorTimedOut(taskId, evaluator, stakeAmount);
+
+        market.refundExpired(taskId, 0);
+
+        assertEq(usdc.balanceOf(worker1), worker1BalanceBefore, "worker must not be paid without a deliverable");
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "requester must get the full reward back");
+        assertEq(
+            usdc.balanceOf(feeRecipient),
+            feeRecipientBefore + stakeAmount,
+            "evaluator stake must be forfeited, not stranded"
+        );
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, 0, "stake zeroed");
     }
 
     // -----------------------------------------------------------------------
@@ -1716,6 +1784,36 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
     }
 
+    function test_RevertWhen_RejectSubmission_NonSubmitter_CannotPhantomClearGuard() public {
+        // A real worker has a live submission. The requester tries to reject a
+        // throwaway address that never submitted, hoping to phantom-clear the
+        // active-submission counter and unblock cancelTask around the real submission.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("real work"));
+
+        address neverSubmitted = address(0x9999);
+        _rejectSubmission(taskId, requester, neverSubmitted);
+
+        // worker1's real submission must still block cancelTask.
+        vm.expectRevert(ITMPCore.SubmissionsExist.selector);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+    }
+
+    function test_RejectSubmission_NonSubmitter_ThenRealRejection_StillUnblocks() public {
+        // Rejecting a non-submitter is a legitimate no-op pre-rejection and must not
+        // block the real worker's eventual rejection from clearing the guard correctly.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("real work"));
+
+        _rejectSubmission(taskId, requester, address(0x9999));
+        _rejectSubmission(taskId, requester, worker1);
+
+        uint256 balanceBefore = usdc.balanceOf(requester);
+        _cancelTask(taskId, requester);
+        assertEq(usdc.balanceOf(requester), balanceBefore + REWARD);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
     // -----------------------------------------------------------------------
     // updateTask tests
     // -----------------------------------------------------------------------
@@ -1732,6 +1830,17 @@ contract TaskMarketTest is DiamondTestHelper {
 
         ITMPCore.Task memory task = market.getTask(taskId);
         assertEq(task.reward, newReward);
+    }
+
+    function test_RevertWhen_UpdateTask_RewardIncrease_NotFunded() public {
+        // No paymentAmount funds the increase this time (additionalPayment = 0) -- the
+        // Diamond's balance can't cover the new reward, so the increase must revert instead
+        // of silently promising a reward the escrow doesn't actually hold.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        uint256 newReward = REWARD * 2;
+
+        vm.expectRevert(ITMPCore.RewardIncreaseNotFunded.selector);
+        _updateTask(taskId, requester, 0, newReward, 0, 0, 0);
     }
 
     function test_UpdateTask_RewardDecrease() public {
@@ -2790,6 +2899,73 @@ contract TaskMarketTest is DiamondTestHelper {
         assertGt(usdc.balanceOf(worker1), before);
     }
 
+    function test_Appeal_BountyEmptyAwards_AllowsRealSubmitterToAppeal() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+        _submitWork(taskId, worker1, keccak256("work"));
+
+        ITMPCore.Award[] memory noAwards = new ITMPCore.Award[](0);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.REJECT, 100, noAwards);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
+        // task.worker is never set for an empty-awards verdict.
+        assertEq(market.getTask(taskId).worker, address(0));
+
+        // worker1 is a real submitter (tracked via taskSubmissionHashes) even though
+        // task.worker was never populated -- appeal must still succeed for them.
+        _appeal(taskId, worker1);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Disputed));
+    }
+
+    function test_RevertWhen_Appeal_BountyEmptyAwards_NonSubmitterCannotAppeal() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+        _submitWork(taskId, worker1, keccak256("work"));
+
+        ITMPCore.Award[] memory noAwards = new ITMPCore.Award[](0);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.REJECT, 100, noAwards);
+
+        // worker2 never submitted anything on this task -- must not be able to appeal.
+        vm.expectRevert(ITMPCore.NotWorker.selector);
+        _appeal(taskId, worker2);
+    }
+
+    function test_RevertWhen_Appeal_BountyNonEmptyAwards_LosingSubmitterCannotAppeal() public {
+        // Two workers submit to the same bounty. The evaluator awards worker1 outright.
+        // worker2 is a real submitter but was not awarded -- the empty-awards fallback
+        // must not let a losing submitter appeal (and thus stall) a verdict that already
+        // has a valid, non-empty task.worker.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+        _submitWork(taskId, worker1, keccak256("winner work"));
+        _submitWork(taskId, worker2, keccak256("loser work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, awards);
+        assertEq(market.getTask(taskId).worker, worker1);
+
+        vm.expectRevert(ITMPCore.NotWorker.selector);
+        _appeal(taskId, worker2);
+    }
+
     function test_EvaluatorTimeout_ForfeitsStakeAndOpensPendingApproval() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         uint32 evalWindowSecs = uint32(2 days);
@@ -2864,6 +3040,7 @@ contract TaskMarketTest is DiamondTestHelper {
             (bytes32)
         );
         _acceptAuction(taskId, worker1, acceptPrice);
+        _submitWork(taskId, worker1, keccak256("work"));
 
         vm.warp(block.timestamp + DURATION + 1);
         assertEq(hook.onCompleteCalls(), 0);
@@ -3055,6 +3232,39 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 before = usdc.balanceOf(requester);
         market.refundExpired(taskId, 0);
         assertGt(usdc.balanceOf(requester), before);
+    }
+
+    function test_RefundExpired_DuringAppealing_DeductsAlreadyPaidEvaluatorFee() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        uint16 evalFeeBps = 1000; // 10%
+        uint32 evalWindow = uint32(2 days);
+        uint32 appealWindow = uint32(3 days);
+        _assignEvaluator(taskId, requester, evaluator, evalFeeBps, evalWindow, appealWindow);
+        _claimTask(taskId, worker1, 0);
+        // Submit near the original expiry so the appeal window extension actually pushes
+        // expiryTime past "now" (mirrors test_RefundExpired_DuringAppealing_AfterExtendedExpiry).
+        vm.warp(block.timestamp + DURATION - 1 hours);
+        _submitWork(taskId, worker1, keccak256("work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+
+        uint256 evaluatorBalanceBefore = usdc.balanceOf(evaluator);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, awards);
+        uint256 evalFee = (REWARD * evalFeeBps) / 10000;
+        assertEq(usdc.balanceOf(evaluator), evaluatorBalanceBefore + evalFee);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
+
+        // Let the appeal window (and thus the extended expiry) pass without an appeal,
+        // then let anyone call refundExpired instead of finalizeVerdict.
+        vm.warp(block.timestamp + appealWindow + 1);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.refundExpired(taskId, 0);
+
+        // The requester must only recover reward - evalFee (already paid to the evaluator),
+        // not the full original reward stacked on top of it (that would drain other tasks'
+        // pooled escrow).
+        assertEq(usdc.balanceOf(requester), requesterBefore + (REWARD - evalFee));
     }
 
     function test_RevertWhen_RefundExpired_DuringDisputed_BeforeExtendedExpiry() public {

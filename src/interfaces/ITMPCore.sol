@@ -130,6 +130,7 @@ interface ITMPCore is IERC165 {
     error RequesterRefundFailed();
     error USDCRefundFailed();
     error ExcessRefundFailed();
+    error RewardIncreaseNotFunded();
 
     // Hooks
     error HookCheckFundRejected();
