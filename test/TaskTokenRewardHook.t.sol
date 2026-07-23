@@ -360,7 +360,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         bytes32 taskId = _createClaimTask();
 
         // Verify state stored
-        (uint256 rewardUsd,,,, address req,, bool reserved, bool paid) = hook.rewardStates(taskId);
+        (uint256 rewardUsd,,,, address req,, bool reserved, bool paid,) = hook.rewardStates(taskId);
         assertEq(rewardUsd, REWARD_100_USDC);
         assertEq(req, requester);
         assertFalse(reserved);
@@ -370,7 +370,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         uint256 vaultBefore = vault.available();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
 
-        (,, uint256 startPrice, uint256 reservedAmt,, address lockedWorker, bool res,) = hook.rewardStates(taskId);
+        (,, uint256 startPrice, uint256 reservedAmt,, address lockedWorker, bool res,,) = hook.rewardStates(taskId);
         assertEq(startPrice, DREAMS_PER_USDC);
         assertEq(lockedWorker, worker);
         assertTrue(res);
@@ -393,7 +393,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(vault.taskReserve(taskId), 0);
 
         // Verify paid flag
-        (,,,,,,, bool paid2) = hook.rewardStates(taskId);
+        (,,,,,,, bool paid2,) = hook.rewardStates(taskId);
         assertTrue(paid2);
     }
 
@@ -449,7 +449,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(vault.taskReserve(taskId), 0, "reservation must be released via onCancel, not left dangling");
         assertEq(vault.available(), vaultBefore, "vault tokens must not be orphaned");
 
-        (,,,,,, bool reserved,) = hook.rewardStates(taskId);
+        (,,,,,, bool reserved,,) = hook.rewardStates(taskId);
         assertFalse(reserved, "reward state must reflect the released reservation");
 
         // A cancelled task can never be reclaimed, so no double-reservation is possible.
@@ -925,7 +925,8 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         bytes32 taskId = _createClaimTask();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
 
-        (, uint256 usdBonusValue, uint256 startPrice, uint256 reservedAmt,,, bool reserved,) = hook.rewardStates(taskId);
+        (, uint256 usdBonusValue, uint256 startPrice, uint256 reservedAmt,,, bool reserved,,) =
+            hook.rewardStates(taskId);
         assertEq(usdBonusValue, 0);
         // Rate still locks even though the bonus is zero — the two are independent.
         assertEq(startPrice, DREAMS_PER_USDC);
@@ -944,7 +945,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         bytes32 taskId = _createClaimTask();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
 
-        (, uint256 usdBonusValue,,,,,,) = hook.rewardStates(taskId);
+        (, uint256 usdBonusValue,,,,,,,) = hook.rewardStates(taskId);
         // $100 * 7.5% = $7.50 (7.5e6 USDC base units)
         assertEq(usdBonusValue, 7.5e6);
 
@@ -995,7 +996,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         bytes32 taskId = _createClaimTask();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
 
-        (,, uint256 startPrice, uint256 reservedAmt,,, bool reserved,) = hook.rewardStates(taskId);
+        (,, uint256 startPrice, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
         assertEq(startPrice, 0);
         assertEq(reservedAmt, 0);
         assertTrue(reserved);
@@ -1254,8 +1255,13 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     }
 
     function test_epochBudget_release_noOp_whenAmountExceedsUsed() public {
+        // Hoist this out of the prank'd call: vm.prank only applies to the very next
+        // external call, and evaluating budget.currentEpoch() inline as an argument would
+        // consume it before release() runs, leaving release() to execute as the test
+        // contract instead of the hook and revert with OnlyHook.
+        uint64 epoch = budget.currentEpoch();
         vm.prank(address(hook));
-        budget.release(requester, worker, 999 * 1e6);
+        budget.release(requester, worker, 999 * 1e6, epoch);
         assertEq(budget.workerUsed(worker), 0);
     }
 

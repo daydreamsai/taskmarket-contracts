@@ -132,8 +132,12 @@ contract EpochBudget is Ownable {
     }
 
     /// @notice Check USD capacity and consume budget. Reverts if any cap is exceeded.
-    function checkAndConsume(address requester, address worker, uint256 amount) external onlyHook {
-        uint64 epoch = _rollEpochIfStale();
+    function checkAndConsume(address requester, address worker, uint256 amount)
+        external
+        onlyHook
+        returns (uint64 epoch)
+    {
+        epoch = _rollEpochIfStale();
 
         if (amount > maxUsdPerTask) revert TaskCapExceeded(amount, maxUsdPerTask);
 
@@ -155,10 +159,14 @@ contract EpochBudget is Ownable {
         emit Consumed(requester, worker, amount);
     }
 
-    /// @notice Reverse previously consumed budget within the same epoch (cancel/expire/forfeit).
-    ///         If the epoch has rolled since consumption, usage is already zero — no-op.
-    function release(address requester, address worker, uint256 amount) external onlyHook {
+    /// @notice Reverse previously consumed budget in the epoch it was originally consumed in.
+    ///         `consumedEpoch` must be the epoch value returned by the matching
+    ///         checkAndConsume call. If the epoch has since rolled past, that epoch's usage
+    ///         bucket has already reset to zero -- releasing is a documented no-op rather
+    ///         than corrupting the current epoch's live usage accounting.
+    function release(address requester, address worker, uint256 amount, uint64 consumedEpoch) external onlyHook {
         uint64 epoch = _rollEpochIfStale();
+        if (epoch != consumedEpoch) return;
         bool anyDecremented = false;
 
         uint256 gUsed = _usedIn(globalUsage, epoch);

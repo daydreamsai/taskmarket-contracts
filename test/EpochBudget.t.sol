@@ -117,14 +117,14 @@ contract EpochBudgetTest is Test {
     function test_release_onlyHook() public {
         vm.prank(STRANGER);
         vm.expectRevert(EpochBudget.OnlyHook.selector);
-        budget.release(REQUESTER, WORKER, 1e18);
+        budget.release(REQUESTER, WORKER, 1e18, 0);
     }
 
     function test_release_reversesUsage() public {
         vm.prank(HOOK);
-        budget.checkAndConsume(REQUESTER, WORKER, 200e18);
+        uint64 epoch = budget.checkAndConsume(REQUESTER, WORKER, 200e18);
         vm.prank(HOOK);
-        budget.release(REQUESTER, WORKER, 50e18);
+        budget.release(REQUESTER, WORKER, 50e18, epoch);
         assertEq(budget.workerUsed(WORKER), 150e18);
         assertEq(budget.globalUsed(), 150e18);
         assertEq(budget.requesterUsed(REQUESTER), 150e18);
@@ -132,21 +132,49 @@ contract EpochBudgetTest is Test {
 
     function test_release_noOpWhenAmountExceedsUsage() public {
         vm.prank(HOOK);
-        budget.checkAndConsume(REQUESTER, WORKER, 100e18);
+        uint64 epoch = budget.checkAndConsume(REQUESTER, WORKER, 100e18);
         // Releasing more than used is a no-op for each tracked actor (branch: used < amount).
         vm.prank(HOOK);
-        budget.release(REQUESTER, WORKER, 500e18);
+        budget.release(REQUESTER, WORKER, 500e18, epoch);
         assertEq(budget.workerUsed(WORKER), 100e18);
     }
 
     function test_release_afterRolloverIsNoOp() public {
         vm.prank(HOOK);
-        budget.checkAndConsume(REQUESTER, WORKER, 200e18);
+        uint64 epoch = budget.checkAndConsume(REQUESTER, WORKER, 200e18);
         vm.warp(block.timestamp + EPOCH + 1);
         // Usage already zero in the new epoch; release should leave it at zero.
         vm.prank(HOOK);
-        budget.release(REQUESTER, WORKER, 200e18);
+        budget.release(REQUESTER, WORKER, 200e18, epoch);
         assertEq(budget.workerUsed(WORKER), 0);
+    }
+
+    function test_release_afterRollover_doesNotCorruptNewEpochUsage() public {
+        vm.prank(HOOK);
+        uint64 epochN = budget.checkAndConsume(REQUESTER, WORKER, 200e18);
+
+        vm.warp(block.timestamp + EPOCH + 1);
+
+        // Unrelated fresh consumption for the same worker/requester in the new epoch.
+        vm.prank(HOOK);
+        budget.checkAndConsume(REQUESTER, WORKER, 150e18);
+        assertEq(budget.workerUsed(WORKER), 150e18);
+
+        // Releasing the stale epoch-N reservation must be a no-op against the new epoch's
+        // real usage, not decrement it as if it belonged to the current epoch.
+        vm.prank(HOOK);
+        budget.release(REQUESTER, WORKER, 200e18, epochN);
+        assertEq(budget.workerUsed(WORKER), 150e18, "stale release must not corrupt current epoch usage");
+        assertEq(budget.globalUsed(), 150e18);
+        assertEq(budget.requesterUsed(REQUESTER), 150e18);
+    }
+
+    function test_release_sameEpoch_decrementsExactAmount() public {
+        vm.prank(HOOK);
+        uint64 epoch = budget.checkAndConsume(REQUESTER, WORKER, 200e18);
+        vm.prank(HOOK);
+        budget.release(REQUESTER, WORKER, 50e18, epoch);
+        assertEq(budget.workerUsed(WORKER), 150e18);
     }
 
     function test_ownerSetters() public {

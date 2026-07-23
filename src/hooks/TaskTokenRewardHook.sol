@@ -51,6 +51,7 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
         address worker;
         bool reserved; // true for Claim/Pitch/Auction (pre-reserved)
         bool paid;
+        uint64 consumedEpoch;
     }
 
     IRewardVault public vault;
@@ -175,7 +176,8 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
             requester: ctx.requester,
             worker: address(0),
             reserved: false,
-            paid: false
+            paid: false,
+            consumedEpoch: 0
         });
 
         emit RewardConfigured(taskId, ctx.reward);
@@ -285,7 +287,8 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
 
             if (!paid) {
                 try vault.release(taskId, tokenReward) { } catch { }
-                try epochBudget.release(state.requester, state.worker, state.usdBonusValue) { } catch { }
+                try epochBudget.release(state.requester, state.worker, state.usdBonusValue, state.consumedEpoch) { }
+                    catch { }
                 return true;
             }
 
@@ -345,10 +348,10 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
                 // reentrant call back into any Diamond-facing function reverts. If
                 // `token` is ever changed to a callback-capable token, this ordering
                 // must be revisited.
-                try epochBudget.checkAndConsume(ctx.requester, worker, cappedUsd) {
-                // consume succeeded — vault payment follows below
-                }
-                catch {
+                uint64 consumeEpoch = 0;
+                try epochBudget.checkAndConsume(ctx.requester, worker, cappedUsd) returns (uint64 epoch) {
+                    consumeEpoch = epoch;
+                } catch {
                     continue;
                 }
 
@@ -362,7 +365,7 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
                     _creditWithSplit(ctx.requester, worker, tokenReward);
                     emit RewardPaid(taskId, worker, workerUsd, cappedUsd, rate, tokenReward);
                 } else {
-                    try epochBudget.release(ctx.requester, worker, cappedUsd) { } catch { }
+                    try epochBudget.release(ctx.requester, worker, cappedUsd, consumeEpoch) { } catch { }
                 }
             }
         }
@@ -389,7 +392,8 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
         RewardState storage state = rewardStates[taskId];
         if (state.reserved && !state.paid && state.reservedTokenAmount > 0) {
             try vault.release(taskId, state.reservedTokenAmount) { } catch { }
-            try epochBudget.release(state.requester, state.worker, state.usdBonusValue) { } catch { }
+            try epochBudget.release(state.requester, state.worker, state.usdBonusValue, state.consumedEpoch) { }
+                catch { }
             emit RewardReserveReleased(taskId, state.reservedTokenAmount);
         }
     }
@@ -611,8 +615,9 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
         // is a trusted owner-set contract with no callback mechanism, so the
         // reentrancy-no-eth finding is a false positive.
         // slither-disable-next-line reentrancy-no-eth
-        try epochBudget.checkAndConsume(requester, worker, bonusUsd) {
+        try epochBudget.checkAndConsume(requester, worker, bonusUsd) returns (uint64 epoch) {
             state.reservedTokenAmount = tokenAmount;
+            state.consumedEpoch = epoch;
             vault.reserve(taskId, tokenAmount);
         } catch { }
 
@@ -630,7 +635,7 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
         state.reserved = false;
         state.reservedTokenAmount = 0;
         try vault.release(taskId, tokenAmount) { } catch { }
-        try epochBudget.release(state.requester, state.worker, usdAmount) { } catch { }
+        try epochBudget.release(state.requester, state.worker, usdAmount, state.consumedEpoch) { } catch { }
         emit RewardReserveReleased(taskId, tokenAmount);
     }
 
