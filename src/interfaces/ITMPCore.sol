@@ -267,7 +267,7 @@ interface ITMPCore is IERC165 {
         bytes32 deliverable;
         uint8 rating;
         address hookContract;
-        // Rev013: the requester's stake requirement selected at creation time, distinct from
+        // Rev014: the requester's stake requirement selected at creation time, distinct from
         // stakeAmount above (the worker's actual chosen stake, set later by claimTask). Recorded
         // here (and in TaskCreated) so it is chain-recoverable the same way reward/mode/expiryTime
         // already are -- see ADR-0029.
@@ -306,7 +306,7 @@ interface ITMPCore is IERC165 {
         bytes32[] tags;
     }
 
-    /// @notice Requester's stake requirement, passed to createTask (Rev013).
+    /// @notice Requester's stake requirement, passed to createTask (Rev014).
     ///         Packed into one calldata pointer, like HookConfig/TaskContent, to stay within
     ///         the Yul stack limit under the --ir-minimum coverage profile -- two loose scalar
     ///         parameters reproduced a "stack too deep" failure there even though the default
@@ -445,7 +445,7 @@ interface ITMPCore is IERC165 {
     /// @param pitchDeadline   Seconds from now for pitch acceptance (Pitch mode only, 0 otherwise)
     /// @param bidDeadline     Seconds from now for bid submission (Auction mode only, 0 otherwise)
     /// @param auctionSubtype  Auction subtype selector (see ITMPModes; bytes4(0) for non-auction tasks)
-    /// @param stakeConfig     Requester's stake requirement (Rev013); informational only -- not
+    /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
     ///                        currently enforced by claimTask, see ADR-0029
     /// @param hookConfig      Hook contracts and per-task hookData (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).

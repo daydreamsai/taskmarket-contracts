@@ -45,7 +45,7 @@ contract CoreFacet {
     /// @param pitchDeadline   Seconds from now for pitch window (Pitch mode only, 0 otherwise)
     /// @param bidDeadline     Seconds from now for bid window (Auction mode only, 0 otherwise)
     /// @param auctionSubtype  Auction subtype selector (bytes4(0) for non-auction tasks)
-    /// @param stakeConfig     Requester's stake requirement (Rev013); informational only -- not
+    /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
     ///                        currently enforced by claimTask, see ADR-0029
     /// @param hookConfig      Hook contracts + hookData packed into one calldata pointer (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
