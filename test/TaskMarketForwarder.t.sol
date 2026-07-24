@@ -82,6 +82,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -170,6 +171,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -196,6 +198,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -222,6 +225,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -253,6 +257,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -274,6 +279,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -309,6 +315,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -336,6 +343,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -366,6 +374,7 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )

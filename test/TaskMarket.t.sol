@@ -107,6 +107,20 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 _bd,
         bytes4 _auctionSubtype
     ) internal returns (bytes32) {
+        return _createTask(_req, _reward, _dur, _mode, _pd, _bd, _auctionSubtype, false, 0);
+    }
+
+    function _createTask(
+        address _req,
+        uint256 _reward,
+        uint256 _dur,
+        bytes4 _mode,
+        uint256 _pd,
+        uint256 _bd,
+        bytes4 _auctionSubtype,
+        bool _stakeRequired,
+        uint16 _stakeBps
+    ) internal returns (bytes32) {
         return abi.decode(
             _relay(
                 _req,
@@ -120,6 +134,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         _pd,
                         _bd,
                         _auctionSubtype,
+                        ITMPCore.StakeConfig({ required: _stakeRequired, bps: _stakeBps }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -150,6 +165,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         _dur,
                         _dur,
                         bytes4(0),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -333,7 +349,7 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 expectedId = _nextTaskId(requester);
 
         vm.expectEmit(true, true, true, true);
-        emit ITMPCore.TaskCreated(expectedId, requester, REWARD, market.BOUNTY(), block.timestamp + DURATION);
+        emit ITMPCore.TaskCreated(expectedId, requester, REWARD, market.BOUNTY(), block.timestamp + DURATION, false, 0);
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
 
@@ -348,9 +364,9 @@ contract TaskMarketTest is DiamondTestHelper {
 
     function test_TaskCreated_ModeIsIndexedTopic() public {
         bytes32 expectedId = _nextTaskId(requester);
-        // topic3 = mode (indexed); checkData = reward + expiryTime
+        // topic3 = mode (indexed); checkData = reward + expiryTime + stakeRequired + stakeBps
         vm.expectEmit(true, true, true, true);
-        emit ITMPCore.TaskCreated(expectedId, requester, REWARD, market.BOUNTY(), block.timestamp + DURATION);
+        emit ITMPCore.TaskCreated(expectedId, requester, REWARD, market.BOUNTY(), block.timestamp + DURATION, false, 0);
         _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
     }
 
@@ -607,6 +623,7 @@ contract TaskMarketTest is DiamondTestHelper {
             0,
             0,
             bytes4(0),
+            ITMPCore.StakeConfig({ required: false, bps: 0 }),
             ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
             ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
         );
@@ -686,6 +703,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         0,
                         bytes4(0),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -713,6 +731,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -774,6 +793,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -792,6 +812,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -810,6 +831,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -828,6 +850,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -846,6 +869,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 1 days,
                 bytes4(0xdeadbeef),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -862,6 +886,47 @@ contract TaskMarketTest is DiamondTestHelper {
     function test_CreateTask_NonAuction_SubtypeZero() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         assertEq(market.getTaskAuctionConfig(taskId).auctionSubtype, bytes4(0));
+    }
+
+    function test_CreateTask_StakeConfig_StoredAndRecoverable() public {
+        bytes32 expectedId = _nextTaskId(requester);
+
+        vm.expectEmit(true, true, true, true);
+        emit ITMPCore.TaskCreated(expectedId, requester, REWARD, market.CLAIM(), block.timestamp + DURATION, true, 1500);
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0, bytes4(0), true, 1500);
+
+        assertEq(taskId, expectedId);
+
+        ITMPCore.Task memory task = market.getTask(taskId);
+        assertTrue(task.stakeRequired);
+        assertEq(task.stakeBps, 1500);
+    }
+
+    function test_CreateTask_StakeConfig_DefaultsFalseZero() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        ITMPCore.Task memory task = market.getTask(taskId);
+        assertFalse(task.stakeRequired);
+        assertEq(task.stakeBps, 0);
+    }
+
+    function test_RevertWhen_CreateTask_StakeBpsTooHigh() public {
+        bytes memory data = abi.encodeCall(
+            market.createTask,
+            (
+                REWARD,
+                DURATION,
+                market.BOUNTY(),
+                0,
+                0,
+                bytes4(0),
+                ITMPCore.StakeConfig({ required: true, bps: 10001 }),
+                ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+            )
+        );
+        vm.expectRevert(ITMPCore.StakeBpsTooHigh.selector);
+        forwarder.relay(address(market), requester, REWARD, data);
     }
 
     // -----------------------------------------------------------------------
@@ -2548,6 +2613,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -2570,6 +2636,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -2673,6 +2740,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         0,
                         bytes4(0),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -2705,6 +2773,7 @@ contract TaskMarketTest is DiamondTestHelper {
                 0,
                 0,
                 bytes4(0),
+                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
             )
@@ -2790,6 +2859,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         0,
                         bytes4(0),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: tags })
                     )
@@ -3032,6 +3102,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         1 days,
                         market.AUCTION_DUTCH(),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -3068,6 +3139,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         1 days,
                         market.AUCTION_DUTCH(),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -3408,6 +3480,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         0,
                         bytes4(0),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )
@@ -4011,6 +4084,7 @@ contract TaskMarketTest is DiamondTestHelper {
                     0,
                     0,
                     bytes4(0),
+                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                 )
@@ -4125,6 +4199,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         0,
                         bytes4(0),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: contentHash, contentURI: "ipfs://xyz", tags: emptyTags })
                     )
@@ -4406,6 +4481,7 @@ contract TaskMarketTest is DiamondTestHelper {
                         0,
                         1 days,
                         market.AUCTION_DUTCH(),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
                     )

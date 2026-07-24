@@ -273,6 +273,19 @@
   },
   {
     "type": "function",
+    "name": "diamondVersion",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDefaultHooks",
     "inputs": [],
     "outputs": [
@@ -406,6 +419,19 @@
         "name": "hooks",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDiamondVersion",
+    "inputs": [
+      {
+        "name": "newVersion",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -604,6 +630,11 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DiamondVersionNotIncreasing",
+    "inputs": []
   },
   {
     "type": "error",
@@ -870,6 +901,23 @@
         "name": "auctionSubtype",
         "type": "bytes4",
         "internalType": "bytes4"
+      },
+      {
+        "name": "stakeConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.StakeConfig",
+        "components": [
+          {
+            "name": "required",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "bps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
       },
       {
         "name": "hookConfig",
@@ -1205,6 +1253,25 @@
   },
   {
     "type": "event",
+    "name": "ReputationFeedbackFailed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RequesterReputation",
     "inputs": [
       {
@@ -1435,6 +1502,18 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "stakeRequired",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "stakeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -1688,7 +1767,17 @@
   },
   {
     "type": "error",
+    "name": "RewardIncreaseNotFunded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardMustBeGreaterThanZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakeBpsTooHigh",
     "inputs": []
   },
   {
@@ -2724,6 +2813,16 @@
             "name": "hookContract",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "stakeRequired",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stakeBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

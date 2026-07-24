@@ -45,6 +45,8 @@ contract CoreFacet {
     /// @param pitchDeadline   Seconds from now for pitch window (Pitch mode only, 0 otherwise)
     /// @param bidDeadline     Seconds from now for bid window (Auction mode only, 0 otherwise)
     /// @param auctionSubtype  Auction subtype selector (bytes4(0) for non-auction tasks)
+    /// @param stakeConfig     Requester's stake requirement (Rev013); informational only -- not
+    ///                        currently enforced by claimTask, see ADR-0029
     /// @param hookConfig      Hook contracts + hookData packed into one calldata pointer (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     // solhint-disable-next-line code-complexity
@@ -55,6 +57,7 @@ contract CoreFacet {
         uint256 pitchDeadline,
         uint256 bidDeadline,
         bytes4 auctionSubtype,
+        ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content
     ) external returns (bytes32 taskId) {
@@ -74,6 +77,7 @@ contract CoreFacet {
             if (!(auctionSubtype == AUCTION_DUTCH || auctionSubtype == AUCTION_ENGLISH
                         || auctionSubtype == AUCTION_REVERSE_DUTCH || auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert ITMPCore.InvalidAuctionSubtype();
         }
+        if (stakeConfig.bps > 10000) revert ITMPCore.StakeBpsTooHigh();
 
         taskId = keccak256(abi.encode(block.chainid, address(this), requester, s.requesterNonce[requester]++));
 
@@ -85,6 +89,8 @@ contract CoreFacet {
         t.status = ITMPCore.TaskStatus.Open;
         t.mode = mode;
         t.feeBps = s.defaultFeeBps;
+        t.stakeRequired = stakeConfig.required;
+        t.stakeBps = stakeConfig.bps;
 
         ITMPCore.TaskMetadata storage meta = s.taskMetadata[taskId];
         meta.createdAt = block.timestamp;
@@ -109,7 +115,9 @@ contract CoreFacet {
 
         _buildAndCheckHooks(taskId, hookConfig, s);
 
-        emit ITMPCore.TaskCreated(taskId, requester, reward, mode, block.timestamp + duration);
+        emit ITMPCore.TaskCreated(
+            taskId, requester, reward, mode, block.timestamp + duration, stakeConfig.required, stakeConfig.bps
+        );
         LibTaskMarket._nonReentrantAfter(s);
     }
 

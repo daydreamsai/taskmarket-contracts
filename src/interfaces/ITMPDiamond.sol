@@ -31,6 +31,7 @@ interface ITMPDiamond {
         uint256 pitchDeadlineSecs,
         uint256 bidDeadlineSecs,
         bytes4 auctionSubtype,
+        ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content
     ) external returns (bytes32);

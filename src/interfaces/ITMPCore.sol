@@ -105,6 +105,7 @@ interface ITMPCore is IERC165 {
     error InvalidHookAddress();
     error InvalidForwarderAddress();
     error FeeBpsTooHigh();
+    error StakeBpsTooHigh();
     error RewardMustBeGreaterThanZero();
     error DurationMustBeGreaterThanZero();
     error PitchDeadlineMustBeGreaterThanZero();
@@ -266,6 +267,12 @@ interface ITMPCore is IERC165 {
         bytes32 deliverable;
         uint8 rating;
         address hookContract;
+        // Rev013: the requester's stake requirement selected at creation time, distinct from
+        // stakeAmount above (the worker's actual chosen stake, set later by claimTask). Recorded
+        // here (and in TaskCreated) so it is chain-recoverable the same way reward/mode/expiryTime
+        // already are -- see ADR-0029.
+        bool stakeRequired;
+        uint16 stakeBps;
     }
 
     /// @notice Worker performance statistics.
@@ -299,6 +306,16 @@ interface ITMPCore is IERC165 {
         bytes32[] tags;
     }
 
+    /// @notice Requester's stake requirement, passed to createTask (Rev013).
+    ///         Packed into one calldata pointer, like HookConfig/TaskContent, to stay within
+    ///         the Yul stack limit under the --ir-minimum coverage profile -- two loose scalar
+    ///         parameters reproduced a "stack too deep" failure there even though the default
+    ///         via_ir profile compiled them fine.
+    struct StakeConfig {
+        bool required;
+        uint16 bps;
+    }
+
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
@@ -320,7 +337,13 @@ interface ITMPCore is IERC165 {
 
     /// @notice Emitted when a task is created and reward is escrowed.
     event TaskCreated(
-        bytes32 indexed taskId, address indexed requester, uint256 reward, bytes4 indexed mode, uint256 expiryTime
+        bytes32 indexed taskId,
+        address indexed requester,
+        uint256 reward,
+        bytes4 indexed mode,
+        uint256 expiryTime,
+        bool stakeRequired,
+        uint16 stakeBps
     );
 
     /// @notice Emitted when a task is completed and worker is paid.
@@ -422,6 +445,8 @@ interface ITMPCore is IERC165 {
     /// @param pitchDeadline   Seconds from now for pitch acceptance (Pitch mode only, 0 otherwise)
     /// @param bidDeadline     Seconds from now for bid submission (Auction mode only, 0 otherwise)
     /// @param auctionSubtype  Auction subtype selector (see ITMPModes; bytes4(0) for non-auction tasks)
+    /// @param stakeConfig     Requester's stake requirement (Rev013); informational only -- not
+    ///                        currently enforced by claimTask, see ADR-0029
     /// @param hookConfig      Hook contracts and per-task hookData (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     /// @return taskId         Contract-generated canonical task identifier
@@ -432,6 +457,7 @@ interface ITMPCore is IERC165 {
         uint256 pitchDeadline,
         uint256 bidDeadline,
         bytes4 auctionSubtype,
+        ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content
     ) external returns (bytes32 taskId);
