@@ -94,6 +94,8 @@ Rev012UpgradeTest:test_Rev012Upgrade_BumpsVersionAndReplacesFacets() (gas: 28175
 Rev012UpgradeTest:test_RevertWhen_Rev012Upgrade_NotAtRev011() (gas: 28166785)
 Rev013UpgradeTest:test_Rev013Upgrade_BumpsVersionAndReplacesFacets() (gas: 40578454)
 Rev013UpgradeTest:test_RevertWhen_Rev013Upgrade_NotAtRev012() (gas: 22157306)
+Rev015UpgradeTest:test_Rev015Upgrade_BumpsVersionAndReplacesRegistryFacet() (gas: 43906132)
+Rev015UpgradeTest:test_RevertWhen_Rev015Upgrade_NotAtRev014() (gas: 17597537)
 RewardVaultTest:test_available_fullBalanceWhenNothingReserved() (gas: 13403)
 RewardVaultTest:test_available_returnsZeroWhenReservedExceedsBalance() (gas: 64233)
 RewardVaultTest:test_emergencyWithdraw_leavesReservationUnfulfillable() (gas: 75744)
