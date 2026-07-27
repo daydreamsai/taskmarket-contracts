@@ -299,4 +299,4 @@ Frontend: `apps/web/components/market/dreams-rewards-card.tsx`,
 `apps/web/components/market/tasks.tsx` (task detail caption),
 `apps/web/components/market/actions/submit-artifacts-form.tsx` (submit-work reminder)
 CLI: `apps/cli/src/commands/stats.ts`, `apps/cli/src/commands/wallet/withdraw-dreams.ts`
-Smoke test: `apps/backend/scripts/smoke-token-reward-hook.ts`
+Smoke test: `apps/backend/src/scripts/smoke-token-reward-hook.ts`

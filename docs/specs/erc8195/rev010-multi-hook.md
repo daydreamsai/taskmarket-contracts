@@ -392,6 +392,6 @@ does not match any other flow in the codebase.
 | `packages/shared/src/schemas/wallet.schemas.ts` | `bonusBps` on `ExchangeRateOutputSchema`; `nonce`/`validBefore` on `WithdrawDreamsInputSchema` |
 | `apps/web/components/market/tasks.tsx`, `wizard/step-publish.tsx`, `actions/submit-artifacts-form.tsx`, `dreams-rewards-card.tsx` | Show USD value and DREAMS amount together in task detail, publish wizard, submit-work flow, account card |
 | `apps/cli/src/commands/wallet/withdraw-dreams.ts` | Generate nonce + expiry, sign the extended authorization message |
-| `apps/backend/scripts/smoke-token-reward-hook.ts` | `bonusBps` assertions; nonce + expiry in the withdraw-dreams signed message |
+| `apps/backend/src/scripts/smoke-token-reward-hook.ts` | `bonusBps` assertions; nonce + expiry in the withdraw-dreams signed message |
 | `apps/docs/src/public/reference/rewards.md` | Single consolidated user-facing DREAMS rewards reference doc |
 | `packages/contracts/docs/extensions/ext-001-token-reward-hook.md` | Internal technical reference for the reward hook (setters, env vars, event indexing) |
