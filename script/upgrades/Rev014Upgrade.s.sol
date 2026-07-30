@@ -9,7 +9,7 @@ import { CoreFacet } from "../../src/facets/CoreFacet.sol";
 /// @title Rev014Upgrade — replace CoreFacet to add stakeRequired/stakeBps to createTask
 /// @dev createTask's signature changed (a new StakeConfig calldata struct param inserted before
 ///      the hookConfig/content structs), so its selector changed too -- this is a Remove(old) +
-///      Replace(unchanged) + Add(new) on CoreFacet, not a pure Replace like rev013. See ADR-0029.
+///      Replace(unchanged) + Add(new) on CoreFacet, not a pure Replace like rev013.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)

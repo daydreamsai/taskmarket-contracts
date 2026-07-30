@@ -46,7 +46,7 @@ contract CoreFacet {
     /// @param bidDeadline     Seconds from now for bid window (Auction mode only, 0 otherwise)
     /// @param auctionSubtype  Auction subtype selector (bytes4(0) for non-auction tasks)
     /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
-    ///                        currently enforced by claimTask, see ADR-0029
+    ///                        currently enforced by claimTask
     /// @param hookConfig      Hook contracts + hookData packed into one calldata pointer (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     // solhint-disable-next-line code-complexity
@@ -451,7 +451,7 @@ contract CoreFacet {
                 // escrow is one pooled balance across every task -- but it catches the
                 // acute failure mode where no funding transfer happened at all (e.g. a
                 // relayed paymentAmount of 0 due to a backend bug), instead of silently
-                // promising a reward the Diamond cannot pay. See ADR 0025.
+                // promising a reward the Diamond cannot pay.
                 if (s.usdcToken.balanceOf(address(this)) < newReward) {
                     revert ITMPCore.RewardIncreaseNotFunded();
                 }

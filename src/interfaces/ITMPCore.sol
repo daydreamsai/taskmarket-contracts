@@ -270,7 +270,7 @@ interface ITMPCore is IERC165 {
         // Rev014: the requester's stake requirement selected at creation time, distinct from
         // stakeAmount above (the worker's actual chosen stake, set later by claimTask). Recorded
         // here (and in TaskCreated) so it is chain-recoverable the same way reward/mode/expiryTime
-        // already are -- see ADR-0029.
+        // already are.
         bool stakeRequired;
         uint16 stakeBps;
     }
@@ -446,7 +446,7 @@ interface ITMPCore is IERC165 {
     /// @param bidDeadline     Seconds from now for bid submission (Auction mode only, 0 otherwise)
     /// @param auctionSubtype  Auction subtype selector (see ITMPModes; bytes4(0) for non-auction tasks)
     /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
-    ///                        currently enforced by claimTask, see ADR-0029
+    ///                        currently enforced by claimTask
     /// @param hookConfig      Hook contracts and per-task hookData (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     /// @return taskId         Contract-generated canonical task identifier

@@ -14,7 +14,7 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 /// @title SwapRewardHookTest
 /// @dev Deploys the "existing, already-live" RewardVault/EpochBudget/TaskTokenRewardHook trio
 ///      (mirroring what DeployRewardHook.s.sol would have produced), then runs the swap
-///      script per ADR-0028 and asserts: the vault is reused (not redeployed), a fresh
+///      script and asserts: the vault is reused (not redeployed), a fresh
 ///      EpochBudget/hook pair is deployed and authorized, and the Diamond's default hooks
 ///      point at the new hook. Also asserts the script reverts instead of proceeding when the
 ///      vault has an outstanding reservation.

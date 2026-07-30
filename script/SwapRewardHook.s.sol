@@ -17,10 +17,10 @@ interface IAuthorizedRelayer {
 
 /// @title SwapRewardHook — ship issue #202's EpochBudget.release() epoch-mismatch fix by
 ///        deploying a fresh EpochBudget + TaskTokenRewardHook and re-pointing the EXISTING
-///        RewardVault at the new hook (ADR-0028)
+///        RewardVault at the new hook
 /// @notice Unlike DeployRewardHook.s.sol (first-time deployment), this reuses the
 ///         already-deployed RewardVault instead of deploying a fresh one -- no balance
-///         migration, no dual-vault overlap window. Per ADR-0028, this is only safe once the
+///         migration, no dual-vault overlap window. This is only safe once the
 ///         vault has zero outstanding reservations: the script asserts
 ///         `RewardVault.totalReserved() == 0` and reverts otherwise, rather than silently
 ///         deauthorizing the old hook out from under a live reservation.
@@ -50,8 +50,7 @@ interface IAuthorizedRelayer {
 ///                                       totalReserved()==0 guard below. Setting this true
 ///                                       means any reservation still outstanding on the old
 ///                                       hook is silently orphaned -- no revert, no event, no
-///                                       error anywhere -- exactly the failure mode ADR-0028
-///                                       exists to prevent. Only ever set this after
+///                                       error anywhere. Only ever set this after
 ///                                       independently confirming (e.g. via the Reserved/
 ///                                       Released/Paid event reconciliation this repo already
 ///                                       does by hand) that every outstanding reservation is

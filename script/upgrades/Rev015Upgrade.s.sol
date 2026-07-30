@@ -8,7 +8,7 @@ import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
 /// @title Rev015Upgrade — replace RegistryFacet so getTask() returns the rev014 Task fields
-/// @dev Rev014 (ADR-0029) added `stakeRequired`/`stakeBps` to the shared `ITMPCore.Task` struct
+/// @dev Rev014 added `stakeRequired`/`stakeBps` to the shared `ITMPCore.Task` struct
 ///      and updated `createTask` (CoreFacet) to write them, but never redeployed RegistryFacet
 ///      -- its `getTask()` returns `ITMPCore.Task memory` by value, so its deployed bytecode
 ///      still ABI-encodes whatever Task shape it was compiled against (the pre-rev014, 12-field
