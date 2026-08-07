@@ -164,6 +164,9 @@ interface ITMPDiamond {
     function setReputationRegistry(address registry) external;
     function setDefaultHooks(address[] calldata hooks) external;
     function getDefaultHooks() external view returns (address[] memory);
+    // Rev017: admin-settable floor on assignEvaluator's appealWindowSecs.
+    function minAppealWindowSecs() external view returns (uint32);
+    function setMinAppealWindowSecs(uint32 newMinimum) external;
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
 
     // -------------------------------------------------------------------------

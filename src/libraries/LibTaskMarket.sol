@@ -14,6 +14,31 @@ library LibTaskMarket {
     uint256 internal constant NOT_ENTERED = 1;
     uint256 internal constant ENTERED = 2;
 
+    // Hooks return at most a single bool (32 bytes) per ITMPHook -- checkFund, checkClaim,
+    // checkSelectWorker, checkSubmit, checkEvaluate, and checkComplete all return exactly
+    // one bool, and on* hooks return nothing at all. Anything beyond 32 bytes of return
+    // data is therefore already an attacker signal, not a legitimate response to preserve.
+    uint256 internal constant HOOK_MAX_RETURN_BYTES = 32;
+    // Fixed gas stipend forwarded to every hook call, independent of the caller's own
+    // remaining gas. Bounds plain compute/loop griefing by a hook; independent of, and in
+    // addition to, the bounded-copy guarantee in _safeHookCall below. Sized generously
+    // enough for a realistic production hook (TaskTokenRewardHook.checkClaim/checkComplete
+    // cold-writes several storage slots and makes two further nested external calls into
+    // EpochBudget/RewardVault, each with their own cold SSTORE writes) rather than the
+    // bare minimum -- it is still a hard, fixed cap, far below a full transaction's gas
+    // budget, so it does not weaken the DoS guard's intent.
+    uint256 internal constant HOOK_GAS_STIPEND = 1_000_000;
+
+    // Rev017: default floor for assignEvaluator's appealWindowSecs, used whenever
+    // s.minAppealWindowSecs has never been set. Five minutes is sized for a worker that
+    // discovers an adverse verdict by polling on a bounded schedule rather than by watching
+    // the chain continuously: a minute is barely distinguishable from zero for such a worker,
+    // which would leave the degenerate case this guard exists to close only nominally closed.
+    // It is not an opinion on how long a dispute window ought to be -- that stays the
+    // requester's choice, same as evaluationWindowSecs -- and it is admin-settable precisely
+    // so it can be corrected in either direction without a facet upgrade.
+    uint32 internal constant DEFAULT_MIN_APPEAL_WINDOW_SECS = 5 minutes;
+
     // -------------------------------------------------------------------------
     // Errors (not in ITMPCore since they are implementation-specific)
     // -------------------------------------------------------------------------
@@ -91,11 +116,44 @@ library LibTaskMarket {
         return s.taskHooks[taskId];
     }
 
+    /// @notice The effective minimum appeal window: the admin-configured value, or the compiled
+    ///         default when it has never been set. A stored zero is treated as unset rather than
+    ///         as "no minimum", because a zero floor is exactly the hole this guard exists to
+    ///         close -- and every diamond upgraded into rev017 starts with a zero in this slot.
+    ///         AdminFacet's setter rejects zero for the same reason, so unset and
+    ///         deliberately-zero are not states that can be confused.
+    function _minAppealWindowSecs(AppStorage storage s) internal view returns (uint32) {
+        uint32 configured = s.minAppealWindowSecs;
+        return configured == 0 ? DEFAULT_MIN_APPEAL_WINDOW_SECS : configured;
+    }
+
+    /// @notice Bounded low-level call: forwards a fixed gas stipend to `hook` and copies at
+    ///         most HOOK_MAX_RETURN_BYTES of return data into memory, regardless of the
+    ///         actual returndatasize(). A plain `target.call(callData)` unconditionally
+    ///         copies the full return blob into memory as part of constructing the
+    ///         `(bool, bytes memory)` tuple -- even when the bytes value is discarded via
+    ///         `(bool ok,)` -- and that copy's cost is quadratic in size, so an oversized
+    ///         return blob can force an out-of-gas in the caller regardless of what the
+    ///         caller does with the data. Bounding the copy here is a hard guarantee
+    ///         independent of gas amounts or EVM gas-repricing; the gas stipend is a
+    ///         separate, additional guard against plain compute/loop griefing.
+    function _safeHookCall(address hook, bytes memory callData) private returns (bool ok, bytes memory ret) {
+        uint256 maxCopy = HOOK_MAX_RETURN_BYTES;
+        uint256 gasStipend = HOOK_GAS_STIPEND;
+        ret = new bytes(maxCopy);
+        assembly {
+            ok := call(gasStipend, hook, 0, add(callData, 0x20), mload(callData), 0, 0)
+            let copyLen := returndatasize()
+            if gt(copyLen, maxCopy) { copyLen := maxCopy }
+            returndatacopy(add(ret, 0x20), 0, copyLen)
+            mstore(ret, copyLen)
+        }
+    }
+
     /// @notice Calls check* on every hook in order. Reverts with errSelector if any hook rejects.
     function _dispatchCheckHooks(address[] memory hooks, bytes memory callData, bytes4 errSelector) internal {
         for (uint256 i; i < hooks.length; i++) {
-            // solhint-disable-next-line avoid-low-level-calls
-            (bool ok, bytes memory ret) = hooks[i].call(callData);
+            (bool ok, bytes memory ret) = _safeHookCall(hooks[i], callData);
             if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) {
                 assembly {
                     mstore(0x00, errSelector)
@@ -108,9 +166,7 @@ library LibTaskMarket {
     /// @notice Calls on* on every hook in order. Failures are swallowed individually.
     function _dispatchAfterHooks(address[] memory hooks, bytes memory callData) internal {
         for (uint256 i; i < hooks.length; i++) {
-            // slither-disable-next-line unchecked-lowlevel
-            // solhint-disable-next-line avoid-low-level-calls
-            (bool ok,) = hooks[i].call(callData);
+            (bool ok,) = _safeHookCall(hooks[i], callData);
             if (!ok) emit ITMPCore.HookCallFailed(hooks[i]);
         }
     }
@@ -125,8 +181,7 @@ library LibTaskMarket {
     {
         bytes memory callData = abi.encodeCall(ITMPHook.checkFund, (taskId, _buildContext(taskId, s), hookData));
         for (uint256 i; i < hooks.length; i++) {
-            // solhint-disable-next-line avoid-low-level-calls
-            (bool ok, bytes memory ret) = hooks[i].call(callData);
+            (bool ok, bytes memory ret) = _safeHookCall(hooks[i], callData);
             if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) {
                 revert ITMPCore.HookCheckFundRejected();
             }

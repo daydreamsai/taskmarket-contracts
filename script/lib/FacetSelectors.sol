@@ -38,7 +38,7 @@ library FacetSelectors {
     function adminFacetSelectors() internal pure returns (bytes4[] memory s) {
         // initialize is NOT included -- it is called once via the Diamond constructor's
         // _init delegatecall, never added as a routable selector.
-        s = new bytes4[](17);
+        s = new bytes4[](19);
         s[0] = AdminFacet.paused.selector;
         s[1] = AdminFacet.pause.selector;
         s[2] = AdminFacet.unpause.selector;
@@ -56,6 +56,10 @@ library FacetSelectors {
         s[14] = AdminFacet.getDefaultHooks.selector;
         s[15] = AdminFacet.diamondVersion.selector;
         s[16] = AdminFacet.setDiamondVersion.selector;
+        // rev017: the appeal-window floor is admin-settable state, so both its getter and its
+        // setter must route through the Diamond.
+        s[17] = AdminFacet.minAppealWindowSecs.selector;
+        s[18] = AdminFacet.setMinAppealWindowSecs.selector;
     }
 
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {

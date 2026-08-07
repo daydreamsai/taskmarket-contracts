@@ -45,6 +45,14 @@ struct AppStorage {
     // the legacy selector-presence detection in DiamondFullUpgrade.s.sol. Bumped by each
     // versioned upgrade step script after it applies its delta.
     uint256 diamondVersion;
+    // Rev017: protocol-level floor on assignEvaluator's appealWindowSecs. Admin-settable rather
+    // than a compiled-in constant because nobody yet knows the right value, and a facet upgrade
+    // is too heavy an instrument for tuning one number. Appended to the end of the struct per
+    // AGENTS.md's storage-layout rule. Zero means "never set" on every diamond that predates
+    // this field, NOT "no minimum" -- reading it through LibTaskMarket._minAppealWindowSecs
+    // substitutes the default, so the guard is live from the moment the facet is cut in and
+    // does not depend on anyone remembering to call the setter.
+    uint32 minAppealWindowSecs;
 }
 
 library LibAppStorage {

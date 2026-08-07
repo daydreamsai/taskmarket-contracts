@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "./mocks/MockPGTRForwarder.sol";
 import "./mocks/MockTaskHook.sol";
+import "./mocks/MockReturnBombHook.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./mocks/MockReputationRegistry.sol";
 import "./mocks/MockRevertingReputationRegistry.sol";
@@ -2846,6 +2847,57 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(hook.onExpireCalls(), 1);
     }
 
+    // -------------------------------------------------------------------------
+    // Issue #317: hook return-data DoS -- a malicious hook returning an oversized
+    // blob must not be able to force an uncontrolled out-of-gas on the caller.
+    // -------------------------------------------------------------------------
+
+    // Bomb sizing rationale: RETURN_BOMB_SIZE bytes of return data costs the callee
+    // roughly 3*words + words^2/512 gas to allocate and RETURN (words = size/32); at
+    // 1,000,000 bytes (31,250 words) that is ~2,000,000 gas, and the caller pays a
+    // comparable amount to RETURNDATACOPY the blob back into its own (already larger)
+    // memory. RETURN_BOMB_GAS_BUDGET covers legitimate refundExpired/submitWork logic
+    // plus the hook's ~2,000,000 gas build cost, but leaves no room for the caller's own
+    // ~2,000,000 gas copy-back, so unpatched code reliably runs out of gas -- while
+    // patched code (32-byte copy cap + 1,000,000 gas hook stipend) fits comfortably, since
+    // the hook can never afford to build the bomb within its stipend in the first place.
+    uint256 internal constant RETURN_BOMB_SIZE = 1_000_000;
+    uint256 internal constant RETURN_BOMB_GAS_BUDGET = 3_000_000;
+
+    function test_RefundExpired_SurvivesHookReturnBomb() public {
+        MockReturnBombHook hook = new MockReturnBombHook();
+        hook.setBombSize(RETURN_BOMB_SIZE);
+        hook.setBombOnExpire(true);
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+
+        vm.warp(block.timestamp + DURATION + 1);
+        uint256 before = usdc.balanceOf(requester);
+        market.refundExpired{ gas: RETURN_BOMB_GAS_BUDGET }(taskId, 0);
+        assertGt(usdc.balanceOf(requester), before);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_SubmitWork_SurvivesHookReturnBomb() public {
+        MockReturnBombHook hook = new MockReturnBombHook();
+        hook.setBombSize(RETURN_BOMB_SIZE);
+        hook.setBombOnCheckSubmit(true);
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.CLAIM(), address(hook));
+        _claimTask(taskId, worker1, 0);
+
+        // The hook is a check-hook and legitimately rejects (it cannot complete within its
+        // bounded gas stipend), so submitWork must still revert -- but cleanly and within
+        // budget via HookCheckSubmitRejected, never via an uncontrolled out-of-gas.
+        (bool ok, bytes memory ret) = address(forwarder).call{ gas: RETURN_BOMB_GAS_BUDGET }(
+            abi.encodeCall(
+                forwarder.relay,
+                (address(market), worker1, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))))
+            )
+        );
+        assertFalse(ok);
+        assertEq(ret.length, 4);
+        assertEq(bytes4(ret), ITMPCore.HookCheckSubmitRejected.selector);
+    }
+
     function test_HookCheckSelectWorker_Revert_BlocksSelectWorker() public {
         MockTaskHook hook = new MockTaskHook();
         bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.PITCH(), address(hook));
@@ -3804,6 +3856,7 @@ contract TaskMarketTest is DiamondTestHelper {
         // No evalFee assigned here so remaining = REWARD; REWARD+1 must revert.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD + 1, rank: 1 });
@@ -3842,6 +3895,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint16 evalFeeBps = 1000; // 10%
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, evalFeeBps, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
@@ -3861,6 +3915,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, evalFeeBps, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: remaining, rank: 1 });
@@ -3879,6 +3934,7 @@ contract TaskMarketTest is DiamondTestHelper {
         market.setDefaultFeeBps(platformFeeBps);
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
@@ -3907,6 +3963,8 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work1"));
+        _submitWork(taskId, worker2, keccak256("work2"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](2);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: award1, rank: 1 });
@@ -3930,6 +3988,8 @@ contract TaskMarketTest is DiamondTestHelper {
         // Two awards that individually seem fine but together exceed escrow.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work1"));
+        _submitWork(taskId, worker2, keccak256("work2"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](2);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2 + 1, rank: 1 });
@@ -3950,6 +4010,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](3);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2, rank: 1 });
@@ -3986,6 +4047,167 @@ contract TaskMarketTest is DiamondTestHelper {
         // All reward refunded to requester since awards array is empty.
         assertEq(usdc.balanceOf(requester), reqBefore + REWARD);
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #316: evaluate()/resolveDispute() payout bypass -- awards must go to the
+    // task's real worker/submitter, never to an arbitrary caller-supplied address.
+    // -------------------------------------------------------------------------
+
+    // Full exploit chain as reported: a requester self-assigns as both evaluator and
+    // dispute resolver with a zero appeal window, then evaluates its own task awarding
+    // an address that never did the work. Must revert -- either at assignEvaluator
+    // (self-assignment guard) or at evaluate() (award-recipient validation).
+    function test_RevertWhen_EvaluateExploitChain_SelfAssignedEvaluatorAwardsWrongWorker() public {
+        address attacker = address(0xA77ACC);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+
+        bool assignReverted = false;
+        try forwarder.relay(
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, requester, 0, 0, uint32(2 days), 0, requester))
+        ) {
+        // Unpatched code allows the self-assignment; continue the chain below.
+        }
+        catch {
+            assignReverted = true;
+        }
+
+        if (!assignReverted) {
+            _claimTask(taskId, worker1, 0);
+            _submitWork(taskId, worker1, keccak256("genuine work"));
+
+            ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+            awards[0] = ITMPCore.Award({ worker: attacker, amount: REWARD, rank: 1 });
+
+            uint256 attackerBefore = usdc.balanceOf(attacker);
+            vm.expectRevert();
+            _evaluate(taskId, requester, ITMPCore.VerdictType.APPROVE, 1000, awards);
+            assertEq(usdc.balanceOf(attacker), attackerBefore);
+        }
+    }
+
+    // Isolates the evaluate()-level award validation from the assignEvaluator guard above:
+    // a legitimate, non-requester evaluator still must not be able to award an address
+    // other than the task's real worker.
+    function test_RevertWhen_Evaluate_AwardsWrongWorker_ClaimMode() public {
+        address attacker = address(0xA77ACC);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("genuine work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: attacker, amount: REWARD, rank: 1 });
+
+        uint256 attackerBefore = usdc.balanceOf(attacker);
+        vm.expectRevert(ITMPCore.WorkerMismatch.selector);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+        assertEq(usdc.balanceOf(attacker), attackerBefore);
+    }
+
+    // Bounty/Benchmark variant: evaluate() must reject an award to an address that never
+    // called submitWork for this task, mirroring AcceptanceFacet._resolveDeliverables.
+    function test_RevertWhen_Evaluate_AwardsNonSubmitter_BountyMode() public {
+        address attacker = address(0xA77ACC);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("genuine work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: attacker, amount: REWARD, rank: 1 });
+
+        vm.expectRevert(ITMPCore.SubmissionNotFound.selector);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+    }
+
+    // Defense in depth: resolveDispute() accepts its own caller-supplied awards array
+    // independent of evaluate() -- a dispute resolver distinct from the requester must
+    // still not be able to redirect payout to a non-worker address.
+    function test_RevertWhen_ResolveDispute_AwardsWrongWorker() public {
+        address attacker = address(0xA77ACC);
+        address resolver = address(20);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), resolver))
+        );
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("genuine work"));
+
+        ITMPCore.Award[] memory legitAwards = new ITMPCore.Award[](1);
+        legitAwards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, legitAwards);
+        _appeal(taskId, worker1);
+
+        ITMPCore.Award[] memory maliciousAwards = new ITMPCore.Award[](1);
+        maliciousAwards[0] = ITMPCore.Award({ worker: attacker, amount: REWARD, rank: 1 });
+
+        uint256 attackerBefore = usdc.balanceOf(attacker);
+        vm.prank(resolver);
+        vm.expectRevert(ITMPCore.WorkerMismatch.selector);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, maliciousAwards);
+        assertEq(usdc.balanceOf(attacker), attackerBefore);
+    }
+
+    // A non-zero award to address(0) must be rejected by evaluate() itself, not deferred to
+    // _payAwards. The verdict is one-shot on chain: if it were stored, the task would move to
+    // Appealing and then finalizeVerdict would revert forever, stranding the escrow.
+    function test_RevertWhen_Evaluate_AwardsZeroAddress_ClaimMode() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("genuine work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: address(0), amount: REWARD, rank: 1 });
+
+        vm.expectRevert(ITMPCore.InvalidAwardRecipient.selector);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+
+        // No verdict was stored, so the task never left Review and remains finalizable later.
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Review), "task must stay in Review");
+    }
+
+    // Same guard on the bounty-like branch, which otherwise checks submission presence.
+    function test_RevertWhen_Evaluate_AwardsZeroAddress_BountyMode() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("genuine work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: address(0), amount: REWARD, rank: 1 });
+
+        vm.expectRevert(ITMPCore.InvalidAwardRecipient.selector);
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+    }
+
+    // resolveDispute() shares _validateAwardRecipients, so the same guard applies there.
+    function test_RevertWhen_ResolveDispute_AwardsZeroAddress() public {
+        address resolver = address(20);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), resolver))
+        );
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("genuine work"));
+
+        ITMPCore.Award[] memory legitAwards = new ITMPCore.Award[](1);
+        legitAwards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, legitAwards);
+        _appeal(taskId, worker1);
+
+        ITMPCore.Award[] memory zeroAwards = new ITMPCore.Award[](1);
+        zeroAwards[0] = ITMPCore.Award({ worker: address(0), amount: REWARD, rank: 1 });
+
+        vm.prank(resolver);
+        vm.expectRevert(ITMPCore.InvalidAwardRecipient.selector);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, zeroAwards);
     }
 
     // -------------------------------------------------------------------------
@@ -4052,6 +4274,102 @@ contract TaskMarketTest is DiamondTestHelper {
                 market.assignEvaluator, (taskId, evaluator, 0, 10001, uint32(1 days), uint32(1 days), address(0))
             )
         );
+    }
+
+    // Issue #316: a requester self-assigning as evaluator can single-handedly approve
+    // its own awards -- assignEvaluator must refuse evaluator == requester.
+    function test_RevertWhen_AssignEvaluator_EvaluatorIsRequester() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        vm.expectRevert(ITMPCore.EvaluatorCannotBeRequester.selector);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, requester, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+    }
+
+    // Issue #316: a requester self-assigning as dispute resolver can rubber-stamp any
+    // appeal in its own favor -- assignEvaluator must refuse disputeResolver == requester.
+    function test_RevertWhen_AssignEvaluator_DisputeResolverIsRequester() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        vm.expectRevert(ITMPCore.DisputeResolverCannotBeRequester.selector);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), requester))
+        );
+    }
+
+    // Issue #316: appealWindowSecs == 0 closes the worker's only recourse before it can
+    // ever fire -- assignEvaluator must enforce a protocol-level minimum.
+    function test_RevertWhen_AssignEvaluator_AppealWindowTooShort() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        vm.expectRevert(ITMPCore.AppealWindowTooShort.selector);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), 0, address(0)))
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Rev017: the appeal-window floor is admin-settable state, not a constant
+    // -------------------------------------------------------------------------
+
+    function test_MinAppealWindowSecs_DefaultsWhenUnset() public view {
+        // The storage slot is genuinely zero on a fresh diamond -- nothing initializes it -- so
+        // this asserts the lazy default, not a value someone wrote.
+        assertEq(market.minAppealWindowSecs(), 300);
+    }
+
+    function test_SetMinAppealWindowSecs_TightensTheGuard() public {
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, true);
+        emit ITMPCore.MinAppealWindowUpdated(2 hours);
+        market.setMinAppealWindowSecs(uint32(2 hours));
+        assertEq(market.minAppealWindowSecs(), 2 hours);
+
+        // A window that was legal under the default is now rejected.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        vm.expectRevert(ITMPCore.AppealWindowTooShort.selector);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(3 days), uint32(1 hours), address(0))
+            )
+        );
+    }
+
+    function test_SetMinAppealWindowSecs_LoosensTheGuard() public {
+        vm.prank(owner);
+        market.setMinAppealWindowSecs(1);
+        assertEq(market.minAppealWindowSecs(), 1);
+
+        // A one-second window is below the compiled default but at the configured floor, so it
+        // is accepted -- an admin-settable minimum is also an admin-defeatable one by design.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(3 days), 1, address(0)))
+        );
+    }
+
+    function test_RevertWhen_SetMinAppealWindowSecs_Zero() public {
+        // Zero is both the degenerate case the guard closes and the "never set" sentinel, so it
+        // must not be storable -- otherwise unset and deliberately-zero become indistinguishable.
+        vm.prank(owner);
+        vm.expectRevert(ITMPCore.InvalidMinAppealWindow.selector);
+        market.setMinAppealWindowSecs(0);
+    }
+
+    function test_RevertWhen_SetMinAppealWindowSecs_NotOwner() public {
+        vm.prank(requester);
+        vm.expectRevert();
+        market.setMinAppealWindowSecs(120);
     }
 
     // -------------------------------------------------------------------------

@@ -43,8 +43,11 @@ contract EvaluatorFacet {
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (evaluator == address(0)) revert ITMPCore.InvalidEvaluator();
+        if (evaluator == requester) revert ITMPCore.EvaluatorCannotBeRequester();
+        if (disputeResolver == requester) revert ITMPCore.DisputeResolverCannotBeRequester();
         if (evalCfg.evaluator != address(0)) revert ITMPCore.EvaluatorAlreadyAssigned();
         if (feeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
+        if (appealWindowSecs < LibTaskMarket._minAppealWindowSecs(s)) revert ITMPCore.AppealWindowTooShort();
 
         evalCfg.evaluator = evaluator;
         evalCfg.evaluatorStake = stakeAmount;
@@ -96,6 +99,8 @@ contract EvaluatorFacet {
                     || ((task.mode == BOUNTY || task.mode == BENCHMARK)
                         && (task.status == ITMPCore.TaskStatus.Open
                             || task.status == ITMPCore.TaskStatus.PendingApproval)))) revert ITMPCore.WrongStatusForEvaluation();
+
+        _validateAwardRecipients(task, taskId, awards, s);
 
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
         v.issued = true;
@@ -232,6 +237,7 @@ contract EvaluatorFacet {
         if (caller != s.taskEvaluatorConfigs[taskId].disputeResolver) revert ITMPCore.NotDisputeResolver();
         if (verdictType == ITMPCore.VerdictType.REJECT) revert ITMPCore.DisputeResolutionMustAwardWorkers();
         if (awards.length == 0) revert ITMPCore.AwardsRequired();
+        _validateAwardRecipients(task, taskId, awards, s);
 
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
         v.verdictType = verdictType;
@@ -272,6 +278,36 @@ contract EvaluatorFacet {
 
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, forfeited);
         LibTaskMarket._nonReentrantAfter(s);
+    }
+
+    /// @dev Ensures every award recipient is a legitimate party for this task: the locked
+    ///      worker for Claim/Pitch/Auction, or an address that actually submitted work for
+    ///      Bounty/Benchmark (mirrors AcceptanceFacet._resolveDeliverables' submission
+    ///      check). Called by both evaluate() and resolveDispute() before their respective
+    ///      awards arrays are committed to storage, so a caller-supplied awards array can
+    ///      never redirect payout to a party who was never actually the worker/submitter.
+    ///      Zero-amount awards are skipped -- they never trigger a transfer or touch
+    ///      task.worker, so their recipient is inert. A non-zero award to address(0) reverts
+    ///      here rather than at _payAwards: the verdict is one-shot on chain, so letting it
+    ///      be stored would move the task to Appealing and then revert finalizeVerdict
+    ///      permanently, stranding the escrow.
+    function _validateAwardRecipients(
+        ITMPCore.Task storage task,
+        bytes32 taskId,
+        ITMPCore.Award[] calldata awards,
+        AppStorage storage s
+    ) private view {
+        bool bountyLike = task.mode == BOUNTY || task.mode == BENCHMARK;
+        for (uint256 i; i < awards.length; ++i) {
+            if (awards[i].amount == 0) continue;
+            address worker = awards[i].worker;
+            if (worker == address(0)) revert ITMPCore.InvalidAwardRecipient();
+            if (bountyLike) {
+                if (s.taskSubmissionHashes[taskId][worker].length == 0) revert ITMPCore.SubmissionNotFound();
+            } else if (worker != task.worker) {
+                revert ITMPCore.WorkerMismatch();
+            }
+        }
     }
 
     // Complexity is inherent: iterates N winners applying per-winner fee, transfer, hook, and event; handles excess refund.

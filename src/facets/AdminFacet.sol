@@ -177,6 +177,28 @@ contract AdminFacet is Initializable {
     }
 
     // -------------------------------------------------------------------------
+    // Minimum appeal window (Rev017)
+    // -------------------------------------------------------------------------
+
+    /// @notice Return the protocol-level floor on assignEvaluator's appealWindowSecs.
+    ///         Returns the compiled default when the value has never been set, so a caller
+    ///         reading this before any setMinAppealWindowSecs call still gets the figure the
+    ///         contract will actually enforce rather than a misleading zero.
+    function minAppealWindowSecs() external view returns (uint32) {
+        return LibTaskMarket._minAppealWindowSecs(LibAppStorage.appStorage());
+    }
+
+    /// @notice Set the protocol-level minimum appeal window (owner only).
+    ///         Zero is rejected: a zero floor is the degenerate case the guard exists to close,
+    ///         and it is also the sentinel meaning "never set", so permitting it would make the
+    ///         two indistinguishable in storage.
+    function setMinAppealWindowSecs(uint32 newMinimum) external onlyOwner {
+        if (newMinimum == 0) revert ITMPCore.InvalidMinAppealWindow();
+        LibAppStorage.appStorage().minAppealWindowSecs = newMinimum;
+        emit ITMPCore.MinAppealWindowUpdated(newMinimum);
+    }
+
+    // -------------------------------------------------------------------------
     // Diamond version (Rev011)
     // -------------------------------------------------------------------------
 

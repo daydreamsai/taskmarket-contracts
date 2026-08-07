@@ -79,6 +79,10 @@ interface ITMPCore is IERC165 {
     error EvaluationWindowNotExpired();
     error DisputeResolutionMustAwardWorkers();
     error AwardsRequired();
+    error EvaluatorCannotBeRequester();
+    error DisputeResolverCannotBeRequester();
+    error AppealWindowTooShort();
+    error InvalidMinAppealWindow();
 
     // Auction
     error BidDeadlinePassed();
@@ -332,6 +336,11 @@ interface ITMPCore is IERC165 {
 
     /// @notice Emitted when the protocol default hook list is replaced.
     event DefaultHooksSet(address[] hooks);
+
+    /// @notice Rev017: the protocol-level minimum appeal window changed. Emitted so a protocol
+    ///         parameter can never move silently -- an admin-settable minimum is also an
+    ///         admin-defeatable one, and this is the record of anyone exercising that.
+    event MinAppealWindowUpdated(uint32 minAppealWindowSecs);
 
     /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy
     ///         hook cannot block fund recovery; this event makes failures observable on-chain.

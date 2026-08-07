@@ -292,9 +292,12 @@ contract DiamondFullUpgrade is Script {
     // Path C: steady-state (post-rev010) — pure Replace
     // -------------------------------------------------------------------------
 
-    /// @dev All pre-rev011 selectors at current signatures — Replace in 9 cuts, plus 1 Add cut for
-    ///      the new rev011 diamondVersion/setDiamondVersion selectors (absent on every diamond
-    ///      until this upgrade, so they cannot be part of a Replace).
+    /// @dev All pre-rev011 selectors at current signatures — Replace in 9 cuts, plus 2 Add cuts
+    ///      for selectors absent on every diamond until their revision landed and which therefore
+    ///      cannot be part of a Replace: rev011's diamondVersion/setDiamondVersion, and rev017's
+    ///      minAppealWindowSecs/setMinAppealWindowSecs. Path C must always produce today's
+    ///      complete steady-state selector set -- DiamondSelectorParityTest is what enforces
+    ///      that, by comparing this path's output against a fresh deploy's.
     /// @dev internal (not private) so the rev011 selector-parity test can invoke Path C
     ///      directly against a diamond it deployed itself, without going through run()'s
     ///      env-var/loupe-based path detection.
@@ -310,7 +313,7 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet,
         address regFacet
     ) internal {
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
 
         cuts[0] = _replaceCut(cutFacet, FacetSelectors.cutFacetSelectors());
         cuts[1] = _replaceCut(loupeFacet, FacetSelectors.loupeFacetSelectors());
@@ -322,6 +325,7 @@ contract DiamondFullUpgrade is Script {
         cuts[7] = _replaceCut(ratingFacet, FacetSelectors.ratingFacetSelectors());
         cuts[8] = _replaceCut(regFacet, FacetSelectors.registryFacetSelectors());
         cuts[9] = _addCut(adminFacet, _diamondVersionSelectors());
+        cuts[10] = _addCut(adminFacet, _minAppealWindowSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         AdminFacet(diamond).setDiamondVersion(CURRENT_VERSION);
@@ -371,9 +375,10 @@ contract DiamondFullUpgrade is Script {
 
     /// @dev All 15 AdminFacet selectors present on any diamond upgraded to at least rev010, i.e.
     ///      before rev011's diamondVersion/setDiamondVersion existed. Used as the Replace cut
-    ///      in Path C -- distinct from FacetSelectors.adminFacetSelectors(), which is the 17-selector
-    ///      canonical set including the two new ones, appropriate for a fresh deploy's Add cut but
-    ///      not for a Replace cut against a diamond that does not have them yet.
+    ///      in Path C -- distinct from FacetSelectors.adminFacetSelectors(), which is the
+    ///      19-selector canonical set including the four added since (rev011's two and rev017's
+    ///      two), appropriate for a fresh deploy but not for a Replace cut against a diamond that
+    ///      does not have them yet.
     function _adminPreRev011Selectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](15);
         s[0] = AdminFacet.paused.selector;
@@ -400,6 +405,15 @@ contract DiamondFullUpgrade is Script {
         s = new bytes4[](2);
         s[0] = AdminFacet.diamondVersion.selector;
         s[1] = AdminFacet.setDiamondVersion.selector;
+    }
+
+    /// @dev Rev017: minAppealWindowSecs/setMinAppealWindowSecs, absent on every diamond deployed
+    ///      before the appeal-window floor became admin-settable state. Always an Add cut, never
+    ///      a Replace.
+    function _minAppealWindowSelectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = AdminFacet.minAppealWindowSecs.selector;
+        s[1] = AdminFacet.setMinAppealWindowSecs.selector;
     }
 
     /// @dev 18 CoreFacet selectors unchanged across both rev007 and rev010.
