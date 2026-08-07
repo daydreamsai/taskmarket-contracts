@@ -11,6 +11,8 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import "./mocks/MockPGTRForwarder.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
+import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 // ─────────────────────────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,15 +112,11 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
             abi.encodeCall(
                 market.createTask,
                 (
-                    REWARD_100_USDC,
-                    1 days,
-                    market.CLAIM(),
-                    0,
-                    0,
-                    bytes4(0),
+                    taskConfig(REWARD_100_USDC, 1 days, market.CLAIM(), 0, 0, bytes4(0)),
                     ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
-                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
                 )
             )
         );
@@ -132,15 +130,11 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
             abi.encodeCall(
                 market.createTask,
                 (
-                    REWARD_100_USDC,
-                    1 days,
-                    market.BOUNTY(),
-                    0,
-                    0,
-                    bytes4(0),
+                    taskConfig(REWARD_100_USDC, 1 days, market.BOUNTY(), 0, 0, bytes4(0)),
                     ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
-                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
                 )
             )
         );
@@ -154,15 +148,11 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
             abi.encodeCall(
                 market.createTask,
                 (
-                    REWARD_100_USDC,
-                    365 days,
-                    market.CLAIM(),
-                    0,
-                    0,
-                    bytes4(0),
+                    taskConfig(REWARD_100_USDC, 365 days, market.CLAIM(), 0, 0, bytes4(0)),
                     ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
-                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
                 )
             )
         );

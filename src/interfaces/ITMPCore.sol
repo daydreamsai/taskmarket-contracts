@@ -322,6 +322,23 @@ interface ITMPCore is IERC165 {
         uint16 bps;
     }
 
+    /// @notice The task's own shape, passed to createTask (Rev018): what is being paid, for how
+    ///         long, under which mode, and the mode-specific deadlines.
+    /// @dev Packed for the same reason as HookConfig/TaskContent/StakeConfig before it. These six
+    ///      were the last loose scalars on createTask, and with the evaluator terms added they
+    ///      pushed the function past what the --ir-minimum coverage codegen can allocate ("stack
+    ///      too deep by 4 slots") even though the default via_ir profile compiled it. Grouping
+    ///      them ends that pressure for good: createTask now takes five calldata pointers, and a
+    ///      seventh task-shape field becomes a struct member rather than another signature change.
+    struct TaskConfig {
+        uint256 reward;
+        uint256 duration;
+        bytes4 mode;
+        uint256 pitchDeadline;
+        uint256 bidDeadline;
+        bytes4 auctionSubtype;
+    }
+
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
@@ -450,27 +467,24 @@ interface ITMPCore is IERC165 {
     ///         keccak256(abi.encode(block.chainid, address(this), requester, requesterNonce[requester]++))
     ///         The requester is read from the PGTR forwarder via _effectiveSender() / pgtrSender().
     ///         The USDC reward MUST be transferred to this contract by the forwarder before this call.
-    /// @param reward        USDC reward amount (6 decimals); for Auction = max price
-    /// @param duration      Task lifetime in seconds
-    /// @param mode            4-byte mode selector (see ITMPModes for canonical values)
-    /// @param pitchDeadline   Seconds from now for pitch acceptance (Pitch mode only, 0 otherwise)
-    /// @param bidDeadline     Seconds from now for bid submission (Auction mode only, 0 otherwise)
-    /// @param auctionSubtype  Auction subtype selector (see ITMPModes; bytes4(0) for non-auction tasks)
+    /// @param config          Reward, duration, mode, and the mode-specific pitch/bid deadlines
+    ///                        and auction subtype (Rev018).
     /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
     ///                        currently enforced by claimTask
     /// @param hookConfig      Hook contracts and per-task hookData (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
+    /// @param evaluatorConfig Evaluator terms applied in the same transaction (Rev018); the zero
+    ///                        struct means the task has no evaluator. An implementation MUST
+    ///                        apply these atomically with creation rather than expecting a
+    ///                        following call, because the task is claimable as soon as this
+    ///                        transaction mines and a separate assignment can lose that race.
     /// @return taskId         Contract-generated canonical task identifier
     function createTask(
-        uint256 reward,
-        uint256 duration,
-        bytes4 mode,
-        uint256 pitchDeadline,
-        uint256 bidDeadline,
-        bytes4 auctionSubtype,
+        ITMPCore.TaskConfig calldata config,
         ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
-        ITMPCore.TaskContent calldata content
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
     ) external returns (bytes32 taskId);
 
     /// @notice Accept a worker's submission and release escrowed payment.

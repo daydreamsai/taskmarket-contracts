@@ -71,7 +71,7 @@ contract DiamondTest is DiamondTestHelper {
     function test_DiamondCut_Add_DuplicateSelectorReverts() public {
         CoreFacet newCore = new CoreFacet();
         bytes4[] memory sels = new bytes4[](1);
-        sels[0] = CoreFacet.createTask.selector; // already registered
+        sels[0] = FacetSelectors.CREATE_TASK; // already registered
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(newCore), IDiamondCut.FacetCutAction.Add, sels);
@@ -256,7 +256,7 @@ contract DiamondTest is DiamondTestHelper {
     }
 
     function test_Loupe_FacetAddress_CreateTask() public view {
-        address facet = IDiamondLoupe(address(diamond)).facetAddress(CoreFacet.createTask.selector);
+        address facet = IDiamondLoupe(address(diamond)).facetAddress(FacetSelectors.CREATE_TASK);
         assertNotEq(facet, address(0), "createTask must route to a facet");
     }
 

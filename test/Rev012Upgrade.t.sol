@@ -7,6 +7,7 @@ import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { Rev012Upgrade } from "../script/upgrades/Rev012Upgrade.s.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev012UpgradeTest
@@ -28,7 +29,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
         address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
         assertEq(AdminFacet(diamond).diamondVersion(), 11, "fresh deploy must start at rev011");
 
-        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
         address oldAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
@@ -39,7 +40,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 12, "diamondVersion must be 12 after rev012 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
         address newAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
         assertTrue(newAcceptFacet != oldAcceptFacet, "AcceptanceFacet must be replaced");

@@ -81,9 +81,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
             address(loupeFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors()
         );
         cuts[2] = IDiamondCut.FacetCut(address(adminFacet), IDiamondCut.FacetCutAction.Add, adminPreRev011);
-        cuts[3] = IDiamondCut.FacetCut(
-            address(coreFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.coreFacetSelectors()
-        );
+        cuts[3] = IDiamondCut.FacetCut(address(coreFacet), IDiamondCut.FacetCutAction.Add, _corePreRev018Selectors());
         cuts[4] = IDiamondCut.FacetCut(
             address(auctionFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.auctionFacetSelectors()
         );
@@ -103,6 +101,24 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         bytes memory initData = abi.encodeCall(AdminFacet.initialize, (USDC, FEE_RECIPIENT, FEE_BPS));
         Diamond diamond = new Diamond(_owner, cuts, address(adminFacet), initData);
         return address(diamond);
+    }
+
+    /// @dev CoreFacet's selectors as an old diamond routes them: everything in
+    ///      FacetSelectors.coreFacetSelectors() except rev018's evaluator-aware createTask, which
+    ///      no diamond routes until Path C adds it. Kept local to this test for the same reason
+    ///      adminPreRev011 above is -- it describes a historical state, not the steady state that
+    ///      FacetSelectors is the source of truth for. Path C ends by Adding the new selector, so
+    ///      including it here would make that Add revert on an already-routed selector; omitting
+    ///      the legacy one would instead make Path C's Replace revert on a selector that does not
+    ///      exist. Either way the parity assertion never gets a chance to lie about drift.
+    function _corePreRev018Selectors() private pure returns (bytes4[] memory s) {
+        bytes4[] memory current = FacetSelectors.coreFacetSelectors();
+        s = new bytes4[](current.length - 1);
+        uint256 k;
+        for (uint256 i = 0; i < current.length; i++) {
+            if (current[i] == FacetSelectors.CREATE_TASK) continue;
+            s[k++] = current[i];
+        }
     }
 
     /// @dev Compares the total set of routable selectors, not per-facet groupings -- facet

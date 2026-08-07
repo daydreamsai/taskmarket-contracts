@@ -14,6 +14,7 @@ import { Rev013Upgrade } from "../script/upgrades/Rev013Upgrade.s.sol";
 import { Rev015Upgrade } from "../script/upgrades/Rev015Upgrade.s.sol";
 import { Rev017Upgrade } from "../script/upgrades/Rev017Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 
 /// @title Rev017UpgradeTest
 /// @dev Deploys a diamond at rev011 (the test helper's baseline), advances it through
@@ -105,7 +106,9 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         assertTrue(newAdmin != oldAdmin, "AdminFacet must be replaced");
 
         // Every pre-existing selector of each replaced facet still routes, to the new address.
-        _assertRoutes(diamond, CoreFacet.createTask.selector, newCore, "createTask");
+        // The nine-parameter signature that existed when rev017 landed. Rev018 added a second
+        // createTask overload, so it is no longer reachable as `CoreFacet.createTask.selector`.
+        _assertRoutes(diamond, FacetSelectors.LEGACY_CREATE_TASK, newCore, "createTask");
         _assertRoutes(diamond, CoreFacet.claimTask.selector, newCore, "claimTask");
         _assertRoutes(diamond, CoreFacet.submitWork.selector, newCore, "submitWork");
         _assertRoutes(diamond, CoreFacet.cancelTask.selector, newCore, "cancelTask");

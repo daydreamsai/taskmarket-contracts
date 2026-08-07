@@ -8,6 +8,7 @@ import { CoreFacet } from "../src/facets/CoreFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { Rev012Upgrade } from "../script/upgrades/Rev012Upgrade.s.sol";
 import { Rev013Upgrade } from "../script/upgrades/Rev013Upgrade.s.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev013UpgradeTest
@@ -38,14 +39,14 @@ contract Rev013UpgradeTest is Test, DiamondTestHelper {
         _advanceToRev012(diamond);
         assertEq(AdminFacet(diamond).diamondVersion(), 12, "must be at rev012 before rev013");
 
-        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
         address oldEvalFacet = IDiamondLoupe(diamond).facetAddress(EvaluatorFacet.appeal.selector);
 
         new Rev013Upgrade().run();
 
         assertEq(AdminFacet(diamond).diamondVersion(), 13, "diamondVersion must be 13 after rev013 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
         address newEvalFacet = IDiamondLoupe(diamond).facetAddress(EvaluatorFacet.appeal.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
         assertTrue(newEvalFacet != oldEvalFacet, "EvaluatorFacet must be replaced");

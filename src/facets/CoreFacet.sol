@@ -39,17 +39,41 @@ contract CoreFacet {
     ///         Task ID is contract-generated:
     ///           keccak256(abi.encode(block.chainid, address(this), requester, nonce))
     ///         The USDC reward MUST be transferred to this contract by the forwarder before calling.
-    /// @param reward          USDC reward (6 decimals); for Auction = max price
-    /// @param duration        Task lifetime in seconds
-    /// @param mode            4-byte mode selector (use BOUNTY/CLAIM/PITCH/BENCHMARK/AUCTION)
-    /// @param pitchDeadline   Seconds from now for pitch window (Pitch mode only, 0 otherwise)
-    /// @param bidDeadline     Seconds from now for bid window (Auction mode only, 0 otherwise)
-    /// @param auctionSubtype  Auction subtype selector (bytes4(0) for non-auction tasks)
+    /// @param config          Reward (6-decimal USDC; for Auction = max price), duration, mode,
+    ///                        and the mode-specific pitch/bid deadlines and auction subtype.
     /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
     ///                        currently enforced by claimTask
     /// @param hookConfig      Hook contracts + hookData packed into one calldata pointer (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
-    // solhint-disable-next-line code-complexity
+    /// @param evaluatorConfig Evaluator terms, applied in this same transaction. Pass the zero
+    ///                        struct for a task with no evaluator. Configuring an evaluator here
+    ///                        rather than via a following `assignEvaluator` call is the only way
+    ///                        to do it without a race: the task is Open, and so claimable, the
+    ///                        instant this transaction mines, and `assignEvaluator` reverts
+    ///                        `TaskNotOpen` once a worker has claimed.
+    function createTask(
+        ITMPCore.TaskConfig calldata config,
+        ITMPCore.StakeConfig calldata stakeConfig,
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
+    ) external returns (bytes32 taskId) {
+        return _createTask(config, stakeConfig, hookConfig, content, evaluatorConfig);
+    }
+
+    /// @notice Deprecated: `createTask` without evaluator terms. Behaves exactly as before --
+    ///         it creates a task with no evaluator, which a caller can still appoint afterwards
+    ///         with `assignEvaluator` (accepting that call's race against the first claim).
+    /// @dev Kept routed alongside the evaluator-aware overload on purpose (rev018). The diamond
+    ///      routes purely by selector, so removing this one in the same cut that adds the new one
+    ///      would make every task creation revert for the whole window between the facet cut and
+    ///      the off-chain callers being redeployed -- and would strand creation entirely if that
+    ///      redeploy failed, recoverable only by a diamond rollback. Expanding first and
+    ///      contracting later (rev019 removes this shim) makes both halves independently
+    ///      reversible. This overload is deliberately absent from `ITMPCore`/`ITMPDiamond`: it is
+    ///      a migration shim, not part of the protocol interface, and adding it there would
+    ///      change `type(ITMPCore).interfaceId`, which `DiamondLoupeFacet.supportsInterface`
+    ///      reports.
     function createTask(
         uint256 reward,
         uint256 duration,
@@ -61,6 +85,43 @@ contract CoreFacet {
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content
     ) external returns (bytes32 taskId) {
+        // A zero-valued struct is exactly "no evaluator", which is what this signature has always
+        // meant. It shares the whole body below, so the shim cannot drift from the real path.
+        // Every field is named and zeroed explicitly rather than left to Solidity's
+        // zero-initialisation, so that adding a field to TaskEvaluatorConfig fails to compile
+        // here and forces whoever adds it to say what the shim should pass.
+        ITMPCore.TaskEvaluatorConfig memory noEvaluator = ITMPCore.TaskEvaluatorConfig({
+            evaluator: address(0),
+            evaluatorStake: 0,
+            evaluatorFeeBps: 0,
+            evaluationWindow: 0,
+            appealWindow: 0,
+            disputeResolver: address(0)
+        });
+        return _createTask(
+            ITMPCore.TaskConfig({
+                reward: reward,
+                duration: duration,
+                mode: mode,
+                pitchDeadline: pitchDeadline,
+                bidDeadline: bidDeadline,
+                auctionSubtype: auctionSubtype
+            }),
+            stakeConfig,
+            hookConfig,
+            content,
+            noEvaluator
+        );
+    }
+
+    // solhint-disable-next-line code-complexity
+    function _createTask(
+        ITMPCore.TaskConfig memory config,
+        ITMPCore.StakeConfig calldata stakeConfig,
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig memory evaluatorConfig
+    ) private returns (bytes32 taskId) {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
         LibTaskMarket._requireNotPaused(s);
@@ -68,14 +129,16 @@ contract CoreFacet {
 
         address requester = LibTaskMarket._effectiveSender(s);
         if (requester == address(0)) revert ITMPCore.InvalidRequester();
-        if (reward == 0) revert ITMPCore.RewardMustBeGreaterThanZero();
-        if (duration == 0) revert ITMPCore.DurationMustBeGreaterThanZero();
-        if (!(mode == BOUNTY || mode == CLAIM || mode == PITCH || mode == BENCHMARK || mode == AUCTION)) {
+        if (config.reward == 0) revert ITMPCore.RewardMustBeGreaterThanZero();
+        if (config.duration == 0) revert ITMPCore.DurationMustBeGreaterThanZero();
+        if (!(config.mode == BOUNTY || config.mode == CLAIM || config.mode == PITCH || config.mode == BENCHMARK
+                    || config.mode == AUCTION)) {
             revert ITMPCore.InvalidMode();
         }
-        if (mode == AUCTION) {
-            if (!(auctionSubtype == AUCTION_DUTCH || auctionSubtype == AUCTION_ENGLISH
-                        || auctionSubtype == AUCTION_REVERSE_DUTCH || auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert ITMPCore.InvalidAuctionSubtype();
+        if (config.mode == AUCTION) {
+            if (!(config.auctionSubtype == AUCTION_DUTCH || config.auctionSubtype == AUCTION_ENGLISH
+                        || config.auctionSubtype == AUCTION_REVERSE_DUTCH
+                        || config.auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert ITMPCore.InvalidAuctionSubtype();
         }
         if (stakeConfig.bps > 10000) revert ITMPCore.StakeBpsTooHigh();
 
@@ -84,10 +147,10 @@ contract CoreFacet {
         ITMPCore.Task storage t = s.tasks[taskId];
         t.id = taskId;
         t.requester = requester;
-        t.reward = reward;
-        t.expiryTime = block.timestamp + duration;
+        t.reward = config.reward;
+        t.expiryTime = block.timestamp + config.duration;
         t.status = ITMPCore.TaskStatus.Open;
-        t.mode = mode;
+        t.mode = config.mode;
         t.feeBps = s.defaultFeeBps;
         t.stakeRequired = stakeConfig.required;
         t.stakeBps = stakeConfig.bps;
@@ -97,26 +160,36 @@ contract CoreFacet {
         meta.contentHash = content.contentHash;
         meta.contentURI = content.contentURI;
 
-        if (mode == PITCH) {
-            if (pitchDeadline == 0) revert ITMPCore.PitchDeadlineMustBeGreaterThanZero();
-            s.taskPitchConfigs[taskId].pitchDeadline = block.timestamp + pitchDeadline;
+        if (config.mode == PITCH) {
+            if (config.pitchDeadline == 0) revert ITMPCore.PitchDeadlineMustBeGreaterThanZero();
+            s.taskPitchConfigs[taskId].pitchDeadline = block.timestamp + config.pitchDeadline;
         }
-        if (mode == AUCTION) {
-            if (bidDeadline == 0) revert ITMPCore.BidDeadlineMustBeGreaterThanZero();
+        if (config.mode == AUCTION) {
+            if (config.bidDeadline == 0) revert ITMPCore.BidDeadlineMustBeGreaterThanZero();
             ITMPCore.TaskAuctionConfig storage ac = s.taskAuctionConfigs[taskId];
-            ac.bidDeadline = block.timestamp + bidDeadline;
-            ac.maxPrice = reward;
-            ac.auctionSubtype = auctionSubtype;
+            ac.bidDeadline = block.timestamp + config.bidDeadline;
+            ac.maxPrice = config.reward;
+            ac.auctionSubtype = config.auctionSubtype;
         }
 
         if (content.tags.length > 0) {
             s.taskTags[taskId] = content.tags;
         }
 
+        // Applied before the hooks so a checkFund hook observes a fully configured task rather
+        // than one that only becomes evaluator-gated a moment later.
+        _applyCreationEvaluatorConfig(taskId, requester, evaluatorConfig, s);
+
         _buildAndCheckHooks(taskId, hookConfig, s);
 
         emit ITMPCore.TaskCreated(
-            taskId, requester, reward, mode, block.timestamp + duration, stakeConfig.required, stakeConfig.bps
+            taskId,
+            requester,
+            config.reward,
+            config.mode,
+            block.timestamp + config.duration,
+            stakeConfig.required,
+            stakeConfig.bps
         );
         LibTaskMarket._nonReentrantAfter(s);
     }
@@ -528,6 +601,32 @@ contract CoreFacet {
             _refundExpiredNormal(taskId, task, s, requesterAgentId);
         }
         LibTaskMarket._nonReentrantAfter(s);
+    }
+
+    /// @dev Creation-side wrapper around the shared evaluator-config body. Kept in its own frame
+    ///      so the struct copy and stake-pull locals do not add to createTask's already-deep
+    ///      stack. A zero `evaluator` means the task has no evaluator, which is the common case.
+    function _applyCreationEvaluatorConfig(
+        bytes32 taskId,
+        address requester,
+        ITMPCore.TaskEvaluatorConfig memory evaluatorConfig,
+        AppStorage storage s
+    ) private {
+        if (evaluatorConfig.evaluator != address(0)) {
+            LibTaskMarket._applyEvaluatorConfig(taskId, requester, evaluatorConfig, s);
+            return;
+        }
+        // Evaluator terms with no evaluator to apply them to would be silently dropped, leaving
+        // the requester believing the task is evaluator-gated when it is not -- and believing it
+        // for the whole life of the task, since nothing ever reports the discarded fields.
+        // A malformed request is worth a revert here; a misconfigured escrow is not recoverable.
+        if (
+            evaluatorConfig.evaluatorStake != 0 || evaluatorConfig.evaluatorFeeBps != 0
+                || evaluatorConfig.evaluationWindow != 0 || evaluatorConfig.appealWindow != 0
+                || evaluatorConfig.disputeResolver != address(0)
+        ) {
+            revert ITMPCore.InvalidEvaluator();
+        }
     }
 
     function _buildAndCheckHooks(bytes32 taskId, ITMPCore.HookConfig calldata hookConfig, AppStorage storage s)

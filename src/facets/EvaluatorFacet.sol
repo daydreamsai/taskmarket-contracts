@@ -13,9 +13,16 @@ contract EvaluatorFacet {
     bytes4 private constant BOUNTY = TMP_BOUNTY;
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
 
-    /// @notice Assign an evaluator to an open task.
+    /// @notice Assign an evaluator to an open task that was created without one.
     ///         Only the requester may call this, only while the task is Open.
     ///         If stakeAmount > 0, the contract pulls from the requester via transferFrom.
+    /// @dev A requester who knows at creation time that the task needs an evaluator should pass
+    ///      the configuration to `createTask` instead: the task is claimable the instant
+    ///      `createTask` mines, so a second transaction races the first worker to claim and can
+    ///      lose (`TaskNotOpen`). This function exists for the case that genuinely needs it --
+    ///      deciding on an evaluator after the task is already live -- and the `Open` gate below
+    ///      is correct for that case, because appointing an evaluator after a worker has claimed
+    ///      would change the terms the worker committed to.
     /// @param taskId               Task identifier
     /// @param evaluator            Evaluator address
     /// @param stakeAmount          USDC stake amount pulled from requester (0 = no stake)
@@ -39,34 +46,25 @@ contract EvaluatorFacet {
 
         address requester = LibTaskMarket._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
-        if (evaluator == address(0)) revert ITMPCore.InvalidEvaluator();
-        if (evaluator == requester) revert ITMPCore.EvaluatorCannotBeRequester();
-        if (disputeResolver == requester) revert ITMPCore.DisputeResolverCannotBeRequester();
-        if (evalCfg.evaluator != address(0)) revert ITMPCore.EvaluatorAlreadyAssigned();
-        if (feeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
-        if (appealWindowSecs < LibTaskMarket._minAppealWindowSecs(s)) revert ITMPCore.AppealWindowTooShort();
 
-        evalCfg.evaluator = evaluator;
-        evalCfg.evaluatorStake = stakeAmount;
-        evalCfg.evaluatorFeeBps = feeBps;
-        evalCfg.evaluationWindow = evaluationWindowSecs;
-        evalCfg.appealWindow = appealWindowSecs;
-        evalCfg.disputeResolver = disputeResolver;
+        // Remaining validation, storage writes, stake pull and event live in LibTaskMarket so
+        // this path and createTask's cannot drift apart. See _applyEvaluatorConfig.
+        LibTaskMarket._applyEvaluatorConfig(
+            taskId,
+            requester,
+            ITMPCore.TaskEvaluatorConfig({
+                evaluator: evaluator,
+                evaluatorStake: stakeAmount,
+                evaluatorFeeBps: feeBps,
+                evaluationWindow: evaluationWindowSecs,
+                appealWindow: appealWindowSecs,
+                disputeResolver: disputeResolver
+            }),
+            s
+        );
 
-        if (stakeAmount > 0) {
-            // Pull stake from the requester. Pulling from an arbitrary evaluator address would
-            // let a malicious requester drain any address that has pre-approved this contract.
-            // requester = _effectiveSender(s) = authenticated PGTR forwarder caller; not arbitrary
-            // slither-disable-next-line arbitrary-send-erc20
-            if (!s.usdcToken.transferFrom(requester, address(this), stakeAmount)) {
-                revert ITMPCore.StakeTransferFailed();
-            }
-        }
-
-        emit ITMPEvaluator.EvaluatorAssigned(taskId, evaluator, stakeAmount);
         LibTaskMarket._nonReentrantAfter(s);
     }
 

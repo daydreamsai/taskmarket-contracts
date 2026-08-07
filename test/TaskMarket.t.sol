@@ -19,10 +19,14 @@ import "../src/interfaces/ITMPReputation.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
+import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { Diamond } from "../src/Diamond.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
+import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { taskConfig } from "./helpers/TaskConfigHelper.sol";
+import { TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock USDC", "USDC") {
@@ -129,15 +133,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        _reward,
-                        _dur,
-                        _mode,
-                        _pd,
-                        _bd,
-                        _auctionSubtype,
+                        taskConfig(_reward, _dur, _mode, _pd, _bd, _auctionSubtype),
                         ITMPCore.StakeConfig({ required: _stakeRequired, bps: _stakeBps }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -160,15 +160,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        _reward,
-                        _dur,
-                        _mode,
-                        _dur,
-                        _dur,
-                        bytes4(0),
+                        taskConfig(_reward, _dur, _mode, _dur, _dur, bytes4(0)),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -618,15 +614,11 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.prank(alice);
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
         market.createTask(
-            REWARD,
-            DURATION,
-            bounty,
-            0,
-            0,
-            bytes4(0),
+            taskConfig(REWARD, DURATION, bounty, 0, 0, bytes4(0)),
             ITMPCore.StakeConfig({ required: false, bps: 0 }),
             ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-            ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+            ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+            noEvaluatorConfig()
         );
     }
 
@@ -698,15 +690,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.BOUNTY(),
-                        0,
-                        0,
-                        bytes4(0),
+                        taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -726,15 +714,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
@@ -788,15 +772,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.InvalidRequester.selector);
@@ -807,15 +787,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                0,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(0, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.RewardMustBeGreaterThanZero.selector);
@@ -826,15 +802,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                0,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, 0, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.DurationMustBeGreaterThanZero.selector);
@@ -845,15 +817,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                bytes4(0xdeadbeef),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, bytes4(0xdeadbeef), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.InvalidMode.selector);
@@ -864,15 +832,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.AUCTION(),
-                0,
-                1 days,
-                bytes4(0xdeadbeef),
+                taskConfig(REWARD, DURATION, market.AUCTION(), 0, 1 days, bytes4(0xdeadbeef)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.InvalidAuctionSubtype.selector);
@@ -915,15 +879,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: true, bps: 10001 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.StakeBpsTooHigh.selector);
@@ -2764,15 +2724,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                mode,
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, mode, 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert();
@@ -2787,15 +2743,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                mode,
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, mode, 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert(ITMPCore.HookCheckFundRejected.selector);
@@ -2942,15 +2894,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.BOUNTY(),
-                        0,
-                        0,
-                        bytes4(0),
+                        taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -2975,15 +2923,11 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.expectRevert();
@@ -3061,15 +3005,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.BOUNTY(),
-                        0,
-                        0,
-                        bytes4(0),
+                        taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: tags })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: tags }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -3091,6 +3031,314 @@ contract TaskMarketTest is DiamondTestHelper {
     // -------------------------------------------------------------------------
 
     address public evaluator = address(10);
+    address public disputeResolver = address(11);
+
+    // -------------------------------------------------------------------------
+    // createTask with evaluator config — the single-transaction path (Rev018)
+    // -------------------------------------------------------------------------
+
+    /// @dev Builds a createTask call carrying evaluator terms. Deliberately spelled out rather
+    ///      than routed through _createTask, so a test asserting the atomic path cannot silently
+    ///      start exercising the two-transaction one. Takes the mode as a literal rather than
+    ///      calling market.CLAIM(), because that view call would consume a pending expectRevert.
+    function _createTaskWithEvaluator(
+        address _req,
+        address _eval,
+        uint256 _stake,
+        uint16 _feeBps,
+        uint32 _evalWindow,
+        uint32 _appealWindow,
+        address _disputeResolver
+    ) internal returns (bytes memory) {
+        return (_relay(
+                _req,
+                REWARD,
+                abi.encodeCall(
+                    market.createTask,
+                    (
+                        taskConfig(REWARD, DURATION, TMP_CLAIM, 0, 0, bytes4(0)),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        ITMPCore.TaskEvaluatorConfig({
+                            evaluator: _eval,
+                            evaluatorStake: _stake,
+                            evaluatorFeeBps: _feeBps,
+                            evaluationWindow: _evalWindow,
+                            appealWindow: _appealWindow,
+                            disputeResolver: _disputeResolver
+                        })
+                    )
+                )
+            ));
+    }
+
+    function test_CreateTask_WithEvaluator_StoresConfigInOneTransaction() public {
+        bytes32 taskId = abi.decode(
+            _createTaskWithEvaluator(requester, evaluator, 0, 500, uint32(2 days), uint32(1 days), disputeResolver),
+            (bytes32)
+        );
+
+        ITMPCore.TaskEvaluatorConfig memory cfg = market.getTaskEvaluatorConfig(taskId);
+        assertEq(cfg.evaluator, evaluator, "evaluator stored");
+        assertEq(cfg.evaluatorFeeBps, 500, "fee stored");
+        assertEq(cfg.evaluationWindow, uint32(2 days), "evaluation window stored");
+        assertEq(cfg.appealWindow, uint32(1 days), "appeal window stored");
+        assertEq(cfg.disputeResolver, disputeResolver, "dispute resolver stored");
+        assertEq(market.evaluatorFor(taskId), evaluator, "evaluatorFor agrees");
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Open), "task is live");
+    }
+
+    function test_CreateTask_WithEvaluator_EmitsEvaluatorAssigned() public {
+        // The same event the assignment path emits, so an indexer needs no second vocabulary for
+        // "this task has an evaluator" depending on which path configured it.
+        vm.expectEmit(true, true, false, true);
+        emit ITMPEvaluator.EvaluatorAssigned(
+            keccak256(abi.encode(block.chainid, address(market), requester, market.requesterNonce(requester))),
+            evaluator,
+            0
+        );
+        _createTaskWithEvaluator(requester, evaluator, 0, 500, uint32(2 days), uint32(1 days), address(0));
+    }
+
+    /// @dev The point of the whole change: no second transaction exists, so there is no window in
+    ///      which a worker can claim between creation and assignment. A claim landing in the very
+    ///      next call still finds the evaluator already configured, which under the
+    ///      create-then-assign shape was precisely the case that failed (`TaskNotOpen`).
+    function test_CreateTask_WithEvaluator_SurvivesImmediateClaim() public {
+        bytes32 taskId = abi.decode(
+            _createTaskWithEvaluator(requester, evaluator, 0, 500, uint32(2 days), uint32(1 days), address(0)),
+            (bytes32)
+        );
+
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+
+        // Review, not PendingApproval: the task reached the evaluator-gated state with only one
+        // relayed transaction having ever configured the evaluator.
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Review), "evaluator-gated");
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, evaluator, "evaluator still set after claim");
+    }
+
+    function test_CreateTask_WithEvaluator_NonZeroStake_TransfersFromRequester() public {
+        uint256 stakeAmount = REWARD / 10;
+        usdc.mint(requester, stakeAmount);
+        vm.prank(requester);
+        usdc.approve(address(market), stakeAmount);
+
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        bytes32 taskId = abi.decode(
+            _createTaskWithEvaluator(requester, evaluator, stakeAmount, 0, uint32(2 days), uint32(1 days), address(0)),
+            (bytes32)
+        );
+
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, stakeAmount, "stake recorded");
+        assertEq(usdc.balanceOf(requester), requesterBefore - stakeAmount, "stake pulled from requester");
+    }
+
+    function test_CreateTask_WithoutEvaluator_LeavesConfigEmpty() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "no evaluator");
+        assertEq(market.evaluatorFor(taskId), address(0), "evaluatorFor agrees");
+    }
+
+    /// @dev Evaluator terms with no evaluator would otherwise be written nowhere and reported
+    ///      nowhere, leaving the requester believing the task is evaluator-gated for its lifetime.
+    function test_RevertWhen_CreateTask_EvaluatorTermsWithoutEvaluator() public {
+        vm.expectRevert(ITMPCore.InvalidEvaluator.selector);
+        _createTaskWithEvaluator(requester, address(0), 0, 500, uint32(2 days), uint32(1 days), address(0));
+    }
+
+    /// @dev A task already configured at creation cannot be reconfigured by the assignment path,
+    ///      which is the same EvaluatorAlreadyAssigned guard the assignment path applies to itself.
+    function test_RevertWhen_AssignEvaluator_AfterCreationConfigured() public {
+        bytes32 taskId = abi.decode(
+            _createTaskWithEvaluator(requester, evaluator, 0, 500, uint32(2 days), uint32(1 days), address(0)),
+            (bytes32)
+        );
+        vm.expectRevert(ITMPCore.EvaluatorAlreadyAssigned.selector);
+        _assignEvaluator(taskId, requester, worker2, 100, uint32(1 days), uint32(1 days));
+    }
+
+    // -------------------------------------------------------------------------
+    // Validation parity between the two entry points
+    //
+    // The creation path must reject exactly what the assignment path rejects. Asserting
+    // individual known guards would only cover the guards that exist today; these drive the same
+    // terms through both entry points and require the same answer, so a guard added to one path
+    // and not the other fails here whatever that guard turns out to be. That matters concretely:
+    // rev017 tightened the terms assignEvaluator accepts (self-assignment, minimum appeal
+    // window), and rev018's creation path must not become the cheap way around it.
+    // -------------------------------------------------------------------------
+
+    /// @dev Runs one set of evaluator terms through both entry points on two identical fresh
+    ///      tasks and asserts they agree: either both revert with the same data, or neither does
+    ///      and both store the same configuration.
+    function _assertEntryPointsAgree(
+        address _eval,
+        uint16 _feeBps,
+        uint32 _evalWindow,
+        uint32 _appealWindow,
+        string memory label
+    ) internal {
+        (bool createOk, bytes memory createErr) = _tryCreateWithEvaluator(_eval, _feeBps, _evalWindow, _appealWindow);
+        (bool assignOk, bytes memory assignErr, bytes32 assignedTaskId) =
+            _tryAssignEvaluator(_eval, _feeBps, _evalWindow, _appealWindow);
+
+        assertEq(createOk, assignOk, string.concat("entry points disagree on acceptance: ", label));
+        if (!createOk) {
+            assertEq(createErr, assignErr, string.concat("entry points revert differently: ", label));
+            return;
+        }
+
+        // Both succeeded: the stored terms must be identical too, not merely both present.
+        bytes32 createdTaskId =
+            keccak256(abi.encode(block.chainid, address(market), requester, market.requesterNonce(requester) - 2));
+        ITMPCore.TaskEvaluatorConfig memory a = market.getTaskEvaluatorConfig(createdTaskId);
+        ITMPCore.TaskEvaluatorConfig memory b = market.getTaskEvaluatorConfig(assignedTaskId);
+        assertEq(abi.encode(a), abi.encode(b), string.concat("entry points store different terms: ", label));
+    }
+
+    function _tryCreateWithEvaluator(address _eval, uint16 _feeBps, uint32 _evalWindow, uint32 _appealWindow)
+        private
+        returns (bool ok, bytes memory err)
+    {
+        try this.externalCreateWithEvaluator(_eval, _feeBps, _evalWindow, _appealWindow) {
+            ok = true;
+        } catch (bytes memory reason) {
+            err = reason;
+        }
+    }
+
+    function _tryAssignEvaluator(address _eval, uint16 _feeBps, uint32 _evalWindow, uint32 _appealWindow)
+        private
+        returns (bool ok, bytes memory err, bytes32 taskId)
+    {
+        taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        try this.externalAssignEvaluator(taskId, _eval, _feeBps, _evalWindow, _appealWindow) {
+            ok = true;
+        } catch (bytes memory reason) {
+            err = reason;
+        }
+    }
+
+    /// @dev `external` so the try/catch above can call it -- Solidity's try only applies to
+    ///      external calls. Not part of any test's assertions directly.
+    function externalCreateWithEvaluator(address _eval, uint16 _feeBps, uint32 _evalWindow, uint32 _appealWindow)
+        external
+    {
+        require(msg.sender == address(this), "self only");
+        _createTaskWithEvaluator(requester, _eval, 0, _feeBps, _evalWindow, _appealWindow, address(0));
+    }
+
+    function externalAssignEvaluator(
+        bytes32 taskId,
+        address _eval,
+        uint16 _feeBps,
+        uint32 _evalWindow,
+        uint32 _appealWindow
+    ) external {
+        require(msg.sender == address(this), "self only");
+        _assignEvaluator(taskId, requester, _eval, _feeBps, _evalWindow, _appealWindow);
+    }
+
+    function test_EvaluatorConfig_EntryPointsAgree_ValidTerms() public {
+        _assertEntryPointsAgree(evaluator, 500, uint32(2 days), uint32(1 days), "valid terms");
+    }
+
+    function test_EvaluatorConfig_EntryPointsAgree_FeeBpsTooHigh() public {
+        _assertEntryPointsAgree(evaluator, 10001, uint32(2 days), uint32(1 days), "fee above 100 percent");
+    }
+
+    function test_EvaluatorConfig_EntryPointsAgree_ZeroEvaluator() public {
+        _assertEntryPointsAgree(address(0), 500, uint32(2 days), uint32(1 days), "no evaluator address");
+    }
+
+    /// @dev Self-assignment and a zero appeal window are the shapes rev017 has opinions about.
+    ///      Whatever those opinions are on the revision this eventually merges after, both entry
+    ///      points must hold them identically.
+    function test_EvaluatorConfig_EntryPointsAgree_EvaluatorIsRequester() public {
+        _assertEntryPointsAgree(requester, 500, uint32(2 days), uint32(1 days), "evaluator is the requester");
+    }
+
+    function test_EvaluatorConfig_EntryPointsAgree_ZeroAppealWindow() public {
+        _assertEntryPointsAgree(evaluator, 500, uint32(2 days), 0, "zero appeal window");
+    }
+
+    function testFuzz_EvaluatorConfig_EntryPointsAgree(uint16 _feeBps, uint32 _evalWindow, uint32 _appealWindow)
+        public
+    {
+        _assertEntryPointsAgree(evaluator, _feeBps, _evalWindow, _appealWindow, "fuzzed terms");
+    }
+
+    // -------------------------------------------------------------------------
+    // Legacy createTask overload (Rev018 expand-then-contract shim)
+    // -------------------------------------------------------------------------
+
+    /// @dev Encodes the pre-rev018 nine-parameter signature by hand. Nothing in this repo's
+    ///      Solidity can produce this calldata through the typed interface any more -- which is
+    ///      exactly the point: an off-chain caller that has not been redeployed yet still encodes
+    ///      it, and it must keep working until rev019 removes it.
+    function _createTaskLegacyCalldata() internal view returns (bytes memory) {
+        return abi.encodeWithSelector(
+            FacetSelectors.LEGACY_CREATE_TASK,
+            REWARD,
+            DURATION,
+            TMP_CLAIM,
+            uint256(0),
+            uint256(0),
+            bytes4(0),
+            ITMPCore.StakeConfig({ required: false, bps: 0 }),
+            ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+            ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+        );
+    }
+
+    function test_CreateTask_LegacySelector_StillCreatesTask() public {
+        bytes32 expectedId =
+            keccak256(abi.encode(block.chainid, address(market), requester, market.requesterNonce(requester)));
+
+        bytes32 taskId = abi.decode(_relay(requester, REWARD, _createTaskLegacyCalldata()), (bytes32));
+
+        assertEq(taskId, expectedId, "legacy selector returns the canonical task id");
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Open), "task is Open");
+        assertEq(market.getTask(taskId).reward, REWARD, "reward escrowed against the task");
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "legacy path sets no evaluator");
+    }
+
+    /// @dev The shim shares the whole creation body, so it must reject what the current signature
+    ///      rejects rather than being a laxer second door into task creation.
+    function test_RevertWhen_CreateTask_LegacySelector_ZeroReward() public {
+        bytes memory data = abi.encodeWithSelector(
+            FacetSelectors.LEGACY_CREATE_TASK,
+            uint256(0),
+            DURATION,
+            TMP_CLAIM,
+            uint256(0),
+            uint256(0),
+            bytes4(0),
+            ITMPCore.StakeConfig({ required: false, bps: 0 }),
+            ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+            ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+        );
+        vm.expectRevert(ITMPCore.RewardMustBeGreaterThanZero.selector);
+        _relay(requester, 0, data);
+    }
+
+    /// @dev A task created through the legacy selector can still be given an evaluator the old
+    ///      way, so a caller that has not migrated keeps its entire previous flow, race included.
+    function test_CreateTask_LegacySelector_ThenAssignEvaluator() public {
+        bytes32 taskId = abi.decode(_relay(requester, REWARD, _createTaskLegacyCalldata()), (bytes32));
+        _assignEvaluator(taskId, requester, evaluator, 500, uint32(2 days), uint32(1 days));
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, evaluator, "evaluator assigned afterwards");
+    }
+
+    function test_CreateTask_BothSelectorsRouteToTheSameFacet() public view {
+        address viaNew = IDiamondLoupe(address(market)).facetAddress(FacetSelectors.CREATE_TASK);
+        address viaLegacy = IDiamondLoupe(address(market)).facetAddress(FacetSelectors.LEGACY_CREATE_TASK);
+        assertNotEq(viaNew, address(0), "evaluator-aware createTask must route");
+        assertEq(viaLegacy, viaNew, "legacy createTask must route to the same CoreFacet");
+    }
 
     function test_AssignEvaluator_OnlyRequester() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
@@ -3304,15 +3552,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.AUCTION(),
-                        0,
-                        1 days,
-                        market.AUCTION_DUTCH(),
+                        taskConfig(REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH()),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -3341,15 +3585,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.AUCTION(),
-                        0,
-                        1 days,
-                        market.AUCTION_DUTCH(),
+                        taskConfig(REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH()),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -3682,15 +3922,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.CLAIM(),
-                        0,
-                        0,
-                        bytes4(0),
+                        taskConfig(REWARD, DURATION, market.CLAIM(), 0, 0, bytes4(0)),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -4552,15 +4788,11 @@ contract TaskMarketTest is DiamondTestHelper {
             abi.encodeCall(
                 market.createTask,
                 (
-                    REWARD,
-                    DURATION,
-                    bountyMode,
-                    0,
-                    0,
-                    bytes4(0),
+                    taskConfig(REWARD, DURATION, bountyMode, 0, 0, bytes4(0)),
                     ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
                 )
             )
         );
@@ -4667,15 +4899,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.BOUNTY(),
-                        0,
-                        0,
-                        bytes4(0),
+                        taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: contentHash, contentURI: "ipfs://xyz", tags: emptyTags })
+                        ITMPCore.TaskContent({ contentHash: contentHash, contentURI: "ipfs://xyz", tags: emptyTags }),
+                        noEvaluatorConfig()
                     )
                 )
             ),
@@ -4949,15 +5177,11 @@ contract TaskMarketTest is DiamondTestHelper {
                 abi.encodeCall(
                     market.createTask,
                     (
-                        REWARD,
-                        DURATION,
-                        market.AUCTION(),
-                        0,
-                        1 days,
-                        market.AUCTION_DUTCH(),
+                        taskConfig(REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH()),
                         ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
                     )
                 )
             ),

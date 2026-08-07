@@ -5,6 +5,7 @@ import { Script, console } from "forge-std/Script.sol";
 import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
+import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
 /// @title Rev014Upgrade — replace CoreFacet to add stakeRequired/stakeBps to createTask
 /// @dev createTask's signature changed (a new StakeConfig calldata struct param inserted before
@@ -51,7 +52,10 @@ contract Rev014Upgrade is Script {
         cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, _coreUnchangedSelectors());
 
         bytes4[] memory newCreateTask = new bytes4[](1);
-        newCreateTask[0] = CoreFacet.createTask.selector;
+        // The nine-parameter signature this step introduced. Rev018 added a second createTask
+        // overload, so it is no longer reachable as `CoreFacet.createTask.selector`; it is named
+        // "legacy" from rev018's perspective, but it is exactly what rev014 added here.
+        newCreateTask[0] = FacetSelectors.LEGACY_CREATE_TASK;
         cuts[2] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCreateTask);
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");

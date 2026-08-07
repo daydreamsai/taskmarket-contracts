@@ -9,6 +9,8 @@ import "../src/interfaces/ITMPCore.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
+import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -76,15 +78,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         _relay(requester, REWARD, data, _nonce(0));
@@ -165,15 +163,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         bytes4 expectedSelector = market.createTask.selector;
@@ -192,15 +186,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         bytes32 nonce = _nonce(99);
@@ -219,15 +209,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         bytes32 nonce = _nonce(100);
@@ -251,15 +237,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         uint256 expiredBefore = block.timestamp - 1;
@@ -273,15 +255,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         // validBefore == block.timestamp (inclusive, <= check)
@@ -309,15 +287,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                0,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(0, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.prank(server);
@@ -337,15 +311,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory createData = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.CLAIM(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.CLAIM(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         _relay(requester, REWARD, createData, _nonce(0));
@@ -368,15 +338,11 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         bytes memory data = abi.encodeCall(
             market.createTask,
             (
-                REWARD,
-                DURATION,
-                market.BOUNTY(),
-                0,
-                0,
-                bytes4(0),
+                taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
                 ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig()
             )
         );
         vm.prank(attacker);

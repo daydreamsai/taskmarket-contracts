@@ -182,10 +182,13 @@ contract DiamondFullUpgrade is Script {
         oldCoreChanged[2] = OLD_CREATE_TASK;
         cuts[4] = _removeCut(oldCoreChanged);
         cuts[5] = _replaceCut(coreFacet, _coreRevIntegrityUnchangedSelectors());
-        bytes4[] memory newCoreChanged = new bytes4[](3);
+        bytes4[] memory newCoreChanged = new bytes4[](4);
         newCoreChanged[0] = CoreFacet.cancelTask.selector;
         newCoreChanged[1] = CoreFacet.refundExpired.selector;
-        newCoreChanged[2] = CoreFacet.createTask.selector;
+        // Both createTask overloads: rev018 routes the legacy nine-parameter signature to the
+        // same facet as the evaluator-aware one, and a diamond this old has neither yet.
+        newCoreChanged[2] = FacetSelectors.CREATE_TASK;
+        newCoreChanged[3] = FacetSelectors.LEGACY_CREATE_TASK;
         cuts[6] = _addCut(coreFacet, newCoreChanged);
 
         cuts[7] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
@@ -249,8 +252,9 @@ contract DiamondFullUpgrade is Script {
         oldCreateTask[0] = OLD_CREATE_TASK;
         cuts[i++] = _removeCut(oldCreateTask);
         cuts[i++] = _replaceCut(coreFacet, _coreExistingSelectors());
-        bytes4[] memory newCreateTask = new bytes4[](1);
-        newCreateTask[0] = CoreFacet.createTask.selector;
+        bytes4[] memory newCreateTask = new bytes4[](2);
+        newCreateTask[0] = FacetSelectors.CREATE_TASK;
+        newCreateTask[1] = FacetSelectors.LEGACY_CREATE_TASK;
         cuts[i++] = _addCut(coreFacet, newCreateTask);
 
         cuts[i++] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
@@ -313,19 +317,29 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet,
         address regFacet
     ) internal {
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](11);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
+        // Running index rather than literals: a revision that appends a cut here and a revision
+        // that appends another one merge cleanly into two `i++` lines, whereas two literal
+        // `cuts[10] = ...` assignments merge into a silent overwrite of one by the other. Path B
+        // above already uses this form for the same reason.
+        uint256 i = 0;
 
-        cuts[0] = _replaceCut(cutFacet, FacetSelectors.cutFacetSelectors());
-        cuts[1] = _replaceCut(loupeFacet, FacetSelectors.loupeFacetSelectors());
-        cuts[2] = _replaceCut(adminFacet, _adminPreRev011Selectors());
-        cuts[3] = _replaceCut(coreFacet, FacetSelectors.coreFacetSelectors());
-        cuts[4] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
-        cuts[5] = _replaceCut(acceptFacet, FacetSelectors.acceptFacetSelectors());
-        cuts[6] = _replaceCut(evalFacet, FacetSelectors.evalFacetSelectors());
-        cuts[7] = _replaceCut(ratingFacet, FacetSelectors.ratingFacetSelectors());
-        cuts[8] = _replaceCut(regFacet, FacetSelectors.registryFacetSelectors());
-        cuts[9] = _addCut(adminFacet, _diamondVersionSelectors());
-        cuts[10] = _addCut(adminFacet, _minAppealWindowSelectors());
+        cuts[i++] = _replaceCut(cutFacet, FacetSelectors.cutFacetSelectors());
+        cuts[i++] = _replaceCut(loupeFacet, FacetSelectors.loupeFacetSelectors());
+        cuts[i++] = _replaceCut(adminFacet, _adminPreRev011Selectors());
+        // CoreFacet: Replace the selectors an existing diamond already routes, then Add rev018's
+        // evaluator-aware createTask, which no diamond routes until this cut lands and so cannot
+        // be part of a Replace. The legacy createTask stays routed rather than being removed --
+        // see FacetSelectors.LEGACY_CREATE_TASK.
+        cuts[i++] = _replaceCut(coreFacet, _corePreRev018Selectors());
+        cuts[i++] = _addCut(coreFacet, _createTaskSelector());
+        cuts[i++] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
+        cuts[i++] = _replaceCut(acceptFacet, FacetSelectors.acceptFacetSelectors());
+        cuts[i++] = _replaceCut(evalFacet, FacetSelectors.evalFacetSelectors());
+        cuts[i++] = _replaceCut(ratingFacet, FacetSelectors.ratingFacetSelectors());
+        cuts[i++] = _replaceCut(regFacet, FacetSelectors.registryFacetSelectors());
+        cuts[i++] = _addCut(adminFacet, _diamondVersionSelectors());
+        cuts[i++] = _addCut(adminFacet, _minAppealWindowSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         AdminFacet(diamond).setDiamondVersion(CURRENT_VERSION);
@@ -414,6 +428,42 @@ contract DiamondFullUpgrade is Script {
         s = new bytes4[](2);
         s[0] = AdminFacet.minAppealWindowSecs.selector;
         s[1] = AdminFacet.setMinAppealWindowSecs.selector;
+    }
+
+    /// @dev Rev018's evaluator-aware createTask on its own. Always an Add cut for an existing
+    ///      diamond, never a Replace: the selector is new, and the legacy one it sits beside is
+    ///      what keeps creation working until off-chain callers have moved over.
+    function _createTaskSelector() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = FacetSelectors.CREATE_TASK;
+    }
+
+    /// @dev The 21 CoreFacet selectors a steady-state diamond routes before rev018 -- i.e.
+    ///      FacetSelectors.coreFacetSelectors() minus rev018's new createTask overload. Used as
+    ///      Path C's Replace cut, since Replace requires every selector to already exist.
+    function _corePreRev018Selectors() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](21);
+        s[0] = bytes4(keccak256("BOUNTY()"));
+        s[1] = bytes4(keccak256("CLAIM()"));
+        s[2] = bytes4(keccak256("PITCH()"));
+        s[3] = bytes4(keccak256("BENCHMARK()"));
+        s[4] = bytes4(keccak256("AUCTION()"));
+        s[5] = bytes4(keccak256("AUCTION_DUTCH()"));
+        s[6] = bytes4(keccak256("AUCTION_ENGLISH()"));
+        s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
+        s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
+        s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
+        s[10] = FacetSelectors.LEGACY_CREATE_TASK;
+        s[11] = CoreFacet.claimTask.selector;
+        s[12] = CoreFacet.selectWorker.selector;
+        s[13] = CoreFacet.submitPitch.selector;
+        s[14] = CoreFacet.submitProof.selector;
+        s[15] = CoreFacet.submitWork.selector;
+        s[16] = CoreFacet.forfeitAndReopen.selector;
+        s[17] = CoreFacet.cancelTask.selector;
+        s[18] = CoreFacet.updateTask.selector;
+        s[19] = CoreFacet.refundExpired.selector;
+        s[20] = CoreFacet.rejectSubmission.selector;
     }
 
     /// @dev 18 CoreFacet selectors unchanged across both rev007 and rev010.
