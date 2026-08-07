@@ -1292,6 +1292,162 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     // -----------------------------------------------------------------------
+    // Escrow liability: recorded liability and moved money must agree
+    //
+    // Escrow is a single pooled USDC balance shared by every task, so a task that pays out more
+    // than it is owed is funded by other tasks' escrow. These cover both directions -- money out
+    // (refundExpired) and money in (updateTask's relayed reward increase).
+    // -----------------------------------------------------------------------
+
+    function test_RevertWhen_RefundExpired_AlreadyRefunded() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+
+        market.refundExpired(taskId, 0);
+
+        // refundExpired is permissionless by design (ADR-0026), so a stranger repeating it is
+        // the realistic case, not a hypothetical one.
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ITMPCore.TaskAlreadyRefunded.selector);
+        market.refundExpired(taskId, 0);
+    }
+
+    function test_RefundExpired_ZeroesOutstandingReward() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+
+        market.refundExpired(taskId, 0);
+
+        assertEq(market.getTask(taskId).reward, 0, "settled reward liability must be zeroed");
+    }
+
+    function test_RefundExpired_RepeatCannotDrainAnotherTasksEscrow() public {
+        // Two independently funded tasks sharing one escrow pool. Task B is the bystander that
+        // a repeated refund of task A used to be paid out of.
+        bytes32 taskA = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 taskB = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        assertEq(usdc.balanceOf(address(market)), REWARD * 2, "both rewards escrowed in one pool");
+
+        vm.warp(block.timestamp + DURATION + 1);
+
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.refundExpired(taskA, 0);
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "first refund is legitimate");
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ITMPCore.TaskAlreadyRefunded.selector);
+        market.refundExpired(taskA, 0);
+
+        assertEq(usdc.balanceOf(address(market)), REWARD, "task B's escrow is untouched");
+
+        // B remains solvent and can still be paid.
+        market.refundExpired(taskB, 0);
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD * 2, "task B refunds normally");
+    }
+
+    function test_RevertWhen_RefundExpired_AuctionClaimedNoDeliverable_AlreadyRefunded() public {
+        // The auction claimed-but-never-delivered branch sets Expired too, and a second call
+        // falls through to the normal path -- so it was repeatable by the same mechanism.
+        uint256 acceptPrice = 40 * 10 ** 6;
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
+        _acceptAuction(taskId, worker1, acceptPrice);
+
+        vm.warp(block.timestamp + DURATION + 1);
+        market.refundExpired(taskId, 0);
+        assertEq(market.getTask(taskId).reward, 0, "settled reward liability must be zeroed");
+
+        vm.expectRevert(ITMPCore.TaskAlreadyRefunded.selector);
+        market.refundExpired(taskId, 0);
+    }
+
+    function test_RevertWhen_UpdateTask_RewardUnchanged() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+
+        vm.expectRevert(ITMPCore.NoRewardChange.selector);
+        _updateTask(taskId, requester, 0, REWARD, 0, 0, 0);
+    }
+
+    function test_UpdateTask_DuplicateRelayOfSameIncreaseChargesOnce() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        uint256 newReward = REWARD * 2;
+        uint256 delta = newReward - REWARD;
+
+        _updateTask(taskId, requester, delta, newReward, 0, 0, 0);
+
+        uint256 escrowAfterFirst = usdc.balanceOf(address(market));
+        assertEq(escrowAfterFirst, newReward, "escrow matches the raised reward");
+
+        // A retry of the same logical update carries a fresh receipt nonce, so the forwarder's
+        // replay guard does not fire and it pulls the delta again. The contract-side revert is
+        // what unwinds that transfer -- the whole transaction reverts with it.
+        vm.expectRevert(ITMPCore.NoRewardChange.selector);
+        _updateTask(taskId, requester, delta, newReward, 0, 0, 0);
+
+        assertEq(usdc.balanceOf(address(market)), escrowAfterFirst, "duplicate relay moved no money");
+        assertEq(market.getTask(taskId).reward, newReward, "recorded reward still matches escrow");
+    }
+
+    /// @dev Outstanding liability for one task: what escrow still owes on it. Accepted and
+    ///      Cancelled tasks have been disbursed in full by their own settlement paths, so they
+    ///      carry no residual claim on the pool; every other status is owed `task.reward`.
+    function _outstandingLiability(bytes32 taskId) internal view returns (uint256) {
+        ITMPCore.Task memory task = market.getTask(taskId);
+        if (task.status == ITMPCore.TaskStatus.Accepted || task.status == ITMPCore.TaskStatus.Cancelled) {
+            return 0;
+        }
+        return task.reward;
+    }
+
+    function _assertSolvent(bytes32[] memory taskIds, string memory label) internal view {
+        uint256 liability;
+        for (uint256 i; i < taskIds.length; i++) {
+            liability += _outstandingLiability(taskIds[i]);
+        }
+        assertLe(liability, usdc.balanceOf(address(market)), label);
+    }
+
+    /// @notice The pool must be able to satisfy every claim still standing against it, at every
+    ///         point in the lifecycle. Issue #198 asked for this invariant and it was never
+    ///         written; the repeat-refund bug is exactly what it catches.
+    function test_Invariant_LiabilityNeverExceedsEscrowAcrossTransitions() public {
+        bytes32 refunded = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 raised = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 accepted = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+
+        bytes32[] memory taskIds = new bytes32[](3);
+        taskIds[0] = refunded;
+        taskIds[1] = raised;
+        taskIds[2] = accepted;
+
+        _assertSolvent(taskIds, "solvent after funding");
+
+        uint256 newReward = REWARD * 2;
+        _updateTask(raised, requester, newReward - REWARD, newReward, 0, 0, 0);
+        _assertSolvent(taskIds, "solvent after a funded reward increase");
+
+        vm.expectRevert(ITMPCore.NoRewardChange.selector);
+        _updateTask(raised, requester, newReward - REWARD, newReward, 0, 0, 0);
+        _assertSolvent(taskIds, "solvent after a duplicate increase relay");
+
+        _acceptSubmission(accepted, requester, worker1);
+        _assertSolvent(taskIds, "solvent after an acceptance payout");
+
+        vm.warp(block.timestamp + DURATION + 1);
+
+        market.refundExpired(refunded, 0);
+        _assertSolvent(taskIds, "solvent after an expiry refund");
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ITMPCore.TaskAlreadyRefunded.selector);
+        market.refundExpired(refunded, 0);
+        _assertSolvent(taskIds, "solvent after a repeated expiry refund is rejected");
+
+        market.refundExpired(raised, 0);
+        _assertSolvent(taskIds, "solvent after the raised task is refunded in full");
+        assertEq(usdc.balanceOf(address(market)), 0, "pool fully settled");
+    }
+
+    // -----------------------------------------------------------------------
     // forfeitAndReopen additional reverts
     // -----------------------------------------------------------------------
 

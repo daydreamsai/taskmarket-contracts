@@ -40,6 +40,7 @@ interface ITMPCore is IERC165 {
     error TaskIsCancelled();
     error TaskIsExpired();
     error TaskNotYetExpired();
+    error TaskAlreadyRefunded();
     error NotInAppealingState();
     error NotInDisputedState();
     error NotInReviewState();
@@ -132,6 +133,7 @@ interface ITMPCore is IERC165 {
     error USDCRefundFailed();
     error ExcessRefundFailed();
     error RewardIncreaseNotFunded();
+    error NoRewardChange();
 
     // Hooks
     error HookCheckFundRejected();

@@ -440,6 +440,16 @@ contract CoreFacet {
         uint256 originalBidDeadline = s.taskAuctionConfigs[taskId].bidDeadline;
         uint256 originalPitchDeadline = s.taskPitchConfigs[taskId].pitchDeadline;
 
+        // A reward that is named but unchanged must revert, not no-op. The USDC for a reward
+        // increase is pulled by the forwarder BEFORE this call runs, and the Diamond has no way
+        // to hand it back -- so a silent no-op here keeps money that corresponds to no liability,
+        // and a duplicate relay of the same increase (a retry with a fresh receipt nonce, which
+        // the forwarder's replay guard does not and cannot catch) charges the requester twice for
+        // one increase. Reverting is the only mechanism available on this side of the forwarder
+        // boundary that unwinds the transfer, because the whole transaction unwinds with it.
+        // Callers leave a field unchanged by passing 0, so this rejects nothing legitimate.
+        if (newReward != 0 && newReward == task.reward) revert ITMPCore.NoRewardChange();
+
         uint256 refund = 0;
         if (newReward != 0 && newReward != task.reward) {
             if (newReward < task.reward) {
@@ -499,6 +509,12 @@ contract CoreFacet {
         if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
         if (task.status == ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskAlreadyAccepted();
         if (task.status == ITMPCore.TaskStatus.Cancelled) revert ITMPCore.TaskIsCancelled();
+        // Expired is a status this function sets itself, so it must be as terminal here as
+        // Accepted and Cancelled are. Without this the call is repeatable: it is permissionless
+        // by design (ADR-0026) and every guard above still passes on a second call, so each
+        // repeat pays the reward again out of the single pooled escrow balance shared by all
+        // tasks -- draining unrelated, fully funded tasks.
+        if (task.status == ITMPCore.TaskStatus.Expired) revert ITMPCore.TaskAlreadyRefunded();
         // Bounty/Benchmark: if active submissions exist the requester must explicitly accept.
         // refundExpired is blocked so workers are guaranteed their work will be evaluated.
         // Active submission count drops to zero when all submissions have been rejected.
@@ -548,6 +564,12 @@ contract CoreFacet {
             task.status = ITMPCore.TaskStatus.Expired;
             uint256 refundAmount = task.reward;
             address requesterAddr = task.requester;
+            // Extinguish the recorded liability in the same statement group that decides to pay
+            // it out, before any transfer (checks-effects-interactions). The status check above
+            // is what actually blocks a repeat today; this is what keeps the books honest if a
+            // future status is ever allowed to reach this path, so the escrow pool can never be
+            // asked to satisfy the same obligation twice.
+            task.reward = 0;
 
             // An evaluator can be assigned to an auction task while it's still Open. Since
             // the task never reaches Review without a deliverable, evaluate() never runs and
@@ -627,6 +649,10 @@ contract CoreFacet {
 
         task.status = ITMPCore.TaskStatus.Expired;
         uint256 refundAmount = task.reward - evalFeeAlreadyPaid;
+        // See _refundAuctionClaimed: the outstanding reward liability is settled in full here
+        // (the evaluator fee portion having already been paid out by evaluate()), so it is
+        // zeroed alongside the status rather than left standing for a later read to act on.
+        task.reward = 0;
 
         address timedOutEvaluator = evalCfg.evaluator;
         uint256 evaluatorForfeited = evalCfg.evaluatorStake;
