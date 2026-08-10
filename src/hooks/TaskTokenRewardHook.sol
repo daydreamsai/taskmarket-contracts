@@ -609,16 +609,28 @@ contract TaskTokenRewardHook is ITMPHook, Ownable {
 
         // TOCTOU guard: budget may be exhausted between remaining() and checkAndConsume.
         // reservedTokenAmount stays 0 on failure so no token reward is owed without
-        // blocking USDC payout. If vault.reserve() itself reverts (insufficient vault
-        // balance), that propagates and reverts the whole claim/select-worker call —
-        // consistent with epochBudget's consumption being rolled back too. epochBudget
-        // is a trusted owner-set contract with no callback mechanism, so the
-        // reentrancy-no-eth finding is a false positive.
+        // blocking USDC payout. epochBudget is a trusted owner-set contract with no
+        // callback mechanism, so the reentrancy-no-eth finding is a false positive.
         // slither-disable-next-line reentrancy-no-eth
         try epochBudget.checkAndConsume(requester, worker, bonusUsd) returns (uint64 epoch) {
-            state.reservedTokenAmount = tokenAmount;
-            state.consumedEpoch = epoch;
-            vault.reserve(taskId, tokenAmount);
+            // A dry vault must degrade to "no bonus", never block the USDC path. The
+            // vault is a pre-funded pool that drains as rewards are paid (and can be
+            // swept by the owner via emergencyWithdraw), so exhaustion is an expected
+            // operational state, not an error. Check hooks are NOT try-catch wrapped
+            // by the Diamond — LibTaskMarket._dispatchCheckHooks reverts
+            // HookCheckClaimRejected whenever a hook call fails — so letting
+            // vault.reserve() propagate would make claimTask/selectWorker revert on
+            // every hooked task for as long as the vault is empty.
+            try vault.reserve(taskId, tokenAmount) {
+                state.reservedTokenAmount = tokenAmount;
+                state.consumedEpoch = epoch;
+            } catch {
+                // Hand the budget back: it was consumed for a reward that will never be
+                // owed. reservedTokenAmount stays 0, which is the same state the
+                // budget-exhausted branch leaves behind, so checkComplete and
+                // _releaseReserve already treat this task as carrying no token reward.
+                try epochBudget.release(requester, worker, bonusUsd, epoch) { } catch { }
+            }
         } catch { }
 
         emit RewardReserved(taskId, worker, rate, state.reservedTokenAmount);

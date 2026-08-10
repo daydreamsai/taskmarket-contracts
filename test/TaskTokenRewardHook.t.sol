@@ -1122,14 +1122,50 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
     // ─── Vault insufficient ───────────────────────────────────────────────────
 
-    function test_vaultInsufficient_revertsAtClaim() public {
+    // A dry vault is an expected operational state, not an error: the pool drains as
+    // rewards are paid, and the owner can sweep it outright. It must skip the bonus and
+    // leave the USDC path alone — the same rule the Bounty sibling below and the
+    // exhausted-EpochBudget test above already encode. Check hooks are NOT try-catch
+    // wrapped by the Diamond, so a revert here blocked claimTask on EVERY hooked task
+    // for as long as the vault was empty.
+    function test_vaultInsufficient_claimSucceedsNoReservation() public {
+        uint256 avail = vault.available();
+        vm.prank(owner);
+        vault.withdraw(owner, avail);
+        assertEq(vault.available(), 0);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        (,,, uint256 reservedAmt,, address lockedWorker, bool reserved,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0, "no token reward may be owed against an empty vault");
+        assertTrue(reserved, "the task is still worker-locked");
+        assertEq(lockedWorker, worker);
+        assertEq(vault.taskReserve(taskId), 0);
+
+        // The budget was consumed for a reward that will never be owed, so it must be
+        // handed back rather than stranded until the epoch rolls.
+        assertEq(budget.workerUsed(worker), 0, "epoch budget must be released, not stranded");
+        assertEq(budget.requesterUsed(requester), 0);
+        assertEq(budget.globalUsed(), 0);
+    }
+
+    // The load-bearing half: with the vault dry, the task still runs to completion and
+    // the worker is still paid in USDC. The bonus degrades, not the market.
+    function test_vaultInsufficient_claim_paysUsdcWithoutBonus() public {
         uint256 avail = vault.available();
         vm.prank(owner);
         vault.withdraw(owner, avail);
 
         bytes32 taskId = _createClaimTask();
-        vm.expectRevert();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore, "USDC payout must not depend on the bonus vault");
+        assertEq(hook.claimable(worker), 0, "no DREAMS may be credited when none were reserved");
     }
 
     function test_vaultInsufficient_bounty_skipsBonusNotUSDP() public {
