@@ -12,7 +12,7 @@ import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev013UpgradeTest
-/// @dev Deploys a diamond at rev011, applies rev012 to reach rev012 (rev013's precondition),
+/// @dev Deploys a diamond placed at rev011, applies rev012 to reach rev012 (rev013's precondition),
 ///      applies the rev013 upgrade step, and asserts diamondVersion bumps to 13 and
 ///      CoreFacet/EvaluatorFacet are replaced with new implementations while their selector
 ///      sets are unchanged.
@@ -35,7 +35,7 @@ contract Rev013UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev013Upgrade_BumpsVersionAndReplacesFacets() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _advanceToRev012(diamond);
         assertEq(AdminFacet(diamond).diamondVersion(), 12, "must be at rev012 before rev013");
 
@@ -65,7 +65,7 @@ contract Rev013UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev013Upgrade_NotAtRev012() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));

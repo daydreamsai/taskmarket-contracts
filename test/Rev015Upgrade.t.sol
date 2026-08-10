@@ -11,7 +11,7 @@ import { Rev015Upgrade } from "../script/upgrades/Rev015Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev015UpgradeTest
-/// @dev Deploys a diamond at rev011 (the test helper's baseline), advances through
+/// @dev Deploys a diamond placed at rev011 (the step tests' baseline), advances through
 ///      rev012/013/014 to reach rev015's precondition, applies the rev015 upgrade step, and
 ///      asserts diamondVersion bumps to 15 and RegistryFacet is replaced with a new
 ///      implementation while its full selector set keeps routing correctly.
@@ -44,7 +44,7 @@ contract Rev015UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev015Upgrade_BumpsVersionAndReplacesRegistryFacet() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _advanceToRev014(diamond);
         assertEq(AdminFacet(diamond).diamondVersion(), 14, "must be at rev014 before rev015");
 
@@ -84,7 +84,7 @@ contract Rev015UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev015Upgrade_NotAtRev014() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));

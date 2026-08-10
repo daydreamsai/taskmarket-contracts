@@ -13,23 +13,23 @@ import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 
 /// @title FacetSelectors — single source of truth for each facet's current (steady-state)
 ///        selector set.
-/// @dev DiamondDeploy.s.sol (fresh deploy), DiamondFullUpgrade.s.sol's steady-state
-///      Replace path, and DiamondTestHelper.sol (test fixtures) all call these functions
+/// @dev DiamondDeploy.s.sol (fresh deploy), the RevNNNUpgrade step scripts' steady-state
+///      Replace cuts, and DiamondTestHelper.sol (test fixtures) all call these functions
 ///      instead of maintaining independent copies, so a selector added to a facet only ever
 ///      needs to be added here once. Historical migration-delta selector lists (selectors that
-///      existed only on an old revision, or only get Added/Removed as part of a specific
-///      upgrade path) have no fresh-deploy equivalent and stay local to
-///      DiamondFullUpgrade.s.sol.
+///      existed only on an old revision, or only get Added/Removed as part of one specific
+///      step) have no fresh-deploy equivalent and stay local to the step script or the test
+///      that names them.
 library FacetSelectors {
     /// @dev The pre-rev018 nine-parameter `createTask`. Rev018 kept it routed beside the
     ///      evaluator-aware overload so off-chain callers could migrate after the facet cut rather
     ///      than in lockstep with it; rev019 removed the shim behind it, so it is no longer part
     ///      of any steady-state selector set and is not in `coreFacetSelectors()`.
     /// @dev It survives as a constant because the historical upgrade paths still have to name it:
-    ///      Rev018Upgrade Replaces it, Rev019Upgrade Removes it, and DiamondFullUpgrade's Path C
-    ///      does both in one run for a diamond that has been through neither step. A selector no
-    ///      facet serves has no `.selector` expression to derive it from, so the signature hash is
-    ///      written out -- the same idiom DiamondFullUpgrade's other historical selectors use.
+    ///      Rev014Upgrade Adds it, Rev018Upgrade Replaces it, and Rev019Upgrade Removes it. A
+    ///      selector no facet serves has no `.selector` expression to derive it from, so the
+    ///      signature hash is written out -- the same idiom the other historical selectors named
+    ///      by a step script or a step test use.
     bytes4 internal constant LEGACY_CREATE_TASK = bytes4(
         keccak256(
             "createTask(uint256,uint256,bytes4,uint256,uint256,bytes4,(bool,uint16),(address[],bytes),(bytes32,string,bytes32[]))"

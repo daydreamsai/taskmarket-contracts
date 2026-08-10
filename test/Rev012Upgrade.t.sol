@@ -11,7 +11,8 @@ import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev012UpgradeTest
-/// @dev Deploys a diamond at rev011 (a fresh deploy already starts there), applies the rev012
+/// @dev Deploys a diamond and places it at rev011 (a fresh deploy seeds the current revision,
+///      so the counter is rewound to reach rev012's precondition), applies the rev012
 ///      upgrade step, and asserts diamondVersion bumps to 12 and CoreFacet/AcceptanceFacet are
 ///      replaced with new implementations while their selector sets are unchanged.
 contract Rev012UpgradeTest is Test, DiamondTestHelper {
@@ -26,8 +27,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev012Upgrade_BumpsVersionAndReplacesFacets() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
-        assertEq(AdminFacet(diamond).diamondVersion(), 11, "fresh deploy must start at rev011");
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
         address oldAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
@@ -59,7 +59,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev012Upgrade_NotAtRev011() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));

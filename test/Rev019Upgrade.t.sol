@@ -40,7 +40,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
         owner = vm.addr(OWNER_KEY);
     }
 
-    /// @dev Brings a fresh (rev011 baseline) diamond to rev019's precondition: version 18, with
+    /// @dev Brings a diamond placed at rev011 to rev019's precondition: version 18, with
     ///      both createTask selectors routed.
     function _atRev018WithBothCreateTaskSelectors(address diamond) internal {
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
@@ -74,7 +74,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev019Upgrade_RemovesLegacySelectorAndReplacesCoreFacet() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _atRev018WithBothCreateTaskSelectors(diamond);
 
         assertEq(AdminFacet(diamond).diamondVersion(), 18, "must be at rev018 before rev019");
@@ -126,7 +126,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
     ///      Remove is dropped, but for the wrong reason, and would pass against a diamond that had
     ///      never routed the selector in the first place.
     function test_Rev019Upgrade_LegacySelectorRevertsWhenUnrouted() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _atRev018WithBothCreateTaskSelectors(diamond);
         new Rev019Upgrade().run();
 
@@ -144,7 +144,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
     /// @dev The other half of the same fact: the surviving selector still executes, so the cut
     ///      removed one route rather than breaking task creation outright.
     function test_Rev019Upgrade_NewSelectorStillExecutes() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _atRev018WithBothCreateTaskSelectors(diamond);
         new Rev019Upgrade().run();
 
@@ -156,7 +156,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev019Upgrade_NotAtRev018() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));

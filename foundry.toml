@@ -8,6 +8,16 @@ optimizer_runs = 200
 via_ir = true
 fuzz = { runs = 256 }
 invariant = { runs = 64 }
+# NOTE: the upgrade-step tests must run single-threaded -- `forge test -j 1`, which is what
+# `make test` and the package's test scripts pass. The RevNNNUpgrade scripts take their target
+# diamond from FORGE_DIAMOND_ADDRESS_*, and `vm.setEnv` writes the one process-wide environment
+# that every concurrently-executing test suite shares, so parallel suites retarget each other's
+# steps mid-sequence. A bare parallel `forge test` fails intermittently, in a different suite each
+# run. The `threads` config key here is NOT honoured by the test runner (only the CLI flag is),
+# which is why this is a comment and not a setting.
+# DiamondSelectorParity.t.sol enumerates the upgrade-step scripts to assert the fresh-deploy
+# version seed matches the highest one, so it needs to read that directory listing.
+fs_permissions = [{ access = "read", path = "./script/upgrades" }]
 
 [profile.default.fmt]
 line_length = 120

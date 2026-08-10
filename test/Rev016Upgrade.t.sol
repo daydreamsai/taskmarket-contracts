@@ -13,7 +13,7 @@ import { Rev016Upgrade } from "../script/upgrades/Rev016Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev016UpgradeTest
-/// @dev Deploys a diamond at rev011 (the test helper's baseline), advances through
+/// @dev Deploys a diamond placed at rev011 (the step tests' baseline), advances through
 ///      rev012/013/014/015 to reach rev016's precondition, applies the rev016 upgrade step, and
 ///      asserts diamondVersion bumps to 16 and CoreFacet is replaced with a new implementation
 ///      while every one of its selectors still routes. Rev016 changes no parameter list, so the
@@ -52,7 +52,7 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev016Upgrade_BumpsVersionAndReplacesCoreFacet() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _advanceToRev015(diamond);
         assertEq(AdminFacet(diamond).diamondVersion(), 15, "must be at rev015 before rev016");
 
@@ -115,7 +115,7 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev016Upgrade_NotAtRev015() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.chainId(BASE_SEPOLIA_CHAIN_ID);
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));

@@ -41,9 +41,10 @@ struct AppStorage {
     mapping(bytes32 => address[]) taskHooks;
     // Rev011: explicit upgrade-step counter, tracking the same revision numbering already used
     // throughout this codebase's comments (rev007, rev008, ...). Zero on every diamond deployed
-    // before this field existed; the one-time transition into version tracking still relies on
-    // the legacy selector-presence detection in DiamondFullUpgrade.s.sol. Bumped by each
-    // versioned upgrade step script after it applies its delta.
+    // before this field existed. Seeded at initialize() time from LibRevision.CURRENT_REVISION on
+    // a fresh deploy, and bumped by each versioned upgrade step script after it applies its
+    // delta. Rev020 retired the pre-rev011 bootstrap that used to migrate a zero-versioned
+    // diamond into tracking; a diamond still reading zero would have to be cut forward by hand.
     uint256 diamondVersion;
     // Rev017: protocol-level floor on assignEvaluator's appealWindowSecs. Admin-settable rather
     // than a compiled-in constant because nobody yet knows the right value, and a facet upgrade

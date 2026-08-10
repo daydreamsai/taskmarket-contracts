@@ -37,7 +37,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         owner = vm.addr(OWNER_KEY);
     }
 
-    /// @dev Brings a fresh (rev011 baseline) diamond to rev018's precondition: version 17, with
+    /// @dev Brings a diamond placed at rev011 to rev018's precondition: version 17, with
     ///      the legacy createTask selector routed and the new one absent.
     function _atRev017WithOnlyLegacyCreateTask(address diamond) internal {
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
@@ -81,7 +81,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev018Upgrade_AddsCreateTaskOverloadAndKeepsLegacyRouted() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _atRev017WithOnlyLegacyCreateTask(diamond);
 
         assertEq(AdminFacet(diamond).diamondVersion(), 17, "must be at rev017 before rev018");
@@ -148,7 +148,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
     ///      document for their own superseded signatures. Deleted rather than weakened into an
     ///      assertion that would pass without proving anything.
     function test_Rev018Upgrade_NewSelectorExecutesAfterTheCut() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _atRev017WithOnlyLegacyCreateTask(diamond);
         new Rev018Upgrade().run();
 
@@ -186,7 +186,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev018Upgrade_NotAtRev017() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));

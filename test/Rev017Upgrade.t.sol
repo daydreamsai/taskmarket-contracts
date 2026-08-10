@@ -16,7 +16,7 @@ import { Rev017Upgrade } from "../script/upgrades/Rev017Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
 /// @title Rev017UpgradeTest
-/// @dev Deploys a diamond at rev011 (the test helper's baseline), advances it through
+/// @dev Deploys a diamond placed at rev011 (the step tests' baseline), advances it through
 ///      rev012/013/014/015/016 to reach rev017's precondition, applies the rev017 step, and
 ///      asserts diamondVersion bumps to 17, all four hook-dispatching facets are genuinely
 ///      replaced, every pre-existing selector still routes, and the one new selector
@@ -72,7 +72,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_Rev017Upgrade_BumpsVersionAndReplacesHookDispatchingFacets() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _advanceToRev016(diamond);
         // Reconstruct the pre-rev017 selector set only after the intervening steps have run --
         // rev012/rev013 Replace whole facet selector sets, and LibDiamond rejects a Replace of a
@@ -134,7 +134,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
     }
 
     function test_RevertWhen_Rev017Upgrade_NotAtRev016() public {
-        address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
+        address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
         _setUpgradeEnv(diamond);
 
         // Diamond is still at rev011 -- rev017 requires rev016.

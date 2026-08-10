@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Diamond upgrade orchestrator -- run via `make upgrade <testnet|mainnet> [revNNN]`.
 #
-# With no revision argument, applies every not-yet-applied upgrade step in sequence:
-#   1. If the diamond has never had diamondVersion tracked (pre-rev011), runs the legacy
-#      DiamondFullUpgrade.s.sol bootstrap first (it auto-detects and migrates from whichever
-#      historical selector state the diamond is actually in, then sets diamondVersion to 11).
-#   2. Then applies every script/upgrades/RevNNNUpgrade.s.sol whose target revision is greater
-#      than the diamond's current diamondVersion, in ascending order.
+# With no revision argument, applies every script/upgrades/RevNNNUpgrade.s.sol whose target
+# revision is greater than the diamond's current diamondVersion, in ascending order.
+#
+# A freshly deployed diamond seeds diamondVersion from LibRevision.CURRENT_REVISION, so it is
+# already at the current revision and this script correctly finds nothing pending. Rev020 removed
+# the pre-rev011 bootstrap that used to run when diamondVersion read 0: no such diamond exists,
+# and one that did would now have to be cut forward by hand.
 #
 # With an explicit revision argument (e.g. "rev012"), runs only that one step's script directly
 # -- useful for a controlled single-step apply. Each step script asserts its own precondition
@@ -61,13 +62,10 @@ fi
 
 VERSION="$(current_version)"
 if [ -z "$VERSION" ] || [ "$VERSION" = "0" ]; then
-  echo "diamondVersion is untracked (pre-rev011) -- running legacy bootstrap..."
-  run_script "script/DiamondFullUpgrade.s.sol:DiamondFullUpgrade"
-  if [ "$DRY_RUN" = "1" ]; then
-    echo "Dry run: stopping after the first pending step (bootstrap) -- later steps can't be simulated until this one actually broadcasts."
-    exit 0
-  fi
-  VERSION="$(current_version)"
+  echo "diamondVersion reads 0, or could not be read, for $DIAMOND on $RPC_URL." >&2
+  echo "No automated migration exists for an untracked (pre-rev011) diamond -- the cut would have" >&2
+  echo "to be reconstructed by hand. Check the address and the network before doing anything else." >&2
+  exit 1
 fi
 
 shopt -s nullglob

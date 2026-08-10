@@ -6,6 +6,7 @@ import { Initializable } from "openzeppelin-contracts-upgradeable/contracts/prox
 import { LibDiamond } from "../libraries/LibDiamond.sol";
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibRevision } from "../libraries/LibRevision.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFees } from "../interfaces/ITMPFees.sol";
 import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
@@ -41,9 +42,11 @@ contract AdminFacet is Initializable {
         s.feeRecipient = _feeRecipient;
         s.defaultFeeBps = _defaultFeeBps;
         s.reentrancyStatus = LibTaskMarket.NOT_ENTERED;
-        // Rev011: a fresh deploy already includes today's full steady-state selector set
-        // (FacetSelectors.sol), so it starts at the current revision rather than 0.
-        s.diamondVersion = 11;
+        // A fresh deploy already includes today's full steady-state selector set
+        // (FacetSelectors.sol), so it starts at the current revision rather than 0. Rev020 moved
+        // this from the hardcoded literal 11 to LibRevision.CURRENT_REVISION, which tracks the
+        // build -- see that library for the rule when adding a revision.
+        s.diamondVersion = LibRevision.CURRENT_REVISION;
     }
 
     // -------------------------------------------------------------------------

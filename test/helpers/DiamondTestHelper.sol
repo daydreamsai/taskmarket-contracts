@@ -67,4 +67,47 @@ abstract contract DiamondTestHelper is Test {
         Diamond diamond = new Diamond(_owner, cuts, address(adminFacet), initData);
         return ITMPDiamond(address(diamond));
     }
+
+    /// @dev A fresh deploy placed at an earlier revision, for the RevNNNUpgrade step tests.
+    ///      Routing and bytecode are the current build's; only the counter is moved. See
+    ///      placeAtVersion for why this cannot go through setDiamondVersion.
+    function deployDiamondAtVersion(
+        address _owner,
+        address _usdc,
+        address _feeRecipient,
+        uint16 _feeBps,
+        uint256 _version
+    ) internal returns (address diamond) {
+        diamond = address(deployDiamond(_owner, _usdc, _feeRecipient, _feeBps));
+        placeAtVersion(diamond, _version);
+    }
+
+    /// @dev Storage slot of AppStorage.diamondVersion: the struct's base slot plus the field's
+    ///      index in the packed layout. Every field before it occupies a full slot of its own
+    ///      except defaultFeeBps/feeRecipient, which pack together (2 + 20 bytes), putting
+    ///      diamondVersion at offset 29 rather than 30. AppStorage is append-only per the
+    ///      repository's storage-layout rule, so appending a field cannot move this -- but
+    ///      inserting one would, which is what placeAtVersion's read-back assertion catches.
+    uint256 internal constant DIAMOND_VERSION_SLOT = uint256(keccak256("taskmarket.appstorage.v1")) + 29;
+
+    /// @dev Places a diamond's diamondVersion at an arbitrary revision, including a lower one.
+    ///
+    ///      A fresh deploy seeds LibRevision.CURRENT_REVISION, so every RevNNNUpgrade step test
+    ///      has to rewind before it can exercise a step whose precondition is an earlier
+    ///      revision. `setDiamondVersion` deliberately refuses to decrease
+    ///      (DiamondVersionNotIncreasing) and that guard is not relaxed for tests, so the counter
+    ///      is written directly instead.
+    ///
+    ///      Only the counter moves. The diamond's selector routing and facet bytecode are
+    ///      untouched and remain those of the current build -- these fixtures reconstruct
+    ///      historical *routing* where a step's cut depends on it, never historical bytecode,
+    ///      which this repo no longer contains.
+    function placeAtVersion(address diamond, uint256 version) internal {
+        vm.store(diamond, bytes32(DIAMOND_VERSION_SLOT), bytes32(version));
+        assertEq(
+            AdminFacet(diamond).diamondVersion(),
+            version,
+            "placeAtVersion: DIAMOND_VERSION_SLOT no longer points at AppStorage.diamondVersion"
+        );
+    }
 }
