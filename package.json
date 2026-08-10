@@ -2,11 +2,14 @@
   "name": "@taskmarket/contracts",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "exports": {
     "./abi": "./abi/index.ts"
   },
   "scripts": {
-    "build": "forge build",
+    "build:sol": "forge build",
+    "generate-abi": "tsx scripts/generate-abi.ts",
+    "type-check": "tsc --noEmit -p scripts/tsconfig.json",
     "test": "forge test",
     "test:ci": "FOUNDRY_PROFILE=ci forge test",
     "test:gas": "forge test --gas-report",
@@ -25,6 +28,9 @@
     "clean": "forge clean"
   },
   "devDependencies": {
-    "solhint": "^6.2.1"
+    "@types/node": "^20.11.0",
+    "solhint": "^6.2.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
   }
 }

@@ -359,4 +359,30 @@ contract TaskMarketForwarderTest is DiamondTestHelper {
         assertEq(forwarder.taskMarket(), address(market));
         assertEq(forwarder.authorizedRelayer(), server);
     }
+
+    /// @notice Freezes the receipt-key derivation against a fixed vector.
+    /// @dev `consumedReceipts` is keyed by this hash, and an off-chain caller reconstructs the
+    ///      same key to ask whether a relay it never got a hash back for actually landed. That
+    ///      reconstruction lives in another language, in another package, and cannot see this
+    ///      file -- so a change to the expression below silently invalidates it, and the failure
+    ///      is not a wrong answer but a `false` for a call that succeeded.
+    ///
+    ///      The point of the test is therefore to fail here, on the side that changed. Editing
+    ///      the field order, a type, or the set of inputs breaks this assertion; the fix is to
+    ///      update the off-chain derivation to match, not to re-freeze the constant. The mapping
+    ///      itself is unaffected either way, since entries keep the key they were written under.
+    function test_ReceiptHash_DerivationIsFrozen() public pure {
+        bytes32 receiptHash = keccak256(
+            abi.encode(
+                uint256(8453),
+                address(0x1111111111111111111111111111111111111111),
+                uint256(1_000_000),
+                bytes32(0x2222222222222222222222222222222222222222222222222222222222222222),
+                uint256(1_786_029_192),
+                address(0x3333333333333333333333333333333333333333),
+                bytes4(0xdeadbeef)
+            )
+        );
+        assertEq(receiptHash, 0x99ba1fdf70fbfe86a31d2b8e6461b405640c9d5e677c31a0cd24c980cb1782d1);
+    }
 }
