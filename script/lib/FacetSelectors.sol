@@ -21,25 +21,18 @@ import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 ///      upgrade path) have no fresh-deploy equivalent and stay local to
 ///      DiamondFullUpgrade.s.sol.
 library FacetSelectors {
-    /// @dev Rev018 kept the pre-rev018 nine-parameter `createTask` routed alongside the
-    ///      evaluator-aware struct-form one, so off-chain callers can be migrated after the
-    ///      facet cut rather than in lockstep with it. It has no `.selector` expression available
-    ///      -- `CoreFacet.createTask` is overloaded, so the compiler cannot resolve which one is
-    ///      meant -- hence the explicit signature hash, the same idiom the constant getters above
-    ///      and DiamondFullUpgrade's historical selectors already use. Rev019 removes this entry
-    ///      and the shim behind it once nothing encodes the old signature any more.
+    /// @dev The pre-rev018 nine-parameter `createTask`. Rev018 kept it routed beside the
+    ///      evaluator-aware overload so off-chain callers could migrate after the facet cut rather
+    ///      than in lockstep with it; rev019 removed the shim behind it, so it is no longer part
+    ///      of any steady-state selector set and is not in `coreFacetSelectors()`.
+    /// @dev It survives as a constant because the historical upgrade paths still have to name it:
+    ///      Rev018Upgrade Replaces it, Rev019Upgrade Removes it, and DiamondFullUpgrade's Path C
+    ///      does both in one run for a diamond that has been through neither step. A selector no
+    ///      facet serves has no `.selector` expression to derive it from, so the signature hash is
+    ///      written out -- the same idiom DiamondFullUpgrade's other historical selectors use.
     bytes4 internal constant LEGACY_CREATE_TASK = bytes4(
         keccak256(
             "createTask(uint256,uint256,bytes4,uint256,uint256,bytes4,(bool,uint16),(address[],bytes),(bytes32,string,bytes32[]))"
-        )
-    );
-
-    /// @dev Rev018's evaluator-aware `createTask`, whose task-shape scalars are grouped into
-    ///      ITMPCore.TaskConfig. Spelled out for the same reason as LEGACY_CREATE_TASK: with two
-    ///      overloads in scope, `CoreFacet.createTask.selector` no longer compiles.
-    bytes4 internal constant CREATE_TASK = bytes4(
-        keccak256(
-            "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(bool,uint16),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address))"
         )
     );
 
@@ -85,7 +78,7 @@ library FacetSelectors {
     }
 
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](21);
         // public constant getters -- must use keccak256; .selector syntax does not apply to constants
         s[0] = bytes4(keccak256("BOUNTY()"));
         s[1] = bytes4(keccak256("CLAIM()"));
@@ -97,7 +90,7 @@ library FacetSelectors {
         s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-        s[10] = CREATE_TASK;
+        s[10] = CoreFacet.createTask.selector;
         s[11] = CoreFacet.claimTask.selector;
         s[12] = CoreFacet.selectWorker.selector;
         s[13] = CoreFacet.submitPitch.selector;
@@ -108,7 +101,6 @@ library FacetSelectors {
         s[18] = CoreFacet.updateTask.selector;
         s[19] = CoreFacet.refundExpired.selector;
         s[20] = CoreFacet.rejectSubmission.selector;
-        s[21] = LEGACY_CREATE_TASK;
     }
 
     function auctionFacetSelectors() internal pure returns (bytes4[] memory s) {

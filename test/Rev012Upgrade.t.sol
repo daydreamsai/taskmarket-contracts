@@ -29,7 +29,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
         address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
         assertEq(AdminFacet(diamond).diamondVersion(), 11, "fresh deploy must start at rev011");
 
-        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
+        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
         address oldAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
@@ -40,7 +40,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 12, "diamondVersion must be 12 after rev012 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
         address newAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
         assertTrue(newAcceptFacet != oldAcceptFacet, "AcceptanceFacet must be replaced");

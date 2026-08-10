@@ -182,13 +182,13 @@ contract DiamondFullUpgrade is Script {
         oldCoreChanged[2] = OLD_CREATE_TASK;
         cuts[4] = _removeCut(oldCoreChanged);
         cuts[5] = _replaceCut(coreFacet, _coreRevIntegrityUnchangedSelectors());
-        bytes4[] memory newCoreChanged = new bytes4[](4);
+        bytes4[] memory newCoreChanged = new bytes4[](3);
         newCoreChanged[0] = CoreFacet.cancelTask.selector;
         newCoreChanged[1] = CoreFacet.refundExpired.selector;
-        // Both createTask overloads: rev018 routes the legacy nine-parameter signature to the
-        // same facet as the evaluator-aware one, and a diamond this old has neither yet.
-        newCoreChanged[2] = FacetSelectors.CREATE_TASK;
-        newCoreChanged[3] = FacetSelectors.LEGACY_CREATE_TASK;
+        // Only the evaluator-aware createTask. Rev018 briefly had this path add the legacy
+        // nine-parameter selector too, so a diamond this old landed mid-migration alongside
+        // everything else; rev019 removed the shim, so there is nothing to route it to.
+        newCoreChanged[2] = CoreFacet.createTask.selector;
         cuts[6] = _addCut(coreFacet, newCoreChanged);
 
         cuts[7] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
@@ -252,9 +252,8 @@ contract DiamondFullUpgrade is Script {
         oldCreateTask[0] = OLD_CREATE_TASK;
         cuts[i++] = _removeCut(oldCreateTask);
         cuts[i++] = _replaceCut(coreFacet, _coreExistingSelectors());
-        bytes4[] memory newCreateTask = new bytes4[](2);
-        newCreateTask[0] = FacetSelectors.CREATE_TASK;
-        newCreateTask[1] = FacetSelectors.LEGACY_CREATE_TASK;
+        bytes4[] memory newCreateTask = new bytes4[](1);
+        newCreateTask[0] = CoreFacet.createTask.selector;
         cuts[i++] = _addCut(coreFacet, newCreateTask);
 
         cuts[i++] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
@@ -317,7 +316,7 @@ contract DiamondFullUpgrade is Script {
         address ratingFacet,
         address regFacet
     ) internal {
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
         // Running index rather than literals: a revision that appends a cut here and a revision
         // that appends another one merge cleanly into two `i++` lines, whereas two literal
         // `cuts[10] = ...` assignments merge into a silent overwrite of one by the other. Path B
@@ -329,10 +328,13 @@ contract DiamondFullUpgrade is Script {
         cuts[i++] = _replaceCut(adminFacet, _adminPreRev011Selectors());
         // CoreFacet: Replace the selectors an existing diamond already routes, then Add rev018's
         // evaluator-aware createTask, which no diamond routes until this cut lands and so cannot
-        // be part of a Replace. The legacy createTask stays routed rather than being removed --
-        // see FacetSelectors.LEGACY_CREATE_TASK.
+        // be part of a Replace, then Remove the legacy nine-parameter selector (rev019). Path C
+        // targets the current steady state, and no facet has served that selector since rev019
+        // deleted the shim -- leaving it routed would point it at a CoreFacet without the
+        // function, which is a silent 404 through the fallback rather than an honest one.
         cuts[i++] = _replaceCut(coreFacet, _corePreRev018Selectors());
         cuts[i++] = _addCut(coreFacet, _createTaskSelector());
+        cuts[i++] = _removeCut(_legacyCreateTaskSelector());
         cuts[i++] = _replaceCut(auctionFacet, FacetSelectors.auctionFacetSelectors());
         cuts[i++] = _replaceCut(acceptFacet, FacetSelectors.acceptFacetSelectors());
         cuts[i++] = _replaceCut(evalFacet, FacetSelectors.evalFacetSelectors());
@@ -431,16 +433,26 @@ contract DiamondFullUpgrade is Script {
     }
 
     /// @dev Rev018's evaluator-aware createTask on its own. Always an Add cut for an existing
-    ///      diamond, never a Replace: the selector is new, and the legacy one it sits beside is
-    ///      what keeps creation working until off-chain callers have moved over.
+    ///      diamond, never a Replace: no diamond routes this selector until the cut lands.
     function _createTaskSelector() private pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
-        s[0] = FacetSelectors.CREATE_TASK;
+        s[0] = CoreFacet.createTask.selector;
     }
 
-    /// @dev The 21 CoreFacet selectors a steady-state diamond routes before rev018 -- i.e.
-    ///      FacetSelectors.coreFacetSelectors() minus rev018's new createTask overload. Used as
-    ///      Path C's Replace cut, since Replace requires every selector to already exist.
+    /// @dev The pre-rev018 nine-parameter createTask, for Path C's Remove cut (rev019). Always a
+    ///      Remove and never part of a Replace: no facet has served this signature since rev019
+    ///      deleted the shim, so there is no address to point it at.
+    function _legacyCreateTaskSelector() private pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = FacetSelectors.LEGACY_CREATE_TASK;
+    }
+
+    /// @dev The 21 CoreFacet selectors a steady-state diamond routes before rev018 -- the current
+    ///      set with the evaluator-aware createTask swapped back for the legacy one. Used as Path
+    ///      C's Replace cut, since Replace requires every selector to already exist. The legacy
+    ///      entry is Replaced and then Removed in the same cut sequence rather than being left
+    ///      out of the Replace: an old diamond routes it, so omitting it would leave it pointing
+    ///      at the previous CoreFacet.
     function _corePreRev018Selectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](21);
         s[0] = bytes4(keccak256("BOUNTY()"));

@@ -103,21 +103,20 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         return address(diamond);
     }
 
-    /// @dev CoreFacet's selectors as an old diamond routes them: everything in
-    ///      FacetSelectors.coreFacetSelectors() except rev018's evaluator-aware createTask, which
-    ///      no diamond routes until Path C adds it. Kept local to this test for the same reason
-    ///      adminPreRev011 above is -- it describes a historical state, not the steady state that
-    ///      FacetSelectors is the source of truth for. Path C ends by Adding the new selector, so
-    ///      including it here would make that Add revert on an already-routed selector; omitting
-    ///      the legacy one would instead make Path C's Replace revert on a selector that does not
-    ///      exist. Either way the parity assertion never gets a chance to lie about drift.
+    /// @dev CoreFacet's selectors as an old diamond routes them: the current set with rev018's
+    ///      evaluator-aware createTask swapped back for the legacy nine-parameter one. Kept local
+    ///      to this test for the same reason adminPreRev011 above is -- it describes a historical
+    ///      state, not the steady state FacetSelectors is the source of truth for.
+    /// @dev This is what makes Path C's createTask handling actually load-bearing here rather than
+    ///      trivially satisfied. Path C Adds the new selector and Removes the legacy one, so the
+    ///      fixture has to be the mirror image: include the new selector and the Add reverts on an
+    ///      already-routed selector; omit the legacy one and the Replace reverts on a selector
+    ///      that does not exist, and the Remove would be a no-op that proves nothing.
     function _corePreRev018Selectors() private pure returns (bytes4[] memory s) {
         bytes4[] memory current = FacetSelectors.coreFacetSelectors();
-        s = new bytes4[](current.length - 1);
-        uint256 k;
+        s = new bytes4[](current.length);
         for (uint256 i = 0; i < current.length; i++) {
-            if (current[i] == FacetSelectors.CREATE_TASK) continue;
-            s[k++] = current[i];
+            s[i] = current[i] == CoreFacet.createTask.selector ? FacetSelectors.LEGACY_CREATE_TASK : current[i];
         }
     }
 

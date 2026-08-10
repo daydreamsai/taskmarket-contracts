@@ -51,6 +51,7 @@ contract CoreFacet {
     ///                        to do it without a race: the task is Open, and so claimable, the
     ///                        instant this transaction mines, and `assignEvaluator` reverts
     ///                        `TaskNotOpen` once a worker has claimed.
+    // solhint-disable-next-line code-complexity
     function createTask(
         ITMPCore.TaskConfig calldata config,
         ITMPCore.StakeConfig calldata stakeConfig,
@@ -58,70 +59,6 @@ contract CoreFacet {
         ITMPCore.TaskContent calldata content,
         ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
     ) external returns (bytes32 taskId) {
-        return _createTask(config, stakeConfig, hookConfig, content, evaluatorConfig);
-    }
-
-    /// @notice Deprecated: `createTask` without evaluator terms. Behaves exactly as before --
-    ///         it creates a task with no evaluator, which a caller can still appoint afterwards
-    ///         with `assignEvaluator` (accepting that call's race against the first claim).
-    /// @dev Kept routed alongside the evaluator-aware overload on purpose (rev018). The diamond
-    ///      routes purely by selector, so removing this one in the same cut that adds the new one
-    ///      would make every task creation revert for the whole window between the facet cut and
-    ///      the off-chain callers being redeployed -- and would strand creation entirely if that
-    ///      redeploy failed, recoverable only by a diamond rollback. Expanding first and
-    ///      contracting later (rev019 removes this shim) makes both halves independently
-    ///      reversible. This overload is deliberately absent from `ITMPCore`/`ITMPDiamond`: it is
-    ///      a migration shim, not part of the protocol interface, and adding it there would
-    ///      change `type(ITMPCore).interfaceId`, which `DiamondLoupeFacet.supportsInterface`
-    ///      reports.
-    function createTask(
-        uint256 reward,
-        uint256 duration,
-        bytes4 mode,
-        uint256 pitchDeadline,
-        uint256 bidDeadline,
-        bytes4 auctionSubtype,
-        ITMPCore.StakeConfig calldata stakeConfig,
-        ITMPCore.HookConfig calldata hookConfig,
-        ITMPCore.TaskContent calldata content
-    ) external returns (bytes32 taskId) {
-        // A zero-valued struct is exactly "no evaluator", which is what this signature has always
-        // meant. It shares the whole body below, so the shim cannot drift from the real path.
-        // Every field is named and zeroed explicitly rather than left to Solidity's
-        // zero-initialisation, so that adding a field to TaskEvaluatorConfig fails to compile
-        // here and forces whoever adds it to say what the shim should pass.
-        ITMPCore.TaskEvaluatorConfig memory noEvaluator = ITMPCore.TaskEvaluatorConfig({
-            evaluator: address(0),
-            evaluatorStake: 0,
-            evaluatorFeeBps: 0,
-            evaluationWindow: 0,
-            appealWindow: 0,
-            disputeResolver: address(0)
-        });
-        return _createTask(
-            ITMPCore.TaskConfig({
-                reward: reward,
-                duration: duration,
-                mode: mode,
-                pitchDeadline: pitchDeadline,
-                bidDeadline: bidDeadline,
-                auctionSubtype: auctionSubtype
-            }),
-            stakeConfig,
-            hookConfig,
-            content,
-            noEvaluator
-        );
-    }
-
-    // solhint-disable-next-line code-complexity
-    function _createTask(
-        ITMPCore.TaskConfig memory config,
-        ITMPCore.StakeConfig calldata stakeConfig,
-        ITMPCore.HookConfig calldata hookConfig,
-        ITMPCore.TaskContent calldata content,
-        ITMPCore.TaskEvaluatorConfig memory evaluatorConfig
-    ) private returns (bytes32 taskId) {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
         LibTaskMarket._requireNotPaused(s);

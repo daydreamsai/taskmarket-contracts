@@ -20,12 +20,12 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 ///      nine-parameter selector routed to the same facet, and replaces EvaluatorFacet's bytecode
 ///      without changing any of its selectors. This exercises all three.
 ///
-///      A fresh test diamond is built from FacetSelectors, which is the *current* steady state,
-///      so it already routes rev018's new selector -- the reverse of what rev018 expects to find.
-///      Rather than skip the step, this test reconstructs the pre-rev018 routing directly by
-///      removing the new selector. Routing is the entire thing the cut manipulates, so a
-///      reconstruction at that level is a faithful precondition even though no historical
-///      CoreFacet bytecode survives in this repo to deploy.
+///      A fresh test diamond is built from FacetSelectors, which is the *current* steady state --
+///      post-rev019, so it routes rev018's new selector and not the legacy one, the reverse of
+///      what rev018 expects to find on both counts. Rather than skip the step, this test
+///      reconstructs the pre-rev018 routing directly. Routing is the entire thing the cut
+///      manipulates, so a reconstruction at that level is a faithful precondition even though no
+///      historical CoreFacet bytecode survives in this repo to deploy.
 contract Rev018UpgradeTest is Test, DiamondTestHelper {
     uint256 internal constant OWNER_KEY = 0xA11CE;
     address internal owner;
@@ -52,19 +52,30 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         vm.prank(owner);
         AdminFacet(diamond).setDiamondVersion(14);
         new Rev015Upgrade().run();
-        // Rev016 (escrow liability) and rev017 (evaluator award recipients, self-assignment
-        // guards, minimum appeal window) are separate changes that are not on this branch, so
-        // there are no step scripts here to run. Their cuts do not touch createTask's routing,
-        // which is all rev018's cut depends on, so advancing the counter reproduces the
-        // precondition faithfully.
+        // Rev016 (escrow liability) is a pure Replace with no selector change, and rev017's own
+        // Adds are already present on a diamond built from current FacetSelectors.sol, so this
+        // diamond is code-equivalent to post-rev017 and only the counter needs to catch up.
+        // Rev017UpgradeTest is what exercises those two steps' cuts; rev018's cut depends only on
+        // createTask's routing, reconstructed below. Same reasoning as rev014 above.
         vm.prank(owner);
         AdminFacet(diamond).setDiamondVersion(17);
 
-        // Reconstruct pre-rev018 routing: only the legacy createTask selector exists.
+        // Reconstruct pre-rev018 routing: only the legacy createTask selector exists. Since
+        // rev019 removed the shim, a fresh diamond routes neither the legacy selector (it is no
+        // longer in coreFacetSelectors()) nor, once this Remove lands, the new one -- so the
+        // legacy selector has to be Added back as well as the new one Removed. It is pointed at
+        // the CoreFacet the diamond already uses: no bytecode in this tree serves that signature
+        // any more, and routing is the entire thing rev018's cut manipulates.
+        address coreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.claimTask.selector);
+
         bytes4[] memory newSel = new bytes4[](1);
-        newSel[0] = FacetSelectors.CREATE_TASK;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        newSel[0] = CoreFacet.createTask.selector;
+        bytes4[] memory legacySel = new bytes4[](1);
+        legacySel[0] = FacetSelectors.LEGACY_CREATE_TASK;
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, newSel);
+        cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, legacySel);
         vm.prank(owner);
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
     }
@@ -75,7 +86,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 17, "must be at rev017 before rev018");
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK),
+            IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector),
             address(0),
             "new selector must be absent pre-upgrade"
         );
@@ -87,7 +98,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 18, "diamondVersion must be 18 after rev018 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.CREATE_TASK);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
         assertNotEq(newCoreFacet, address(0), "evaluator-aware createTask must route");
         assertNotEq(newCoreFacet, oldCoreFacet, "CoreFacet must be replaced");
 
@@ -126,43 +137,32 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         );
     }
 
-    /// @dev Routing tables are not behaviour. Both selectors must actually execute after the cut,
-    ///      which is what a caller mid-migration experiences.
-    function test_Rev018Upgrade_BothSelectorsExecuteAfterTheCut() public {
+    /// @dev Routing tables are not behaviour. The selector rev018 adds must actually execute
+    ///      after the cut, not merely appear in the loupe.
+    ///
+    ///      Rev018's own branch asserted the same of the legacy selector, since a caller
+    ///      mid-migration depends on it. That half cannot survive rev019: no bytecode in this
+    ///      tree serves the nine-parameter signature any more, so the fixture can restore the
+    ///      routing entry but not the code behind it, and a call would reach a CoreFacet with no
+    ///      such function. This is the same limitation Rev014UpgradeTest and Rev015UpgradeTest
+    ///      document for their own superseded signatures. Deleted rather than weakened into an
+    ///      assertion that would pass without proving anything.
+    function test_Rev018Upgrade_NewSelectorExecutesAfterTheCut() public {
         address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
         _atRev017WithOnlyLegacyCreateTask(diamond);
         new Rev018Upgrade().run();
 
-        // Neither call is relayed by a trusted forwarder, so both must fail the very first guard
-        // in the shared creation body -- proving the call reached CoreFacet's code rather than
-        // the diamond's "function does not exist" fallback, which reverts with empty data.
-        (bool okLegacy, bytes memory legacyErr) = diamond.call(_legacyCreateTaskCalldata());
-        assertFalse(okLegacy, "legacy createTask reverts without a trusted forwarder");
-        assertEq(bytes4(legacyErr), ITMPCore.NotTrustedForwarder.selector, "legacy selector reached CoreFacet");
-
+        // The call is not relayed by a trusted forwarder, so it must fail the very first guard in
+        // the shared creation body -- proving it reached CoreFacet's code rather than the
+        // diamond's "function does not exist" fallback, which reverts with a plain string.
         (bool okNew, bytes memory newErr) = diamond.call(_createTaskCalldata());
         assertFalse(okNew, "createTask reverts without a trusted forwarder");
         assertEq(bytes4(newErr), ITMPCore.NotTrustedForwarder.selector, "new selector reached CoreFacet");
     }
 
-    function _legacyCreateTaskCalldata() private pure returns (bytes memory) {
-        return abi.encodeWithSelector(
-            FacetSelectors.LEGACY_CREATE_TASK,
-            uint256(1),
-            uint256(1 days),
-            bytes4(0),
-            uint256(0),
-            uint256(0),
-            bytes4(0),
-            ITMPCore.StakeConfig({ required: false, bps: 0 }),
-            ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-            ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
-        );
-    }
-
     function _createTaskCalldata() private pure returns (bytes memory) {
         return abi.encodeWithSelector(
-            FacetSelectors.CREATE_TASK,
+            CoreFacet.createTask.selector,
             ITMPCore.TaskConfig({
                 reward: 1,
                 duration: 1 days,

@@ -12,7 +12,6 @@ import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
-import { FacetSelectors } from "./lib/FacetSelectors.sol";
 
 /// @title DiamondUpgrade — add, replace, or remove one facet in the Diamond
 /// @dev Required env vars:
@@ -102,7 +101,7 @@ contract DiamondUpgrade is Script {
             selectors[11] = AdminFacet.setFeeRecipient.selector;
             selectors[12] = AdminFacet.setReputationRegistry.selector;
         } else if (keccak256(bytes(name)) == keccak256("CoreFacet")) {
-            selectors = new bytes4[](21);
+            selectors = new bytes4[](20);
             selectors[0] = bytes4(keccak256("BOUNTY()"));
             selectors[1] = bytes4(keccak256("CLAIM()"));
             selectors[2] = bytes4(keccak256("PITCH()"));
@@ -113,9 +112,7 @@ contract DiamondUpgrade is Script {
             selectors[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
             selectors[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
             selectors[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-            // Both createTask overloads route to CoreFacet from rev018 on.
-            selectors[10] = FacetSelectors.CREATE_TASK;
-            selectors[20] = FacetSelectors.LEGACY_CREATE_TASK;
+            selectors[10] = CoreFacet.createTask.selector;
             selectors[11] = CoreFacet.claimTask.selector;
             selectors[12] = CoreFacet.selectWorker.selector;
             selectors[13] = CoreFacet.submitPitch.selector;

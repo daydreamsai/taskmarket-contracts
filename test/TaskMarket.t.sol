@@ -3272,13 +3272,12 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
-    // Legacy createTask overload (Rev018 expand-then-contract shim)
+    // Legacy createTask overload (removed in Rev019)
     // -------------------------------------------------------------------------
 
-    /// @dev Encodes the pre-rev018 nine-parameter signature by hand. Nothing in this repo's
-    ///      Solidity can produce this calldata through the typed interface any more -- which is
-    ///      exactly the point: an off-chain caller that has not been redeployed yet still encodes
-    ///      it, and it must keep working until rev019 removes it.
+    /// @dev Encodes the pre-rev018 nine-parameter signature by hand -- no typed interface in this
+    ///      repo can produce this calldata. Rev018 routed it to a deprecated shim; rev019 removed
+    ///      both, so this is what an off-chain caller that never migrated now sends.
     function _createTaskLegacyCalldata() internal view returns (bytes memory) {
         return abi.encodeWithSelector(
             FacetSelectors.LEGACY_CREATE_TASK,
@@ -3294,50 +3293,27 @@ contract TaskMarketTest is DiamondTestHelper {
         );
     }
 
-    function test_CreateTask_LegacySelector_StillCreatesTask() public {
-        bytes32 expectedId =
-            keccak256(abi.encode(block.chainid, address(market), requester, market.requesterNonce(requester)));
-
-        bytes32 taskId = abi.decode(_relay(requester, REWARD, _createTaskLegacyCalldata()), (bytes32));
-
-        assertEq(taskId, expectedId, "legacy selector returns the canonical task id");
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Open), "task is Open");
-        assertEq(market.getTask(taskId).reward, REWARD, "reward escrowed against the task");
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "legacy path sets no evaluator");
+    /// @dev The contract half of expand-then-contract. A steady-state diamond must not route the
+    ///      old selector at all: not to a shim, not to a stale facet. The diamond fallback's
+    ///      "function not found" is the specific, diagnosable failure a caller that never migrated
+    ///      should get -- distinguishable from a revert inside CoreFacet, which is what it would
+    ///      get if the shim were still there.
+    function test_RevertWhen_CreateTask_LegacySelector_NoLongerRouted() public {
+        vm.expectRevert(bytes("Diamond: function not found"));
+        _relay(requester, REWARD, _createTaskLegacyCalldata());
     }
 
-    /// @dev The shim shares the whole creation body, so it must reject what the current signature
-    ///      rejects rather than being a laxer second door into task creation.
-    function test_RevertWhen_CreateTask_LegacySelector_ZeroReward() public {
-        bytes memory data = abi.encodeWithSelector(
-            FacetSelectors.LEGACY_CREATE_TASK,
-            uint256(0),
-            DURATION,
-            TMP_CLAIM,
-            uint256(0),
-            uint256(0),
-            bytes4(0),
-            ITMPCore.StakeConfig({ required: false, bps: 0 }),
-            ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-            ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) })
+    function test_CreateTask_LegacySelectorIsUnrouted() public view {
+        assertNotEq(
+            IDiamondLoupe(address(market)).facetAddress(CoreFacet.createTask.selector),
+            address(0),
+            "evaluator-aware createTask must route"
         );
-        vm.expectRevert(ITMPCore.RewardMustBeGreaterThanZero.selector);
-        _relay(requester, 0, data);
-    }
-
-    /// @dev A task created through the legacy selector can still be given an evaluator the old
-    ///      way, so a caller that has not migrated keeps its entire previous flow, race included.
-    function test_CreateTask_LegacySelector_ThenAssignEvaluator() public {
-        bytes32 taskId = abi.decode(_relay(requester, REWARD, _createTaskLegacyCalldata()), (bytes32));
-        _assignEvaluator(taskId, requester, evaluator, 500, uint32(2 days), uint32(1 days));
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, evaluator, "evaluator assigned afterwards");
-    }
-
-    function test_CreateTask_BothSelectorsRouteToTheSameFacet() public view {
-        address viaNew = IDiamondLoupe(address(market)).facetAddress(FacetSelectors.CREATE_TASK);
-        address viaLegacy = IDiamondLoupe(address(market)).facetAddress(FacetSelectors.LEGACY_CREATE_TASK);
-        assertNotEq(viaNew, address(0), "evaluator-aware createTask must route");
-        assertEq(viaLegacy, viaNew, "legacy createTask must route to the same CoreFacet");
+        assertEq(
+            IDiamondLoupe(address(market)).facetAddress(FacetSelectors.LEGACY_CREATE_TASK),
+            address(0),
+            "legacy createTask must have no facet"
+        );
     }
 
     function test_AssignEvaluator_OnlyRequester() public {
