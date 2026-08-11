@@ -15,3 +15,4 @@ export { TaskMarketABI } from './generated/TaskMarket';
 export { EpochBudgetABI } from './generated/EpochBudget';
 export { RewardVaultABI } from './generated/RewardVault';
 export { TaskTokenRewardHookABI } from './generated/TaskTokenRewardHook';
+export { TaskMarketForwarderABI } from './generated/TaskMarketForwarder';

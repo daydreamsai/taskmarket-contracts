@@ -43,10 +43,17 @@ const DIAMOND_FACETS = [
 
 // Standalone contracts deployed at their own addresses. The indexer polls each of
 // these separately, so each needs its own ABI file.
+//
+// The forwarder is here for a different reason than the rest: nothing indexes it, but every
+// relayed call passes through it, so its errors are the ones a relayed write is most likely to
+// revert with. The backend derives its error map from these artifacts, and while the forwarder
+// was absent that map could not name a single one of them -- an unnamed revert is treated as
+// transient and retried against a call that can only revert again.
 const STANDALONE: Record<string, string> = {
   TaskTokenRewardHook: 'TaskTokenRewardHook.sol/TaskTokenRewardHook.json',
   RewardVault: 'RewardVault.sol/RewardVault.json',
   EpochBudget: 'EpochBudget.sol/EpochBudget.json',
+  TaskMarketForwarder: 'TaskMarketForwarder.sol/TaskMarketForwarder.json',
 };
 
 type AbiEntry = Record<string, unknown>;
