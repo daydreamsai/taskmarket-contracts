@@ -16,9 +16,16 @@ interface IAuthorizedRelayer {
     function authorizedRelayer() external view returns (address);
 }
 
-/// @title SwapRewardHook — ship issue #202's EpochBudget.release() epoch-mismatch fix by
-///        deploying a fresh EpochBudget + TaskTokenRewardHook and re-pointing the EXISTING
-///        RewardVault at the new hook
+/// @title SwapRewardHook — deploy a replacement TaskTokenRewardHook and re-point the EXISTING
+///        RewardVault, EpochBudget and Diamond at it
+/// @dev   The EpochBudget is REUSED by default. This script originally deployed a fresh one,
+///        because it was written to ship a fix to EpochBudget itself. That is the exception,
+///        not the rule: a replacement hook that carries in-flight reward state must keep the
+///        budget those tasks consumed from. `EpochBudget.release` returns early when
+///        `epoch != consumedEpoch`, so against a freshly deployed budget every carried task's
+///        release silently no-ops and the consumed budget is never credited back -- it fails
+///        closed rather than reverting, which is what makes it easy to miss. Set
+///        REUSE_EPOCH_BUDGET=false only when replacing the EpochBudget is itself the point.
 /// @notice Unlike DeployRewardHook.s.sol (first-time deployment), this reuses the
 ///         already-deployed RewardVault instead of deploying a fresh one -- no balance
 ///         migration, no dual-vault overlap window. This is only safe once the
@@ -46,6 +53,14 @@ interface IAuthorizedRelayer {
 ///   FORGE_MAX_USD_PER_TASK           — per-task emission cap (USDC base units)
 ///
 ///   FORGE_WORKER_SPLIT_BPS           — worker share in bps (default 8000 = 80%)
+///
+///   FORGE_EPOCH_BUDGET_ADDRESS       — the EXISTING EpochBudget to reuse. Required unless
+///                                       REUSE_EPOCH_BUDGET=false.
+///   REUSE_EPOCH_BUDGET               — default TRUE. Reuses the EpochBudget above rather than
+///                                       deploying one, so a hook carrying in-flight reward
+///                                       state can still settle it. Set false only to replace
+///                                       the EpochBudget deliberately; doing so orphans the
+///                                       consumed budget of every task carried across.
 ///
 ///   SKIP_RESERVATION_CHECK           — DANGEROUS, default false. Bypasses the
 ///                                       totalReserved()==0 guard below. Setting this true
@@ -88,7 +103,9 @@ contract SwapRewardHook is Script {
 
         vm.startBroadcast(ownerKey);
 
-        EpochBudget budget = _deployBudget(deployer);
+        bool reuseBudget = vm.envOr("REUSE_EPOCH_BUDGET", true);
+        EpochBudget budget =
+            reuseBudget ? EpochBudget(vm.envAddress("FORGE_EPOCH_BUDGET_ADDRESS")) : _deployBudget(deployer);
         TaskTokenRewardHook hook = _deployHook(vault, budget, deployer);
 
         budget.setHook(address(hook));
@@ -105,7 +122,7 @@ contract SwapRewardHook is Script {
 
         console.log("=== TaskTokenRewardHook swap complete ===");
         console.log("RewardVault (reused):", address(vault));
-        console.log("EpochBudget (new):   ", address(budget));
+        console.log(reuseBudget ? "EpochBudget (reused):" : "EpochBudget (new):   ", address(budget));
         console.log("TaskTokenRewardHook (new):", address(hook));
         console.log("Authorized relayer (from forwarder):", hook.authorizedRelayer());
         console.log("Diamond default hooks: set to [TaskTokenRewardHook]");

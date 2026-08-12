@@ -83,6 +83,8 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
         vm.setEnv("FORGE_WORKER_CAP_USD", vm.toString(WORKER_CAP_USD));
         vm.setEnv("FORGE_REQUESTER_CAP_USD", vm.toString(REQUESTER_CAP_USD));
         vm.setEnv("FORGE_MAX_USD_PER_TASK", vm.toString(MAX_PER_TASK_USD));
+        vm.setEnv("FORGE_EPOCH_BUDGET_ADDRESS", vm.toString(address(oldBudget)));
+        vm.setEnv("REUSE_EPOCH_BUDGET", "true");
     }
 
     function test_SwapRewardHook_ReusesVaultAndAuthorizesNewHook() public {
@@ -96,8 +98,26 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
 
         TaskTokenRewardHook hook = TaskTokenRewardHook(newHook);
         assertEq(address(hook.vault()), address(vault), "new hook must point at the SAME, reused vault");
-        assertTrue(address(hook.epochBudget()) != address(oldBudget), "a new EpochBudget must be deployed");
+        // The budget is reused, not replaced. A carried task settles by calling
+        // `EpochBudget.release` with the epoch it consumed against; a freshly deployed budget
+        // returns early on the epoch mismatch, so the release silently no-ops.
+        assertEq(address(hook.epochBudget()), address(oldBudget), "the existing EpochBudget must be reused");
+        assertEq(oldBudget.hook(), newHook, "the reused budget must be re-pointed at the new hook");
         assertEq(hook.epochBudget().globalCapUsd(), GLOBAL_CAP_USD);
+    }
+
+    function test_SwapRewardHook_ReuseDisabled_DeploysFreshEpochBudget() public {
+        // The opt-out, for when replacing the EpochBudget is itself the point. Kept tested so
+        // the path does not rot: it was the original behaviour of this script.
+        vm.setEnv("REUSE_EPOCH_BUDGET", "false");
+
+        new SwapRewardHook().run();
+
+        TaskTokenRewardHook hook = TaskTokenRewardHook(diamond.getDefaultHooks()[0]);
+        assertTrue(address(hook.epochBudget()) != address(oldBudget), "a fresh EpochBudget must be deployed");
+        assertEq(hook.epochBudget().globalCapUsd(), GLOBAL_CAP_USD, "fresh budget must carry the configured caps");
+
+        vm.setEnv("REUSE_EPOCH_BUDGET", "true");
     }
 
     function test_RevertWhen_SwapRewardHook_VaultHasOutstandingReservations() public {
