@@ -13,6 +13,10 @@ import "./mocks/MockPGTRForwarder.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
+import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+import { DeployRewardHookProxy } from "../script/lib/DeployRewardHookProxy.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 // ─────────────────────────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,9 +52,13 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     TaskTokenRewardHook hook;
 
     address owner = makeAddr("owner");
-    address backend = makeAddr("backend");
+    address authorizedRelayer = makeAddr("authorizedRelayer");
     address requester = makeAddr("requester");
     address worker = makeAddr("worker");
+    // The key behind `worker`, using forge-std's own derivation for makeAddr. Asserted against
+    // `worker` in the withdrawal tests rather than trusted, so a forge-std change fails loudly
+    // instead of silently signing as somebody else.
+    uint256 workerKey = uint256(keccak256(abi.encodePacked("worker")));
     address feeRecipient = makeAddr("feeRecipient");
 
     function setUp() public {
@@ -67,7 +75,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vault = new RewardVault(address(dreamsToken), owner);
         budget =
             new EpochBudget(EPOCH_DURATION, GLOBAL_CAP_USD, WORKER_CAP_USD, REQUESTER_CAP_USD, MAX_PER_TASK_USD, owner);
-        hook = new TaskTokenRewardHook(
+        hook = DeployRewardHookProxy.deploy(
             address(vault),
             address(budget),
             address(market),
@@ -76,7 +84,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
             BONUS_BPS,
             address(dreamsToken),
             WORKER_SPLIT_BPS,
-            backend,
+            authorizedRelayer,
             owner
         );
 
@@ -175,104 +183,134 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     // ─── Constructor validation ───────────────────────────────────────────────
 
     function test_constructor_zeroVault_reverts() public {
-        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
-        new TaskTokenRewardHook(
-            address(0),
-            address(budget),
-            address(market),
-            18,
-            DREAMS_PER_USDC,
-            BONUS_BPS,
-            address(dreamsToken),
-            WORKER_SPLIT_BPS,
-            backend,
-            owner
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(0),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
         );
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        new ERC1967Proxy(implementation, initData);
     }
 
     function test_constructor_revertsIfTokenZero() public {
-        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
-        new TaskTokenRewardHook(
-            address(vault),
-            address(budget),
-            address(market),
-            18,
-            DREAMS_PER_USDC,
-            BONUS_BPS,
-            address(0),
-            WORKER_SPLIT_BPS,
-            backend,
-            owner
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(0),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
         );
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        new ERC1967Proxy(implementation, initData);
     }
 
     function test_constructor_revertsIfBpsOver10000() public {
-        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
-        new TaskTokenRewardHook(
-            address(vault),
-            address(budget),
-            address(market),
-            18,
-            DREAMS_PER_USDC,
-            BONUS_BPS,
-            address(dreamsToken),
-            10_001,
-            backend,
-            owner
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                10_001,
+                authorizedRelayer,
+                owner
+            )
         );
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        new ERC1967Proxy(implementation, initData);
     }
 
     function test_constructor_revertsIfBonusBpsOver10000() public {
-        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
-        new TaskTokenRewardHook(
-            address(vault),
-            address(budget),
-            address(market),
-            18,
-            DREAMS_PER_USDC,
-            10_001,
-            address(dreamsToken),
-            WORKER_SPLIT_BPS,
-            backend,
-            owner
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                10_001,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
         );
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        new ERC1967Proxy(implementation, initData);
     }
 
-    function test_constructor_revertsIfBackendZero() public {
-        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
-        new TaskTokenRewardHook(
-            address(vault),
-            address(budget),
-            address(market),
-            18,
-            DREAMS_PER_USDC,
-            BONUS_BPS,
-            address(dreamsToken),
-            WORKER_SPLIT_BPS,
-            address(0),
-            owner
+    function test_constructor_revertsIfRelayerZero() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                address(0),
+                owner
+            )
         );
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        new ERC1967Proxy(implementation, initData);
     }
 
     function test_constructor_revertsIfRateZero() public {
-        vm.expectRevert(TaskTokenRewardHook.ZeroRate.selector);
-        new TaskTokenRewardHook(
-            address(vault),
-            address(budget),
-            address(market),
-            18,
-            0,
-            BONUS_BPS,
-            address(dreamsToken),
-            WORKER_SPLIT_BPS,
-            backend,
-            owner
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                0,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
         );
+        vm.expectRevert(TaskTokenRewardHook.ZeroRate.selector);
+        new ERC1967Proxy(implementation, initData);
     }
 
     function test_constructor_allowsZeroBonusBps() public {
         // Unlike dreamsPerUsdc, a zero bonus is a valid initial state (bonus paused).
-        TaskTokenRewardHook freshHook = new TaskTokenRewardHook(
+        TaskTokenRewardHook freshHook = DeployRewardHookProxy.deploy(
             address(vault),
             address(budget),
             address(market),
@@ -281,7 +319,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
             0,
             address(dreamsToken),
             WORKER_SPLIT_BPS,
-            backend,
+            authorizedRelayer,
             owner
         );
         assertEq(freshHook.bonusBps(), 0);
@@ -478,18 +516,48 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(dreamsToken.balanceOf(worker), 0);
     }
 
-    function test_withdrawFor_happyPath() public {
-        bytes32 taskId = _createClaimTask();
+    /// Builds the authorization exactly as a client does: EIP-191 over
+    /// `taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>`.
+    function _signWithdraw(uint256 key, address destination, string memory nonce, uint256 validBefore)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        string memory message = string.concat(
+            "taskmarket:withdraw-dreams:",
+            Strings.toHexString(destination),
+            ":",
+            nonce,
+            ":",
+            Strings.toString(validBefore)
+        );
+        (uint8 v, bytes32 r, bytes32 sig) = vm.sign(key, MessageHashUtils.toEthSignedMessageHash(bytes(message)));
+        return abi.encodePacked(r, sig, v);
+    }
+
+    function _earnClaimable() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+    }
+
+    function test_withdrawFor_happyPath() public {
+        // Guards the key derivation: if this ever drifts, every signature below would be from
+        // some other account and the tests would pass for the wrong reason.
+        assertEq(vm.addr(workerKey), worker);
+
+        _earnClaimable();
 
         uint256 claimableAmt = hook.claimable(worker);
         assertGt(claimableAmt, 0);
 
         address destination = makeAddr("destination");
-        vm.prank(backend);
-        hook.withdrawFor(worker, destination);
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
 
         assertEq(dreamsToken.balanceOf(destination), claimableAmt);
         assertEq(hook.claimable(worker), 0);
@@ -497,20 +565,89 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(hook.totalClaimable(), hook.claimable(requester));
     }
 
-    function test_withdrawFor_revertsIfNotBackend() public {
-        bytes32 taskId = _createClaimTask();
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
-        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+    /// The finding this function exists to close: a authorizedRelayer that is authenticated but wrong --
+    /// compromised key, or a future code path that forgets the off-chain check -- must not be
+    /// able to redirect a wallet's balance. It holds a valid authorization for `destination`
+    /// and tries to pay `attacker` with it.
+    function test_withdrawFor_revertsWhenDestinationIsSwapped() public {
+        _earnClaimable();
 
-        vm.expectRevert(TaskTokenRewardHook.NotBackend.selector);
-        hook.withdrawFor(worker, worker);
+        address destination = makeAddr("destination");
+        address attacker = makeAddr("attacker");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, attacker, "nonce-1", validBefore, signature);
+
+        assertEq(dreamsToken.balanceOf(attacker), 0);
+        assertGt(hook.claimable(worker), 0);
+    }
+
+    function test_withdrawFor_revertsOnSignatureFromAnotherWallet() public {
+        _earnClaimable();
+
+        (, uint256 strangerKey) = makeAddrAndKey("stranger");
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(strangerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsOnReplay() public {
+        _earnClaimable();
+
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+
+        // Replay protection lives here rather than only in the authorizedRelayer's database: a captured
+        // authorization must not be replayable by whoever holds the relaying key.
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.WithdrawNonceUsed.selector);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsWhenExpired() public {
+        _earnClaimable();
+
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.warp(validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.WithdrawAuthorizationExpired.selector);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsIfNotRelayer() public {
+        _earnClaimable();
+
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, worker, "nonce-1", validBefore);
+
+        // A valid wallet signature is still not enough on its own: the authorizedRelayer relays and pays
+        // gas, so the two checks are complementary rather than alternatives.
+        vm.expectRevert(TaskTokenRewardHook.UnauthorizedRelayer.selector);
+        hook.withdrawFor(worker, worker, "nonce-1", validBefore, signature);
     }
 
     function test_withdrawFor_revertsIfNothingToClaim() public {
-        vm.prank(backend);
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, worker, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
         vm.expectRevert(TaskTokenRewardHook.NothingToClaim.selector);
-        hook.withdrawFor(worker, worker);
+        hook.withdrawFor(worker, worker, "nonce-1", validBefore, signature);
     }
 
     // ─── firstSeen ────────────────────────────────────────────────────────────
@@ -774,11 +911,304 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         // Existing balance intact
         assertEq(hook.claimable(worker), earned);
 
-        // Backend can still withdraw on the worker's behalf
+        // The relayer can still withdraw on the worker's behalf
         address dest = makeAddr("dest");
-        vm.prank(backend);
-        hook.withdrawFor(worker, dest);
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, dest, "nonce-banned", validBefore);
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, dest, "nonce-banned", validBefore, signature);
         assertEq(dreamsToken.balanceOf(dest), earned);
+    }
+
+    // ─── upgradeability ───────────────────────────────────────────────────────
+
+    function test_upgrade_preservesWalletStateAcrossImplementations() public {
+        // The whole point of the proxy. Before this, shipping a hook fix meant a fresh contract
+        // with empty storage -- every wallet's `firstSeen` reset, so everyone earned nothing
+        // until they aged past the first ramp threshold again.
+        _earnClaimable();
+        uint256 balanceBefore = hook.claimable(worker);
+        uint40 seenBefore = hook.firstSeen(worker);
+        assertGt(balanceBefore, 0);
+        assertGt(seenBefore, 0);
+
+        address newImplementation = address(new TaskTokenRewardHook());
+        vm.prank(owner);
+        hook.upgradeToAndCall(newImplementation, "");
+
+        assertEq(hook.claimable(worker), balanceBefore);
+        assertEq(hook.firstSeen(worker), seenBefore);
+        assertEq(hook.totalClaimable(), hook.claimable(worker) + hook.claimable(requester));
+    }
+
+    function test_upgrade_revertsForNonOwner() public {
+        // The owner can rewrite the logic governing every wallet's balance, so this is the one
+        // check standing between that power and anyone who asks for it.
+        address newImplementation = address(new TaskTokenRewardHook());
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert();
+        hook.upgradeToAndCall(newImplementation, "");
+    }
+
+    function test_initialize_cannotBeCalledTwice() public {
+        // Re-initializing would reset ownership and configuration on a live contract.
+        vm.expectRevert();
+        hook.initialize(
+            address(vault),
+            address(budget),
+            address(market),
+            18,
+            DREAMS_PER_USDC,
+            BONUS_BPS,
+            address(dreamsToken),
+            WORKER_SPLIT_BPS,
+            authorizedRelayer,
+            owner
+        );
+    }
+
+    // ─── wallet history seeding ───────────────────────────────────────────────
+
+    function test_seedWalletHistory_restoresAgeAndBans() public {
+        vm.warp(52 weeks); // forge starts near timestamp 0; a "9 weeks ago" fixture needs a past
+        address migrated = makeAddr("migrated");
+        address bannedWallet = makeAddr("bannedWallet");
+        uint40 seenAt = uint40(block.timestamp - 9 weeks);
+
+        address[] memory wallets = new address[](2);
+        uint40[] memory firstSeenAt = new uint40[](2);
+        bool[] memory isBanned = new bool[](2);
+        wallets[0] = migrated;
+        wallets[1] = bannedWallet;
+        firstSeenAt[0] = seenAt;
+        firstSeenAt[1] = seenAt;
+        isBanned[1] = true;
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertEq(hook.firstSeen(migrated), seenAt);
+        assertEq(hook.firstSeen(bannedWallet), seenAt);
+        assertFalse(hook.banned(migrated));
+        // A ban that did not carry over would silently readmit a wallet the owner had removed.
+        assertTrue(hook.banned(bannedWallet));
+    }
+
+    function test_seedWalletHistory_neverOverwritesRealHistory() public {
+        // The guard that matters. A wallet that has already interacted with this hook has real
+        // history, and a later or repeated seed must not be able to backdate it.
+        _earnClaimable();
+        uint40 real = hook.firstSeen(worker);
+        assertGt(real, 0);
+
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = worker;
+        vm.warp(block.timestamp + 104 weeks);
+        firstSeenAt[0] = uint40(block.timestamp - 52 weeks);
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertEq(hook.firstSeen(worker), real);
+    }
+
+    function test_seedWalletHistory_ignoresZeroSentinel() public {
+        // 0 means "never seen" everywhere else in this contract; seeding it would be writing
+        // the absence of a value.
+        address wallet = makeAddr("zeroSeed");
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = wallet;
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertEq(hook.firstSeen(wallet), 0);
+    }
+
+    function test_seedWalletHistory_revertsOnLengthMismatch() public {
+        address[] memory wallets = new address[](2);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](2);
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.SeedLengthMismatch.selector);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_seedWalletHistory_revertsForNonOwner() public {
+        address[] memory wallets = new address[](0);
+        uint40[] memory firstSeenAt = new uint40[](0);
+        bool[] memory isBanned = new bool[](0);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert();
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_sealWalletHistory_isPermanent() public {
+        vm.warp(52 weeks);
+        vm.prank(owner);
+        hook.sealWalletHistory();
+        assertTrue(hook.walletHistorySealed());
+
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = makeAddr("tooLate");
+        firstSeenAt[0] = uint40(block.timestamp - 9 weeks);
+
+        // Migration is a phase, not a standing capability: an owner able to backdate wallet age
+        // forever is more power than the migration needs.
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.WalletHistoryAlreadySealed.selector);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_banWallet_emitsEventsForOffChainReconstruction() public {
+        // Without these a ban is invisible in the logs, so a wallet banned before it ever earned
+        // anything could not be found by any off-chain scan -- and would come back unbanned.
+        address wallet = makeAddr("banEvent");
+
+        vm.expectEmit(true, false, false, false);
+        emit TaskTokenRewardHook.WalletBanned(wallet);
+        vm.prank(owner);
+        hook.banWallet(wallet);
+
+        vm.expectEmit(true, false, false, false);
+        emit TaskTokenRewardHook.WalletUnbanned(wallet);
+        vm.prank(owner);
+        hook.unbanWallet(wallet);
+    }
+
+    // ─── in-flight reward state seeding ───────────────────────────────────────
+
+    function _inFlightState(address req, address wrk, uint256 reserved)
+        internal
+        pure
+        returns (TaskTokenRewardHook.RewardState memory)
+    {
+        return TaskTokenRewardHook.RewardState({
+            rewardUsd: 1_000_000,
+            usdBonusValue: 75_000,
+            startPrice: DREAMS_PER_USDC,
+            reservedTokenAmount: reserved,
+            requester: req,
+            worker: wrk,
+            reserved: true,
+            paid: false,
+            consumedEpoch: 0
+        });
+    }
+
+    function test_seedRewardStates_carriesInFlightStateSoNothingStrands() public {
+        // The point of the function. A task reserved against a previous hook can only be settled
+        // by a hook that holds its state; without this the reservation is orphaned in the vault
+        // forever and its tokens keep blocking the next swap.
+        bytes32 taskId = keccak256("in-flight");
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, 26_025_000_000_000_000);
+
+        vm.prank(owner);
+        hook.seedRewardStates(ids, states);
+
+        (uint256 rewardUsd,,, uint256 reservedTokenAmount, address req, address wrk, bool reserved, bool paid,) =
+            hook.rewardStates(taskId);
+        assertEq(rewardUsd, 1_000_000);
+        assertEq(reservedTokenAmount, 26_025_000_000_000_000);
+        assertEq(req, requester);
+        assertEq(wrk, worker);
+        assertTrue(reserved);
+        assertFalse(paid);
+    }
+
+    function test_seedRewardStates_neverOverwritesRealState() public {
+        // A task this hook already knows about has real state; a later seed must not rewrite it.
+        bytes32 taskId = _earnClaimable();
+        (uint256 realReward,,,,,,,,) = hook.rewardStates(taskId);
+        assertGt(realReward, 0);
+
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(address(0xdead), address(0xbeef), 999);
+
+        vm.prank(owner);
+        hook.seedRewardStates(ids, states);
+
+        (uint256 afterReward,,,, address req,,,,) = hook.rewardStates(taskId);
+        assertEq(afterReward, realReward);
+        assertEq(req, requester);
+    }
+
+    function test_seedRewardStates_revertsOnAlreadySettledState() public {
+        // Seeding a paid state would be inert -- every settlement path checks `paid` first -- so
+        // its presence means the wrong set is being replayed. Better to stop than to no-op.
+        bytes32 taskId = keccak256("already-paid");
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, 1);
+        states[0].paid = true;
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.RewardStateAlreadySettled.selector, taskId));
+        hook.seedRewardStates(ids, states);
+    }
+
+    function test_seedRewardStates_seedsWalletAgeForCarriedParticipants() public {
+        // A carried task's participants are known to have transacted before this hook existed,
+        // so they must not read as brand-new wallets and lose the ramp.
+        bytes32 taskId = keccak256("age-carry");
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, 1);
+
+        vm.prank(owner);
+        hook.seedRewardStates(ids, states);
+
+        assertGt(hook.firstSeen(requester), 0);
+        assertGt(hook.firstSeen(worker), 0);
+    }
+
+    function test_seedRewardStates_revertsOnLengthMismatch() public {
+        bytes32[] memory ids = new bytes32[](2);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.SeedLengthMismatch.selector);
+        hook.seedRewardStates(ids, states);
+    }
+
+    function test_seedRewardStates_revertsForNonOwner() public {
+        bytes32[] memory ids = new bytes32[](0);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](0);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert();
+        hook.seedRewardStates(ids, states);
+    }
+
+    function test_sealRewardState_isPermanent() public {
+        vm.prank(owner);
+        hook.sealRewardState();
+        assertTrue(hook.rewardStateSealed());
+
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = keccak256("too-late");
+        states[0] = _inFlightState(requester, worker, 1);
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.RewardStateAlreadySealed.selector);
+        hook.seedRewardStates(ids, states);
     }
 
     // ─── setRamp validation ───────────────────────────────────────────────────

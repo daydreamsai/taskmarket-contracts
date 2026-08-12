@@ -17,7 +17,7 @@ and kept money corresponding to no liability at all.
 
 The first was confirmed exploitable on Base mainnet with a passing Forge proof of concept before
 this fix was written: roughly 430 USDC of pooled escrow, five tasks sitting in `Expired`, the
-contract unpaused, and the call permissionless by design (ADR-0026).
+contract unpaused, and the call permissionless by design.
 
 This revision writes each settled fact together with what it settles: the reward is zeroed by the
 statement group that pays it out, and a payment that will not produce a change reverts rather than
@@ -210,6 +210,4 @@ after settlement must read the `TaskCreated`/`TaskExpired` events or the indexed
 
 - Issue #432 — repeatable `refundExpired`
 - Issue #198, Issue #203 — the rev013 fixes in the same two functions
-- ADR-0026 — Refunding an expired task is permissionless
-- ADR-0011 — Diamond selectors: single source and versioned upgrades
 - `rev013-bounty-security-fixes.md` — the earlier fixes to `refundExpired` and `updateTask`

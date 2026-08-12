@@ -4,68 +4,30 @@
 //
 // `as const` is load-bearing: it is what preserves every event name, parameter name
 // and parameter type as a literal type, so TypeScript consumers get compile-time
-// checking against the contracts (ADR-0065). The .json file beside this one carries
+// checking against the contracts. The .json file beside this one carries
 // the same entries for non-TypeScript tooling.
 export const TaskTokenRewardHookABI = [
   {
     "type": "constructor",
-    "inputs": [
-      {
-        "name": "_vault",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_epochBudget",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_diamond",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_tokenDecimals",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "_dreamsPerUsdc",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_bonusBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "_token",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_workerSplitBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "_backend",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
+    "inputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "backend",
+    "name": "UPGRADE_INTERFACE_VERSION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "authorizedRelayer",
     "inputs": [],
     "outputs": [
       {
@@ -94,7 +56,7 @@ export const TaskTokenRewardHookABI = [
     "name": "banned",
     "inputs": [
       {
-        "name": "",
+        "name": "wallet",
         "type": "address",
         "internalType": "address"
       }
@@ -791,7 +753,7 @@ export const TaskTokenRewardHookABI = [
     "name": "claimable",
     "inputs": [
       {
-        "name": "",
+        "name": "wallet",
         "type": "address",
         "internalType": "address"
       }
@@ -849,7 +811,7 @@ export const TaskTokenRewardHookABI = [
     "name": "firstSeen",
     "inputs": [
       {
-        "name": "",
+        "name": "wallet",
         "type": "address",
         "internalType": "address"
       }
@@ -862,6 +824,64 @@ export const TaskTokenRewardHookABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initialize",
+    "inputs": [
+      {
+        "name": "_vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_epochBudget",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_diamond",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_tokenDecimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "_dreamsPerUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_bonusBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "_token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_workerSplitBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "_authorizedRelayer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1302,10 +1322,23 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "function",
+    "name": "proxiableUUID",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rampMultipliers",
     "inputs": [
       {
-        "name": "",
+        "name": "index",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1324,7 +1357,7 @@ export const TaskTokenRewardHookABI = [
     "name": "rampThresholds",
     "inputs": [
       {
-        "name": "",
+        "name": "index",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1347,10 +1380,23 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "function",
+    "name": "rewardStateSealed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rewardStates",
     "inputs": [
       {
-        "name": "",
+        "name": "taskId",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -1406,10 +1452,112 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "function",
-    "name": "setBackend",
+    "name": "sealRewardState",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sealWalletHistory",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedRewardStates",
     "inputs": [
       {
-        "name": "_backend",
+        "name": "taskIds",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "states",
+        "type": "tuple[]",
+        "internalType": "struct TaskTokenRewardHook.RewardState[]",
+        "components": [
+          {
+            "name": "rewardUsd",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "usdBonusValue",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "startPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedTokenAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reserved",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "paid",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "consumedEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedWalletHistory",
+    "inputs": [
+      {
+        "name": "wallets",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "firstSeenAt",
+        "type": "uint40[]",
+        "internalType": "uint40[]"
+      },
+      {
+        "name": "isBanned",
+        "type": "bool[]",
+        "internalType": "bool[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setAuthorizedRelayer",
+    "inputs": [
+      {
+        "name": "_authorizedRelayer",
         "type": "address",
         "internalType": "address"
       }
@@ -1617,6 +1765,43 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "function",
+    "name": "upgradeToAndCall",
+    "inputs": [
+      {
+        "name": "newImplementation",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "usedWithdrawNonce",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "vault",
     "inputs": [],
     "outputs": [
@@ -1624,6 +1809,19 @@ export const TaskTokenRewardHookABI = [
         "name": "",
         "type": "address",
         "internalType": "contract IRewardVault"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "walletHistorySealed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -1641,6 +1839,21 @@ export const TaskTokenRewardHookABI = [
         "name": "destination",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "nonce",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "validBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -1668,6 +1881,19 @@ export const TaskTokenRewardHookABI = [
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Initialized",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -1818,6 +2044,37 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "event",
+    "name": "RewardStateSealed",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardStateSeeded",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "reservedTokenAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardsWithdrawn",
     "inputs": [
       {
@@ -1842,8 +2099,137 @@ export const TaskTokenRewardHookABI = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "Upgraded",
+    "inputs": [
+      {
+        "name": "implementation",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletBanned",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletHistorySealed",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletHistorySeeded",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "firstSeenAt",
+        "type": "uint40",
+        "indexed": false,
+        "internalType": "uint40"
+      },
+      {
+        "name": "banned",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletUnbanned",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "CallerNotDiamond",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ECDSAInvalidSignature",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ECDSAInvalidSignatureLength",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ECDSAInvalidSignatureS",
+    "inputs": [
+      {
+        "name": "s",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC1967InvalidImplementation",
+    "inputs": [
+      {
+        "name": "implementation",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC1967NonPayable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FailedCall",
     "inputs": []
   },
   {
@@ -1858,7 +2244,17 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "error",
+    "name": "InvalidInitialization",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidRamp",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidWithdrawSignature",
     "inputs": []
   },
   {
@@ -1874,7 +2270,7 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "error",
-    "name": "NotBackend",
+    "name": "NotInitializing",
     "inputs": []
   },
   {
@@ -1928,6 +2324,22 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "error",
+    "name": "RewardStateAlreadySealed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardStateAlreadySettled",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SafeERC20FailedOperation",
     "inputs": [
       {
@@ -1936,6 +2348,63 @@ export const TaskTokenRewardHookABI = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SeedLengthMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StringsInsufficientHexLength",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UUPSUnauthorizedCallContext",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UUPSUnsupportedProxiableUUID",
+    "inputs": [
+      {
+        "name": "slot",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedRelayer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletHistoryAlreadySealed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawAuthorizationExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawNonceUsed",
+    "inputs": []
   },
   {
     "type": "error",

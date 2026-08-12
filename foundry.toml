@@ -18,6 +18,12 @@ invariant = { runs = 64 }
 # DiamondSelectorParity.t.sol enumerates the upgrade-step scripts to assert the fresh-deploy
 # version seed matches the highest one, so it needs to read that directory listing.
 fs_permissions = [{ access = "read", path = "./script/upgrades" }]
+# Emitted on every build so `forge inspect <c> storageLayout` works without a clean rebuild.
+# Without it the layout is absent from the artifact and `forge inspect` errors -- which reads
+# very much like "this contract has no storage" if the caller is not careful. `make contract
+# storage-check` depends on the difference: TaskTokenRewardHook sits behind a proxy and must
+# have no sequential storage, and an unreadable layout must never be mistaken for an empty one.
+extra_output = ["storageLayout"]
 
 [profile.default.fmt]
 line_length = 120

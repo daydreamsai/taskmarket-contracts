@@ -521,7 +521,7 @@ contract CoreFacet {
         if (task.status == ITMPCore.TaskStatus.Cancelled) revert ITMPCore.TaskIsCancelled();
         // Expired is a status this function sets itself, so it must be as terminal here as
         // Accepted and Cancelled are. Without this the call is repeatable: it is permissionless
-        // by design (ADR-0026) and every guard above still passes on a second call, so each
+        // permissionless by design, and every guard above still passes on a second call, so each
         // repeat pays the reward again out of the single pooled escrow balance shared by all
         // tasks -- draining unrelated, fully funded tasks.
         if (task.status == ITMPCore.TaskStatus.Expired) revert ITMPCore.TaskAlreadyRefunded();

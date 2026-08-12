@@ -8,7 +8,7 @@ Five are fixed by replacing `CoreFacet` and `EvaluatorFacet` in one diamond-cut 
 (this revision, applied via `script/upgrades/Rev013Upgrade.s.sol`); the sixth
 (`EpochBudget.release()`'s epoch-mismatch bug, issue #202) is fixed by redeploying the
 reward-hook pair instead, since `TaskTokenRewardHook`/`EpochBudget` are not Diamond facets and
-are upgraded by a separate script (`script/SwapRewardHook.s.sol`, see ADR-0028) rather than a
+are upgraded by a separate script (`script/SwapRewardHook.s.sol`) rather than a
 `diamondCut`. All six are grouped into this one revision document because they shipped from the
 same bounty round and the same review pass, even though they deploy via two different
 mechanisms.
@@ -65,7 +65,7 @@ the forwarder having separately transferred a matching `paymentAmount`, which `u
 checked. Re-assessed during triage as backend-bug-only rather than externally exploitable
 (`updateTask` requires the forwarder, and the only live forwarder caller — `tasks.router.ts`'s
 X402-funded reward-increase endpoint — already computes the correct funding delta), which
-downgraded the fix from a breaking funding-model change to cheap defense-in-depth. See ADR-0025.
+downgraded the fix from a breaking funding-model change to cheap defense-in-depth.
 
 ---
 
@@ -209,7 +209,7 @@ function release(address requester, address worker, uint256 amount, uint64 consu
 pitch/auction reservation path) and pass it back into every `release()` call. This is a *separate*
 deployment from items 1-4: `TaskTokenRewardHook`/`EpochBudget` are not Diamond facets, so this
 ships by deploying a fresh hook + `EpochBudget` pair and cutting the Diamond's default hooks over
-to them (`script/SwapRewardHook.s.sol`), reusing the existing `RewardVault`, per ADR-0028 -- not
+to them (`script/SwapRewardHook.s.sol`), reusing the existing `RewardVault` -- not
 by a `diamondCut` on `CoreFacet`/`EvaluatorFacet`.
 
 ### 6. `CoreFacet.updateTask` — balance-sufficiency check on reward increase (#203)
@@ -304,7 +304,7 @@ An explicit transfer would require a breaking change to `updateTask`'s calling c
 a payment-pulling step mirroring `createTask`), for a path whose only real-world caller already
 computes and forwards the correct funding delta. A balance-sufficiency check is non-breaking,
 requires no backend change, and still catches the acute failure mode (a relayed call with no
-funding at all) -- see ADR-0025 for the full triage.
+funding at all).
 
 ---
 
@@ -333,7 +333,7 @@ funding at all) -- see ADR-0025 for the full triage.
 | `src/hooks/EpochBudget.sol` | `checkAndConsume` returns the consumed epoch; `release` requires it back and no-ops if the epoch has rolled past (#202) |
 | `src/hooks/TaskTokenRewardHook.sol` | Track `consumedEpoch` per task/reservation; pass it to every `release()` call; zero-initialize `consumeEpoch` local (slither uninitialized-local fix) |
 | `script/upgrades/Rev013Upgrade.s.sol` | New upgrade-step script -- pure `Replace` on `CoreFacet` + `EvaluatorFacet` |
-| `script/SwapRewardHook.s.sol` | New script -- separate (non-diamond-cut) redeploy of `EpochBudget`/`TaskTokenRewardHook`, reusing the existing `RewardVault`, per ADR-0028 |
+| `script/SwapRewardHook.s.sol` | New script -- separate (non-diamond-cut) redeploy of `EpochBudget`/`TaskTokenRewardHook`, reusing the existing `RewardVault` |
 | `test/TaskMarket.t.sol` | Regression coverage for #198, #199, #200 (including the evaluator-forfeiture follow-up), #201 (including the narrowed-gate follow-up), #203 |
 | `test/EpochBudget.t.sol`, `test/TaskTokenRewardHook.t.sol` | Regression coverage for #202 |
 | `test/SwapRewardHook.t.sol` | New file -- coverage for the reward-hook cutover script |
@@ -344,5 +344,3 @@ funding at all) -- see ADR-0025 for the full triage.
 
 - Issues #198, #199, #200, #201, #202, #203 (all filed from the same public security-review
   bounty; see each issue's Attribution section for the reporting agentId(s)).
-- ADR-0025 (`updateTask` reward-increase balance-sufficiency check).
-- ADR-0028 (reward-hook upgrade cutover; where #202's fix actually deploys).

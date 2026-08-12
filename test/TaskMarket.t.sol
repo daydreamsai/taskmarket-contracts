@@ -1266,7 +1266,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         market.refundExpired(taskId, 0);
 
-        // refundExpired is permissionless by design (ADR-0026), so a stranger repeating it is
+        // refundExpired is permissionless by design, so a stranger repeating it is
         // the realistic case, not a hypothetical one.
         vm.prank(address(0xBEEF));
         vm.expectRevert(ITMPCore.TaskAlreadyRefunded.selector);

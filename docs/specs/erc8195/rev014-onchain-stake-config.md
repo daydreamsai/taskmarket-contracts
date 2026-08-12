@@ -26,7 +26,7 @@ different, worker-chosen value written later by `claimTask`, not the requester's
 configuration). There was therefore no contract call, live or historical, that could recover the
 original `stakeRequired`/`stakeBps` choice once the off-chain write was lost — the reconciliation
 path's `0`/`0` hardcode was not a bug that a smarter query could fix; the data genuinely did not
-exist on-chain. See ADR-0029 for the full investigation.
+exist on-chain.
 
 ---
 
@@ -161,7 +161,7 @@ event TaskCreated(
 `claims.router.ts` currently always calls it with a hardcoded `0`. Wiring actual on-chain
 enforcement of `stakeBps` into `claimTask` is a separate, larger change (validating the worker's
 chosen stake against `task.stakeBps * task.reward / 10000`, deciding what happens if the worker
-under-stakes, etc.) that was explicitly out of scope for ADR-0029's decision — this revision only
+under-stakes, etc.) that was explicitly out of scope for that decision — this revision only
 makes the requester's original configuration chain-recoverable, matching `reward`/`mode`/
 `expiryTime`'s existing treatment. Enforcement remains a follow-up.
 
@@ -172,7 +172,7 @@ split out specifically to keep `getTask()`'s ABI encoder within Yul stack limits
 `stakeBps` fit that "never read internally" description today, which made `TaskMetadata` an
 initial candidate. It was rejected in favor of the core `Task` struct because the whole point of
 this revision is recoverability through the exact same `getTask()` call already used for
-`reward`/`mode`/`expiryTime` — ADR-0029's own chosen option describes this explicitly — splitting
+`reward`/`mode`/`expiryTime` — the chosen option describes this explicitly — splitting
 across two structs and two accessor calls would only partially achieve that. Adding the two small
 fields (one `bool`, one `uint16`, packed into a single storage/return word) to `Task` itself did
 not reproduce any stack-too-deep failure on the `getTask()` return side, confirmed by `forge

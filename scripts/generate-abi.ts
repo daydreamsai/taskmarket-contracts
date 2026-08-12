@@ -13,7 +13,7 @@
 // The .ts file is what TypeScript consumers import. A JSON import widens every string to
 // `string`, so nothing about an event's name or shape survives into the type system; an
 // `as const` literal keeps all of it, which is what lets the backend check its event
-// names against the contracts at compile time rather than at runtime (ADR-0065). No code
+// names against the contracts at compile time rather than at runtime. No code
 // generation dependency is involved -- `as const` is the whole mechanism, and viem's
 // types (built on abitype) infer from it directly.
 //
@@ -93,7 +93,7 @@ const TS_HEADER = `\
 //
 // \`as const\` is load-bearing: it is what preserves every event name, parameter name
 // and parameter type as a literal type, so TypeScript consumers get compile-time
-// checking against the contracts (ADR-0065). The .json file beside this one carries
+// checking against the contracts. The .json file beside this one carries
 // the same entries for non-TypeScript tooling.
 `;
 

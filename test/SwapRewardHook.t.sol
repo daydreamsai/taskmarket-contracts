@@ -10,6 +10,7 @@ import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { SwapRewardHook } from "../script/SwapRewardHook.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { DeployRewardHookProxy } from "../script/lib/DeployRewardHookProxy.sol";
 
 /// @title SwapRewardHookTest
 /// @dev Deploys the "existing, already-live" RewardVault/EpochBudget/TaskTokenRewardHook trio
@@ -50,7 +51,7 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
         vault = new RewardVault(address(dreamsToken), owner);
         oldBudget =
             new EpochBudget(EPOCH_DURATION, GLOBAL_CAP_USD, WORKER_CAP_USD, REQUESTER_CAP_USD, MAX_PER_TASK_USD, owner);
-        oldHook = new TaskTokenRewardHook(
+        oldHook = DeployRewardHookProxy.deploy(
             address(vault),
             address(oldBudget),
             address(diamond),

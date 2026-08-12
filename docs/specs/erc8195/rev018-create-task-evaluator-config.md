@@ -9,8 +9,8 @@ the task already existed. That second call is gated on the task still being `Ope
 
 The task is claimable from the instant `createTask` mines. On a fast chain with worker agents
 watching for new tasks, the gap between the two transactions is milliseconds, and losing that race
-is not an edge case: ADR-0046's correction note records a live run in which 4 of 4 evaluator
-assignments were lost when the second call was deferred, and ADR-0047 names this two-transaction
+is not an edge case: a live run recorded 4 of 4 evaluator
+assignments lost when the second call was deferred, and this two-transaction
 shape as the root cause of the chaining subsystem that was subsequently withdrawn. A task that
 loses the race is not merely missing an evaluator -- it is a task whose requester believes it is
 evaluator-gated and which will instead settle through the plain acceptance path.

@@ -127,7 +127,7 @@ Tokens are credited to a claimable escrow (`claimable[wallet]`) rather than push
 wallets directly. A wallet-age ramp (`firstSeen`, `rampThresholds`, `rampMultipliers`)
 scales down rewards for wallets younger than the configured thresholds, to limit Sybil
 farming. Workers and requesters withdraw their claimable balance via `withdrawFor`,
-called by the trusted backend server wallet — see
+called by the authorized relayer (the server wallet) — see
 [DREAMS Token Rewards](/reference/rewards) for the withdrawal flow.
 
 ---
@@ -196,9 +196,40 @@ proceeds.
 the start of `checkComplete`, before any external call, so a reentrant token-transfer
 callback cannot double-pay.
 
+**Withdrawal is authorized by the wallet, not by the relayer.** `withdrawFor` is called
+by the authorized relayer, which relays and pays gas — so `msg.sender` is never the wallet and
+cannot authorize anything on its behalf. The hook therefore recovers the wallet's own
+EIP-191 signature over
+`taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>` and reverts unless the
+signer is the wallet whose balance is being moved. `validBefore` is enforced on-chain,
+and `usedWithdrawNonce` (keyed on `keccak256(wallet, nonce)`) rejects replays, so a
+captured authorization cannot be re-presented by whoever holds the relaying key.
+
+The same binding was enforced off-chain before this, and still is; the checks
+are complementary rather than alternatives. What changed is that the rule is now
+enforceable against *any* caller, including a future code path that forgets to apply it,
+rather than resting on one hot key remaining correct forever.
+
+The signed message is the one clients already produce. EIP-712 would be cheaper on-chain
+but would change what every client signs, so it is deliberately not used here; it could
+be added later as a second accepted format rather than a replacement.
+
 **Ownership.** `RewardVault`, `EpochBudget`, and `TaskTokenRewardHook` are owned by the
 deployer key at deploy time. Transfer ownership to a multisig before directing
 production token funding into the vault.
+
+**Upgradeability concentrates power in the owner.** The hook sits behind an ERC-1967
+proxy and is UUPS-upgradeable, so its owner can replace the logic governing every
+wallet's claimable balance. That is the same shape of concentration the withdrawal
+signature removes, one level up, and it is the reason the multisig transfer above is not
+optional. `RewardVault` is deliberately **not** upgradeable: it holds the tokens, and a
+treasury whose logic can be rewritten is a strictly worse thing to own.
+
+**Wallet-history seeding is a one-way capability.** `seedWalletHistory` exists to carry
+`firstSeen` and `banned` across a hook replacement. It refuses to overwrite a wallet that
+already has history on the current hook, and `sealWalletHistory()` disables it
+permanently. Seal it once a migration is verified — an owner able to backdate wallet age
+indefinitely is more power than the migration needs.
 
 ---
 
@@ -222,7 +253,7 @@ Summary:
 | `FORGE_REQUESTER_CAP_USD` | yes | Per-requester per-epoch cap (USDC base units) |
 | `FORGE_MAX_USD_PER_TASK` | yes | Per-task emission cap (USDC base units) |
 | `FORGE_WORKER_SPLIT_BPS` | no | Worker share in bps (default 8000 = 80%) |
-| `FORGE_BACKEND_ADDRESS` | yes | Backend server wallet (trusted for `withdrawFor`) |
+| _(none)_ | — | The authorized relayer is read from the forwarder's `authorizedRelayer()` at deploy time rather than supplied separately, so the hook and the forwarder cannot disagree about who may relay |
 | `FORGE_INITIAL_VAULT_BALANCE` | no | Tokens to seed the vault with at deploy (wei) |
 
 ### Deploy
@@ -235,6 +266,13 @@ make deploy-reward-hook mainnet   # uses the real DREAMS token, DeployRewardHook
 Both scripts wire the hook into `vault.setHook` / `budget.setHook` and call
 `setDefaultHooks([hook])` on the Diamond, replacing the prior default-hook list.
 
+The hook is deployed behind an ERC-1967 proxy (`script/lib/DeployRewardHookProxy.sol`),
+which deploys the implementation and initializes it through the proxy in one step. **Every
+other contract must be pointed at the proxy address, never the implementation** — the
+implementation's own initializers are disabled at construction, so it holds no state and
+has no owner. `hook.upgradeToAndCall(newImplementation, "")` replaces the logic while
+keeping all storage in place.
+
 After deploy, transfer `RewardVault` and `EpochBudget` ownership to a multisig, then
 fund the vault with DREAMS tokens before directing live task traffic to the hook.
 
@@ -245,11 +283,85 @@ fund the vault with DREAMS tokens before directing live task traffic to the hook
 3. Transfer `TaskTokenRewardHook` ownership: `hook.transferOwnership(multisig)`
 4. Fund vault: `dreamsToken.transfer(vaultAddress, initialFunding)` (or via
    `FORGE_INITIAL_VAULT_BALANCE` at deploy time)
-5. Set `DREAMS_HOOK_ADDRESS` in the backend environment — this is the sole switch that
+5. **When replacing an existing hook**, seed wallet history before live traffic reaches
+   the new one — see [Replacing an existing hook](#replacing-an-existing-hook) below.
+6. Set `DREAMS_HOOK_ADDRESS` in the backend environment — this is the sole switch that
    enables `wallet.dreamsBalance`, `wallet.withdrawDreams`, `wallet.exchangeRate`, the
    `estimatedWorkerDreamsBonus`/`estimatedRequesterDreamsBonus`/`dreamsPerUsdc`/
    `bonusBps` fields on `task.get`, and reward-hook event indexing (see
    [Event indexing](#event-indexing) below).
+
+### Replacing an existing hook
+
+`make swap-reward-hook <testnet|mainnet>` deploys a new hook + `EpochBudget` pair and reuses
+the existing `RewardVault`. It requires zero outstanding reservations in the vault.
+
+A replacement hook starts with **empty storage**, and two mappings matter:
+
+- `firstSeen[wallet]` is the basis for the wallet-age ramp, and `rampMultipliers[0]` is `0`.
+  Without migration every existing wallet looks brand new and earns **nothing** until it
+  ages past `rampThresholds[0]` again — two weeks at current settings, then eight to ramp
+  back.
+- `banned[wallet]` resets the other way, which is worse: a wallet the owner removed returns
+  admitted.
+
+`claimable` is unaffected — the old hook stays authorized until drained, so balances remain
+withdrawable from it. `rewardStates` is unaffected because the swap requires zero outstanding
+reservations.
+
+A third mapping matters more than either, because losing it costs money rather than rewards:
+
+- `rewardStates[taskId]` is the only thing that can settle a vault reservation. `vault.release`
+  and `vault.pay` are `onlyHook`, and the hook only calls them from a lifecycle path that reads
+  this mapping. A task reserved against the old hook and carried into a hook that does not know
+  it becomes **permanently unsettleable**: its tokens stay counted in `totalReserved`, and since
+  that figure gates the next swap, one orphaned reservation blocks every future one.
+
+  This is not hypothetical. An earlier testnet cutover stranded five reservations exactly this
+  way; they are still counted, and `totalReserved()` there can never return to zero.
+
+**Do not wait for a drain.** `totalReserved() == 0` is a snapshot, not a state you can hold: on a
+live marketplace a new claim can reserve at any moment, so waiting for the number to reach zero
+and stay there is waiting for a quiet moment that never arrives. Freeze it instead.
+
+**Procedure:**
+
+1. Deploy the new hook + proxy. It is not authorized yet and takes no traffic.
+2. Reconstruct the wallet set from the old hook's logs: workers from `RewardReserved` and
+   `RewardPaid`, requesters from `RewardConfigured` plus a Diamond task lookup for each `taskId`.
+   Read `firstSeen(wallet)` and `banned(wallet)` from the **old** hook and write them in batches
+   via `seedWalletHistory(wallets, firstSeenAt, isBanned)`. No race here -- this can be done days
+   ahead, since it only reads state the old hook will not change.
+3. **`make contract pause <network>`.** Claim and select-worker now revert, so the set of
+   outstanding reservations is frozen.
+4. Read the in-flight set -- vault `Reserved` events minus `Released`/`Paid` -- and read
+   `rewardStates(taskId)` from the old hook for each. Carry them over with
+   `seedRewardStates(taskIds, states)`.
+5. Re-point: `vault.setHook(proxy)`, `budget.setHook(proxy)`, and `setDefaultHooks([proxy])` on
+   the Diamond.
+6. **`make contract unpause <network>`.** In-flight tasks now settle against the new hook exactly
+   as they would have against the old one.
+7. Spot-check seeded wallets and tasks against the old hook, then call `sealWalletHistory()` and
+   `sealRewardState()`.
+
+**Keep the existing `EpochBudget`.** `setEpochBudget` on the hook means it does not have to be
+replaced, and it should not be: `EpochBudget.release` returns early when `epoch != consumedEpoch`,
+so a freshly deployed budget would silently no-op every release for a carried task, leaking
+consumed budget that is never credited back. It fails closed rather than reverting, which is
+precisely what makes it easy to miss. The budget's own state is epoch-stamped and self-expiring,
+so there is nothing in it worth migrating -- the reason to keep it is the carried tasks, not the
+budget's own history.
+
+Since this release `banWallet`/`unbanWallet` emit `WalletBanned`/`WalletUnbanned`, so future
+reconstructions can read bans from logs directly. A hook deployed **before** that change has
+no such events, so its bans are only discoverable by reading `banned(wallet)` for each wallet
+found in step 1 — a wallet banned without ever having earned anything cannot be found that
+way and must be re-banned by hand.
+
+Once the hook is upgradeable, a logic fix needs none of this: `upgradeToAndCall` keeps the
+address and the storage, so the vault is never re-pointed and no reservation is ever orphaned.
+The procedure above applies only to this one migration onto the proxy, and to any later move to a
+genuinely new contract.
 
 ---
 

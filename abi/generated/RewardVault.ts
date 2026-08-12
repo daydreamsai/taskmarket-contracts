@@ -4,7 +4,7 @@
 //
 // `as const` is load-bearing: it is what preserves every event name, parameter name
 // and parameter type as a literal type, so TypeScript consumers get compile-time
-// checking against the contracts (ADR-0065). The .json file beside this one carries
+// checking against the contracts. The .json file beside this one carries
 // the same entries for non-TypeScript tooling.
 export const RewardVaultABI = [
   {

@@ -9,7 +9,7 @@
 // distinction is the whole point: a JSON import widens every string to `string`, so
 // an event's name and parameter types carry nothing the type system can check, while
 // an `as const` literal preserves all of it. That is what makes a removed or renamed
-// event a compile error at the consumer rather than a silent runtime miss (ADR-0065).
+// event a compile error at the consumer rather than a silent runtime miss.
 // The .json copies remain for non-TypeScript tooling.
 export { TaskMarketABI } from './generated/TaskMarket';
 export { EpochBudgetABI } from './generated/EpochBudget';

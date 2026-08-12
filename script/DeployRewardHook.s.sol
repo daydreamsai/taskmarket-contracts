@@ -6,6 +6,7 @@ import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/I
 import { RewardVault } from "../src/hooks/RewardVault.sol";
 import { EpochBudget } from "../src/hooks/EpochBudget.sol";
 import { TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHook.sol";
+import { DeployRewardHookProxy } from "./lib/DeployRewardHookProxy.sol";
 
 interface IDiamondAdmin {
     function setDefaultHooks(address[] calldata hooks) external;
@@ -22,7 +23,7 @@ interface IAuthorizedRelayer {
 ///   FORGE_DIAMOND_ADDRESS            — TaskMarket Diamond proxy
 ///   FORGE_PGTR_FORWARDER             — TaskMarketForwarder address; its authorizedRelayer()
 ///                                       is read on-chain and used as the reward hook's
-///                                       backend address (same server key relays payment-gated
+///                                       authorizedRelayer address (same server key relays payment-gated
 ///                                       calls and calls withdrawFor -- deriving it here means
 ///                                       the two can never drift out of sync)
 ///   FORGE_DREAMS_PER_USDC            — whole DREAMS per $1 (e.g. 347); scaled by 1e18 in this script
@@ -68,7 +69,7 @@ contract DeployRewardHook is Script {
         console.log("RewardVault:          ", address(vault));
         console.log("EpochBudget:          ", address(budget));
         console.log("TaskTokenRewardHook:  ", address(hook));
-        console.log("Backend (from forwarder's authorizedRelayer):", hook.backend());
+        console.log("Authorized relayer (from forwarder):", hook.authorizedRelayer());
         console.log("Diamond default hooks: set to [TaskTokenRewardHook]");
         console.log("Vault is unfunded -- transfer DREAMS to RewardVault to enable payouts");
     }
@@ -92,8 +93,8 @@ contract DeployRewardHook is Script {
     {
         address protocolToken = vm.envAddress("FORGE_PROTOCOL_TOKEN");
         uint256 dreamsPerUsdc = vm.envUint("FORGE_DREAMS_PER_USDC") * 1e18;
-        address backendAddress = IAuthorizedRelayer(vm.envAddress("FORGE_PGTR_FORWARDER")).authorizedRelayer();
-        hook = new TaskTokenRewardHook(
+        address relayerAddress = IAuthorizedRelayer(vm.envAddress("FORGE_PGTR_FORWARDER")).authorizedRelayer();
+        hook = DeployRewardHookProxy.deploy(
             address(vault),
             address(budget),
             vm.envAddress("FORGE_DIAMOND_ADDRESS"),
@@ -102,7 +103,7 @@ contract DeployRewardHook is Script {
             uint16(vm.envUint("FORGE_BONUS_BPS")),
             protocolToken,
             uint16(vm.envOr("FORGE_WORKER_SPLIT_BPS", uint256(8000))),
-            backendAddress,
+            relayerAddress,
             deployer
         );
     }
