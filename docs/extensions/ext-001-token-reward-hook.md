@@ -334,14 +334,36 @@ and stay there is waiting for a quiet moment that never arrives. Freeze it inste
    ahead, since it only reads state the old hook will not change.
 3. **`make contract pause <network>`.** Claim and select-worker now revert, so the set of
    outstanding reservations is frozen.
-4. Read the in-flight set -- vault `Reserved` events minus `Released`/`Paid` -- and read
-   `rewardStates(taskId)` from the old hook for each. Carry them over with
-   `seedRewardStates(taskIds, states)`.
+4. Carry **every non-settled reward state**, not only the reserved ones. Read
+   `rewardStates(taskId)` from the old hook for every task in `RewardConfigured` (union the
+   vault's unsettled `Reserved` set), and carry each one whose `paid` is false and whose
+   `rewardUsd` is non-zero, via `seedRewardStates(taskIds, states)`.
+
+   The narrower "in-flight" reading of this step is wrong, and quietly so. `rewardStates[taskId]`
+   is written when a task is **funded**, not when it is claimed, so a funded-but-unclaimed task
+   holds a real configured reward while appearing in no vault reservation at all. Left behind, its
+   state on the new hook is empty, and `_reserveForWorker` computes
+   `bonusUsd = state.rewardUsd * bonusBps / 10000` = 0 and takes its `rate == 0 || bonusUsd == 0`
+   branch: it emits `RewardReserved(taskId, worker, rate, 0)` and returns true. Nothing reverts,
+   USDC still settles, and the worker simply never receives a token reward.
+
+   This is not a corner case. At the time of writing the deployed hook had zero in-flight
+   reservations and 58 funded-but-unclaimed tasks holding $608.78 of configured reward, so the
+   narrow filter would have carried nothing at all and reported success.
+
+   `paid` states are excluded because `seedRewardStates` rejects them; empty ones because there is
+   nothing to carry. That also excludes reservations orphaned by an earlier swap, whose state
+   lives on a hook that is no longer the one being read.
 5. Re-point: `vault.setHook(proxy)`, `budget.setHook(proxy)`, and `setDefaultHooks([proxy])` on
    the Diamond.
 6. **`make contract unpause <network>`.** In-flight tasks now settle against the new hook exactly
    as they would have against the old one.
-7. Spot-check seeded wallets and tasks against the old hook, then call `sealWalletHistory()` and
+7. Point the consuming application at the new hook address **and rewind its event cursor** to the
+   new hook's deploy block. A seed block configured for a fresh deployment is typically only a
+   fallback used when no cursor exists yet, so an already-running indexer ignores it and resumes
+   from wherever it had reached -- skipping every event the new hook emitted before that point,
+   including the seeding transactions themselves. Nothing errors; the data is simply absent.
+8. Spot-check seeded wallets and tasks against the old hook, then call `sealWalletHistory()` and
    `sealRewardState()`.
 
 **Keep the existing `EpochBudget`.** `setEpochBudget` on the hook means it does not have to be
