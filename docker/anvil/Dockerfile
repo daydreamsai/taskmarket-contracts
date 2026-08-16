@@ -4,8 +4,10 @@
 # network string (eip155:84532), and the facilitator's supported-network validation
 # all line up without any of them learning a new chain. Safe because this chain only
 # exists inside one PR environment's private network.
-FROM ghcr.io/foundry-rs/foundry:latest
+# --optimism: Base Sepolia is an OP-stack chain. Recent Anvil builds require the
+# execution-network family to be explicit when this chain ID is selected.
+FROM ghcr.io/foundry-rs/foundry:v1.7.1
 
 EXPOSE 8545
 
-ENTRYPOINT ["anvil", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "84532"]
+ENTRYPOINT ["anvil", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "84532", "--optimism"]
