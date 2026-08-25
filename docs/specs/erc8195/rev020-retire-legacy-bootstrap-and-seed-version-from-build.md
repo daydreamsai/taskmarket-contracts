@@ -233,4 +233,4 @@ A fresh deploy's `diamondVersion()` now reads 20 instead of 11. Live diamonds ar
 | `packages/contracts/test/Rev020Upgrade.t.sol` | New |
 | `packages/contracts/foundry.toml` | `fs_permissions` read entry; note on single-threaded test runs |
 | `packages/contracts/package.json` | `forge test -j 1` |
-| `docs/CONTRACTS_GUIDE.md` | Upgrade section no longer describes the bootstrap |
+| `docs/guides/CONTRACTS_GUIDE.md` | Upgrade section no longer describes the bootstrap |
