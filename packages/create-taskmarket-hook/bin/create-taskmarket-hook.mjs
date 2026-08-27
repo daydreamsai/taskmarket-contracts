@@ -53,7 +53,7 @@ function isPortableFileComponent(component) {
 
 const dependencies = {
   taskmarket:
-    "daydreamsai/taskmarket-contracts@657b9f74478bdf71c3c1b5e0d2dde7197aba56cb",
+    "daydreamsai/taskmarket-contracts@a85cc8dae76e0fc6da9e463375fd2e385710d442",
   openzeppelin:
     "OpenZeppelin/openzeppelin-contracts@fcbae5394ae8ad52d8e580a3477db99814b9d565",
   openzeppelinUpgradeable:

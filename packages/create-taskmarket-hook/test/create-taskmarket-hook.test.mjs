@@ -16,7 +16,7 @@ const address = "0x1111111111111111111111111111111111111111";
 const mixedCaseAddress = "0xAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const normalizedAddress = mixedCaseAddress.toLowerCase();
 const dependencyCommands = [
-  "forge install --no-git daydreamsai/taskmarket-contracts@657b9f74478bdf71c3c1b5e0d2dde7197aba56cb",
+  "forge install --no-git daydreamsai/taskmarket-contracts@a85cc8dae76e0fc6da9e463375fd2e385710d442",
   "forge install --no-git OpenZeppelin/openzeppelin-contracts@fcbae5394ae8ad52d8e580a3477db99814b9d565",
   "forge install --no-git OpenZeppelin/openzeppelin-contracts-upgradeable@7bf4727aacdbfaa0f36cbd664654d0c9e1dc52bf",
   "forge install --no-git foundry-rs/forge-std@1801b0541f4fda118a10798fd3486bb7051c5dd6",
