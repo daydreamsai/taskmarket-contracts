@@ -1,0 +1,84 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Duplicate dependency bindings",
+    "slug": "duplicate-dependency-bindings",
+    "version": "1.0.0",
+    "description": "Invalid fixture with duplicate chain bindings and normalized addresses."
+  },
+  "author": { "name": "Example Labs", "url": "https://example.com" },
+  "source": {
+    "repository": "https://github.com/example/hook",
+    "commit": "abcdef1234567890",
+    "path": "src/Hook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 12345678
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proxy": { "kind": "none", "upgradeable": false },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 24000,
+            "maximum": 35000,
+            "methodology": "forge gas snapshot on Base"
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["bounty"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": { "status": "unverified", "verifiers": [] },
+  "privilegedRoles": [],
+  "externalDependencies": [
+    {
+      "name": "Policy registry",
+      "kind": "contract",
+      "purpose": "Supplies a policy root.",
+      "deployments": [
+        {
+          "chainId": 8453,
+          "addresses": [
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          ]
+        },
+        {
+          "chainId": 8453,
+          "addresses": ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+        }
+      ]
+    }
+  ],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "No off-chain dependency."
+  },
+  "security": {
+    "audits": [{ "status": "unaudited", "scope": "Example fixture only" }],
+    "notes": ["Fixture addresses and hashes are test data."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "self-attested",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": { "status": "not-default" }
+}

@@ -1,0 +1,1455 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json",
+  "title": "Taskmarket hook manifest",
+  "description": "A versioned, publishable declaration about one Taskmarket hook. It is descriptive evidence, not an on-chain attestation or a protocol listing decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": { "^x-(?!draft$)": {} },
+  "required": [
+    "manifestVersion",
+    "identity",
+    "author",
+    "source",
+    "license",
+    "deployments",
+    "callbacks",
+    "taskModes",
+    "hookData",
+    "sourceVerification",
+    "privilegedRoles",
+    "externalDependencies",
+    "liveness",
+    "security",
+    "listing",
+    "conformance",
+    "protocolDefault"
+  ],
+  "$defs": {
+    "address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
+    "nonZeroAddress": {
+      "type": "string",
+      "pattern": "^0x(?!0{40}$)[a-fA-F0-9]{40}$"
+    },
+    "bytes32": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+    "nonZeroBytes32": {
+      "type": "string",
+      "pattern": "^0x(?!0{64}$)[a-fA-F0-9]{64}$"
+    },
+    "txHash": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+    "nonZeroTxHash": {
+      "type": "string",
+      "pattern": "^0x(?!0{64}$)[a-fA-F0-9]{64}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "safePositiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "A positive JavaScript safe integer after lossless raw-source numeric validation."
+    },
+    "safeNonnegativeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "A nonnegative JavaScript safe integer after lossless raw-source numeric validation."
+    },
+    "httpsUri": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://[^/?#\\s]+(?:[/?#][^\\s]*)?$"
+    },
+    "extensions": {
+      "type": "object",
+      "patternProperties": { "^x-": {} },
+      "additionalProperties": false
+    },
+    "roleHolder": {
+      "type": "object",
+      "description": "One privileged-role holder on one declared deployment chain.",
+      "additionalProperties": false,
+      "required": ["chainId", "address"],
+      "properties": {
+        "chainId": { "$ref": "#/$defs/safePositiveInteger" },
+        "address": { "$ref": "#/$defs/address" }
+      }
+    },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "required": ["name", "holders", "capabilities"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "holders": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/roleHolder" }
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "renounceable": { "type": "boolean" }
+      }
+    },
+    "proxy": {
+      "type": "object",
+      "description": "Proxy and upgrade-authority metadata for one chain deployment.",
+      "additionalProperties": false,
+      "required": ["kind", "upgradeable"],
+      "properties": {
+        "kind": {
+          "enum": ["none", "erc1967", "transparent", "uups", "beacon", "custom"]
+        },
+        "upgradeable": { "type": "boolean" },
+        "implementation": { "$ref": "#/$defs/address" },
+        "admin": { "$ref": "#/$defs/address" },
+        "beacon": {
+          "$ref": "#/$defs/address",
+          "description": "Beacon contract read by a beacon proxy; required only for kind beacon."
+        },
+        "timelock": { "$ref": "#/$defs/address" },
+        "upgradeAuthorityRole": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact privilegedRoles[].name entry that authorizes upgrades. The CLI requires this reference to resolve uniquely when present."
+        },
+        "upgradeAuthorityDescription": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "upgradeable": { "const": true } },
+            "required": ["upgradeable"]
+          },
+          "then": {
+            "required": ["implementation", "upgradeAuthorityDescription"],
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": { "admin": {} },
+                "required": ["admin"]
+              },
+              {
+                "type": "object",
+                "properties": { "timelock": {} },
+                "required": ["timelock"]
+              },
+              {
+                "type": "object",
+                "properties": { "upgradeAuthorityRole": {} },
+                "required": ["upgradeAuthorityRole"]
+              }
+            ],
+            "properties": {
+              "kind": {
+                "enum": ["erc1967", "transparent", "uups", "beacon", "custom"]
+              },
+              "implementation": {},
+              "upgradeAuthorityDescription": {}
+            }
+          },
+          "else": {
+            "properties": {
+              "kind": { "const": "none" },
+              "implementation": false,
+              "admin": false,
+              "beacon": false,
+              "timelock": false,
+              "upgradeAuthorityRole": false,
+              "upgradeAuthorityDescription": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": { "kind": { "const": "transparent" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "type": "object",
+            "properties": { "admin": {} },
+            "required": ["admin"]
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": { "kind": { "const": "beacon" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "type": "object",
+            "properties": { "beacon": {} },
+            "required": ["beacon"]
+          },
+          "else": {
+            "type": "object",
+            "properties": { "beacon": false }
+          }
+        }
+      ]
+    },
+    "gas": {
+      "type": "object",
+      "description": "Callback gas measurements for one chain deployment.",
+      "additionalProperties": false,
+      "required": ["estimates"],
+      "properties": {
+        "estimates": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["typical", "maximum", "methodology"],
+              "properties": {
+                "typical": { "$ref": "#/$defs/safeNonnegativeInteger" },
+                "maximum": { "$ref": "#/$defs/safeNonnegativeInteger" },
+                "methodology": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "dependencyDeployment": {
+      "type": "object",
+      "description": "One external-dependency locator binding on one declared deployment chain.",
+      "additionalProperties": false,
+      "required": ["chainId"],
+      "properties": {
+        "chainId": { "$ref": "#/$defs/safePositiveInteger" },
+        "addresses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/address" }
+        },
+        "url": { "$ref": "#/$defs/httpsUri" }
+      }
+    },
+    "chainDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "required": [
+        "chainId",
+        "hook",
+        "taskmarketDiamond",
+        "deployment",
+        "runtimeCodehash",
+        "proxy",
+        "gas"
+      ],
+      "properties": {
+        "chainId": { "$ref": "#/$defs/safePositiveInteger" },
+        "network": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "hook": { "$ref": "#/$defs/address" },
+        "taskmarketDiamond": { "$ref": "#/$defs/address" },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transactionHash", "blockNumber"],
+          "properties": {
+            "transactionHash": { "$ref": "#/$defs/txHash" },
+            "blockNumber": { "$ref": "#/$defs/safeNonnegativeInteger" }
+          }
+        },
+        "runtimeCodehash": { "$ref": "#/$defs/bytes32" },
+        "creationCodehash": { "$ref": "#/$defs/bytes32" },
+        "proxy": { "$ref": "#/$defs/proxy" },
+        "gas": { "$ref": "#/$defs/gas" }
+      }
+    },
+    "callback": {
+      "enum": [
+        "checkFund",
+        "checkClaim",
+        "checkSelectWorker",
+        "checkSubmit",
+        "checkEvaluate",
+        "checkComplete",
+        "onComplete",
+        "onForfeit",
+        "onCancel",
+        "onExpire"
+      ]
+    },
+    "publishableEvidence": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "object",
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^(?!0{7,64}$)[a-fA-F0-9]{7,64}$"
+            }
+          }
+        },
+        "deployments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hook": { "$ref": "#/$defs/nonZeroAddress" },
+              "taskmarketDiamond": { "$ref": "#/$defs/nonZeroAddress" },
+              "deployment": {
+                "type": "object",
+                "properties": {
+                  "transactionHash": { "$ref": "#/$defs/nonZeroTxHash" },
+                  "blockNumber": { "$ref": "#/$defs/safePositiveInteger" }
+                }
+              },
+              "runtimeCodehash": { "$ref": "#/$defs/nonZeroBytes32" },
+              "creationCodehash": { "$ref": "#/$defs/nonZeroBytes32" },
+              "proxy": {
+                "type": "object",
+                "properties": {
+                  "implementation": { "$ref": "#/$defs/nonZeroAddress" },
+                  "admin": { "$ref": "#/$defs/nonZeroAddress" },
+                  "beacon": { "$ref": "#/$defs/nonZeroAddress" },
+                  "timelock": { "$ref": "#/$defs/nonZeroAddress" }
+                }
+              },
+              "gas": {
+                "type": "object",
+                "properties": {
+                  "estimates": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$": {
+                        "type": "object",
+                        "properties": {
+                          "typical": { "$ref": "#/$defs/safePositiveInteger" },
+                          "maximum": { "$ref": "#/$defs/safePositiveInteger" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "privilegedRoles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "holders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": { "$ref": "#/$defs/nonZeroAddress" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "externalDependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "deployments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "addresses": {
+                      "type": "array",
+                      "items": { "$ref": "#/$defs/nonZeroAddress" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "sourceVerification": {
+          "type": "object",
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": { "status": { "const": "verified" } },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "verifiers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "properties": { "status": { "const": "verified" } },
+                      "required": ["status"]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": { "status": { "const": "partially-verified" } },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "verifiers": {
+                    "type": "array",
+                    "minItems": 2,
+                    "allOf": [
+                      {
+                        "contains": {
+                          "type": "object",
+                          "properties": { "status": { "const": "verified" } },
+                          "required": ["status"]
+                        }
+                      },
+                      {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "status": { "enum": ["unverified", "pending"] }
+                          },
+                          "required": ["status"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": { "status": { "const": "unverified" } },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "verifiers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "status": { "enum": ["unverified", "pending"] }
+                      },
+                      "required": ["status"]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": { "status": { "const": "not-applicable" } },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "verifiers": { "type": "array", "maxItems": 0 }
+                }
+              }
+            }
+          ]
+        },
+        "security": {
+          "type": "object",
+          "properties": {
+            "audits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "if": {
+                      "type": "object",
+                      "properties": { "status": { "const": "audited" } },
+                      "required": ["status"]
+                    },
+                    "then": {
+                      "type": "object",
+                      "properties": { "report": {} },
+                      "required": ["report"]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "listing": {
+          "type": "object",
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": { "status": { "enum": ["submitted", "listed"] } },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": { "listingUrl": {} },
+                "required": ["listingUrl"]
+              }
+            }
+          ]
+        },
+        "conformance": {
+          "type": "object",
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "status": { "enum": ["tested", "independently-verified"] }
+                },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": { "evidence": {} },
+                "required": ["evidence"]
+              }
+            }
+          ]
+        },
+        "protocolDefault": {
+          "type": "object",
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": { "status": { "const": "candidate" } },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": { "evidence": {} },
+                "required": ["evidence"]
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "default-on-some-chains",
+                      "default-on-all-declared-chains"
+                    ]
+                  }
+                },
+                "required": ["status"]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "evidence": {},
+                  "chains": { "type": "array", "minItems": 1 }
+                },
+                "required": ["evidence", "chains"]
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "properties": {
+    "x-draft": {
+      "anyOf": [{ "type": "boolean" }, { "type": "object" }],
+      "description": "When true or an object, explicitly marks schema-shaped editing output that is never publishable. Generic validators must treat this marker as draft status; false is evaluated with publishable evidence requirements."
+    },
+    "manifestVersion": { "const": "1.0.0" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "required": ["name", "slug", "version", "description"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "version": { "$ref": "#/$defs/semver" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "required": ["name", "url"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "$ref": "#/$defs/httpsUri" },
+        "contact": { "type": "string", "format": "email" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "path"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/httpsUri" },
+        "commit": { "type": "string", "pattern": "^[a-fA-F0-9]{7,64}$" },
+        "path": {
+          "type": "string",
+          "pattern": "^(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*//)(?!.*[\\\\\\u0000-\\u001F\\u007F])[^/]+(?:/[^/]+)*$"
+        }
+      }
+    },
+    "license": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.-]+(?: OR [A-Za-z0-9.-]+)*(?: WITH [A-Za-z0-9.-]+)?$"
+    },
+    "deployments": {
+      "type": "array",
+      "description": "Chain-owned runtime evidence. Every deployment carries its own addresses, bytecode hashes, proxy metadata, and gas measurements.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/chainDeployment" }
+    },
+    "callbacks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/callback" }
+    },
+    "taskModes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["bounty", "claim", "pitch", "auction", "benchmark"] }
+    },
+    "hookData": {
+      "type": "object",
+      "description": "Publisher-attested wire metadata. Validation is structural and does not prove ABI type, decoded value, schema, and encoded bytes equivalence.",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "required": ["encoding", "schema", "examples"],
+      "properties": {
+        "encoding": { "enum": ["none", "abi"] },
+        "abiType": { "type": "string", "minLength": 1 },
+        "schema": { "type": "object" },
+        "examples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "decoded", "encoded"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "decoded": {},
+              "encoded": {
+                "type": "string",
+                "pattern": "^0x(?:[a-fA-F0-9]{2})*$"
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "encoding": { "const": "none" } },
+            "required": ["encoding"]
+          },
+          "then": {
+            "properties": {
+              "abiType": false,
+              "schema": { "type": "object", "maxProperties": 0 },
+              "examples": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "decoded": { "type": "null" },
+                    "encoded": { "const": "0x" }
+                  }
+                }
+              }
+            }
+          },
+          "else": { "properties": { "abiType": {} }, "required": ["abiType"] }
+        }
+      ]
+    },
+    "sourceVerification": {
+      "type": "object",
+      "description": "Cross-deployment source-verifier evidence whose entries are explicitly keyed by declared chainId. The CLI requires published verified status to cover every declared chain.",
+      "additionalProperties": false,
+      "required": ["status", "verifiers"],
+      "properties": {
+        "status": {
+          "enum": [
+            "verified",
+            "partially-verified",
+            "unverified",
+            "not-applicable"
+          ]
+        },
+        "verifiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["chainId", "url", "status"],
+            "properties": {
+              "chainId": { "$ref": "#/$defs/safePositiveInteger" },
+              "url": { "$ref": "#/$defs/httpsUri" },
+              "status": { "enum": ["verified", "unverified", "pending"] }
+            }
+          }
+        }
+      }
+    },
+    "privilegedRoles": {
+      "type": "array",
+      "description": "Reusable role definitions with every holder explicitly bound to a declared deployment chain.",
+      "items": { "$ref": "#/$defs/role" }
+    },
+    "externalDependencies": {
+      "type": "array",
+      "description": "Reusable dependency definitions whose runtime addresses and URLs are grouped into declared-chain deployment bindings.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "purpose", "deployments"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": {
+            "enum": ["contract", "oracle", "token", "relayer", "api", "other"]
+          },
+          "purpose": { "type": "string", "minLength": 1 },
+          "deployments": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/dependencyDeployment" }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": ["contract", "oracle", "token", "relayer"]
+                }
+              },
+              "required": ["kind"]
+            },
+            "then": {
+              "properties": {
+                "deployments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": { "addresses": {} },
+                    "required": ["addresses"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "kind": { "const": "api" } },
+              "required": ["kind"]
+            },
+            "then": {
+              "properties": {
+                "deployments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": { "addresses": false, "url": {} },
+                    "required": ["url"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "kind": { "const": "other" } },
+              "required": ["kind"]
+            },
+            "then": {
+              "properties": {
+                "deployments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": { "addresses": {} },
+                        "required": ["addresses"]
+                      },
+                      {
+                        "type": "object",
+                        "properties": { "url": {} },
+                        "required": ["url"]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "liveness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirements", "failureMode"],
+      "properties": {
+        "requirements": { "type": "array", "items": { "type": "string" } },
+        "failureMode": { "type": "string", "minLength": 1 },
+        "recovery": { "type": "string" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audits", "notes"],
+      "properties": {
+        "audits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "scope"],
+            "properties": {
+              "status": { "enum": ["audited", "unaudited", "in-progress"] },
+              "scope": { "type": "string", "minLength": 1 },
+              "report": { "$ref": "#/$defs/httpsUri" },
+              "date": { "type": "string", "format": "date" }
+            }
+          }
+        },
+        "notes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Publisher assertion only; not source verification, conformance, or protocol-default selection.",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["unlisted", "submitted", "listed", "delisted"] },
+        "listingUrl": { "$ref": "#/$defs/httpsUri" },
+        "notes": { "type": "string" }
+      }
+    },
+    "conformance": {
+      "type": "object",
+      "description": "Claimed interface/test conformance; it is not an audit or listing decision.",
+      "additionalProperties": false,
+      "required": ["status", "standard"],
+      "properties": {
+        "status": {
+          "enum": [
+            "self-attested",
+            "tested",
+            "independently-verified",
+            "not-claimed"
+          ]
+        },
+        "standard": { "type": "string", "minLength": 1 },
+        "evidence": { "$ref": "#/$defs/httpsUri" }
+      }
+    },
+    "protocolDefault": {
+      "type": "object",
+      "description": "Observed/default-selection information only; it is independent of listing, verification, conformance, and audit status.",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": [
+            "not-default",
+            "candidate",
+            "default-on-some-chains",
+            "default-on-all-declared-chains"
+          ]
+        },
+        "evidence": { "$ref": "#/$defs/httpsUri" },
+        "chains": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/safePositiveInteger" }
+        }
+      }
+    }
+  },
+  "$comment": "Generic Draft 2020-12 validation enforces non-placeholder evidence whenever x-draft is absent or false. A true/object x-draft marker conditionally permits placeholder editing output but explicitly marks it non-publishable. Raw JSON ingestion must also use the exported lossless inspector so fractional or unsafe mathematical values cannot be rounded by JSON.parse before schema validation. The CLI uses that raw-source path and additionally enforces unique deployment chainIds; exact callback-to-gas-estimate coverage and typical <= maximum on every deployment; unique role/dependency names; declared-chain and normalized duplicate checks for role holders and dependency bindings; same-chain proxy authority links; normalized verifier (chainId, url) uniqueness and verified coverage of every declared chain; exact all/some-chain default semantics; and always reports drafts non-publishable.",
+  "allOf": [
+    {
+      "if": { "properties": { "x-draft": {} }, "required": ["x-draft"] },
+      "then": {
+        "if": {
+          "properties": { "x-draft": { "const": false } },
+          "required": ["x-draft"]
+        },
+        "then": { "$ref": "#/$defs/publishableEvidence" }
+      },
+      "else": { "$ref": "#/$defs/publishableEvidence" }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": { "type": "array", "contains": { "const": "checkFund" } }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkFund": {} },
+                      "required": ["checkFund"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkFund": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": { "const": "checkClaim" }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkClaim": {} },
+                      "required": ["checkClaim"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkClaim": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": { "const": "checkSelectWorker" }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkSelectWorker": {} },
+                      "required": ["checkSelectWorker"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkSelectWorker": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": { "const": "checkSubmit" }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkSubmit": {} },
+                      "required": ["checkSubmit"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkSubmit": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": { "const": "checkEvaluate" }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkEvaluate": {} },
+                      "required": ["checkEvaluate"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkEvaluate": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": { "const": "checkComplete" }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkComplete": {} },
+                      "required": ["checkComplete"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "checkComplete": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": { "const": "onComplete" }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onComplete": {} },
+                      "required": ["onComplete"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onComplete": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": { "type": "array", "contains": { "const": "onForfeit" } }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onForfeit": {} },
+                      "required": ["onForfeit"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onForfeit": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": { "type": "array", "contains": { "const": "onCancel" } }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onCancel": {} },
+                      "required": ["onCancel"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onCancel": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": { "type": "array", "contains": { "const": "onExpire" } }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onExpire": {} },
+                      "required": ["onExpire"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": { "onExpire": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

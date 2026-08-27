@@ -1,0 +1,75 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Approved configuration",
+    "slug": "approved-configuration",
+    "version": "1.0.0",
+    "description": "Rejects tasks that do not include an approved configuration."
+  },
+  "author": {
+    "name": "Taskmarket contributor",
+    "url": "https://github.com/taskmarket"
+  },
+  "source": {
+    "repository": "https://github.com/taskmarket/hooks",
+    "commit": "abcdef0",
+    "path": "src/ApprovedConfigurationHook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "blockNumber": 123
+      },
+      "runtimeCodehash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "proxy": { "kind": "none", "upgradeable": false },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 100000,
+            "maximum": 120000,
+            "methodology": "Foundry gas snapshot on a Base fork."
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["bounty"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": { "status": "unverified", "verifiers": [] },
+  "privilegedRoles": [],
+  "externalDependencies": [],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "A rejecting checkFund callback blocks task creation."
+  },
+  "security": {
+    "audits": [
+      {
+        "status": "unaudited",
+        "scope": "Generated hook source and deployment metadata."
+      }
+    ],
+    "notes": ["No audit is claimed; source and deployment were reviewed."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "tested",
+    "standard": "ITMPHook / ERC-8195",
+    "evidence": "https://github.com/daydreamsai/taskmarket/actions"
+  },
+  "protocolDefault": { "status": "not-default" },
+  "x-schema": "https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json"
+}

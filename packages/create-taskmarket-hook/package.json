@@ -1,0 +1,29 @@
+{
+  "name": "create-taskmarket-hook",
+  "version": "0.1.0",
+  "description": "Scaffold a secure Taskmarket lifecycle hook project",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daydreamsai/taskmarket-contracts.git",
+    "directory": "packages/create-taskmarket-hook"
+  },
+  "bin": {
+    "create-taskmarket-hook": "./bin/create-taskmarket-hook.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

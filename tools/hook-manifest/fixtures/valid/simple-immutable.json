@@ -1,0 +1,76 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Simple immutable hook",
+    "slug": "simple-immutable-hook",
+    "version": "1.0.0",
+    "description": "Example allow-list hook with no mutable configuration."
+  },
+  "author": { "name": "Example Labs", "url": "https://example.com" },
+  "source": {
+    "repository": "https://github.com/example/simple-hook",
+    "commit": "abcdef1234567890",
+    "path": "src/SimpleHook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 12345678
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proxy": { "kind": "none", "upgradeable": false },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 24000,
+            "maximum": 35000,
+            "methodology": "forge gas snapshot, warm storage"
+          },
+          "checkClaim": {
+            "typical": 26000,
+            "maximum": 40000,
+            "methodology": "forge gas snapshot, warm storage"
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund", "checkClaim"],
+  "taskModes": ["claim"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": {
+    "status": "verified",
+    "verifiers": [
+      { "chainId": 8453, "url": "https://basescan.org", "status": "verified" }
+    ]
+  },
+  "privilegedRoles": [],
+  "externalDependencies": [],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "No off-chain dependency; a check rejection reverts the calling lifecycle operation.",
+    "recovery": "Deploy a new hook and attach it to future tasks."
+  },
+  "security": {
+    "audits": [{ "status": "unaudited", "scope": "Example fixture only" }],
+    "notes": ["Fixture addresses and hashes are placeholders."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "self-attested",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": { "status": "not-default" }
+}

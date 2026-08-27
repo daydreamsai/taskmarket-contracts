@@ -16,6 +16,14 @@ a protocol-level `defaultHooks` array that is prepended to every new task's hook
 time. Requesters may append additional hooks; they may not remove default hooks. The existing
 single-hook fallback path is preserved for pre-Rev010 tasks so no migration is required.
 
+> **Implementation erratum (current behavior):** This revision is a durable record of the
+> original proposal. The implemented resolver reads only `taskHooks`; it has no legacy
+> `Task.hookContract` fallback. Default-hook configuration and task creation require nonzero
+> addresses with deployed code and reject duplicates (within a list and across defaults and
+> requester hooks); neither path queries ERC-165. `check*` callbacks observe the transition state
+> after it is written but before outbound transfers. A `false` return or revert rejects the whole
+> transaction, rolling that state change back.
+
 ---
 
 ## Problem 1 — One hook slot prevents composition

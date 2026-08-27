@@ -1,0 +1,132 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Multi-chain proxy hook",
+    "slug": "multi-chain-proxy-hook",
+    "version": "1.0.0",
+    "description": "Example hook with deployment-specific proxy and gas metadata plus chain-bound dependencies."
+  },
+  "author": { "name": "Example Labs", "url": "https://example.com" },
+  "source": {
+    "repository": "https://github.com/example/multi-chain-hook",
+    "commit": "abcdef1234567890",
+    "path": "src/MultiChainHook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 12345678
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proxy": {
+        "kind": "uups",
+        "upgradeable": true,
+        "implementation": "0x3333333333333333333333333333333333333333",
+        "admin": "0x4444444444444444444444444444444444444444",
+        "upgradeAuthorityDescription": "The Base governance multisig authorizes UUPS upgrades."
+      },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 24000,
+            "maximum": 35000,
+            "methodology": "forge gas snapshot on Base"
+          }
+        }
+      }
+    },
+    {
+      "chainId": 84532,
+      "network": "base-sepolia",
+      "hook": "0x5555555555555555555555555555555555555555",
+      "taskmarketDiamond": "0x6666666666666666666666666666666666666666",
+      "deployment": {
+        "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": 23456789
+      },
+      "runtimeCodehash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "proxy": {
+        "kind": "transparent",
+        "upgradeable": true,
+        "implementation": "0x7777777777777777777777777777777777777777",
+        "admin": "0x8888888888888888888888888888888888888888",
+        "upgradeAuthorityDescription": "The Base Sepolia deployment admin authorizes transparent proxy upgrades."
+      },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 31000,
+            "maximum": 47000,
+            "methodology": "forge gas snapshot on Base Sepolia"
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["bounty"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": { "status": "unverified", "verifiers": [] },
+  "privilegedRoles": [
+    {
+      "name": "DEPLOYMENT_ADMINS",
+      "holders": [
+        {
+          "chainId": 8453,
+          "address": "0x4444444444444444444444444444444444444444"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x8888888888888888888888888888888888888888"
+        }
+      ],
+      "capabilities": ["authorize upgrades on their respective deployments"],
+      "renounceable": false
+    }
+  ],
+  "externalDependencies": [
+    {
+      "name": "Policy registry",
+      "kind": "contract",
+      "purpose": "Supplies the chain-local policy root used during checkFund.",
+      "deployments": [
+        {
+          "chainId": 8453,
+          "addresses": ["0x9999999999999999999999999999999999999999"],
+          "url": "https://example.com/base/policy-registry"
+        },
+        {
+          "chainId": 84532,
+          "addresses": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+          "url": "https://example.com/base-sepolia/policy-registry"
+        }
+      ]
+    }
+  ],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "No off-chain dependency; a check rejection reverts the calling lifecycle operation."
+  },
+  "security": {
+    "audits": [{ "status": "unaudited", "scope": "Example fixture only" }],
+    "notes": ["Fixture addresses and hashes are test data."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "self-attested",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": { "status": "not-default" }
+}

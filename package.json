@@ -6,12 +6,19 @@
   "exports": {
     "./abi": "./abi/index.ts"
   },
+  "dependencies": {
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1"
+  },
   "scripts": {
     "build:sol": "forge build",
     "generate-abi": "tsx scripts/generate-abi.ts",
     "type-check": "tsc --noEmit -p scripts/tsconfig.json",
     "test": "forge test -j 1",
-    "test:ci": "FOUNDRY_PROFILE=ci forge test -j 1",
+    "test:ci": "npm run test:hook-starter && npm run test:hook-manifest && FOUNDRY_PROFILE=ci forge test -j 1",
+    "test:hook-starter": "npm --prefix packages/create-taskmarket-hook test",
+    "test:hook-manifest": "node --test tools/hook-manifest/test/*.test.mjs",
+    "validate:hook-manifest": "node tools/hook-manifest/validate.mjs",
     "test:gas": "forge test -j 1 --gas-report",
     "coverage": "forge coverage --report lcov && genhtml lcov.info --output-directory reports/coverage",
     "coverage:summary": "forge coverage --report summary",

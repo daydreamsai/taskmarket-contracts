@@ -1,0 +1,75 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Fractional numeric literal",
+    "slug": "fractional-numeric-literal",
+    "version": "1.0.0",
+    "description": "Regression fixture for fractional JSON literals rounded to safe integers."
+  },
+  "author": { "name": "Example Labs", "url": "https://example.com" },
+  "source": {
+    "repository": "https://github.com/example/simple-hook",
+    "commit": "abcdef1234567890",
+    "path": "src/SimpleHook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 9007199254740991.1,
+      "network": "rounded-chain",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 9007199254740991.1
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proxy": { "kind": "none", "upgradeable": false },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 9007199254740991.1,
+            "maximum": 9007199254740991.1,
+            "methodology": "raw fractional literal"
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["claim"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": {
+    "status": "verified",
+    "verifiers": [
+      {
+        "chainId": 9007199254740991.1,
+        "url": "https://basescan.org",
+        "status": "verified"
+      }
+    ]
+  },
+  "privilegedRoles": [],
+  "externalDependencies": [],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "No off-chain dependency; a check rejection reverts the calling lifecycle operation.",
+    "recovery": "Deploy a new hook and attach it to future tasks."
+  },
+  "security": {
+    "audits": [{ "status": "unaudited", "scope": "Example fixture only" }],
+    "notes": ["Fixture addresses and hashes are placeholders."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "self-attested",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": { "status": "not-default" }
+}

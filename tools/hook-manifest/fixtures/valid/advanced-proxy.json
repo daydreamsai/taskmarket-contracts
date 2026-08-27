@@ -1,0 +1,187 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Reward policy proxy hook",
+    "slug": "reward-policy-proxy-hook",
+    "version": "2.3.1",
+    "description": "Example upgradeable hook with ABI-encoded per-task policy."
+  },
+  "author": {
+    "name": "Example Labs",
+    "url": "https://example.com",
+    "contact": "security@example.com"
+  },
+  "source": {
+    "repository": "https://github.com/example/reward-hook",
+    "commit": "1234567abcdef",
+    "path": "contracts/RewardPolicyHook.sol"
+  },
+  "license": "GPL-3.0-only",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x3333333333333333333333333333333333333333",
+      "taskmarketDiamond": "0x4444444444444444444444444444444444444444",
+      "deployment": {
+        "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": 23456789
+      },
+      "runtimeCodehash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "creationCodehash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "proxy": {
+        "kind": "uups",
+        "upgradeable": true,
+        "implementation": "0x6666666666666666666666666666666666666666",
+        "admin": "0x7777777777777777777777777777777777777777",
+        "timelock": "0x8888888888888888888888888888888888888888",
+        "upgradeAuthorityRole": "UPGRADE_AUTHORITY_ROLE",
+        "upgradeAuthorityDescription": "A 48-hour timelock controlled by the governance multisig authorizes upgrades."
+      },
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 83000,
+            "maximum": 120000,
+            "methodology": "forge gas snapshot with oracle cache miss"
+          },
+          "checkClaim": {
+            "typical": 45000,
+            "maximum": 70000,
+            "methodology": "forge gas snapshot"
+          },
+          "checkComplete": {
+            "typical": 51000,
+            "maximum": 80000,
+            "methodology": "forge gas snapshot"
+          },
+          "onCancel": {
+            "typical": 33000,
+            "maximum": 50000,
+            "methodology": "forge gas snapshot"
+          },
+          "onExpire": {
+            "typical": 33000,
+            "maximum": 50000,
+            "methodology": "forge gas snapshot"
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": [
+    "checkFund",
+    "checkClaim",
+    "checkComplete",
+    "onCancel",
+    "onExpire"
+  ],
+  "taskModes": ["bounty", "claim", "pitch"],
+  "hookData": {
+    "encoding": "abi",
+    "abiType": "(uint16 tier,address sponsor)",
+    "schema": {
+      "type": "object",
+      "required": ["tier", "sponsor"],
+      "properties": {
+        "tier": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "sponsor": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" }
+      },
+      "additionalProperties": false
+    },
+    "examples": [
+      {
+        "name": "tier 250 sponsor",
+        "decoded": {
+          "tier": 250,
+          "sponsor": "0x5555555555555555555555555555555555555555"
+        },
+        "encoded": "0x00000000000000000000000000000000000000000000000000000000000000fa0000000000000000000000005555555555555555555555555555555555555555"
+      }
+    ]
+  },
+  "sourceVerification": {
+    "status": "partially-verified",
+    "verifiers": [
+      { "chainId": 8453, "url": "https://basescan.org", "status": "verified" },
+      {
+        "chainId": 8453,
+        "url": "https://repo.sourcify.dev",
+        "status": "pending"
+      }
+    ]
+  },
+  "privilegedRoles": [
+    {
+      "name": "UPGRADE_AUTHORITY_ROLE",
+      "holders": [
+        {
+          "chainId": 8453,
+          "address": "0x7777777777777777777777777777777777777777"
+        },
+        {
+          "chainId": 8453,
+          "address": "0x8888888888888888888888888888888888888888"
+        }
+      ],
+      "capabilities": ["authorize implementation upgrades"],
+      "renounceable": false
+    },
+    {
+      "name": "POLICY_ADMIN_ROLE",
+      "holders": [
+        {
+          "chainId": 8453,
+          "address": "0x9999999999999999999999999999999999999999"
+        }
+      ],
+      "capabilities": ["change policy caps"],
+      "renounceable": false
+    }
+  ],
+  "externalDependencies": [
+    {
+      "name": "Policy oracle",
+      "kind": "oracle",
+      "purpose": "Supplies the policy root used during checkFund.",
+      "deployments": [
+        {
+          "chainId": 8453,
+          "addresses": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+          "url": "https://example.com/oracle"
+        }
+      ]
+    }
+  ],
+  "liveness": {
+    "requirements": ["Policy oracle RPC availability"],
+    "failureMode": "An unavailable oracle causes checkFund to revert.",
+    "recovery": "Governance can pause new policy-dependent tasks or upgrade after timelock."
+  },
+  "security": {
+    "audits": [
+      {
+        "status": "in-progress",
+        "scope": "Proxy upgrade authorization and policy accounting"
+      }
+    ],
+    "notes": [
+      "Upgrades can change policy behavior after the timelock.",
+      "Oracle liveness can block checked lifecycle operations."
+    ]
+  },
+  "listing": {
+    "status": "submitted",
+    "listingUrl": "https://example.com/listing/reward-policy"
+  },
+  "conformance": {
+    "status": "tested",
+    "standard": "ITMPHook / ERC-8195",
+    "evidence": "https://example.com/tests/reward-policy"
+  },
+  "protocolDefault": {
+    "status": "candidate",
+    "evidence": "https://example.com/governance/proposal/42",
+    "chains": [8453]
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Ambiguous multi-chain proxy hook",
+    "slug": "ambiguous-multi-chain-proxy-hook",
+    "version": "1.0.0",
+    "description": "Invalid legacy shape whose singleton proxy cannot describe both deployments."
+  },
+  "author": { "name": "Example Labs", "url": "https://example.com" },
+  "source": {
+    "repository": "https://github.com/example/multi-chain-hook",
+    "commit": "abcdef1234567890",
+    "path": "src/MultiChainHook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 12345678
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 24000,
+            "maximum": 35000,
+            "methodology": "forge gas snapshot on Base"
+          }
+        }
+      }
+    },
+    {
+      "chainId": 84532,
+      "network": "base-sepolia",
+      "hook": "0x5555555555555555555555555555555555555555",
+      "taskmarketDiamond": "0x6666666666666666666666666666666666666666",
+      "deployment": {
+        "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": 23456789
+      },
+      "runtimeCodehash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "gas": {
+        "estimates": {
+          "checkFund": {
+            "typical": 31000,
+            "maximum": 47000,
+            "methodology": "forge gas snapshot on Base Sepolia"
+          }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["bounty"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": { "status": "unverified", "verifiers": [] },
+  "proxy": {
+    "kind": "uups",
+    "upgradeable": true,
+    "implementation": "0x3333333333333333333333333333333333333333",
+    "admin": "0x4444444444444444444444444444444444444444",
+    "upgradeAuthorityDescription": "Ambiguously claims one chain's authority for both deployments."
+  },
+  "privilegedRoles": [
+    {
+      "name": "DEPLOYMENT_ADMIN",
+      "holders": [
+        {
+          "chainId": 8453,
+          "address": "0x4444444444444444444444444444444444444444"
+        }
+      ],
+      "capabilities": ["authorize upgrades"],
+      "renounceable": false
+    }
+  ],
+  "externalDependencies": [],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "No off-chain dependency; a check rejection reverts the calling lifecycle operation."
+  },
+  "security": {
+    "audits": [{ "status": "unaudited", "scope": "Example fixture only" }],
+    "notes": ["Fixture addresses and hashes are test data."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "self-attested",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": { "status": "not-default" }
+}

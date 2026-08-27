@@ -1,0 +1,49 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "x",
+    "slug": "x",
+    "version": "1.0.0",
+    "description": "x"
+  },
+  "author": { "name": "x", "url": "https://example.com" },
+  "source": {
+    "repository": "https://example.com",
+    "commit": "abcdef1",
+    "path": "Hook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "hook": "0x1234",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 1
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proxy": { "kind": "none", "upgradeable": false },
+      "gas": {
+        "estimates": {
+          "checkFund": { "typical": 1, "maximum": 1, "methodology": "x" }
+        }
+      }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["claim"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [{ "name": "none", "decoded": null, "encoded": "0x" }]
+  },
+  "sourceVerification": { "status": "unverified", "verifiers": [] },
+  "privilegedRoles": [],
+  "externalDependencies": [],
+  "liveness": { "requirements": [], "failureMode": "x" },
+  "security": { "audits": [], "notes": ["x"] },
+  "listing": { "status": "unlisted" },
+  "conformance": { "status": "not-claimed", "standard": "ITMPHook" },
+  "protocolDefault": { "status": "not-default" }
+}

@@ -1,0 +1,86 @@
+{
+  "manifestVersion": "1.0.0",
+  "identity": {
+    "name": "Legacy global runtime evidence",
+    "slug": "legacy-global-runtime-evidence",
+    "version": "1.0.0",
+    "description": "Invalid legacy shape with global gas and unbound dependency locators."
+  },
+  "author": { "name": "Example Labs", "url": "https://example.com" },
+  "source": {
+    "repository": "https://github.com/example/multi-chain-hook",
+    "commit": "abcdef1234567890",
+    "path": "src/MultiChainHook.sol"
+  },
+  "license": "MIT",
+  "deployments": [
+    {
+      "chainId": 8453,
+      "network": "base",
+      "hook": "0x1111111111111111111111111111111111111111",
+      "taskmarketDiamond": "0x2222222222222222222222222222222222222222",
+      "deployment": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockNumber": 12345678
+      },
+      "runtimeCodehash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proxy": { "kind": "none", "upgradeable": false }
+    },
+    {
+      "chainId": 84532,
+      "network": "base-sepolia",
+      "hook": "0x3333333333333333333333333333333333333333",
+      "taskmarketDiamond": "0x4444444444444444444444444444444444444444",
+      "deployment": {
+        "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": 23456789
+      },
+      "runtimeCodehash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "proxy": { "kind": "none", "upgradeable": false }
+    }
+  ],
+  "callbacks": ["checkFund"],
+  "taskModes": ["bounty"],
+  "hookData": {
+    "encoding": "none",
+    "schema": {},
+    "examples": [
+      { "name": "no configuration", "decoded": null, "encoded": "0x" }
+    ]
+  },
+  "sourceVerification": { "status": "unverified", "verifiers": [] },
+  "privilegedRoles": [],
+  "externalDependencies": [
+    {
+      "name": "Policy registry",
+      "kind": "contract",
+      "addresses": ["0x5555555555555555555555555555555555555555"],
+      "url": "https://example.com/policy-registry",
+      "purpose": "Ambiguously supplies one locator for both chains."
+    }
+  ],
+  "liveness": {
+    "requirements": [],
+    "failureMode": "No off-chain dependency."
+  },
+  "gas": {
+    "network": "base and base-sepolia",
+    "estimates": {
+      "checkFund": {
+        "typical": 24000,
+        "maximum": 35000,
+        "methodology": "Ambiguous global gas snapshot"
+      }
+    }
+  },
+  "security": {
+    "audits": [{ "status": "unaudited", "scope": "Example fixture only" }],
+    "notes": ["Fixture addresses and hashes are test data."]
+  },
+  "listing": { "status": "unlisted" },
+  "conformance": {
+    "status": "self-attested",
+    "standard": "ITMPHook / ERC-8195"
+  },
+  "protocolDefault": { "status": "not-default" }
+}
