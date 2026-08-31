@@ -5,7 +5,6 @@ import { Script, console } from "forge-std/Script.sol";
 import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
-import { LibRevision } from "../../src/libraries/LibRevision.sol";
 
 /// @title Rev020Upgrade — seed the fresh-deploy version from the build
 /// @dev Rev020 changes no selector on any facet. The only source change it carries into deployed
@@ -20,10 +19,10 @@ import { LibRevision } from "../../src/libraries/LibRevision.sol";
 ///      how the diamond got there, which is the exact defect rev020 set out to remove. A step
 ///      script keeps the two paths convergent, and the parity test asserts that convergence.
 ///
-/// @dev The cut is a pure Replace of AdminFacet's selector set. It is not strictly required to
-///      move the counter, but it is not cosmetic either: it points the diamond at bytecode built
-///      from this revision's source, so "the diamond is at rev020" stays a statement about the
-///      code the diamond actually runs rather than about a number someone set.
+/// @dev The cut is a pure Replace of AdminFacet's selector set. In the original rev020 build it
+///      pointed the diamond at the source carrying this revision's seed fix. Like every historical
+///      step compiled in-tree, a later sequence run builds the facet from the current checkout;
+///      the literal target below keeps the version transition itself fixed at 19 -> 20.
 ///
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
@@ -36,7 +35,9 @@ import { LibRevision } from "../../src/libraries/LibRevision.sol";
 ///      make upgrade mainnet rev020
 contract Rev020Upgrade is Script {
     uint256 internal constant EXPECTED_PRE_VERSION = 19;
-    uint256 internal constant TARGET_VERSION = LibRevision.CURRENT_REVISION;
+    // Revision steps are immutable historical transitions. This must stay literal so a later
+    // LibRevision bump cannot make rev020 skip an intervening step in the upgrade sequence.
+    uint256 internal constant TARGET_VERSION = 20;
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");

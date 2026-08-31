@@ -4,7 +4,6 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
-import { LibRevision } from "../src/libraries/LibRevision.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { Rev020Upgrade } from "../script/upgrades/Rev020Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
@@ -40,11 +39,7 @@ contract Rev020UpgradeTest is Test, DiamondTestHelper {
 
         new Rev020Upgrade().run();
 
-        assertEq(
-            AdminFacet(diamond).diamondVersion(),
-            LibRevision.CURRENT_REVISION,
-            "diamondVersion must reach the current revision after rev020"
-        );
+        assertEq(AdminFacet(diamond).diamondVersion(), 20, "diamondVersion must reach rev020");
 
         address newAdminFacet = IDiamondLoupe(diamond).facetAddress(AdminFacet.pause.selector);
         assertTrue(newAdminFacet != oldAdminFacet, "AdminFacet must be replaced");

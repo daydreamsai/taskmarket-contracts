@@ -3073,6 +3073,35 @@ contract TaskMarketTest is DiamondTestHelper {
             ));
     }
 
+    function _createTaskWithEvaluatorForMode(bytes4 mode, bytes4 auctionSubtype) internal returns (bytes32) {
+        uint256 pitchDeadline = mode == market.PITCH() ? 1 days : 0;
+        uint256 bidDeadline = mode == market.AUCTION() ? 1 days : 0;
+        return abi.decode(
+            _relay(
+                requester,
+                REWARD,
+                abi.encodeCall(
+                    market.createTask,
+                    (
+                        taskConfig(REWARD, DURATION, mode, pitchDeadline, bidDeadline, auctionSubtype),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        ITMPCore.TaskEvaluatorConfig({
+                            evaluator: evaluator,
+                            evaluatorStake: 0,
+                            evaluatorFeeBps: 0,
+                            evaluationWindow: uint32(2 days),
+                            appealWindow: uint32(1 days),
+                            disputeResolver: address(0)
+                        })
+                    )
+                )
+            ),
+            (bytes32)
+        );
+    }
+
     function test_CreateTask_WithEvaluator_StoresConfigInOneTransaction() public {
         bytes32 taskId = abi.decode(
             _createTaskWithEvaluator(requester, evaluator, 0, 500, uint32(2 days), uint32(1 days), disputeResolver),
@@ -3466,6 +3495,163 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.expectRevert(ITMPCore.NotWorker.selector);
         _appeal(taskId, worker2);
+    }
+
+    function test_Appeal_BountyZeroOnlyReject_LeavesWorkerUnsetAndOnlyRealSubmitterCanAppeal() public {
+        _assertZeroOnlyRejectLeavesBountyLikeWorkerUnsetAndAppealable(market.BOUNTY());
+    }
+
+    function test_Appeal_BenchmarkZeroOnlyReject_LeavesWorkerUnsetAndOnlyRealSubmitterCanAppeal() public {
+        _assertZeroOnlyRejectLeavesBountyLikeWorkerUnsetAndAppealable(market.BENCHMARK());
+    }
+
+    function _assertZeroOnlyRejectLeavesBountyLikeWorkerUnsetAndAppealable(bytes4 mode) private {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, mode, 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+        _submitWork(taskId, worker1, keccak256(abi.encode(mode, "real work")));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.REJECT, 0, awards);
+
+        assertEq(market.getTask(taskId).worker, address(0), "zero-only award must not select a worker");
+
+        vm.expectRevert(ITMPCore.NotWorker.selector);
+        _appeal(taskId, worker2);
+
+        _appeal(taskId, worker1);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Disputed));
+    }
+
+    function test_PayAwards_BountyZeroFirstApproval_SelectsFirstPaidRecipientOnly() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _submitWork(taskId, worker1, keccak256("paid work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](2);
+        awards[0] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 1 });
+        awards[1] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 2 });
+        uint256 zeroRecipientBalance = usdc.balanceOf(worker2);
+        uint256 zeroRecipientCompleted = market.getWorkerStats(worker2).completedTasks;
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+
+        assertEq(market.getTask(taskId).worker, worker1, "evaluate must select the first paid recipient");
+
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+
+        assertEq(market.getTask(taskId).worker, worker1, "finalize must select the first paid recipient");
+        assertEq(usdc.balanceOf(worker2), zeroRecipientBalance, "zero recipient must not be paid");
+        assertEq(
+            market.getWorkerStats(worker2).completedTasks, zeroRecipientCompleted, "zero recipient must not gain stats"
+        );
+    }
+
+    function test_ResolveDispute_BenchmarkZeroFirst_SelectsFirstPaidRecipientOnly() public {
+        address resolver = address(20);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), resolver))
+        );
+        _submitWork(taskId, worker1, keccak256("paid proof"));
+
+        ITMPCore.Award[] memory initialAwards = new ITMPCore.Award[](2);
+        initialAwards[0] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 1 });
+        initialAwards[1] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2, rank: 2 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, initialAwards);
+        assertEq(market.getTask(taskId).worker, worker1, "evaluate must skip zero award");
+        _appeal(taskId, worker1);
+
+        ITMPCore.Award[] memory resolutionAwards = new ITMPCore.Award[](2);
+        resolutionAwards[0] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 1 });
+        resolutionAwards[1] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 2 });
+        uint256 zeroRecipientBalance = usdc.balanceOf(worker2);
+        uint256 zeroRecipientCompleted = market.getWorkerStats(worker2).completedTasks;
+        _relay(
+            resolver, 0, abi.encodeCall(market.resolveDispute, (taskId, ITMPCore.VerdictType.APPROVE, resolutionAwards))
+        );
+
+        assertEq(market.getTask(taskId).worker, worker1, "resolution must skip zero award");
+        assertEq(usdc.balanceOf(worker2), zeroRecipientBalance, "zero recipient must not be paid");
+        assertEq(
+            market.getWorkerStats(worker2).completedTasks, zeroRecipientCompleted, "zero recipient must not gain stats"
+        );
+    }
+
+    function test_ResolveDispute_BountyZeroOnlyAwards_ClearEarlierEvaluatorSelectedWorker() public {
+        _assertZeroOnlyResolutionClearsBountyLikeWorker(market.BOUNTY());
+    }
+
+    function test_ResolveDispute_BenchmarkZeroOnlyAwards_ClearEarlierEvaluatorSelectedWorker() public {
+        _assertZeroOnlyResolutionClearsBountyLikeWorker(market.BENCHMARK());
+    }
+
+    function _assertZeroOnlyResolutionClearsBountyLikeWorker(bytes4 mode) private {
+        address resolver = address(20);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, mode, 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), resolver))
+        );
+        _submitWork(taskId, worker1, keccak256(abi.encode(mode, "paid work")));
+
+        ITMPCore.Award[] memory paidAward = new ITMPCore.Award[](1);
+        paidAward[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, paidAward);
+        assertEq(market.getTask(taskId).worker, worker1, "initial paid verdict must select the submitter");
+        _appeal(taskId, worker1);
+
+        ITMPCore.Award[] memory zeroOnlyAward = new ITMPCore.Award[](1);
+        zeroOnlyAward[0] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 1 });
+        uint256 zeroRecipientBalance = usdc.balanceOf(worker2);
+        uint256 zeroRecipientCompleted = market.getWorkerStats(worker2).completedTasks;
+        _relay(
+            resolver, 0, abi.encodeCall(market.resolveDispute, (taskId, ITMPCore.VerdictType.APPROVE, zeroOnlyAward))
+        );
+
+        assertEq(market.getTask(taskId).worker, address(0), "zero-only resolution must clear the prior worker");
+        assertEq(usdc.balanceOf(worker2), zeroRecipientBalance, "zero recipient must not be paid");
+        assertEq(
+            market.getWorkerStats(worker2).completedTasks, zeroRecipientCompleted, "zero recipient must not gain stats"
+        );
+    }
+
+    function test_PayAwards_ZeroOnlyAwards_PreserveLockedClaimPitchAndAuctionWorkers() public {
+        _assertZeroOnlyAwardsPreserveLockedWorker(market.CLAIM());
+        _assertZeroOnlyAwardsPreserveLockedWorker(market.PITCH());
+        _assertZeroOnlyAwardsPreserveLockedWorker(market.AUCTION());
+    }
+
+    function _assertZeroOnlyAwardsPreserveLockedWorker(bytes4 mode) private {
+        bytes4 auctionSubtype = mode == market.AUCTION() ? market.AUCTION_DUTCH() : bytes4(0);
+        bytes32 taskId = _createTaskWithEvaluatorForMode(mode, auctionSubtype);
+        if (mode == market.CLAIM()) {
+            _claimTask(taskId, worker1, 0);
+        } else if (mode == market.PITCH()) {
+            _submitPitch(taskId, worker1, keccak256("pitch"));
+            _selectWorker(taskId, requester, worker1);
+        } else {
+            _acceptAuction(taskId, worker1, REWARD);
+        }
+        _submitWork(taskId, worker1, keccak256(abi.encode(mode, "locked work")));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+
+        assertEq(market.getTask(taskId).worker, worker1, "evaluate must preserve locked worker");
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(market.getTask(taskId).worker, worker1, "finalize must preserve locked worker");
     }
 
     function test_EvaluatorTimeout_ForfeitsStakeAndOpensPendingApproval() public {

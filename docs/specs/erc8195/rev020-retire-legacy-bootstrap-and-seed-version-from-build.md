@@ -71,6 +71,8 @@ class of operation that should not happen unattended.
 
 ### 3. `src/libraries/LibRevision.sol` — a single constant for the current revision
 
+At rev020, the constant was:
+
 ```solidity
 library LibRevision {
     uint256 internal constant CURRENT_REVISION = 20;
@@ -85,8 +87,9 @@ report. Reporting anything lower sends `upgrade.sh` off applying historical delt
 already absorbed.
 
 The constant lives in its own library, rather than inline in `AdminFacet`, so that there is one
-obvious place for the next revision's author to find it, and so that the upgrade step script and
-the tests can reference the same value rather than repeating the literal.
+obvious place for the next revision's author to find it and fresh-deploy tests can compare the
+seed against the highest upgrade step. Historical step targets remain revision literals: a later
+`CURRENT_REVISION` bump must not make an earlier step skip an intervening revision.
 
 ### 4. `Rev020Upgrade.s.sol`
 
@@ -99,8 +102,10 @@ it, a fresh deploy of this build would report 20 while a live diamond carried fo
 sequence stopped at 19, with both running identical code — `diamondVersion` would then mean
 different things depending on how the diamond got there. Its cut is a pure `Replace` of
 `AdminFacet`'s selector set: not required to move the counter, but not decorative either, since it
-points the diamond at bytecode built from this revision's source, keeping "the diamond is at
-rev020" a claim about code rather than about a number someone set.
+pointed the original rev020 deployment at bytecode carrying the seed fix. Historical steps are
+compiled from the current checkout when a later release runs the full sequence, so their facet
+bytecode may include later source changes; the immutable literal target keeps this transition at
+19 to 20, and subsequent steps advance the version in order.
 
 ### 5. `test/DiamondSelectorParity.t.sol` is rebuilt around two properties
 

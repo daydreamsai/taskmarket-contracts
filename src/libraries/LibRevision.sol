@@ -17,5 +17,5 @@ pragma solidity ^0.8.24;
 ///      step script there disagrees with this constant, so forgetting is caught by `forge test`
 ///      rather than by a deploy.
 library LibRevision {
-    uint256 internal constant CURRENT_REVISION = 20;
+    uint256 internal constant CURRENT_REVISION = 21;
 }

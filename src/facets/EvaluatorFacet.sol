@@ -111,8 +111,12 @@ contract EvaluatorFacet {
             v.awards.push(awards[i]);
         }
 
-        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && awards.length > 0) {
-            task.worker = awards[0].worker;
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            for (uint256 i; i < awards.length; ++i) {
+                if (awards[i].amount == 0) continue;
+                task.worker = awards[i].worker;
+                break;
+            }
         }
 
         uint256 evalFee = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
@@ -325,7 +329,17 @@ contract EvaluatorFacet {
         ITMPCore.Verdict memory verdictMem = s.taskVerdicts[taskId];
 
         task.status = ITMPCore.TaskStatus.Accepted;
-        if (v.awards.length > 0) task.worker = v.awards[0].worker;
+        bool selectedWorker = false;
+        for (uint256 i; i < awardLen; ++i) {
+            if (v.awards[i].amount == 0) continue;
+            task.worker = v.awards[i].worker;
+            selectedWorker = true;
+            break;
+        }
+        if (!selectedWorker && (task.mode == BOUNTY || task.mode == BENCHMARK)) {
+            // An evaluator-selected worker has no authority after a zero-only verdict.
+            task.worker = address(0);
+        }
 
         // Commit award accounting (worker stats + fees) and validate escrow before the check hook;
         // transfers happen after. Accounting and distribution live in separate frames to avoid
