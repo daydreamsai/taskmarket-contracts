@@ -30,6 +30,9 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     uint256 constant REWARD_100_USDC = 100 * 1e6;
     // expected token reward at full rate: rewardUsd * rate / 1e6 = 100e6 * 10e18 / 1e6 = 1000 DREAMS
     uint256 constant EXPECTED_REWARD_1000_DREAMS = 1000 * 1e18;
+    uint256 constant REDUCED_REWARD_40_USDC = 40 * 1e6;
+    uint256 constant REFUNDED_REWARD_60_USDC = REWARD_100_USDC - REDUCED_REWARD_40_USDC;
+    uint256 constant EXPECTED_REDUCED_REWARD_400_DREAMS = 400 * 1e18;
 
     uint256 constant EPOCH_DURATION = 7 days;
     uint256 constant GLOBAL_CAP_USD = 1_000_000 * 1e6;
@@ -170,6 +173,134 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     function _hookArr(address h) internal pure returns (address[] memory arr) {
         arr = new address[](1);
         arr[0] = h;
+    }
+
+    function _createReservedTask(bytes4 mode, bytes4 auctionSubtype) internal returns (bytes32 taskId) {
+        uint256 pitchDuration = mode == market.PITCH() ? 1 days : 0;
+        uint256 bidDuration = mode == market.AUCTION() ? 1 days : 0;
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 3 days, mode, pitchDuration, bidDuration, auctionSubtype),
+                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+    }
+
+    function _decreaseRewardAndAssertRefund(bytes32 taskId) internal {
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        uint256 diamondBefore = usdc.balanceOf(address(market));
+
+        _relay(requester, 0, abi.encodeCall(market.updateTask, (taskId, REDUCED_REWARD_40_USDC, 0, 0, 0)));
+
+        assertEq(usdc.balanceOf(requester) - requesterBefore, REFUNDED_REWARD_60_USDC);
+        assertEq(diamondBefore - usdc.balanceOf(address(market)), REFUNDED_REWARD_60_USDC);
+        assertEq(market.getTask(taskId).reward, REDUCED_REWARD_40_USDC);
+    }
+
+    function _assertReducedRewardReservation(bytes32 taskId) internal view {
+        (
+            uint256 rewardUsd,
+            uint256 usdBonusValue,
+            uint256 startPrice,
+            uint256 reservedTokenAmount,
+            address lockedRequester,
+            address lockedWorker,
+            bool reserved,
+            bool paid,
+            uint64 consumedEpoch
+        ) = hook.rewardStates(taskId);
+
+        assertEq(rewardUsd, REDUCED_REWARD_40_USDC);
+        assertEq(usdBonusValue, REDUCED_REWARD_40_USDC);
+        assertEq(startPrice, DREAMS_PER_USDC);
+        assertEq(reservedTokenAmount, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(lockedRequester, requester);
+        assertEq(lockedWorker, worker);
+        assertTrue(reserved);
+        assertFalse(paid);
+        assertEq(consumedEpoch, budget.currentEpoch());
+        assertEq(vault.taskReserve(taskId), EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(vault.totalReserved(), EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(budget.globalUsed(), REDUCED_REWARD_40_USDC);
+        assertEq(budget.requesterUsed(requester), REDUCED_REWARD_40_USDC);
+        assertEq(budget.workerUsed(worker), REDUCED_REWARD_40_USDC);
+    }
+
+    function _completeReducedRewardReservation(bytes32 taskId) internal {
+        // Reservation-time values remain authoritative even if both live knobs change later.
+        vm.startPrank(owner);
+        hook.setDreamsPerUsdc(DREAMS_PER_USDC * 3);
+        hook.setBonusBps(2_500);
+        vm.stopPrank();
+
+        bytes32 deliverable = keccak256("reduced-reward-work");
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
+        uint256 workerClaimableBefore = hook.claimable(worker);
+        uint256 hookTokenBefore = dreamsToken.balanceOf(address(hook));
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, deliverable)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, deliverable, 0)));
+
+        uint256 fee = REDUCED_REWARD_40_USDC * 500 / 10_000;
+        assertEq(usdc.balanceOf(worker) - workerUsdcBefore, REDUCED_REWARD_40_USDC - fee);
+        assertEq(usdc.balanceOf(feeRecipient) - feeRecipientBefore, fee);
+        assertEq(hook.claimable(worker) - workerClaimableBefore, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(dreamsToken.balanceOf(address(hook)) - hookTokenBefore, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.totalReserved(), 0);
+        assertEq(budget.globalUsed(), REDUCED_REWARD_40_USDC);
+        assertEq(budget.requesterUsed(requester), REDUCED_REWARD_40_USDC);
+        assertEq(budget.workerUsed(worker), REDUCED_REWARD_40_USDC);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+
+        (
+            uint256 rewardUsd,
+            uint256 usdBonusValue,
+            uint256 startPrice,
+            uint256 reservedTokenAmount,
+            address lockedRequester,
+            address lockedWorker,
+            bool reserved,
+            bool paid,
+            uint64 consumedEpoch
+        ) = hook.rewardStates(taskId);
+        assertEq(rewardUsd, REDUCED_REWARD_40_USDC);
+        assertEq(usdBonusValue, REDUCED_REWARD_40_USDC);
+        assertEq(startPrice, DREAMS_PER_USDC);
+        assertEq(reservedTokenAmount, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(lockedRequester, requester);
+        assertEq(lockedWorker, worker);
+        assertTrue(reserved);
+        assertTrue(paid);
+        assertEq(consumedEpoch, budget.currentEpoch());
+    }
+
+    function _exerciseBidAuctionRewardDecrease(bytes4 auctionSubtype) internal {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), auctionSubtype);
+        _decreaseRewardAndAssertRefund(taskId);
+        _relay(worker, 0, abi.encodeCall(market.submitBid, (taskId, REDUCED_REWARD_40_USDC)));
+        vm.warp(market.getTaskAuctionConfig(taskId).bidDeadline);
+        _relay(requester, 0, abi.encodeCall(market.selectLowestBidder, (taskId)));
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function _exerciseClockAuctionRewardDecrease(bytes4 auctionSubtype) internal {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), auctionSubtype);
+        _decreaseRewardAndAssertRefund(taskId);
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
     }
 
     // ─── ERC-165 ──────────────────────────────────────────────────────────────
@@ -426,6 +557,79 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         // Verify paid flag
         (,,,,,,, bool paid2,) = hook.rewardStates(taskId);
         assertTrue(paid2);
+    }
+
+    // ─── Current reward basis after an Open-task reward decrease ─────────────
+
+    function test_checkClaim_directCall_usesCurrentContextReward() public {
+        bytes32 taskId = keccak256("direct-claim-current-reward");
+        ITMPCore.TaskContext memory ctx;
+        ctx.taskId = taskId;
+        ctx.requester = requester;
+        ctx.reward = REWARD_100_USDC;
+
+        vm.prank(address(market));
+        hook.checkFund(taskId, ctx, "");
+
+        ctx.reward = REDUCED_REWARD_40_USDC;
+        vm.prank(address(market));
+        hook.checkClaim(taskId, ctx, worker);
+
+        _assertReducedRewardReservation(taskId);
+    }
+
+    function test_checkSelectWorker_directCall_usesCurrentContextReward() public {
+        bytes32 taskId = keccak256("direct-select-current-reward");
+        ITMPCore.TaskContext memory ctx;
+        ctx.taskId = taskId;
+        ctx.requester = requester;
+        ctx.reward = REWARD_100_USDC;
+
+        vm.prank(address(market));
+        hook.checkFund(taskId, ctx, "");
+
+        ctx.reward = REDUCED_REWARD_40_USDC;
+        vm.prank(address(market));
+        hook.checkSelectWorker(taskId, ctx, worker);
+
+        _assertReducedRewardReservation(taskId);
+    }
+
+    function test_rewardDecrease_claimLifecycle_usesCurrentRewardForReservationAndCompletion() public {
+        bytes32 taskId = _createReservedTask(market.CLAIM(), bytes4(0));
+        _decreaseRewardAndAssertRefund(taskId);
+
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function test_rewardDecrease_pitchLifecycle_usesCurrentRewardForReservationAndCompletion() public {
+        bytes32 taskId = _createReservedTask(market.PITCH(), bytes4(0));
+        _decreaseRewardAndAssertRefund(taskId);
+
+        _relay(worker, 0, abi.encodeCall(market.submitPitch, (taskId, keccak256("reduced-reward-pitch"))));
+        _relay(requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker)));
+
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function test_rewardDecrease_englishAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseBidAuctionRewardDecrease(market.AUCTION_ENGLISH());
+    }
+
+    function test_rewardDecrease_reverseEnglishAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseBidAuctionRewardDecrease(market.AUCTION_REVERSE_ENGLISH());
+    }
+
+    function test_rewardDecrease_dutchAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseClockAuctionRewardDecrease(market.AUCTION_DUTCH());
+    }
+
+    function test_rewardDecrease_reverseDutchAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseClockAuctionRewardDecrease(market.AUCTION_REVERSE_DUTCH());
     }
 
     // ─── Double-reservation guard (evaluator-reject reopen) ────────────────────

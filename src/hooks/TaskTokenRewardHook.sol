@@ -365,7 +365,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         returns (bool)
     {
         _touchFirstSeen(worker);
-        return _reserveForWorker(taskId, ctx.requester, worker);
+        return _reserveForWorker(taskId, ctx.requester, worker, ctx.reward);
     }
 
     /// @notice Lock price and reserve max tokens when a worker is selected (Pitch/Auction).
@@ -376,7 +376,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         returns (bool)
     {
         _touchFirstSeen(worker);
-        return _reserveForWorker(taskId, ctx.requester, worker);
+        return _reserveForWorker(taskId, ctx.requester, worker, ctx.reward);
     }
 
     /// @notice For reserved tasks, verify the submitting worker matches the locked worker.
@@ -889,7 +889,10 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         // recoverable by owner via sweepUnclaimed.
     }
 
-    function _reserveForWorker(bytes32 taskId, address requester, address worker) internal returns (bool) {
+    function _reserveForWorker(bytes32 taskId, address requester, address worker, uint256 rewardUsd)
+        internal
+        returns (bool)
+    {
         RewardState storage state = _s().rewardStates[taskId];
 
         // Guard against double-reservation: a task can return to Open after already
@@ -907,12 +910,17 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             _releaseReserve(taskId);
         }
 
+        // The task reward can change while the task is still Open. Refresh the USD basis from
+        // the current Diamond-built context at the moment the worker is locked in so a prior
+        // reward decrease and refund cannot remain part of the DREAMS reservation. From this
+        // point onward rewardUsd, bonusUsd, and rate are intentionally locked for settlement.
+        state.rewardUsd = rewardUsd;
         uint256 rate = _s().dreamsPerUsdc;
         // intentional two-step bps scaling: bonusUsd is a real checkpoint value (stored
         // in state.usdBonusValue and consumed against EpochBudget independently of the
         // _s().token conversion below), not an algebraic simplification opportunity.
         // slither-disable-next-line divide-before-multiply
-        uint256 bonusUsd = state.rewardUsd * _s().bonusBps / 10000;
+        uint256 bonusUsd = rewardUsd * _s().bonusBps / 10000;
         state.startPrice = rate;
         state.usdBonusValue = bonusUsd;
         state.worker = worker;

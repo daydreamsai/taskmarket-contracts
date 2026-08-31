@@ -16,8 +16,10 @@ Token amounts are computed from two deliberately independent admin-set knobs: `b
 decision) and `dreamsPerUsdc` (the pure DREAMS/USDC market exchange rate, with no
 on-chain price oracle). Both are read once at claim/select-worker time for reserved
 modes (Claim, Pitch, Auction); Bounty tasks (no pre-reservation) use the current values
-at completion. Budget enforcement prevents runaway token emission through per-epoch
-global, per-worker, and per-requester USD caps.
+at completion. The reserved modes also refresh `rewardUsd` from the current task context
+at claim/select-worker time, so any reward decrease and USDC refund made while the task
+was Open is excluded from the later DREAMS reservation. Budget enforcement prevents
+runaway token emission through per-epoch global, per-worker, and per-requester USD caps.
 
 This is a Daydreams-specific extension. It is not part of the ERC-8195 or TMP protocol
 standard.
@@ -60,9 +62,11 @@ tokenReward   = usdBonusValue * dreamsPerUsdc / 1e6
 For Claim / Pitch / Auction tasks, `dreamsPerUsdc` is snapshotted into
 `RewardState.startPrice` and the derived `usdBonusValue` is snapshotted into
 `RewardState.usdBonusValue` when the worker is locked in (`checkClaim` /
-`checkSelectWorker`), and both are used at settlement — the payout is deterministic
-once the worker is locked in, with no drift band or re-read needed, regardless of later
-changes to either `bonusBps` or `dreamsPerUsdc`.
+`checkSelectWorker`). The `rewardUsd` input is the task's current reward at that same
+moment, not necessarily its creation-time reward. Those values are then used at
+settlement — the payout is deterministic once the worker is locked in, with no drift
+band or re-read needed, regardless of later changes to either `bonusBps` or
+`dreamsPerUsdc`.
 
 For Bounty tasks (no pre-reservation), the *current* `bonusBps` and `dreamsPerUsdc` at
 `checkComplete` time are used.
@@ -89,8 +93,8 @@ per-task `hookData` payload is needed.
 
 | Event | Hook call | Action |
 |---|---|---|
-| `createTask` | `checkFund` | Stores `rewardUsd` from the task's USDC reward. Does not reserve tokens or read a rate yet. |
-| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, the claim/select-worker call reverts. |
+| `createTask` | `checkFund` | Stores the initial `rewardUsd` from the task's USDC reward. Does not reserve tokens or read a rate yet. |
+| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context, then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, the claim/select-worker call reverts. |
 | `submitWork` | `checkSubmit` | Validates worker matches the reserved worker (reserved tasks only). |
 | `evaluate` | `checkEvaluate` | No-op. |
 | `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays exactly the reserved amount (deterministic, no drift). Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
