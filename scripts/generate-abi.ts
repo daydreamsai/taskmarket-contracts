@@ -54,6 +54,13 @@ const STANDALONE: Record<string, string> = {
   RewardVault: 'RewardVault.sol/RewardVault.json',
   EpochBudget: 'EpochBudget.sol/EpochBudget.json',
   TaskMarketForwarder: 'TaskMarketForwarder.sol/TaskMarketForwarder.json',
+  SponsoredTaskHook: 'SponsoredTaskHook.sol/SponsoredTaskHook.json',
+  SponsoredTasksVault: 'SponsoredTasksVault.sol/SponsoredTasksVault.json',
+  SponsoredTaskFactory: 'SponsoredTaskFactory.sol/SponsoredTaskFactory.json',
+  SponsoredTaskRegistry: 'SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json',
+  SponsoredTaskFeeBank: 'SponsoredTaskFeeBank.sol/SponsoredTaskFeeBank.json',
+  SponsoredTaskFeeBankGuard: 'SponsoredTaskFeeBankGuard.sol/SponsoredTaskFeeBankGuard.json',
+  SponsoredTaskFeePolicy: 'SponsoredTaskFeePolicy.sol/SponsoredTaskFeePolicy.json',
 };
 
 type AbiEntry = Record<string, unknown>;
