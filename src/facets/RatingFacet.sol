@@ -5,6 +5,7 @@ import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
+import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title RatingFacet — task ratings, ERC-8004 reputation, and confidence scoring
@@ -16,6 +17,8 @@ contract RatingFacet {
     bytes4 private constant PITCH = TMP_PITCH;
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
     bytes4 private constant AUCTION = TMP_AUCTION;
+
+    uint256 private constant MIN_FEEDBACK_GAS = 450_000;
 
     /// @notice Rate a completed task and submit ERC-8004 feedback.
     ///         The requester is the authenticated actor (pgtrSender).
@@ -65,6 +68,9 @@ contract RatingFacet {
         emit ITMPCore.TaskRated(taskId, worker, rating, raterAgentId);
 
         if (workerAgentId != 0 && s.reputationRegistry != address(0)) {
+            // A try/catch lets eth_estimateGas settle on a limit where the registry call runs out
+            // of gas and is swallowed; reverting here makes that limit unusable.
+            if (gasleft() < MIN_FEEDBACK_GAS) revert ITMPCore.InsufficientGasForFeedback();
             try IReputationRegistry(s.reputationRegistry)
                 .giveFeedback(
                     workerAgentId,
@@ -76,7 +82,9 @@ contract RatingFacet {
                     feedbackURI,
                     feedbackHash
                 ) { }
-                catch { }
+            catch {
+                emit ITMPReputation.ReputationFeedbackFailed(taskId, workerAgentId);
+            }
         }
     }
 

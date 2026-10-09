@@ -5092,6 +5092,33 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(reg.lastTag2(), "tmp.mode.bounty");
     }
 
+    function test_RateTask_WithRevertingRegistry_EmitsFailureEvent() public {
+        MockRevertingReputationRegistry reg = new MockRevertingReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+
+        vm.expectEmit(true, true, false, false);
+        emit ITMPReputation.ReputationFeedbackFailed(taskId, 1);
+        _rateTask(taskId, requester, worker1, 80, 1, 0, "", bytes32(0));
+    }
+
+    function test_RevertWhen_RateTask_GasBelowFeedbackFloor() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+
+        bytes memory data = abi.encodeCall(market.rateTask, (taskId, worker1, 80, 1, 0, "", bytes32(0)));
+        vm.expectRevert(ITMPCore.InsufficientGasForFeedback.selector);
+        forwarder.relay{ gas: 300_000 }(address(market), requester, 0, data);
+        assertEq(reg.calls(), 0);
+    }
+
     function test_RateTask_WithRegistry_ClaimModeName() public {
         MockReputationRegistry reg = new MockReputationRegistry();
         vm.prank(owner);

@@ -2751,6 +2751,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "InsufficientGasForFeedback",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RatingMustBe0To100",
     "inputs": []
   },
