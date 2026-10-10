@@ -407,6 +407,7 @@ contract CoreFacet {
                 false
             );
             if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+                LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
                         requesterAgentId, -50, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
@@ -718,6 +719,7 @@ contract CoreFacet {
                 s.taskHasSubmissions[taskId] ? keccak256("expired_after_rejections") : keccak256("expired_no_action");
             emit ITMPCore.RequesterReputation(taskId, task.requester, event_, refundAmount, 0, false);
             if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+                LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
                         requesterAgentId, -50, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)

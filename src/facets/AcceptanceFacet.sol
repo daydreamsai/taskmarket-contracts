@@ -118,6 +118,7 @@ contract AcceptanceFacet {
                 worker == requester
             );
             if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+                LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
                         requesterAgentId, 100, 0, "tmp.task.requester", _modeName(mode), "", "", bytes32(0)
@@ -128,7 +129,7 @@ contract AcceptanceFacet {
             }
         }
 
-        LibTaskMarket._dispatchAfterHooks(
+        LibTaskMarket._dispatchAfterHooksFullGas(
             hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
         );
     }
@@ -320,6 +321,7 @@ contract AcceptanceFacet {
             anySelfAward
         );
         if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+            LibTaskMarket._requireFeedbackGas();
             try IReputationRegistry(s.reputationRegistry)
                 .giveFeedback(
                     requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
@@ -329,7 +331,7 @@ contract AcceptanceFacet {
             }
         }
 
-        LibTaskMarket._dispatchAfterHooks(
+        LibTaskMarket._dispatchAfterHooksFullGas(
             hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
         );
     }

@@ -21,6 +21,7 @@ import "../src/interfaces/ITMPDiamond.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
+import { FeedbackBackfillFacet } from "../src/facets/FeedbackBackfillFacet.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { Diamond } from "../src/Diamond.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
@@ -5874,5 +5875,242 @@ contract TaskMarketTest is DiamondTestHelper {
 
         // Fund recovery must succeed regardless of the reputation registry reverting.
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    // --- rev023: gas floor on every swallowed reputation call ---
+
+    /// @dev Sweeps gas limits and reports whether some limit makes `target.data` revert with
+    ///      InsufficientGasForFeedback. The window depends on how much gas the call spends before it
+    ///      reaches the guard, so it is found rather than hardcoded. State is rolled back each step.
+    function _guardFiresForSomeGasLimit(address target, bytes memory data) internal returns (bool fired) {
+        for (uint256 g = 300_000; g <= 1_500_000 && !fired; g += 25_000) {
+            uint256 snap = vm.snapshotState();
+            (bool ok, bytes memory ret) = target.call{ gas: g }(data);
+            if (!ok && ret.length >= 4 && bytes4(ret) == ITMPCore.InsufficientGasForFeedback.selector) fired = true;
+            vm.revertToState(snap);
+        }
+    }
+
+    function _setRegistry() internal returns (MockReputationRegistry reg) {
+        reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+    }
+
+    function test_RevertWhen_AcceptSubmission_GasBelowFeedbackFloor() public {
+        _setRegistry();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+
+        bytes memory data = abi.encodeCall(
+            forwarder.relay,
+            (address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 42)))
+        );
+        assertTrue(_guardFiresForSomeGasLimit(address(forwarder), data));
+    }
+
+    function test_RevertWhen_AcceptSubmissions_GasBelowFeedbackFloor() public {
+        _setRegistry();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("w1"));
+        _submitWork(taskId, worker2, keccak256("w2"));
+        address[] memory workers = new address[](2);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 6000;
+        shares[1] = 4000;
+
+        bytes memory inner = abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, new bytes32[](0), 42));
+        bytes memory data = abi.encodeCall(forwarder.relay, (address(market), requester, 0, inner));
+        assertTrue(_guardFiresForSomeGasLimit(address(forwarder), data));
+    }
+
+    function test_RevertWhen_CancelTask_GasBelowFeedbackFloor() public {
+        _setRegistry();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _rejectSubmission(taskId, requester, worker1);
+
+        bytes memory inner = abi.encodeCall(market.cancelTask, (taskId, 42));
+        bytes memory data = abi.encodeCall(forwarder.relay, (address(market), requester, 0, inner));
+        assertTrue(_guardFiresForSomeGasLimit(address(forwarder), data));
+    }
+
+    function test_RevertWhen_RefundExpired_GasBelowFeedbackFloor() public {
+        _setRegistry();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+
+        assertTrue(_guardFiresForSomeGasLimit(address(market), abi.encodeCall(market.refundExpired, (taskId, 42))));
+    }
+
+    // --- rev023: temporary FeedbackBackfillFacet ---
+
+    function _backfillFacet() internal returns (FeedbackBackfillFacet) {
+        address facet = address(new FeedbackBackfillFacet());
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = FeedbackBackfillFacet.backfillFeedback.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut(facet, IDiamondCut.FacetCutAction.Add, selectors);
+        vm.prank(owner);
+        IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
+        return FeedbackBackfillFacet(address(market));
+    }
+
+    function _droppedRating(bytes32 taskId, uint256 workerAgentId) internal {
+        MockRevertingReputationRegistry broken = new MockRevertingReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(broken));
+        _rateTask(taskId, requester, worker1, 80, workerAgentId, 0, "ipfs://f", keccak256("f"));
+    }
+
+    function _entry(bytes32 taskId, uint256 workerAgentId)
+        internal
+        view
+        returns (FeedbackBackfillFacet.FeedbackBackfill[] memory e)
+    {
+        e = new FeedbackBackfillFacet.FeedbackBackfill[](1);
+        e[0] = FeedbackBackfillFacet.FeedbackBackfill(taskId, worker1, 80, workerAgentId, "ipfs://f", keccak256("f"));
+    }
+
+    function test_BackfillFeedback_DeliversDroppedRating() public {
+        FeedbackBackfillFacet backfill = _backfillFacet();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        _droppedRating(taskId, 7);
+        MockReputationRegistry reg = _setRegistry();
+
+        vm.expectEmit(true, true, true, false, address(market));
+        emit FeedbackBackfillFacet.FeedbackBackfilled(taskId, worker1, 7);
+        vm.prank(owner);
+        backfill.backfillFeedback(_entry(taskId, 7));
+
+        assertEq(reg.calls(), 1);
+        assertEq(reg.lastTag2(), "tmp.mode.bounty");
+    }
+
+    function test_RevertWhen_BackfillFeedback_NotRated() public {
+        FeedbackBackfillFacet backfill = _backfillFacet();
+        _setRegistry();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+
+        vm.expectRevert(FeedbackBackfillFacet.FeedbackNotRated.selector);
+        vm.prank(owner);
+        backfill.backfillFeedback(_entry(taskId, 7));
+    }
+
+    function test_RevertWhen_BackfillFeedback_NotOwner() public {
+        FeedbackBackfillFacet backfill = _backfillFacet();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        _droppedRating(taskId, 7);
+        _setRegistry();
+
+        vm.expectRevert();
+        vm.prank(worker1);
+        backfill.backfillFeedback(_entry(taskId, 7));
+    }
+
+    function test_RevertWhen_BackfillFeedback_NoWorkerAgentId() public {
+        FeedbackBackfillFacet backfill = _backfillFacet();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        _droppedRating(taskId, 7);
+        _setRegistry();
+
+        vm.expectRevert(FeedbackBackfillFacet.WorkerAgentIdRequired.selector);
+        vm.prank(owner);
+        backfill.backfillFeedback(_entry(taskId, 0));
+    }
+
+    function test_RevertWhen_BackfillFeedback_RegistryNotSet() public {
+        FeedbackBackfillFacet backfill = _backfillFacet();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        _rateTask(taskId, requester, worker1, 80, 0, 0, "", bytes32(0));
+
+        vm.expectRevert(FeedbackBackfillFacet.ReputationRegistryNotSet.selector);
+        vm.prank(owner);
+        backfill.backfillFeedback(_entry(taskId, 7));
+    }
+
+    function test_RevertWhen_BackfillFeedback_RegistryReverts() public {
+        FeedbackBackfillFacet backfill = _backfillFacet();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        _droppedRating(taskId, 7);
+
+        vm.expectRevert(MockRevertingReputationRegistry.AlwaysReverts.selector);
+        vm.prank(owner);
+        backfill.backfillFeedback(_entry(taskId, 7));
+    }
+
+    function test_BackfillFeedback_NotRoutedWithoutTheTemporaryFacet() public view {
+        assertEq(
+            IDiamondLoupe(address(market)).facetAddress(FeedbackBackfillFacet.backfillFeedback.selector), address(0)
+        );
+    }
+
+    // --- rev023: no guard when no registry call is due ---
+
+    function test_RateTask_NoGasFloorWithoutAgentId() public {
+        _setRegistry();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        bytes memory inner = abi.encodeCall(market.rateTask, (taskId, worker1, 80, 0, 0, "", bytes32(0)));
+        forwarder.relay{ gas: 400_000 }(address(market), requester, 0, inner);
+        assertTrue(market.getWorkerStats(worker1).ratedTasks == 1);
+    }
+
+    // --- rev023: settlement hooks need their full gas stipend ---
+
+    function test_RevertWhen_AcceptSubmission_HookGasBelowStipend() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+
+        bytes memory inner = abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 0));
+        bytes memory data = abi.encodeCall(forwarder.relay, (address(market), requester, 0, inner));
+        assertTrue(_revertsWith(address(forwarder), data, ITMPCore.InsufficientGasForHook.selector, 300_000, 2_000_000));
+        assertEq(hook.onCompleteCalls(), 0);
+    }
+
+    function test_AcceptSubmission_HookStillRunsWithEnoughGas() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+
+        forwarder.relay{ gas: 3_000_000 }(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 0))
+        );
+        assertEq(hook.onCompleteCalls(), 1);
+    }
+
+    function test_RefundExpired_HookStillSwallowsWithLowGas() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+        vm.warp(block.timestamp + DURATION + 1);
+
+        // onExpire must never block fund recovery: no stipend guard, so a tight limit still refunds.
+        market.refundExpired{ gas: 600_000 }(taskId, 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    /// @dev True when some gas limit in [from, to] makes `target.data` revert with `selector`.
+    function _revertsWith(address target, bytes memory data, bytes4 selector, uint256 from, uint256 to)
+        internal
+        returns (bool found)
+    {
+        for (uint256 g = from; g <= to && !found; g += 50_000) {
+            uint256 snap = vm.snapshotState();
+            (bool ok, bytes memory ret) = target.call{ gas: g }(data);
+            if (!ok && ret.length >= 4 && bytes4(ret) == selector) found = true;
+            vm.revertToState(snap);
+        }
     }
 }

@@ -1820,6 +1820,16 @@
   },
   {
     "type": "error",
+    "name": "InsufficientGasForFeedback",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForHook",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAuctionSubtype",
     "inputs": []
   },
@@ -2740,11 +2750,6 @@
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "InsufficientGasForFeedback",
-    "inputs": []
   },
   {
     "type": "error",

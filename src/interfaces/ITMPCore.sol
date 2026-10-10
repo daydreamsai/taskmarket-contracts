@@ -62,6 +62,7 @@ interface ITMPCore is IERC165 {
     error WorkerMismatch();
     error WorkerAlreadyRated();
     error InsufficientGasForFeedback();
+    error InsufficientGasForHook();
     error WorkerRequired();
     error DeliverableRequired();
     error DeliverableMismatch();

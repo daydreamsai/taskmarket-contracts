@@ -29,6 +29,13 @@ library LibTaskMarket {
     // bare minimum -- it is still a hard, fixed cap, far below a full transaction's gas
     // budget, so it does not weaken the DoS guard's intent.
     uint256 internal constant HOOK_GAS_STIPEND = 1_000_000;
+    // Covers the cold hook access, context encoding and the post-call event around a hook call.
+    uint256 internal constant HOOK_GAS_MARGIN = 100_000;
+
+    // Minimum gas that must remain when a swallowed ERC-8004 giveFeedback call is about to run.
+    // The call sits in a try/catch, so eth_estimateGas would otherwise settle on a limit where it
+    // runs out of gas unnoticed; giveFeedback itself needs about 220k.
+    uint256 internal constant MIN_FEEDBACK_GAS = 450_000;
 
     // Rev017: default floor for assignEvaluator's appealWindowSecs, used whenever
     // s.minAppealWindowSecs has never been set. Five minutes is sized for a worker that
@@ -231,6 +238,22 @@ library LibTaskMarket {
         }
     }
 
+    /// @notice Calls on* on every hook like _dispatchAfterHooks, but reverts when too little gas
+    ///         remains to give a hook its full stipend. A call forwards at most 63/64 of the gas
+    ///         left, so on a tight limit a swallowed hook is silently handed less than the stipend
+    ///         and its payout or release is skipped. Used only where a caller can starve a
+    ///         settlement hook (onComplete, onForfeit); onCancel and onExpire keep the
+    ///         unconditional swallow because they must not block fund recovery.
+    function _dispatchAfterHooksFullGas(address[] memory hooks, bytes memory callData) internal {
+        for (uint256 i; i < hooks.length; i++) {
+            if (gasleft() < (HOOK_GAS_STIPEND * 64) / 63 + HOOK_GAS_MARGIN) {
+                revert ITMPCore.InsufficientGasForHook();
+            }
+            (bool ok,) = _safeHookCall(hooks[i], callData);
+            if (!ok) emit ITMPCore.HookCallFailed(hooks[i]);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Hook helpers — typed dispatch (keep abi.encodeCall out of facet stack frames)
     // -------------------------------------------------------------------------
@@ -301,12 +324,16 @@ library LibTaskMarket {
 
     function _onCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict) internal {
         address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId, s), verdict)));
+        _dispatchAfterHooksFullGas(
+            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId, s), verdict))
+        );
     }
 
     function _onForfeitHooks(bytes32 taskId, address forfeiter, AppStorage storage s) internal {
         address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onForfeit, (taskId, _buildContext(taskId, s), forfeiter)));
+        _dispatchAfterHooksFullGas(
+            hooks, abi.encodeCall(ITMPHook.onForfeit, (taskId, _buildContext(taskId, s), forfeiter))
+        );
     }
 
     function _onCancelHooks(bytes32 taskId, AppStorage storage s) internal {
@@ -317,5 +344,11 @@ library LibTaskMarket {
     function _onExpireHooks(bytes32 taskId, AppStorage storage s) internal {
         address[] memory hooks = _resolveHooks(taskId, s);
         _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onExpire, (taskId, _buildContext(taskId, s))));
+    }
+
+    /// @dev Reverts when too little gas is left for a reputation-registry call that failures
+    ///      are swallowed around, so an under-funded limit cannot succeed with the call dropped.
+    function _requireFeedbackGas() internal view {
+        if (gasleft() < MIN_FEEDBACK_GAS) revert ITMPCore.InsufficientGasForFeedback();
     }
 }

@@ -18,8 +18,6 @@ contract RatingFacet {
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
     bytes4 private constant AUCTION = TMP_AUCTION;
 
-    uint256 private constant MIN_FEEDBACK_GAS = 450_000;
-
     /// @notice Rate a completed task and submit ERC-8004 feedback.
     ///         The requester is the authenticated actor (pgtrSender).
     ///         For Bounty/Benchmark modes, each (taskId, worker) pair can be rated once.
@@ -68,9 +66,7 @@ contract RatingFacet {
         emit ITMPCore.TaskRated(taskId, worker, rating, raterAgentId);
 
         if (workerAgentId != 0 && s.reputationRegistry != address(0)) {
-            // A try/catch lets eth_estimateGas settle on a limit where the registry call runs out
-            // of gas and is swallowed; reverting here makes that limit unusable.
-            if (gasleft() < MIN_FEEDBACK_GAS) revert ITMPCore.InsufficientGasForFeedback();
+            LibTaskMarket._requireFeedbackGas();
             try IReputationRegistry(s.reputationRegistry)
                 .giveFeedback(
                     workerAgentId,

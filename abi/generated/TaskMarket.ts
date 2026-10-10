@@ -1828,6 +1828,16 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "InsufficientGasForFeedback",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForHook",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAuctionSubtype",
     "inputs": []
   },
@@ -2748,11 +2758,6 @@ export const TaskMarketABI = [
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "InsufficientGasForFeedback",
-    "inputs": []
   },
   {
     "type": "error",
