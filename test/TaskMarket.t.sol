@@ -21,7 +21,6 @@ import "../src/interfaces/ITMPDiamond.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
-import { FeedbackBackfillFacet } from "../src/facets/FeedbackBackfillFacet.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { Diamond } from "../src/Diamond.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
@@ -5944,114 +5943,6 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + DURATION + 1);
 
         assertTrue(_guardFiresForSomeGasLimit(address(market), abi.encodeCall(market.refundExpired, (taskId, 42))));
-    }
-
-    // --- rev023: temporary FeedbackBackfillFacet ---
-
-    function _backfillFacet() internal returns (FeedbackBackfillFacet) {
-        address facet = address(new FeedbackBackfillFacet());
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = FeedbackBackfillFacet.backfillFeedback.selector;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(facet, IDiamondCut.FacetCutAction.Add, selectors);
-        vm.prank(owner);
-        IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
-        return FeedbackBackfillFacet(address(market));
-    }
-
-    function _droppedRating(bytes32 taskId, uint256 workerAgentId) internal {
-        MockRevertingReputationRegistry broken = new MockRevertingReputationRegistry();
-        vm.prank(owner);
-        market.setReputationRegistry(address(broken));
-        _rateTask(taskId, requester, worker1, 80, workerAgentId, 0, "ipfs://f", keccak256("f"));
-    }
-
-    function _entry(bytes32 taskId, uint256 workerAgentId)
-        internal
-        view
-        returns (FeedbackBackfillFacet.FeedbackBackfill[] memory e)
-    {
-        e = new FeedbackBackfillFacet.FeedbackBackfill[](1);
-        e[0] = FeedbackBackfillFacet.FeedbackBackfill(taskId, worker1, 80, workerAgentId, "ipfs://f", keccak256("f"));
-    }
-
-    function test_BackfillFeedback_DeliversDroppedRating() public {
-        FeedbackBackfillFacet backfill = _backfillFacet();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _acceptSubmission(taskId, requester, worker1);
-        _droppedRating(taskId, 7);
-        MockReputationRegistry reg = _setRegistry();
-
-        vm.expectEmit(true, true, true, false, address(market));
-        emit FeedbackBackfillFacet.FeedbackBackfilled(taskId, worker1, 7);
-        vm.prank(owner);
-        backfill.backfillFeedback(_entry(taskId, 7));
-
-        assertEq(reg.calls(), 1);
-        assertEq(reg.lastTag2(), "tmp.mode.bounty");
-    }
-
-    function test_RevertWhen_BackfillFeedback_NotRated() public {
-        FeedbackBackfillFacet backfill = _backfillFacet();
-        _setRegistry();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _acceptSubmission(taskId, requester, worker1);
-
-        vm.expectRevert(FeedbackBackfillFacet.FeedbackNotRated.selector);
-        vm.prank(owner);
-        backfill.backfillFeedback(_entry(taskId, 7));
-    }
-
-    function test_RevertWhen_BackfillFeedback_NotOwner() public {
-        FeedbackBackfillFacet backfill = _backfillFacet();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _acceptSubmission(taskId, requester, worker1);
-        _droppedRating(taskId, 7);
-        _setRegistry();
-
-        vm.expectRevert();
-        vm.prank(worker1);
-        backfill.backfillFeedback(_entry(taskId, 7));
-    }
-
-    function test_RevertWhen_BackfillFeedback_NoWorkerAgentId() public {
-        FeedbackBackfillFacet backfill = _backfillFacet();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _acceptSubmission(taskId, requester, worker1);
-        _droppedRating(taskId, 7);
-        _setRegistry();
-
-        vm.expectRevert(FeedbackBackfillFacet.WorkerAgentIdRequired.selector);
-        vm.prank(owner);
-        backfill.backfillFeedback(_entry(taskId, 0));
-    }
-
-    function test_RevertWhen_BackfillFeedback_RegistryNotSet() public {
-        FeedbackBackfillFacet backfill = _backfillFacet();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _acceptSubmission(taskId, requester, worker1);
-        _rateTask(taskId, requester, worker1, 80, 0, 0, "", bytes32(0));
-
-        vm.expectRevert(FeedbackBackfillFacet.ReputationRegistryNotSet.selector);
-        vm.prank(owner);
-        backfill.backfillFeedback(_entry(taskId, 7));
-    }
-
-    function test_RevertWhen_BackfillFeedback_RegistryReverts() public {
-        FeedbackBackfillFacet backfill = _backfillFacet();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        _acceptSubmission(taskId, requester, worker1);
-        _droppedRating(taskId, 7);
-
-        vm.expectRevert(MockRevertingReputationRegistry.AlwaysReverts.selector);
-        vm.prank(owner);
-        backfill.backfillFeedback(_entry(taskId, 7));
-    }
-
-    function test_BackfillFeedback_NotRoutedWithoutTheTemporaryFacet() public view {
-        assertEq(
-            IDiamondLoupe(address(market)).facetAddress(FeedbackBackfillFacet.backfillFeedback.selector), address(0)
-        );
     }
 
     // --- rev023: no guard when no registry call is due ---

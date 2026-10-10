@@ -1,4 +1,4 @@
-# Rev023 -- gas guards on swallowed calls, and a temporary feedback backfill
+# Rev023 -- gas guards on swallowed calls
 
 ## Status
 
@@ -15,8 +15,8 @@ Settlement hooks have the same shape. A hook call forwards at most 63/64 of the 
 tight limit a swallowed `onComplete` or `onForfeit` is silently handed less than its stipend and a
 payout or release inside it is skipped.
 
-Ratings made before rev022 also have no registry entry, and `rateTask` refuses to rate a worker
-twice, so nothing can deliver them.
+Ratings made before rev022 also had no registry entry, and `rateTask` refuses to rate a worker
+twice, so nothing could deliver them.
 
 ## Change
 
@@ -35,21 +35,12 @@ twice, so nothing can deliver them.
   replaces `AcceptanceFacet`, `CoreFacet`, `EvaluatorFacet` and `RatingFacet` with their full
   selector lists. Selectors and storage layout are unchanged.
 
-### Temporary backfill facet
+### Backfill
 
-`FeedbackBackfillFacet.backfillFeedback(FeedbackBackfill[])` is callable only by the Diamond owner.
-Each entry must be a rating the Diamond recorded (`taskWorkerRated`) and must carry a worker agent
-id and a rating of at most 100. The registry call is not wrapped in a `try/catch`, so a failure
-reverts the whole batch. It emits `FeedbackBackfilled(taskId, worker, workerAgentId)`. Feedback is
-attributed to the Diamond, the same client address `rateTask` uses, with tag1 `tmp.task.rating` and
-tag2 taken from the task's mode.
-
-The facet holds no storage and is not part of the revision sequence, the deploy script or
-`FacetSelectors`; a fresh diamond never carries it. It is routed with
-`script/temp/AddFeedbackBackfill.s.sol` (requires revision 23, changes no version) and unrouted with
-`script/temp/RemoveFeedbackBackfill.s.sol`, which asserts the selector routes nowhere afterwards. The
-Diamond keeps no record of which ratings reached the registry, so the off-chain backfill script is
-responsible for not sending an entry twice.
+Ratings made before rev022 had no registry entry, and `rateTask` refuses to rate a worker twice. A
+temporary owner-only facet, routed and unrouted by standalone scripts outside the revision sequence,
+delivered them from the original transactions' arguments, attributed to the Diamond. It has since been
+removed, and the selector routes nowhere.
 
 ## Upgrade
 
@@ -64,5 +55,5 @@ make upgrade mainnet rev023
 
 `Rev023Upgrade.t.sol` asserts the bytecode behind every selector of all four facets moved,
 `DiamondSelectorParity.t.sol` replays the whole sequence, and `TaskMarket.t.sol` covers the gas floor
-at each call site, the absence of a floor when no registry call is due, the hook guard on
-`onComplete` and its absence on `onExpire`, and every backfill precondition.
+at each call site, the absence of a floor when no registry call is due, and the hook guard on
+`onComplete` and its absence on `onExpire`.
