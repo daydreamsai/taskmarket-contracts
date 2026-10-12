@@ -7,7 +7,8 @@ import "../src/TaskMarketForwarder.sol";
 contract DeployForwarder is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
-        address usdc = vm.envAddress("USDC_TOKEN_ADDRESS");
+        address usdc = vm.envOr("FORGE_USDC_TOKEN_ADDRESS", vm.envOr("USDC_TOKEN_ADDRESS", address(0)));
+        require(usdc != address(0), "DeployForwarder: set FORGE_USDC_TOKEN_ADDRESS (or USDC_TOKEN_ADDRESS)");
         address taskMarket = vm.envAddress("CONTRACT_ADDRESS");
         address authorizedRelayer = vm.envAddress("FORGE_SERVER_ADDRESS");
 

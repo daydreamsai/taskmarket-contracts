@@ -3,7 +3,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 
-const usage = `Usage: create-taskmarket-hook <project-name> --taskmarket <0x-address> [--hook-name <SolidityName>]
+const usage = `Usage: create-taskmarket-hook <project-name> --taskmarket <0x-address> [--hook-name <SolidityName>] [--network <base-sepolia|tempo-moderato>]
 
 Example:
   npx create-taskmarket-hook my-hook --taskmarket 0x1111111111111111111111111111111111111111 --hook-name MyHook`;
@@ -21,7 +21,11 @@ function parseArgs(args) {
     const value = rest[index + 1];
     if (!flag?.startsWith("--") || !value || options[flag])
       throw new Error("invalid arguments");
-    if (flag !== "--taskmarket" && flag !== "--hook-name")
+    if (
+      flag !== "--taskmarket" &&
+      flag !== "--hook-name" &&
+      flag !== "--network"
+    )
       throw new Error(`unknown option: ${flag}`);
     options[flag] = value;
   }
@@ -29,6 +33,7 @@ function parseArgs(args) {
     projectName,
     taskmarket: options["--taskmarket"],
     hookName: options["--hook-name"],
+    network: options["--network"],
   };
 }
 
@@ -77,14 +82,15 @@ function render(files, values) {
       contents
         .replaceAll("{{PROJECT_NAME}}", values.projectName)
         .replaceAll("{{HOOK_NAME}}", values.hookName)
+        .replaceAll("{{DEPLOY_SECTION}}", values.network.deploySection)
+        .replaceAll("{{NETWORK_LABEL}}", values.network.label)
         .replaceAll("{{TASKMARKET_HEX}}", values.taskmarket.slice(2))
         .replaceAll("{{TASKMARKET_ADDRESS}}", values.taskmarket),
     ]),
   );
 }
 
-const template = {
-  "foundry.toml": `[profile.default]
+const foundryDefaults = `[profile.default]
 src = "src"
 test = "test"
 script = "script"
@@ -94,23 +100,81 @@ solc_version = "0.8.24"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+`;
 
+// Tempo has no native gas token: transactions pay fees in a TIP-20 stablecoin, and contracts are
+// verified through Sourcify at contracts.tempo.xyz rather than an Etherscan API.
+const moderatoFeeToken = "0x20c0000000000000000000006a37da5c996874be";
+const tempoVerifier = "https://contracts.tempo.xyz";
+
+const networks = {
+  "base-sepolia": {
+    label: "Base Sepolia",
+    files: {
+      "foundry.toml": `${foundryDefaults}
 [rpc_endpoints]
 base_sepolia = "\${FORGE_BASE_SEPOLIA_RPC_URL}"
 
 [etherscan]
 base_sepolia = { key = "\${FORGE_ETHERSCAN_API_KEY}", chain = 84532, url = "https://api.etherscan.io/v2/api?chainid=84532" }
 `,
-  "remappings.txt": `@taskmarket/contracts/=lib/taskmarket-contracts/
-@openzeppelin/=lib/openzeppelin-contracts/
-openzeppelin-contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/
-forge-std/=lib/forge-std/src/
-`,
-  ".env.example": `# A Base Sepolia RPC endpoint and the private key that will deploy the hook.
+      ".env.example": `# A Base Sepolia RPC endpoint and the private key that will deploy the hook.
 FORGE_BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
 PRIVATE_KEY=
 # Used by forge script --verify. Obtain one from Basescan/Etherscan.
 FORGE_ETHERSCAN_API_KEY=
+`,
+    },
+    deploySection: `## Deploy and verify on Base Sepolia
+
+Set \`PRIVATE_KEY\`, \`FORGE_BASE_SEPOLIA_RPC_URL\`, and \`FORGE_ETHERSCAN_API_KEY\` in \`.env\`. Confirm that the configured Taskmarket address is the Base Sepolia deployment you intend to use before broadcasting.
+
+\`\`\`sh
+set -a
+. ./.env
+set +a
+forge script script/Deploy.s.sol:Deploy --rpc-url base_sepolia --broadcast --verify
+\`\`\``,
+  },
+  "tempo-moderato": {
+    label: "Tempo Moderato",
+    files: {
+      "foundry.toml": `${foundryDefaults}
+# Deploy with FOUNDRY_PROFILE=tempo so forge builds Tempo transactions.
+[profile.tempo]
+network = "tempo"
+
+[rpc_endpoints]
+tempo_moderato = "\${FORGE_TEMPO_MODERATO_RPC_URL}"
+`,
+      ".env.example": `# A Tempo Moderato (chain 42431) RPC endpoint and the private key that will deploy the hook.
+FORGE_TEMPO_MODERATO_RPC_URL=
+PRIVATE_KEY=
+# Tempo has no native gas token. Fees are paid in this TIP-20 stablecoin (OUSD on Moderato);
+# the deployer must hold a balance of it.
+FORGE_FEE_TOKEN=${moderatoFeeToken}
+`,
+    },
+    deploySection: `## Deploy and verify on Tempo Moderato
+
+Set \`PRIVATE_KEY\`, \`FORGE_TEMPO_MODERATO_RPC_URL\`, and \`FORGE_FEE_TOKEN\` in \`.env\`. Tempo has no native gas token: the deployer pays fees in the TIP-20 stablecoin named by \`FORGE_FEE_TOKEN\` and must hold a balance of it. Verification goes to Sourcify at \`${tempoVerifier}\` and needs no API key. Confirm that the configured Taskmarket address is the Tempo Moderato deployment you intend to use before broadcasting.
+
+\`\`\`sh
+set -a
+. ./.env
+set +a
+FOUNDRY_PROFILE=tempo forge script script/Deploy.s.sol:Deploy --rpc-url tempo_moderato \\
+  --tempo.fee-token "$FORGE_FEE_TOKEN" --broadcast \\
+  --verify --verifier sourcify --verifier-url ${tempoVerifier}
+\`\`\``,
+  },
+};
+
+const template = {
+  "remappings.txt": `@taskmarket/contracts/=lib/taskmarket-contracts/
+@openzeppelin/=lib/openzeppelin-contracts/
+openzeppelin-contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/
+forge-std/=lib/forge-std/src/
 `,
   ".gitignore": `.env
 out/
@@ -354,19 +418,10 @@ Run it on its own while developing hook policy:
 forge test -j 1 --match-contract {{HOOK_NAME}}LifecycleTest -vvv
 \`\`\`
 
-This is local integration coverage only. It deliberately does not call the configured Base Sepolia
-address or require a private key.
+This is local integration coverage only. It deliberately does not call the configured
+{{NETWORK_LABEL}} address or require a private key.
 
-## Deploy and verify on Base Sepolia
-
-Set \`PRIVATE_KEY\`, \`FORGE_BASE_SEPOLIA_RPC_URL\`, and \`FORGE_ETHERSCAN_API_KEY\` in \`.env\`. Confirm that the configured Taskmarket address is the Base Sepolia deployment you intend to use before broadcasting.
-
-\`\`\`sh
-set -a
-. ./.env
-set +a
-forge script script/Deploy.s.sol:Deploy --rpc-url base_sepolia --broadcast --verify
-\`\`\`
+{{DEPLOY_SECTION}}
 
 Register the deployed hook when creating a Taskmarket task. Hooks are immutable per task, and check callbacks can block task state transitions, so test your policy thoroughly before using it in production.
 `,
@@ -383,6 +438,7 @@ async function main() {
     projectName,
     taskmarket,
     hookName = projectName && solidityName(projectName),
+    network = "base-sepolia",
   } = parsed;
   if (!projectName || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(projectName))
     return fail("project name must be lowercase kebab-case");
@@ -396,6 +452,8 @@ async function main() {
     return fail("--taskmarket must be a non-zero 20-byte address");
   if (!/^(?:Hook|[A-Z][A-Za-z0-9]*Hook)$/.test(hookName))
     return fail("--hook-name must be a PascalCase name ending in Hook");
+  if (!Object.hasOwn(networks, network))
+    return fail("--network must be base-sepolia or tempo-moderato");
 
   const target = path.resolve(process.cwd(), projectName);
   try {
@@ -404,11 +462,15 @@ async function main() {
   } catch {
     /* expected */
   }
-  const files = render(template, {
-    projectName,
-    taskmarket: taskmarket.toLowerCase(),
-    hookName,
-  });
+  const files = render(
+    { ...networks[network].files, ...template },
+    {
+      projectName,
+      taskmarket: taskmarket.toLowerCase(),
+      hookName,
+      network: networks[network],
+    },
+  );
   const nonPortablePath = Object.keys(files).find((file) =>
     file.split("/").some((component) => !isPortableFileComponent(component)),
   );

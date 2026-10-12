@@ -110,6 +110,58 @@ test("generates a substituted, reproducible project", async (t) => {
   }
 });
 
+test("generates Tempo Moderato deploy configuration with --network", async (t) => {
+  const cwd = await temporaryDirectory();
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const result = run(
+    cwd,
+    "tempo-hook",
+    "--taskmarket",
+    address,
+    "--network",
+    "tempo-moderato",
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const root = path.join(cwd, "tempo-hook");
+
+  const foundry = await readFile(path.join(root, "foundry.toml"), "utf8");
+  assert.match(foundry, /^\[profile\.tempo\]\nnetwork = "tempo"$/m);
+  assert.match(
+    foundry,
+    /^tempo_moderato = "\$\{FORGE_TEMPO_MODERATO_RPC_URL\}"$/m,
+  );
+  assert.doesNotMatch(foundry, /base_sepolia|etherscan/);
+
+  const env = await readFile(path.join(root, ".env.example"), "utf8");
+  assert.match(
+    env,
+    /^FORGE_FEE_TOKEN=0x20c0000000000000000000006a37da5c996874be$/m,
+  );
+  assert.doesNotMatch(env, /ETHERSCAN|BASE_SEPOLIA/);
+
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
+  assert.ok(readme.includes("## Deploy and verify on Tempo Moderato"));
+  assert.ok(readme.includes("FOUNDRY_PROFILE=tempo forge script"));
+  assert.ok(readme.includes('--tempo.fee-token "$FORGE_FEE_TOKEN"'));
+  assert.ok(
+    readme.includes(
+      "--verifier sourcify --verifier-url https://contracts.tempo.xyz",
+    ),
+  );
+  assert.doesNotMatch(readme, /Base Sepolia/);
+
+  const rejected = run(
+    cwd,
+    "mars-hook",
+    "--taskmarket",
+    address,
+    "--network",
+    "mars",
+  );
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /--network must be base-sepolia or tempo-moderato/);
+});
+
 test("rejects invalid names and existing targets without overwriting", async (t) => {
   const cwd = await temporaryDirectory();
   t.after(() => rm(cwd, { recursive: true, force: true }));

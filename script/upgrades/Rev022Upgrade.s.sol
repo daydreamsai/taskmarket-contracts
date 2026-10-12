@@ -6,6 +6,7 @@ import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
+import { DeployTarget } from "../lib/DeployTarget.sol";
 
 /// @title Rev022Upgrade -- make rateTask fail loudly when the feedback call is under-funded
 /// @dev Replaces RatingFacet so rateTask reverts below a minimum gas floor before calling the
@@ -15,6 +16,8 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)
 ///      FORGE_DIAMOND_ADDRESS_MAINNET  — Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET — Diamond proxy on Tempo Moderato (chain 42431)
+///      FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET — Diamond proxy on Tempo mainnet (chain 4217)
 /// @dev Usage:
 ///      make upgrade testnet rev022
 ///      make upgrade mainnet rev022
@@ -24,9 +27,7 @@ contract Rev022Upgrade is Script {
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
-        address diamond = block.chainid == 8453
-            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET")
-            : vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
+        address diamond = DeployTarget.diamondFor(vm);
 
         uint256 currentVersion = AdminFacet(diamond).diamondVersion();
         require(currentVersion == EXPECTED_PRE_VERSION, "Rev022Upgrade: diamond is not at rev021");

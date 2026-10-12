@@ -9,6 +9,7 @@ import { CoreFacet } from "../../src/facets/CoreFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
+import { DeployTarget } from "../lib/DeployTarget.sol";
 
 /// @title Rev023Upgrade -- gas guards on every swallowed reputation call and on settlement hooks
 /// @dev The guards live in LibTaskMarket, an internal library, so they are compiled into each facet
@@ -22,6 +23,8 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_TESTNET  -- Diamond proxy on Base Sepolia (chain 84532)
 ///      FORGE_DIAMOND_ADDRESS_MAINNET  -- Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET -- Diamond proxy on Tempo Moderato (chain 42431)
+///      FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET -- Diamond proxy on Tempo mainnet (chain 4217)
 /// @dev Usage:
 ///      make upgrade testnet rev023
 ///      make upgrade mainnet rev023
@@ -31,9 +34,7 @@ contract Rev023Upgrade is Script {
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
-        address diamond = block.chainid == 8453
-            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET")
-            : vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
+        address diamond = DeployTarget.diamondFor(vm);
 
         uint256 currentVersion = AdminFacet(diamond).diamondVersion();
         require(currentVersion == EXPECTED_PRE_VERSION, "Rev023Upgrade: diamond is not at rev022");

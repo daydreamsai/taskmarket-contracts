@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Script, console } from "forge-std/Script.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
+import { DeployTarget } from "./lib/DeployTarget.sol";
 
 /// @title DiamondUpgradeAcceptPinning — atomically migrate acceptSubmissions to the 5-param pinning signature
 ///
@@ -16,6 +17,7 @@ import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)
 ///      FORGE_DIAMOND_ADDRESS_MAINNET  — Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET / _TEMPO_MAINNET — Diamond proxy on Tempo (42431 / 4217)
 ///
 /// @dev Usage:
 ///      make upgrade-accept-pinning testnet
@@ -27,9 +29,7 @@ contract DiamondUpgradeAcceptPinning is Script {
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
-        address diamond = block.chainid == 8453
-            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET")
-            : vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
+        address diamond = DeployTarget.diamondFor(vm);
 
         vm.startBroadcast(ownerKey);
 

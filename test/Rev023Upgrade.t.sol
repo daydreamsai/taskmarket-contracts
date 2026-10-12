@@ -28,6 +28,7 @@ contract Rev023UpgradeTest is Test, DiamondTestHelper {
     }
 
     function _setUpgradeEnv(address diamond) internal {
+        vm.chainId(84532);
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));

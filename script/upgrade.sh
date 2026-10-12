@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Diamond upgrade orchestrator -- run via `make upgrade <testnet|mainnet> [revNNN]`.
+# Diamond upgrade orchestrator -- run via
+# `make upgrade <testnet|mainnet|tempo-testnet|tempo-mainnet> [revNNN]`.
 #
 # With no revision argument, applies every script/upgrades/RevNNNUpgrade.s.sol whose target
 # revision is greater than the diamond's current diamondVersion, in ascending order.
@@ -35,16 +36,33 @@ if [ "$NETWORK" = "testnet" ]; then
 elif [ "$NETWORK" = "mainnet" ]; then
   RPC_URL="base"
   DIAMOND="${FORGE_DIAMOND_ADDRESS_MAINNET:?FORGE_DIAMOND_ADDRESS_MAINNET not set}"
+elif [ "$NETWORK" = "tempo-testnet" ]; then
+  RPC_URL="tempo_moderato"
+  DIAMOND="${FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET:?FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET not set}"
+elif [ "$NETWORK" = "tempo-mainnet" ]; then
+  RPC_URL="tempo"
+  DIAMOND="${FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET:?FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET not set}"
 else
-  echo "Usage: script/upgrade.sh <testnet|mainnet> [revNNN]" >&2
+  echo "Usage: script/upgrade.sh <testnet|mainnet|tempo-testnet|tempo-mainnet> [revNNN]" >&2
   exit 1
 fi
 
+# Tempo pays gas in a TIP-20 stablecoin and verifies through Sourcify rather than Etherscan.
+NETWORK_FLAGS=()
+VERIFY_FLAGS=(--verify)
+case "$NETWORK" in
+  tempo-*)
+    export FOUNDRY_PROFILE=tempo
+    NETWORK_FLAGS=(--tempo.fee-token "${FORGE_FEE_TOKEN:?FORGE_FEE_TOKEN (or FORGE_FEE_TOKEN_TEMPO_*) not set}")
+    VERIFY_FLAGS=(--verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
+    ;;
+esac
+
 run_script() {
   if [ "$DRY_RUN" = "1" ]; then
-    forge script "$1" --rpc-url "$RPC_URL"
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"}
   else
-    forge script "$1" --rpc-url "$RPC_URL" --broadcast --verify
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} --broadcast "${VERIFY_FLAGS[@]}"
   fi
 }
 
