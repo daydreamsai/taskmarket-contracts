@@ -56,3 +56,28 @@ On Tempo the diamond's `usdcToken` is OUSD (Open USD), a TIP-20 stablecoin nativ
 `0x20c0000000000000000000006a37da5c996874be` on both mainnet and Moderato, with 6 decimals. It is
 passed as `FORGE_USDC_TOKEN_ADDRESS_TEMPO_*`. The diamond treats it as any 6-decimal ERC-20; the
 contract name `usdcToken` is historical.
+
+## Gas on Tempo
+
+Tempo caps a single transaction at 30M gas and charges far more than Ethereum for new code and new
+storage. Three things follow for `DiamondDeploy.s.sol` and the Tempo Make targets:
+
+- The diamond is created with only `DiamondCutFacet`, then each other facet is added by its own
+  `diamondCut`, with `AdminFacet.initialize` running in the `AdminFacet` cut. Passing every cut to
+  the constructor measured about 47M gas on Moderato. The largest single transaction is now the
+  `CoreFacet` deployment, about 21M. `diamondCut` is owner-only, so nobody can act on the diamond
+  between the steps. Base deploys take the same path.
+- The Tempo deploy targets pass `--slow`. Forge estimates each Tempo transaction against the live
+  chain when it sends it, so each `diamondCut` must be estimated after the diamond exists; without
+  `--slow` it is priced as a call to an empty address and runs out of gas.
+- Forge before v1.8.5 simulates contract creation with Ethereum's gas schedule and under-estimates
+  a Tempo facet deployment about fivefold, so the first transaction runs out of gas. Deploy to Tempo
+  with Foundry v1.8.5 or later.
+
+## Fee token
+
+`FORGE_FEE_TOKEN_TEMPO_*` is only the token the deployer pays gas in; the settlement token is
+unaffected. Moderato's validators take fees in PathUSD
+(`0x20c0000000000000000000000000000000000000`), and the OUSD/PathUSD fee AMM pool there holds too
+little OUSD to convert a deploy's fees, so a deploy that pays gas in OUSD fails before its first
+transaction. Moderato deploys pay gas in PathUSD.

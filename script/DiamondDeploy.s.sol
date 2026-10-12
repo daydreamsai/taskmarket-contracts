@@ -63,8 +63,19 @@ contract DiamondDeploy is Script {
         // 3. Encode initialize call (AdminFacet.initialize is delegatecalled once)
         bytes memory initData = abi.encodeCall(AdminFacet.initialize, (usdc, feeRecipient, feeBps));
 
-        // 4. Deploy Diamond
-        Diamond diamond = new Diamond(deployer, cuts, address(adminFacet), initData);
+        // 4. Deploy Diamond with only the cut facet, then add the rest one facet per transaction.
+        // A single constructor carrying every cut needs ~47M gas on Tempo, which caps a
+        // transaction at 30M. AdminFacet's cut runs initialize.
+        IDiamondCut.FacetCut[] memory first = new IDiamondCut.FacetCut[](1);
+        first[0] = cuts[0];
+        Diamond diamond = new Diamond(deployer, first, address(0), "");
+        for (uint256 i = 1; i < cuts.length; i++) {
+            IDiamondCut.FacetCut[] memory step = new IDiamondCut.FacetCut[](1);
+            step[0] = cuts[i];
+            bool isAdmin = cuts[i].facetAddress == address(adminFacet);
+            IDiamondCut(address(diamond))
+                .diamondCut(step, isAdmin ? address(adminFacet) : address(0), isAdmin ? initData : bytes(""));
+        }
 
         // 5. Register optional PGTR forwarder and reputation registry
         address forwarder = vm.envOr("FORGE_PGTR_FORWARDER", address(0));
