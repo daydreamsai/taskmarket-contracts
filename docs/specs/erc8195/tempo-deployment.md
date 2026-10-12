@@ -9,7 +9,7 @@ Implemented (tooling only).
 The Taskmarket diamond deploys to Tempo mainnet (chain 4217) and the Tempo Moderato testnet (chain
 42431) from the same sources as Base. No contract under `src/` changes, and no new revision is cut:
 a fresh Tempo diamond seeds `diamondVersion` from `LibRevision.CURRENT_REVISION`, exactly as a fresh
-Base diamond does. The file name keeps the revision the work was planned against (rev021); the
+Base diamond does. The file name carries no revision number for that reason; the
 revision a Tempo diamond reports is whatever `CURRENT_REVISION` is when it is deployed.
 
 What changes is the deploy and upgrade tooling, which only knew Base and Base Sepolia.
@@ -48,6 +48,10 @@ What changes is the deploy and upgrade tooling, which only knew Base and Base Se
   there.
 - `DeployForwarder.s.sol` reads `FORGE_USDC_TOKEN_ADDRESS`, falling back to `USDC_TOKEN_ADDRESS`,
   so it takes the same per-network input as `DiamondDeploy.s.sol`.
+- `make deploy-forwarder tempo-testnet|tempo-mainnet` deploys `TaskMarketForwarder` against an
+  existing Tempo diamond and registers it with `addForwarder`. See "Forwarder" below.
+- The Tempo `deploy`, `deploy-forwarder` and `upgrade` targets run through `script/tempo.sh`, which
+  reads only the `_TEMPO_TESTNET` / `_TEMPO_MAINNET` inputs. See "Inputs" below.
 - `create-taskmarket-hook` accepts `--network <base-sepolia|tempo-moderato>`.
 
 ## Settlement token
@@ -81,3 +85,40 @@ unaffected. Moderato's validators take fees in PathUSD
 (`0x20c0000000000000000000000000000000000000`), and the OUSD/PathUSD fee AMM pool there holds too
 little OUSD to convert a deploy's fees, so a deploy that pays gas in OUSD fails before its first
 transaction. Moderato deploys pay gas in PathUSD.
+
+## Inputs
+
+The Base targets resolve each input as `${FORGE_X:-$FORGE_X_<NETWORK>}`, so an unsuffixed value wins.
+That rule is unsafe on Tempo: an unsuffixed `FORGE_DEFAULT_PLATFORM_FEE_BPS` or
+`FORGE_ERC8004_REPUTATION_REGISTRY` kept in `.env` for Base would silently configure a Tempo diamond
+with Base's fee or Base's reputation registry. The Tempo targets therefore read only the suffixed
+names and overwrite the unsuffixed ones from them before forge runs. A missing required suffixed
+variable stops the target before anything is sent, naming every missing variable.
+
+Before broadcasting, the targets print the resolved inputs: network and chain id, RPC alias, the
+deployer address derived from the key (never the key), the fee token and every address and fee
+the step uses. `DRY_RUN=1` runs the forge scripts without `--broadcast`.
+
+| Target | Required (`_TEMPO_TESTNET` / `_TEMPO_MAINNET`) | Optional |
+| --- | --- | --- |
+| `deploy` | `FORGE_DEV_PRIVATE_KEY`, `FORGE_FEE_TOKEN`, `FORGE_USDC_TOKEN_ADDRESS`, `FORGE_FEE_RECIPIENT_ADDRESS`, `FORGE_DEFAULT_PLATFORM_FEE_BPS` | `FORGE_ERC8004_REPUTATION_REGISTRY` |
+| `deploy-forwarder` | `FORGE_DEV_PRIVATE_KEY`, `FORGE_FEE_TOKEN`, `FORGE_USDC_TOKEN_ADDRESS`, `FORGE_DIAMOND_ADDRESS`, `FORGE_SERVER_ADDRESS` | |
+| `upgrade` | `FORGE_DEV_PRIVATE_KEY`, `FORGE_FEE_TOKEN`, `FORGE_DIAMOND_ADDRESS` | |
+
+## Forwarder
+
+`DiamondDeploy.s.sol` cannot trust a forwarder that does not exist yet, so the PGTR forwarder is a
+second step. `make deploy-forwarder tempo-testnet|tempo-mainnet`:
+
+1. Reads `owner()` from `FORGE_DIAMOND_ADDRESS_TEMPO_*` and stops if the deployer is not the owner:
+   `AdminFacet.addForwarder(address)` is `onlyOwner`.
+2. Runs `DeployForwarder.s.sol` with `FOUNDRY_PROFILE=tempo`, `--tempo.fee-token`, `--slow` and
+   Sourcify verification. The constructor takes the settlement token
+   (`FORGE_USDC_TOKEN_ADDRESS_TEMPO_*`), the diamond, and the authorized relayer
+   (`FORGE_SERVER_ADDRESS_TEMPO_*`, the backend's server wallet).
+3. Runs `AddForwarder.s.sol`, which calls `addForwarder(forwarder)` on the diamond from the owner.
+4. Checks `isTrustedForwarder(forwarder)` returns true and prints the address to set as the
+   backend's `FORWARDER_ADDRESS_<chainId>`.
+
+With `DRY_RUN=1` it simulates step 2 only; the simulated forwarder does not exist on chain, so
+`addForwarder` is skipped.

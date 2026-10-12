@@ -39,7 +39,7 @@ verbosity = 3
 # Tempo profile: `FOUNDRY_PROFILE=tempo` (the Makefile's tempo-* targets set it). Enables forge's
 # Tempo network family so scripts broadcast Tempo transactions and accept `--tempo.fee-token`.
 # Tempo has no native gas token: fees are paid in a TIP-20 stablecoin. See
-# docs/specs/erc8195/rev021-tempo-deployment.md.
+# docs/specs/erc8195/tempo-deployment.md.
 [profile.tempo]
 network = "tempo"
 

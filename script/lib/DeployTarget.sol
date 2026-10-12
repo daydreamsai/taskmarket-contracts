@@ -8,7 +8,7 @@ import { Vm } from "forge-std/Vm.sol";
 ///      picked theirs with `block.chainid == 8453 ? MAINNET : TESTNET`, which sends any chain that
 ///      is not Base mainnet to the Base Sepolia diamond -- on Tempo that would cut the wrong
 ///      network's diamond address (or none). An unknown chain reverts instead of falling through.
-///      See docs/specs/erc8195/rev021-tempo-deployment.md.
+///      See docs/specs/erc8195/tempo-deployment.md.
 library DeployTarget {
     uint256 internal constant BASE_MAINNET = 8453;
     uint256 internal constant BASE_SEPOLIA = 84532;
