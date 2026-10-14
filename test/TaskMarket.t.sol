@@ -3436,7 +3436,7 @@ contract TaskMarketTest is DiamondTestHelper {
             requester,
             0,
             abi.encodeCall(
-                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), disputeResolver)
             )
         );
         _submitWork(taskId, worker1, keccak256("work"));
@@ -3511,7 +3511,7 @@ contract TaskMarketTest is DiamondTestHelper {
             requester,
             0,
             abi.encodeCall(
-                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), disputeResolver)
             )
         );
         _submitWork(taskId, worker1, keccak256(abi.encode(mode, "real work")));
@@ -5119,6 +5119,75 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(reg.calls(), 0);
     }
 
+    // --- rev024: per-chain feedback gas floor ---
+
+    function test_MinFeedbackGas_DefaultsTo450k() public view {
+        assertEq(market.minFeedbackGas(), 450_000);
+    }
+
+    /// @dev A limit that clears the 450k default but not a raised floor: rateTask succeeds under the
+    ///      default and reverts InsufficientGasForFeedback once the owner raises the floor.
+    function test_RevertWhen_RateTask_GasBetweenDefaultAndRaisedFloor() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        bytes memory data = abi.encodeCall(market.rateTask, (taskId, worker1, 80, 1, 0, "", bytes32(0)));
+
+        uint256 snap = vm.snapshotState();
+        forwarder.relay{ gas: 1_000_000 }(address(market), requester, 0, data);
+        assertEq(reg.calls(), 1, "1M clears the default floor");
+        vm.revertToState(snap);
+
+        vm.prank(owner);
+        market.setMinFeedbackGas(1_900_000);
+
+        vm.expectRevert(ITMPCore.InsufficientGasForFeedback.selector);
+        forwarder.relay{ gas: 1_000_000 }(address(market), requester, 0, data);
+        assertEq(reg.calls(), 0);
+
+        forwarder.relay{ gas: 3_000_000 }(address(market), requester, 0, data);
+        assertEq(reg.calls(), 1, "a limit above the raised floor still rates");
+    }
+
+    function test_SetMinFeedbackGas_EmitsAndStores() public {
+        vm.expectEmit(false, false, false, true, address(market));
+        emit ITMPCore.MinFeedbackGasUpdated(1_900_000);
+        vm.prank(owner);
+        market.setMinFeedbackGas(1_900_000);
+        assertEq(market.minFeedbackGas(), 1_900_000);
+    }
+
+    function test_SetMinFeedbackGas_AcceptsBounds() public {
+        vm.startPrank(owner);
+        market.setMinFeedbackGas(450_000);
+        assertEq(market.minFeedbackGas(), 450_000);
+        market.setMinFeedbackGas(5_000_000);
+        assertEq(market.minFeedbackGas(), 5_000_000);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_SetMinFeedbackGas_BelowDefault() public {
+        vm.prank(owner);
+        vm.expectRevert(ITMPCore.InvalidMinFeedbackGas.selector);
+        market.setMinFeedbackGas(449_999);
+    }
+
+    function test_RevertWhen_SetMinFeedbackGas_AboveCap() public {
+        vm.prank(owner);
+        vm.expectRevert(ITMPCore.InvalidMinFeedbackGas.selector);
+        market.setMinFeedbackGas(5_000_001);
+    }
+
+    function test_RevertWhen_SetMinFeedbackGas_NotOwner() public {
+        vm.prank(requester);
+        vm.expectRevert();
+        market.setMinFeedbackGas(1_900_000);
+        assertEq(market.minFeedbackGas(), 450_000);
+    }
+
     function test_RateTask_WithRegistry_ClaimModeName() public {
         MockReputationRegistry reg = new MockReputationRegistry();
         vm.prank(owner);
@@ -5882,7 +5951,7 @@ contract TaskMarketTest is DiamondTestHelper {
     ///      InsufficientGasForFeedback. The window depends on how much gas the call spends before it
     ///      reaches the guard, so it is found rather than hardcoded. State is rolled back each step.
     function _guardFiresForSomeGasLimit(address target, bytes memory data) internal returns (bool fired) {
-        for (uint256 g = 300_000; g <= 1_500_000 && !fired; g += 25_000) {
+        for (uint256 g = 300_000; g <= 3_500_000 && !fired; g += 25_000) {
             uint256 snap = vm.snapshotState();
             (bool ok, bytes memory ret) = target.call{ gas: g }(data);
             if (!ok && ret.length >= 4 && bytes4(ret) == ITMPCore.InsufficientGasForFeedback.selector) fired = true;
@@ -5982,14 +6051,43 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(hook.onCompleteCalls(), 1);
     }
 
-    function test_RefundExpired_HookStillSwallowsWithLowGas() public {
+    function test_RevertWhen_RefundExpired_HookGasBelowStipend() public {
         MockTaskHook hook = new MockTaskHook();
         bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
         vm.warp(block.timestamp + DURATION + 1);
 
-        // onExpire must never block fund recovery: no stipend guard, so a tight limit still refunds.
-        market.refundExpired{ gas: 600_000 }(taskId, 0);
+        bytes memory data = abi.encodeCall(market.refundExpired, (taskId, 0));
+        assertTrue(_revertsWith(address(market), data, ITMPCore.InsufficientGasForHook.selector, 300_000, 2_000_000));
+        assertEq(hook.onExpireCalls(), 0);
+    }
+
+    function test_RefundExpired_HookRunsWithEnoughGas() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+        vm.warp(block.timestamp + DURATION + 1);
+
+        market.refundExpired{ gas: 3_000_000 }(taskId, 0);
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+        assertEq(hook.onExpireCalls(), 1);
+    }
+
+    function test_RevertWhen_CancelTask_HookGasBelowStipend() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+
+        bytes memory inner = abi.encodeCall(market.cancelTask, (taskId, 0));
+        bytes memory data = abi.encodeCall(forwarder.relay, (address(market), requester, 0, inner));
+        assertTrue(_revertsWith(address(forwarder), data, ITMPCore.InsufficientGasForHook.selector, 300_000, 2_000_000));
+        assertEq(hook.onCancelCalls(), 0);
+    }
+
+    function test_CancelTask_HookRunsWithEnoughGas() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _createTaskWithHook(requester, REWARD, DURATION, market.BOUNTY(), address(hook));
+
+        forwarder.relay{ gas: 3_000_000 }(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+        assertEq(hook.onCancelCalls(), 1);
     }
 
     /// @dev True when some gas limit in [from, to] makes `target.data` revert with `selector`.

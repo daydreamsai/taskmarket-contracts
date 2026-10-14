@@ -53,6 +53,21 @@ library FacetSelectors {
     function adminFacetSelectors() internal pure returns (bytes4[] memory s) {
         // initialize is NOT included -- it is called once via the Diamond constructor's
         // _init delegatecall, never added as a routable selector.
+        bytes4[] memory base = adminFacetSelectorsThroughRev023();
+        s = new bytes4[](base.length + 2);
+        for (uint256 i; i < base.length; ++i) {
+            s[i] = base[i];
+        }
+        // rev024: the per-chain feedback gas floor. Kept out of adminFacetSelectorsThroughRev023
+        // so the rev017 and rev020 step scripts still cut exactly the set they cut on-chain.
+        s[base.length] = AdminFacet.minFeedbackGas.selector;
+        s[base.length + 1] = AdminFacet.setMinFeedbackGas.selector;
+    }
+
+    /// @dev The AdminFacet selector set as it stood from rev017 to rev023. Historical step
+    ///      scripts (rev017, rev020) and Rev024Upgrade's Replace use this; deploys use
+    ///      adminFacetSelectors().
+    function adminFacetSelectorsThroughRev023() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](19);
         s[0] = AdminFacet.paused.selector;
         s[1] = AdminFacet.pause.selector;

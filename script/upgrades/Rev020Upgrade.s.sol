@@ -53,8 +53,9 @@ contract Rev020Upgrade is Script {
         address adminFacet = address(new AdminFacet());
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] =
-            IDiamondCut.FacetCut(adminFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.adminFacetSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            adminFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.adminFacetSelectorsThroughRev023()
+        );
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         AdminFacet(diamond).setDiamondVersion(TARGET_VERSION);

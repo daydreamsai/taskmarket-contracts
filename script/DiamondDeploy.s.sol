@@ -13,6 +13,7 @@ import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
+import { DeployTarget } from "./lib/DeployTarget.sol";
 import { FacetSelectors } from "./lib/FacetSelectors.sol";
 
 /// @title DiamondDeploy — deploy TaskMarket Diamond proxy + all facets
@@ -24,6 +25,9 @@ import { FacetSelectors } from "./lib/FacetSelectors.sol";
 /// @dev Optional env vars:
 ///      FORGE_PGTR_FORWARDER              — if set, registers the PGTR forwarder via addForwarder
 ///      FORGE_ERC8004_REPUTATION_REGISTRY — if set, registers the reputation registry via setReputationRegistry
+///      FORGE_MIN_FEEDBACK_GAS            — if set, the feedback gas floor passed to setMinFeedbackGas;
+///                                          unset leaves the 450,000 default (script/tempo.sh
+///                                          requires FORGE_MIN_FEEDBACK_GAS_TEMPO_* for Tempo)
 contract DiamondDeploy is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -86,6 +90,12 @@ contract DiamondDeploy is Script {
         address reputationRegistry = vm.envOr("FORGE_ERC8004_REPUTATION_REGISTRY", address(0));
         if (reputationRegistry != address(0)) {
             AdminFacet(address(diamond)).setReputationRegistry(reputationRegistry);
+        }
+
+        // rev024: per-chain floor on the gas left before a swallowed giveFeedback call.
+        uint256 feedbackGasFloor = vm.envOr("FORGE_MIN_FEEDBACK_GAS", uint256(0));
+        if (feedbackGasFloor != 0) {
+            AdminFacet(address(diamond)).setMinFeedbackGas(feedbackGasFloor);
         }
 
         vm.stopBroadcast();

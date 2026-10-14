@@ -202,6 +202,28 @@ contract AdminFacet is Initializable {
     }
 
     // -------------------------------------------------------------------------
+    // Feedback gas floor (Rev024)
+    // -------------------------------------------------------------------------
+
+    /// @notice Return the gas that must remain before a swallowed ERC-8004 giveFeedback call.
+    ///         Returns the compiled default (450,000) when the value has never been set.
+    function minFeedbackGas() external view returns (uint256) {
+        return LibTaskMarket._minFeedbackGas(LibAppStorage.appStorage());
+    }
+
+    /// @notice Set this chain's feedback gas floor (owner only). Must be between
+    ///         LibTaskMarket.MIN_FEEDBACK_GAS and LibTaskMarket.MAX_FEEDBACK_GAS: lower would
+    ///         reopen the silent-failure window the floor closes, higher could make settlement
+    ///         unreachable under a chain's transaction gas cap.
+    function setMinFeedbackGas(uint256 newMinimum) external onlyOwner {
+        if (newMinimum < LibTaskMarket.MIN_FEEDBACK_GAS || newMinimum > LibTaskMarket.MAX_FEEDBACK_GAS) {
+            revert ITMPCore.InvalidMinFeedbackGas();
+        }
+        LibAppStorage.appStorage().minFeedbackGas = newMinimum;
+        emit ITMPCore.MinFeedbackGasUpdated(newMinimum);
+    }
+
+    // -------------------------------------------------------------------------
     // Diamond version (Rev011)
     // -------------------------------------------------------------------------
 

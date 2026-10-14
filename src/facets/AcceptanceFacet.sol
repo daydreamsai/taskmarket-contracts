@@ -311,6 +311,7 @@ contract AcceptanceFacet {
         if (totalFee > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
         }
+        _refundSplitRemainder(task.reward, requester, awards, s);
 
         emit ITMPCore.RequesterReputation(
             taskId,
@@ -334,6 +335,24 @@ contract AcceptanceFacet {
         LibTaskMarket._dispatchAfterHooksFullGas(
             hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
         );
+    }
+
+    /// @dev Each award is rounded down from its share, so the awards can sum to a few base units less
+    ///      than the reward; that remainder belongs to the requester, not the pooled balance. Its own
+    ///      frame keeps _payMultiAwards under the --ir-minimum stack limit.
+    function _refundSplitRemainder(
+        uint256 reward,
+        address requester,
+        ITMPCore.Award[] memory awards,
+        AppStorage storage s
+    ) private {
+        uint256 totalAwarded = 0;
+        for (uint256 i; i < awards.length; ++i) {
+            totalAwarded += awards[i].amount;
+        }
+        if (reward > totalAwarded) {
+            if (!s.usdcToken.transfer(requester, reward - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
+        }
     }
 
     function _resolveDeliverables(

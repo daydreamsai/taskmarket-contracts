@@ -143,6 +143,22 @@ Ownership lives in `LibDiamond.DiamondStorage` (separate from `AppStorage`). Two
 
 `LibDiamond.enforceIsContractOwner()` is called by `DiamondCutFacet` and `AdminFacet`.
 
+The full list of owner powers and the current custody of the owner key are in `SECURITY.md`
+under Off-Chain Trust Boundaries.
+
+---
+
+## Trust Boundaries
+
+The contracts rely on three off-chain parties; `SECURITY.md` states each in full.
+
+- **Relayer:** `TaskMarketForwarder.relay` accepts calls only from its immutable
+  `authorizedRelayer` and verifies no user signature. Users are authenticated off-chain by paying
+  for the request (ERC-8194 payment-gated relay); the diamond trusts the actor the relayer names.
+- **Operator backend:** Tempo receive-policy and token blacklist / transfer-policy checks run
+  off-chain before escrow and payout. On chain, a refused transfer reverts.
+- **Owner:** controls upgrades, pause, forwarders, fees, hooks and gas minimums.
+
 ---
 
 ## ReentrancyGuard

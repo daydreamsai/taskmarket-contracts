@@ -73,10 +73,10 @@ contract Rev017Upgrade is Script {
         address acceptFacet = address(new AcceptanceFacet());
         address evalFacet = address(new EvaluatorFacet());
 
-        // adminFacetSelectors() is the post-rev017 set (nineteen entries, the last two being the
+        // adminFacetSelectorsThroughRev023() is the post-rev017 set (nineteen entries, the last two being the
         // new minAppealWindowSecs getter/setter). Split it: the first seventeen exist on-chain
         // already and must be Replaced, the last two do not and must be Added.
-        bytes4[] memory allAdminSelectors = FacetSelectors.adminFacetSelectors();
+        bytes4[] memory allAdminSelectors = FacetSelectors.adminFacetSelectorsThroughRev023();
         uint256 addedCount = 2;
         bytes4[] memory existingAdminSelectors = new bytes4[](allAdminSelectors.length - addedCount);
         for (uint256 i; i < existingAdminSelectors.length; ++i) {

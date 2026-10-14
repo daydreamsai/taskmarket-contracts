@@ -6,12 +6,13 @@ import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
-import { TMP_BOUNTY, TMP_BENCHMARK } from "../interfaces/ITMPModes.sol";
+import { TMP_BOUNTY, TMP_BENCHMARK, TMP_CLAIM } from "../interfaces/ITMPModes.sol";
 
 /// @title EvaluatorFacet — ERC-8195 evaluator flow: assign, evaluate, appeal, finalize, dispute
 contract EvaluatorFacet {
     bytes4 private constant BOUNTY = TMP_BOUNTY;
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
+    bytes4 private constant CLAIM = TMP_CLAIM;
 
     /// @notice Assign an evaluator to an open task that was created without one.
     ///         Only the requester may call this, only while the task is Open.
@@ -119,7 +120,7 @@ contract EvaluatorFacet {
             }
         }
 
-        uint256 evalFee = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
+        uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         uint256 stakeReturn = evalCfg.evaluatorStake;
         evalCfg.evaluatorStake = 0;
         uint256 appealDeadline = block.timestamp + evalCfg.appealWindow;
@@ -167,11 +168,16 @@ contract EvaluatorFacet {
         if (!authorized) revert ITMPCore.NotWorker();
         if (task.status != ITMPCore.TaskStatus.Appealing) revert ITMPCore.NotInAppealingState();
         if (block.timestamp >= s.phaseDeadline[taskId]) revert ITMPCore.AppealWindowClosed();
+        // Only the dispute resolver can settle a Disputed task, and nothing can call
+        // resolveDispute as the zero address. Without one, an appeal would freeze the verdict
+        // until expiry, when refundExpired pays the requester and the worker loses any award.
+        // Refusing the appeal leaves the verdict to finalize when the appeal window closes.
+        address dr = s.taskEvaluatorConfigs[taskId].disputeResolver;
+        if (dr == address(0)) revert ITMPCore.NoDisputeResolver();
 
         task.status = ITMPCore.TaskStatus.Disputed;
         emit ITMPEvaluator.TaskAppealed(taskId, worker);
-        address dr = s.taskEvaluatorConfigs[taskId].disputeResolver;
-        if (dr != address(0)) emit ITMPEvaluator.TaskDisputed(taskId, dr);
+        emit ITMPEvaluator.TaskDisputed(taskId, dr);
 
         LibTaskMarket._nonReentrantAfter(s);
     }
@@ -190,34 +196,69 @@ contract EvaluatorFacet {
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
         if (!v.issued) revert ITMPCore.NoVerdictIssued();
 
-        ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
         if (v.verdictType == ITMPCore.VerdictType.REJECT) {
-            // REJECT refunds the (post-evaluator-fee) remainder to the requester in full,
-            // so the task is done -- not reopened. Terminal status here mirrors
-            // cancelTask's pattern (refund + Cancelled), and dispatches the same
-            // _onCancelHooks release so any reward-hook reservation is cleaned up
-            // rather than left dangling. Previously this set status back to Open,
-            // which falsely advertised the task as re-claimable despite having no
-            // escrow left behind it -- a worker who claimed it would find
-            // acceptSubmission reverting on the empty balance at completion time.
-            uint256 evalFee = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
-            uint256 refund = task.reward - evalFee;
-            address requesterAddr = task.requester;
-            task.status = ITMPCore.TaskStatus.Cancelled;
-            task.worker = address(0);
-            task.deliverable = bytes32(0);
-            evalCfg.evaluator = address(0);
-            evalCfg.evaluationWindow = 0;
-            evalCfg.appealWindow = 0;
-            if (refund > 0) {
-                if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
-            }
-            emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
-            LibTaskMarket._onCancelHooks(taskId, s);
+            _finalizeReject(taskId, task, s);
         } else {
             _payAwards(taskId, task, v, s);
         }
         LibTaskMarket._nonReentrantAfter(s);
+    }
+
+    /// @dev REJECT refunds the (post-evaluator-fee) remainder to the requester in full, so the task
+    ///      is done -- not reopened. Terminal status here mirrors cancelTask's pattern (refund +
+    ///      Cancelled), and dispatches the same _onCancelHooks release so any reward-hook reservation
+    ///      is cleaned up rather than left dangling. Reopening would advertise the task as
+    ///      re-claimable with no escrow left behind it.
+    function _finalizeReject(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
+        ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
+        uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
+        uint256 refund = task.reward - evalFee;
+        address requesterAddr = task.requester;
+        address claimant = task.worker;
+        task.status = ITMPCore.TaskStatus.Cancelled;
+        task.worker = address(0);
+        task.deliverable = bytes32(0);
+        evalCfg.evaluator = address(0);
+        evalCfg.evaluationWindow = 0;
+        evalCfg.appealWindow = 0;
+        if (refund > 0) {
+            if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
+        }
+        _forfeitClaimStake(taskId, task, claimant, s);
+        emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
+        LibTaskMarket._onCancelHooks(taskId, s);
+    }
+
+    /// @dev Settles a Claim worker's stake when a verdict or a dispute resolution ends the task.
+    ///      Award recipients are pinned to task.worker for Claim, so task.worker is the claimant.
+    ///      A worker who receives an award gets the stake back, as acceptSubmission does; a worker
+    ///      the evaluator or resolver awarded nothing forfeits it. Auction tasks reuse stakeAmount
+    ///      for the accepted price, which is not a stake.
+    function _settleClaimStake(bytes32 taskId, ITMPCore.Task storage task, bool awarded, AppStorage storage s) private {
+        if (task.mode != CLAIM || task.stakeAmount == 0) return;
+        if (!awarded) {
+            _forfeitClaimStake(taskId, task, task.worker, s);
+            return;
+        }
+        uint256 stake = task.stakeAmount;
+        task.stakeAmount = 0;
+        if (!s.usdcToken.transfer(task.worker, stake)) revert ITMPCore.StakeReturnFailed();
+        emit ITMPCore.StakeReturned(taskId, task.worker, stake);
+    }
+
+    /// @dev The stake exists to make submitting work that will not pass costly, so work an
+    ///      evaluator rejects forfeits it. It goes to the requester, whose task the rejected work
+    ///      held up. forfeitAndReopen, the missed-deadline forfeit, still pays the fee recipient.
+    function _forfeitClaimStake(bytes32 taskId, ITMPCore.Task storage task, address claimant, AppStorage storage s)
+        private
+    {
+        if (task.mode != CLAIM) return;
+        uint256 stake = task.stakeAmount;
+        if (stake == 0) return;
+        task.stakeAmount = 0;
+        s.stakeForfeit[taskId] = stake;
+        if (!s.usdcToken.transfer(task.requester, stake)) revert ITMPCore.ForfeitTransferFailed();
+        emit ITMPCore.StakeForfeited(taskId, claimant, stake);
     }
 
     /// @notice Resolve a disputed task.
@@ -325,7 +366,8 @@ contract EvaluatorFacet {
             }
         }
 
-        uint256 remaining = task.reward - (task.reward * s.taskEvaluatorConfigs[taskId].evaluatorFeeBps) / 10000;
+        uint256 remaining =
+            task.reward - LibTaskMarket._evaluatorFee(task, s.taskEvaluatorConfigs[taskId].evaluatorFeeBps);
         ITMPCore.Verdict memory verdictMem = s.taskVerdicts[taskId];
 
         task.status = ITMPCore.TaskStatus.Accepted;
@@ -348,6 +390,7 @@ contract EvaluatorFacet {
 
         LibTaskMarket._checkCompleteHooks(taskId, s, verdictMem);
         _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
+        _settleClaimStake(taskId, task, totalAwarded > 0, s);
         LibTaskMarket._onCompleteHooks(taskId, s, verdictMem);
     }
 

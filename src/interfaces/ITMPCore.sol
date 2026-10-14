@@ -85,6 +85,8 @@ interface ITMPCore is IERC165 {
     error DisputeResolverCannotBeRequester();
     error AppealWindowTooShort();
     error InvalidMinAppealWindow();
+    error InvalidMinFeedbackGas();
+    error NoDisputeResolver();
 
     // Auction
     error BidDeadlinePassed();
@@ -360,6 +362,10 @@ interface ITMPCore is IERC165 {
     ///         parameter can never move silently -- an admin-settable minimum is also an
     ///         admin-defeatable one, and this is the record of anyone exercising that.
     event MinAppealWindowUpdated(uint32 minAppealWindowSecs);
+
+    /// @notice Rev024: the per-chain gas floor checked before a swallowed giveFeedback call
+    ///         changed.
+    event MinFeedbackGasUpdated(uint256 minFeedbackGas);
 
     /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy
     ///         hook cannot block fund recovery; this event makes failures observable on-chain.

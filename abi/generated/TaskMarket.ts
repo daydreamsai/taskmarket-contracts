@@ -362,6 +362,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "minFeedbackGas",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "owner",
     "inputs": [],
     "outputs": [
@@ -486,6 +499,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "setMinFeedbackGas",
+    "inputs": [
+      {
+        "name": "newMinimum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setReputationRegistry",
     "inputs": [
       {
@@ -597,6 +623,19 @@ export const TaskMarketABI = [
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MinFeedbackGasUpdated",
+    "inputs": [
+      {
+        "name": "minFeedbackGas",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -716,6 +755,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidMinAppealWindow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidMinFeedbackGas",
     "inputs": []
   },
   {
@@ -1246,6 +1290,31 @@ export const TaskMarketABI = [
       },
       {
         "name": "stakeAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EvaluatorStakeRefunded",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2273,6 +2342,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ExcessRefundFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LengthMismatch",
     "inputs": []
   },
@@ -2599,12 +2673,12 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "ExcessRefundFailed",
+    "name": "InvalidAwardRecipient",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InvalidAwardRecipient",
+    "name": "NoDisputeResolver",
     "inputs": []
   },
   {

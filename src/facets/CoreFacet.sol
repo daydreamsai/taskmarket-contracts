@@ -394,6 +394,7 @@ contract CoreFacet {
         uint256 refundAmount = task.reward;
         address requesterAddr = task.requester;
         if (!s.usdcToken.transfer(requesterAddr, refundAmount)) revert ITMPCore.RefundFailed();
+        _refundEvaluatorStake(taskId, requesterAddr, s);
 
         // Emit requester reputation signal when cancelling after all submissions were rejected.
         // Clean cancellations (no submissions ever) are reputation-neutral and do not emit.
@@ -567,6 +568,19 @@ contract CoreFacet {
         }
     }
 
+    /// @dev The evaluator stake is pulled from the requester when the evaluator is assigned, and only
+    ///      evaluate(), evaluatorTimeout() and refundExpired() otherwise release it. A task can only be
+    ///      cancelled while Open, before any evaluator has had work to do, so the stake goes back to
+    ///      the requester who posted it instead of staying in the pooled balance owed to no task.
+    function _refundEvaluatorStake(bytes32 taskId, address requesterAddr, AppStorage storage s) private {
+        ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
+        uint256 stake = evalCfg.evaluatorStake;
+        if (stake == 0) return;
+        evalCfg.evaluatorStake = 0;
+        if (!s.usdcToken.transfer(requesterAddr, stake)) revert ITMPCore.RefundFailed();
+        emit ITMPEvaluator.EvaluatorStakeRefunded(taskId, requesterAddr, stake);
+    }
+
     function _buildAndCheckHooks(bytes32 taskId, ITMPCore.HookConfig calldata hookConfig, AppStorage storage s)
         private
     {
@@ -673,7 +687,7 @@ contract CoreFacet {
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
 
         // If evaluate() already ran (status Appealing/Disputed), it paid out
-        // evalFee = task.reward * evaluatorFeeBps / 10000 to the evaluator immediately.
+        // LibTaskMarket._evaluatorFee to the evaluator immediately.
         // That amount is no longer part of this task's outstanding liability, so it
         // must not be refunded again here on top of the full original reward.
         uint256 evalFeeAlreadyPaid = 0;
@@ -681,7 +695,7 @@ contract CoreFacet {
             (task.status == ITMPCore.TaskStatus.Appealing || task.status == ITMPCore.TaskStatus.Disputed)
                 && evalCfg.evaluatorFeeBps > 0
         ) {
-            evalFeeAlreadyPaid = (task.reward * evalCfg.evaluatorFeeBps) / 10000;
+            evalFeeAlreadyPaid = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         }
 
         task.status = ITMPCore.TaskStatus.Expired;

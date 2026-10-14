@@ -2,6 +2,16 @@
 
 This document describes the security practices used in the TaskMarket smart contracts.
 
+## Audit Status
+
+These contracts have not had a traditional audit by a security firm. They had one open security
+review, run as a Taskmarket bounty task
+([task](https://taskmarket.dev/tasks/0x779ac4c1bfa18e2fc2475f4e0243d30e753ad3759df46ff00c7ee2e73a7f03ff)):
+opened 2026-07-13, closed 2026-07-20, settled 2026-07-23, 20 USDC reward, 311 submissions, with
+findings rated and paid to multiple reviewers. Its scope was the diamond facets, AppStorage,
+access control, escrow and payout, the reward vault and hooks, reviewed against this repository
+at revision rev010. Later revisions (rev011 onward) have not had an independent review.
+
 ---
 
 ## Automated Analysis
@@ -89,7 +99,7 @@ defaults use lazy-init in the facet function body.
 
 ### Access Control
 
-All mutating functions require a call via a trusted PGTR forwarder (ERC-8194). The forwarder verifies x402 payment receipts and extracts the authenticated actor via `pgtrSender()`. `resolveDispute` additionally accepts direct calls from the registered dispute resolver address.
+All mutating functions require a call via a trusted PGTR forwarder (ERC-8194). The forwarder accepts calls only from its `authorizedRelayer` and exposes the actor the relayer named via `pgtrSender()`; it does not verify a user signature or payment proof itself (see Off-Chain Trust Boundaries). `resolveDispute` additionally accepts direct calls from the registered dispute resolver address.
 
 Owner-only functions (fee configuration, forwarder registration, `diamondCut`, pause/unpause) are restricted to the contract owner via `LibDiamond.enforceIsContractOwner()`. The two-step pattern requires the incoming owner to call `acceptOwnership()` before the transfer completes, preventing irrecoverable ownership loss from a mistyped address.
 
@@ -141,8 +151,106 @@ No funds are permanently stranded because `refundExpired` does not call `check*`
 
 ---
 
+## Off-Chain Trust Boundaries
+
+Some guarantees depend on off-chain components run by the operator. They are listed here so
+reviewers do not assume the contracts enforce them.
+
+### Forwarder and relayer (ERC-8194 payment-gated relay)
+
+`TaskMarketForwarder.relay` reverts unless `msg.sender == authorizedRelayer` (immutable, set at
+construction). It checks receipt expiry (`validBefore`) and replay (`consumedReceipts`, keyed on
+chain id, actor, amount, nonce, target and selector), pulls `paymentAmount` USDC from the relayer
+into the diamond, and records `pgtrSenderAddr` as the actor the diamond reads via `pgtrSender()`.
+
+It verifies no user signature. Users are authenticated off-chain: the relayer accepts a request
+only after the user has paid for it (an x402 payment from the user's wallet), and it then relays
+the call naming that wallet as the actor. The contracts therefore trust the relayer to name the
+actor correctly and to relay only paid requests. A compromised relayer key can act as any user
+within the task flow, bounded by what the diamond allows that role to do and by the USDC the
+relayer itself holds; it cannot call owner-only functions. Recovery is to deploy a new forwarder
+and swap it with `addForwarder` / `removeForwarder`.
+
+### Token policy pre-checks
+
+On Tempo, TIP-20 receive policies and token blacklist / transfer-policy restrictions are checked
+off-chain in the operator's backend before a task is escrowed and before a payout is sent. The
+contracts do not perform these checks. Contract transfers keep revert semantics: a transfer the
+token refuses reverts the whole call (see Push Payment Failure), and funds stay escrowed until it
+can succeed.
+
+### Owner key
+
+The owner (`LibDiamond.contractOwner`) can:
+
+- upgrade any logic, add or remove any selector and run arbitrary init code via `diamondCut`;
+  this is equivalent to full control of escrowed funds
+- `pause` / `unpause` all state-mutating operations
+- `addForwarder` / `removeForwarder`, which decides which relayer may act for users
+- `setDefaultFeeBps` and `setFeeRecipient`
+- `setReputationRegistry` and `setDefaultHooks`
+- `setMinAppealWindowSecs` and `setMinFeedbackGas`
+- `setDiamondVersion`
+- `transferOwnership` (two-step, completed by `acceptOwnership`)
+
+Custody: the diamond owner is an externally owned account (EOA) on each chain. Whoever controls
+the owner key can exercise every power listed above.
+
+The forwarder has no owner: its `authorizedRelayer` is fixed at deployment and can only be
+replaced by deploying a new forwarder. The relayer key is likewise an EOA. Protection of both
+keys is handled out of band and is not specified here.
+
+### Hook gas
+
+Hooks are external contracts. Each hook call gets a fixed stipend (`HOOK_GAS_STIPEND`, 1,000,000
+gas) and is only made when enough gas remains to forward the full stipend, so a caller
+cannot starve a hook by sending a short gas limit; reputation feedback calls are guarded by the
+gas floor introduced in rev023 (450,000) and made owner-set per chain as `minFeedbackGas` in rev024.
+
+---
+
+## CI and Reproducing Checks
+
+This package is mirrored from a private repository. CI workflow files are not mirrored and CI
+runs are not publicly viewable, so CI claims in this document cannot be checked from outside.
+The public mirror, [taskmarket-contracts](https://github.com/daydreamsai/taskmarket-contracts),
+holds the sources and tests, so every check reproduces locally with Foundry:
+
+```bash
+forge build
+forge test -j 1            # serial: the upgrade scripts share process-wide env
+forge snapshot --check -j 1
+```
+
+---
+
 ## Reporting a Vulnerability
 
-**Critical or high severity** — use [GitHub private vulnerability reporting](https://github.com/daydreamsai/taskmarket/security/advisories/new). This creates a private advisory visible only to maintainers and allows coordinated disclosure before a fix is deployed.
+### Scope
 
-**Low severity or general findings** — open a public [GitHub issue](https://github.com/daydreamsai/taskmarket/issues). Transparency is welcome for findings that do not put user funds at immediate risk.
+In scope: the Solidity sources in this package (`src/`, including hooks) and the deployed
+diamonds and forwarders built from them.
+
+Out of scope: the operator's backend, relayer and web app (report those to the same channel,
+but they are not covered by this policy), third-party tokens and registries the contracts call,
+findings that require the owner key to act maliciously, and gas or style findings with no
+security impact.
+
+### How to report
+
+Report privately through a [GitHub private security advisory](https://github.com/daydreamsai/taskmarket-contracts/security/advisories/new)
+on this repository. Do not open a public issue for anything that could put funds at risk.
+You can also reach us on the Taskmarket Discord. Low-severity findings with no fund risk may be
+opened as public issues.
+
+Please include the affected contract and function, the deployment (chain and address) if any,
+and a proof of concept (a Foundry test is ideal). We ask that you do not disclose publicly until a
+fix is deployed or we agree a date.
+
+We respond on a best-effort basis and do not commit to fixed response times.
+
+### Bug bounty
+
+There is a bug bounty, handled per finding. Contact us through either channel above; we then
+list a Taskmarket task for you to submit the finding to, and the reward is set on that task.
+There is no fixed reward table.

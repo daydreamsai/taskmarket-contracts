@@ -46,7 +46,7 @@ contract Rev020UpgradeTest is Test, DiamondTestHelper {
 
         // Checked exhaustively rather than by sample: the whole risk of a pure Replace is one
         // entry going missing from the list.
-        bytes4[] memory selectors = FacetSelectors.adminFacetSelectors();
+        bytes4[] memory selectors = FacetSelectors.adminFacetSelectorsThroughRev023();
         for (uint256 i; i < selectors.length; i++) {
             assertEq(
                 IDiamondLoupe(diamond).facetAddress(selectors[i]),

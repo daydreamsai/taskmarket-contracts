@@ -54,6 +54,13 @@ struct AppStorage {
     // substitutes the default, so the guard is live from the moment the facet is cut in and
     // does not depend on anyone remembering to call the setter.
     uint32 minAppealWindowSecs;
+    // Rev024: per-chain floor on the gas that must remain before a swallowed ERC-8004
+    // giveFeedback call. The registry's cost differs by chain (about 220k on Base, up to about
+    // 1.8M on Tempo), so one compiled-in constant is either too low for one chain or changes
+    // behaviour on another. Appended at the end per the storage-layout rule. Zero means "never
+    // set": LibTaskMarket._minFeedbackGas substitutes MIN_FEEDBACK_GAS, so a diamond that is
+    // never configured keeps the rev023 floor of 450,000.
+    uint256 minFeedbackGas;
 }
 
 library LibAppStorage {

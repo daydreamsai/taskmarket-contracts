@@ -163,6 +163,9 @@ interface ITMPDiamond {
     // Rev017: admin-settable floor on assignEvaluator's appealWindowSecs.
     function minAppealWindowSecs() external view returns (uint32);
     function setMinAppealWindowSecs(uint32 newMinimum) external;
+    // Rev024: per-chain floor on the gas left before a swallowed giveFeedback call.
+    function minFeedbackGas() external view returns (uint256);
+    function setMinFeedbackGas(uint256 newMinimum) external;
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
 
     // -------------------------------------------------------------------------

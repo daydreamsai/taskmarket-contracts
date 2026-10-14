@@ -49,6 +49,7 @@ case "$ACTION" in
     FEE_RECIPIENT="$(need FORGE_FEE_RECIPIENT_ADDRESS)"
     FEE_BPS="$(need FORGE_DEFAULT_PLATFORM_FEE_BPS)"
     REGISTRY="$(need FORGE_ERC8004_REPUTATION_REGISTRY)"
+    FEEDBACK_GAS="$(need FORGE_MIN_FEEDBACK_GAS)"
     ;;
   deploy-forwarder)
     USDC="$(need FORGE_USDC_TOKEN_ADDRESS)"
@@ -57,15 +58,16 @@ case "$ACTION" in
     ;;
   upgrade)
     DIAMOND="$(need FORGE_DIAMOND_ADDRESS)"
+    FEEDBACK_GAS="$(need FORGE_MIN_FEEDBACK_GAS)"
     ;;
 esac
 for name in FORGE_DEV_PRIVATE_KEY FORGE_FEE_TOKEN; do
   v="${name}_${SUFFIX}"; [ -n "${!v:-}" ] || MISSING+=("$v")
 done
 case "$ACTION" in
-  deploy) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_FEE_RECIPIENT_ADDRESS FORGE_DEFAULT_PLATFORM_FEE_BPS) ;;
+  deploy) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_FEE_RECIPIENT_ADDRESS FORGE_DEFAULT_PLATFORM_FEE_BPS FORGE_MIN_FEEDBACK_GAS) ;;
   deploy-forwarder) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SERVER_ADDRESS) ;;
-  upgrade) CHECK=(FORGE_DIAMOND_ADDRESS) ;;
+  upgrade) CHECK=(FORGE_DIAMOND_ADDRESS FORGE_MIN_FEEDBACK_GAS) ;;
 esac
 for name in "${CHECK[@]}"; do
   v="${name}_${SUFFIX}"; [ -n "${!v:-}" ] || MISSING+=("$v")
@@ -89,6 +91,7 @@ case "$ACTION" in
     echo "  Fee recipient:      $FEE_RECIPIENT"
     echo "  Platform fee bps:   $FEE_BPS"
     echo "  Reputation registry: ${REGISTRY:-<unset: none registered>}"
+    echo "  Feedback gas floor: $FEEDBACK_GAS"
     ;;
   deploy-forwarder)
     echo "  Settlement token:   $USDC"
@@ -98,6 +101,7 @@ case "$ACTION" in
   upgrade)
     echo "  Diamond:            $DIAMOND"
     echo "  Step:               ${REV:-all pending}"
+    echo "  Feedback gas floor: $FEEDBACK_GAS"
     ;;
 esac
 [ "$DRY_RUN" = "1" ] && echo "  Mode:               DRY RUN (no broadcast)"
@@ -107,6 +111,7 @@ export FOUNDRY_PROFILE=tempo
 # Overwrite every unsuffixed name the scripts read so a Base value in .env cannot leak through.
 export FORGE_DEV_PRIVATE_KEY="$KEY"
 export FORGE_FEE_TOKEN="$FEE_TOKEN"
+if [ -n "${FEEDBACK_GAS:-}" ]; then export FORGE_MIN_FEEDBACK_GAS="$FEEDBACK_GAS"; else unset FORGE_MIN_FEEDBACK_GAS; fi
 unset USDC_TOKEN_ADDRESS CONTRACT_ADDRESS FORWARDER_ADDRESS
 
 BROADCAST=(--broadcast --slow --verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)

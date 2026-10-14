@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { AppStorage } from "./LibAppStorage.sol";
+import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { IPGTRForwarder } from "../interfaces/IPGTRForwarder.sol";
+import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTaskMarket — shared internal helpers for TaskMarket facets
 /// @dev All helpers take AppStorage as an explicit parameter so they can be called
@@ -35,7 +36,14 @@ library LibTaskMarket {
     // Minimum gas that must remain when a swallowed ERC-8004 giveFeedback call is about to run.
     // The call sits in a try/catch, so eth_estimateGas would otherwise settle on a limit where it
     // runs out of gas unnoticed; giveFeedback itself needs about 220k.
+    // Rev024: this is the default and the lowest value AdminFacet.setMinFeedbackGas accepts;
+    // the effective floor is s.minFeedbackGas once the owner has set it (see _minFeedbackGas).
     uint256 internal constant MIN_FEEDBACK_GAS = 450_000;
+    // Rev024: highest floor setMinFeedbackGas accepts. Every settlement path that reaches a
+    // giveFeedback call needs at least this much gas left, so a floor near a chain's transaction
+    // gas cap would make acceptance unreachable; 5M is well above the worst measured registry
+    // cost (about 1.8M on Tempo) and well below any supported chain's cap.
+    uint256 internal constant MAX_FEEDBACK_GAS = 5_000_000;
 
     // Rev017: default floor for assignEvaluator's appealWindowSecs, used whenever
     // s.minAppealWindowSecs has never been set. Five minutes is sized for a worker that
@@ -151,6 +159,16 @@ library LibTaskMarket {
         emit ITMPEvaluator.EvaluatorAssigned(taskId, cfg.evaluator, cfg.evaluatorStake);
     }
 
+    /// @notice The evaluator fee on a task: basis points of what the task actually pays. An
+    ///         auction escrows its price cap in task.reward and settles at the accepted price,
+    ///         which selectLowestBidder and acceptAuction record in task.stakeAmount. evaluate()
+    ///         charges this and every later settlement deducts the same amount, so the base must
+    ///         be computed in one place.
+    function _evaluatorFee(ITMPCore.Task storage task, uint16 feeBps) internal view returns (uint256) {
+        uint256 base = task.mode == TMP_AUCTION ? task.stakeAmount : task.reward;
+        return (base * feeBps) / 10000;
+    }
+
     // -------------------------------------------------------------------------
     // Hook helpers — low-level
     // -------------------------------------------------------------------------
@@ -208,7 +226,9 @@ library LibTaskMarket {
         uint256 maxCopy = HOOK_MAX_RETURN_BYTES;
         uint256 gasStipend = HOOK_GAS_STIPEND;
         ret = new bytes(maxCopy);
-        assembly {
+        // Memory-safe: reads callData and writes only inside ret, which is allocated at maxCopy
+        // bytes while the copy is capped at maxCopy, then shortens ret's length in place.
+        assembly ("memory-safe") {
             ok := call(gasStipend, hook, 0, add(callData, 0x20), mload(callData), 0, 0)
             let copyLen := returndatasize()
             if gt(copyLen, maxCopy) { copyLen := maxCopy }
@@ -222,7 +242,8 @@ library LibTaskMarket {
         for (uint256 i; i < hooks.length; i++) {
             (bool ok, bytes memory ret) = _safeHookCall(hooks[i], callData);
             if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) {
-                assembly {
+                // Memory-safe: writes four bytes of scratch space and reverts.
+                assembly ("memory-safe") {
                     mstore(0x00, errSelector)
                     revert(0x00, 0x04)
                 }
@@ -241,9 +262,10 @@ library LibTaskMarket {
     /// @notice Calls on* on every hook like _dispatchAfterHooks, but reverts when too little gas
     ///         remains to give a hook its full stipend. A call forwards at most 63/64 of the gas
     ///         left, so on a tight limit a swallowed hook is silently handed less than the stipend
-    ///         and its payout or release is skipped. Used only where a caller can starve a
-    ///         settlement hook (onComplete, onForfeit); onCancel and onExpire keep the
-    ///         unconditional swallow because they must not block fund recovery.
+    ///         and its payout or release is skipped. Used for every settlement hook (onComplete,
+    ///         onForfeit, onCancel, onExpire). The guard never blocks cancel or expiry fund
+    ///         recovery outright: it only demands more gas (at most MAX_HOOKS stipends), which
+    ///         any caller can supply, so a relayed limit cannot drop a hook's release unnoticed.
     function _dispatchAfterHooksFullGas(address[] memory hooks, bytes memory callData) internal {
         for (uint256 i; i < hooks.length; i++) {
             if (gasleft() < (HOOK_GAS_STIPEND * 64) / 63 + HOOK_GAS_MARGIN) {
@@ -338,17 +360,27 @@ library LibTaskMarket {
 
     function _onCancelHooks(bytes32 taskId, AppStorage storage s) internal {
         address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onCancel, (taskId, _buildContext(taskId, s))));
+        _dispatchAfterHooksFullGas(hooks, abi.encodeCall(ITMPHook.onCancel, (taskId, _buildContext(taskId, s))));
     }
 
     function _onExpireHooks(bytes32 taskId, AppStorage storage s) internal {
         address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooks(hooks, abi.encodeCall(ITMPHook.onExpire, (taskId, _buildContext(taskId, s))));
+        _dispatchAfterHooksFullGas(hooks, abi.encodeCall(ITMPHook.onExpire, (taskId, _buildContext(taskId, s))));
     }
 
     /// @dev Reverts when too little gas is left for a reputation-registry call that failures
     ///      are swallowed around, so an under-funded limit cannot succeed with the call dropped.
+    ///      The floor is per chain: the owner-set s.minFeedbackGas, or MIN_FEEDBACK_GAS if unset.
     function _requireFeedbackGas() internal view {
-        if (gasleft() < MIN_FEEDBACK_GAS) revert ITMPCore.InsufficientGasForFeedback();
+        if (gasleft() < _minFeedbackGas(LibAppStorage.appStorage())) {
+            revert ITMPCore.InsufficientGasForFeedback();
+        }
+    }
+
+    /// @notice The effective feedback gas floor: the owner-configured value, or MIN_FEEDBACK_GAS
+    ///         when it has never been set (every diamond upgraded into rev024 reads zero here).
+    function _minFeedbackGas(AppStorage storage s) internal view returns (uint256) {
+        uint256 configured = s.minFeedbackGas;
+        return configured == 0 ? MIN_FEEDBACK_GAS : configured;
     }
 }

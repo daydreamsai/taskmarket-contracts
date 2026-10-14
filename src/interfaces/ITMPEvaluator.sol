@@ -32,6 +32,9 @@ interface ITMPEvaluator is IERC165 {
     /// @notice Emitted when an evaluator fails to evaluate within the window.
     event EvaluatorTimedOut(bytes32 indexed taskId, address indexed evaluator, uint256 forfeitedStake);
 
+    /// @notice Emitted when a cancelled task's evaluator stake goes back to the requester who posted it.
+    event EvaluatorStakeRefunded(bytes32 indexed taskId, address indexed requester, uint256 amount);
+
     // -------------------------------------------------------------------------
     // Functions
     // -------------------------------------------------------------------------
