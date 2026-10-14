@@ -460,7 +460,8 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
 
             if (!paid) {
                 try _s().vault.release(taskId, tokenReward) { } catch { }
-                try _s().epochBudget
+                try _s()
+                    .epochBudget
                     .release(state.requester, state.worker, state.usdBonusValue, state.consumedEpoch) { }
                     catch { }
                 return true;

@@ -6,7 +6,7 @@
 # exists inside one PR environment's private network.
 # --optimism: Base Sepolia is an OP-stack chain. Recent Anvil builds require the
 # execution-network family to be explicit when this chain ID is selected.
-FROM ghcr.io/foundry-rs/foundry:v1.7.1
+FROM ghcr.io/foundry-rs/foundry:v1.8.5
 
 EXPOSE 8545
 
