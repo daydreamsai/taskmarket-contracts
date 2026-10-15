@@ -127,7 +127,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     }
 
     function _rev025Selectors() internal pure returns (bytes4[] memory s) {
-        bytes4[] memory settlement = FacetSelectors.settlementFacetSelectors();
+        bytes4[] memory settlement = FacetSelectors.settlementFacetSelectorsAdded();
         s = new bytes4[](settlement.length + 2);
         s[0] = ITMPTerms.createTask.selector;
         s[1] = AdminFacet.setTermsBounds.selector;

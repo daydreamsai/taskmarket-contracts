@@ -994,24 +994,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "cancelTask",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requesterAgentId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "claimTask",
     "inputs": [
       {
@@ -1368,55 +1350,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "forfeitAndReopen",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "refundExpired",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requesterAgentId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "rejectSubmission",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "selectWorker",
     "inputs": [
       {
@@ -1557,69 +1490,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "EvaluatorStakeRefunded",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requester",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "EvaluatorTimedOut",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "evaluator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "forfeitedStake",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "HookCallFailed",
-    "inputs": [
-      {
-        "name": "hook",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "HookRegistered",
     "inputs": [
       {
@@ -1701,162 +1571,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "ReputationFeedbackFailed",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "agentId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RequesterReputation",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requester",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "event_",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "reward",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "submissionCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "selfAward",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "StakeForfeited",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "stakeAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "StakeReturned",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "stakeAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SubmissionRejected",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskCancelled",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requester",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "refundAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TaskClaimed",
     "inputs": [
       {
@@ -1873,43 +1587,6 @@ export const TaskMarketABI = [
       },
       {
         "name": "stakeAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskCompleted",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requester",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "workerPayment",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "platformFee",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1962,44 +1639,6 @@ export const TaskMarketABI = [
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskExpired",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "requester",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "refundAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskReopened",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -2221,27 +1860,7 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "FeeTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ForfeitTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HookCheckFundRejected",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientGasForFeedback",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientGasForHook",
     "inputs": []
   },
   {
@@ -2272,11 +1891,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidWorker",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoActiveSubmissions",
     "inputs": []
   },
   {
@@ -2331,16 +1945,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "RefundFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RequesterRefundFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardIncreaseNotFunded",
     "inputs": []
   },
@@ -2361,11 +1965,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "StakeReturnFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "StakeTransferFailed",
     "inputs": []
   },
@@ -2376,27 +1975,7 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "SubmissionsExist",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TaskAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TaskAlreadyRefunded",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "TaskDoesNotExist",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TaskIsCancelled",
     "inputs": []
   },
   {
@@ -2416,11 +1995,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "TaskNotYetExpired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "USDCRefundFailed",
     "inputs": []
   },
@@ -2432,11 +2006,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "WorkerNotSelected",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "WorkerPaymentFailed",
     "inputs": []
   },
   {
@@ -2646,6 +2215,81 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "HookCallFailed",
+    "inputs": [
+      {
+        "name": "hook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReputationFeedbackFailed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RequesterReputation",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "event_",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "reward",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "submissionCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "selfAward",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SelfAward",
     "inputs": [
       {
@@ -2665,6 +2309,68 @@ export const TaskMarketABI = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StakeReturned",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "stakeAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskCompleted",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "workerPayment",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "platformFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2696,6 +2402,21 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "FeeTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForFeedback",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForHook",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LengthMismatch",
     "inputs": []
   },
@@ -2716,6 +2437,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "StakeReturnFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SubmissionNotFound",
     "inputs": []
   },
@@ -2727,6 +2453,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "WinnerNotSelected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorkerPaymentFailed",
     "inputs": []
   },
   {
@@ -2918,6 +2649,56 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "EvaluatorTimedOut",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "evaluator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "forfeitedStake",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StakeForfeited",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "stakeAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TaskAppealed",
     "inputs": [
       {
@@ -2931,6 +2712,31 @@ export const TaskMarketABI = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskCancelled",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "refundAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -3022,6 +2828,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ForfeitTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAwardRecipient",
     "inputs": []
   },
@@ -3063,6 +2874,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "NotWorker",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefundFailed",
     "inputs": []
   },
   {
@@ -4070,6 +3886,37 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "cancelTask",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requesterAgentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "forfeitAndReopen",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getTaskTerms",
     "inputs": [
       {
@@ -4164,6 +4011,42 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "refundExpired",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requesterAgentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rejectSubmission",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "termsBounds",
     "inputs": [],
     "outputs": [
@@ -4189,5 +4072,122 @@ export const TaskMarketABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "EvaluatorStakeRefunded",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SubmissionRejected",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskExpired",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "refundAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskReopened",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "NoActiveSubmissions",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RequesterRefundFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SubmissionsExist",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskAlreadyAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskAlreadyRefunded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskIsCancelled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskNotYetExpired",
+    "inputs": []
   }
 ] as const;

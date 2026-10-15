@@ -12,9 +12,11 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
 /// @title Rev025Upgrade -- settlement terms
 /// @dev Appends taskTerms, taskClocks, taskAwarded and termsBounds to AppStorage. Replaces
-///      CoreFacet and AdminFacet with their rev024 selector lists, Adds the createTask overload
-///      taking TaskTerms to CoreFacet and setTermsBounds to AdminFacet, and Adds SettlementFacet
-///      (normalizeTerms, getTaskTerms, termsBounds). The legacy createTask records the default terms. Run normalizeTerms over
+///      CoreFacet (its rev024 selectors less the settlement calls) and AdminFacet with their rev024
+///      selector lists, Adds the createTask overload taking TaskTerms to CoreFacet and
+///      setTermsBounds to AdminFacet, Adds SettlementFacet (normalizeTerms, getTaskTerms,
+///      termsBounds) and Replaces rejectSubmission, forfeitAndReopen, cancelTask and refundExpired
+///      from CoreFacet onto SettlementFacet. The legacy createTask records the default terms. Run normalizeTerms over
 ///      every live task id after this step, before any other post-upgrade pass over task ids.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
@@ -47,17 +49,24 @@ contract Rev025Upgrade is Script {
         bytes4[] memory newAdmin = new bytes4[](1);
         newAdmin[0] = AdminFacet.setTermsBounds.selector;
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
-        cuts[0] = IDiamondCut.FacetCut(
-            coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectorsThroughRev024()
-        );
+        bytes4[] memory core = FacetSelectors.coreFacetSelectors();
+        bytes4[] memory keptCore = new bytes4[](core.length - 1);
+        for (uint256 i; i < keptCore.length; ++i) {
+            keptCore[i] = core[i];
+        }
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, keptCore);
         cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCore);
         cuts[2] = IDiamondCut.FacetCut(
             adminFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.adminFacetSelectorsThroughRev024()
         );
         cuts[3] = IDiamondCut.FacetCut(adminFacet, IDiamondCut.FacetCutAction.Add, newAdmin);
         cuts[4] = IDiamondCut.FacetCut(
-            settlementFacet, IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectors()
+            settlementFacet, IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectorsAdded()
+        );
+        cuts[5] = IDiamondCut.FacetCut(
+            settlementFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.settlementFacetSelectorsFromCore()
         );
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");

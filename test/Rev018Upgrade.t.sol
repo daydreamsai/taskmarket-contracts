@@ -118,7 +118,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
             "unchanged CoreFacet selectors must route to the same new facet"
         );
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(CoreFacet.rejectSubmission.selector),
+            IDiamondLoupe(diamond).facetAddress(ITMPDiamond.rejectSubmission.selector),
             newCoreFacet,
             "rejectSubmission must route to the new facet"
         );

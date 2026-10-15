@@ -120,10 +120,10 @@ contract Rev018Upgrade is Script {
         s[13] = CoreFacet.submitPitch.selector;
         s[14] = CoreFacet.submitProof.selector;
         s[15] = CoreFacet.submitWork.selector;
-        s[16] = CoreFacet.forfeitAndReopen.selector;
-        s[17] = CoreFacet.cancelTask.selector;
+        s[16] = ITMPDiamond.forfeitAndReopen.selector;
+        s[17] = ITMPDiamond.cancelTask.selector;
         s[18] = CoreFacet.updateTask.selector;
-        s[19] = CoreFacet.refundExpired.selector;
-        s[20] = CoreFacet.rejectSubmission.selector;
+        s[19] = ITMPDiamond.refundExpired.selector;
+        s[20] = ITMPDiamond.rejectSubmission.selector;
     }
 }

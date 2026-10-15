@@ -6,7 +6,7 @@ import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
-import { CoreFacet } from "../src/facets/CoreFacet.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
@@ -76,7 +76,7 @@ contract Rev024UpgradeTest is Test, DiamondTestHelper {
 
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         address oldAcceptance = loupe.facetAddress(AcceptanceFacet.acceptSubmission.selector);
-        address oldCore = loupe.facetAddress(CoreFacet.cancelTask.selector);
+        address oldCore = loupe.facetAddress(ITMPDiamond.cancelTask.selector);
         address oldEvaluator = loupe.facetAddress(EvaluatorFacet.evaluate.selector);
         address oldRating = loupe.facetAddress(RatingFacet.rateTask.selector);
         address oldAdmin = loupe.facetAddress(AdminFacet.pause.selector);
@@ -94,7 +94,7 @@ contract Rev024UpgradeTest is Test, DiamondTestHelper {
         );
         _assertReplaced(
             diamond,
-            CoreFacet.cancelTask.selector,
+            ITMPDiamond.cancelTask.selector,
             FacetSelectors.coreFacetSelectorsThroughRev024(),
             oldCore,
             "CoreFacet"

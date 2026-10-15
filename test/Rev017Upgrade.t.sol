@@ -82,7 +82,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         assertEq(AdminFacet(diamond).diamondVersion(), 16, "must be at rev016 before rev017");
 
         address oldAdmin = IDiamondLoupe(diamond).facetAddress(AdminFacet.pause.selector);
-        address oldCore = IDiamondLoupe(diamond).facetAddress(CoreFacet.refundExpired.selector);
+        address oldCore = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.refundExpired.selector);
         address oldAuction = IDiamondLoupe(diamond).facetAddress(AuctionFacet.submitBid.selector);
         address oldAccept = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
         address oldEval = IDiamondLoupe(diamond).facetAddress(EvaluatorFacet.evaluate.selector);
@@ -95,7 +95,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         // implementations -- replacing only EvaluatorFacet would leave #317's refundExpired
         // fund-freeze path live on CoreFacet's old bytecode.
         address newAdmin = IDiamondLoupe(diamond).facetAddress(AdminFacet.pause.selector);
-        address newCore = IDiamondLoupe(diamond).facetAddress(CoreFacet.refundExpired.selector);
+        address newCore = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.refundExpired.selector);
         address newAuction = IDiamondLoupe(diamond).facetAddress(AuctionFacet.submitBid.selector);
         address newAccept = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
         address newEval = IDiamondLoupe(diamond).facetAddress(EvaluatorFacet.evaluate.selector);
@@ -112,8 +112,8 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         _assertRoutes(diamond, ITMPDiamond.createTask.selector, newCore, "createTask");
         _assertRoutes(diamond, CoreFacet.claimTask.selector, newCore, "claimTask");
         _assertRoutes(diamond, CoreFacet.submitWork.selector, newCore, "submitWork");
-        _assertRoutes(diamond, CoreFacet.cancelTask.selector, newCore, "cancelTask");
-        _assertRoutes(diamond, CoreFacet.forfeitAndReopen.selector, newCore, "forfeitAndReopen");
+        _assertRoutes(diamond, ITMPDiamond.cancelTask.selector, newCore, "cancelTask");
+        _assertRoutes(diamond, ITMPDiamond.forfeitAndReopen.selector, newCore, "forfeitAndReopen");
         _assertRoutes(diamond, AuctionFacet.selectLowestBidder.selector, newAuction, "selectLowestBidder");
         _assertRoutes(diamond, AuctionFacet.acceptAuction.selector, newAuction, "acceptAuction");
         _assertRoutes(diamond, AcceptanceFacet.acceptSubmissions.selector, newAccept, "acceptSubmissions");

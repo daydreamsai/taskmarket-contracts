@@ -119,10 +119,10 @@ contract DiamondUpgrade is Script {
             selectors[13] = CoreFacet.submitPitch.selector;
             selectors[14] = CoreFacet.submitProof.selector;
             selectors[15] = CoreFacet.submitWork.selector;
-            selectors[16] = CoreFacet.forfeitAndReopen.selector;
-            selectors[17] = CoreFacet.cancelTask.selector;
+            selectors[16] = ITMPDiamond.forfeitAndReopen.selector;
+            selectors[17] = ITMPDiamond.cancelTask.selector;
             selectors[18] = CoreFacet.updateTask.selector;
-            selectors[19] = CoreFacet.refundExpired.selector;
+            selectors[19] = ITMPDiamond.refundExpired.selector;
         } else if (keccak256(bytes(name)) == keccak256("AuctionFacet")) {
             selectors = new bytes4[](3);
             selectors[0] = AuctionFacet.submitBid.selector;

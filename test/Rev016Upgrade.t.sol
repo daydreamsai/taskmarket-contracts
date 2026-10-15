@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { Rev012Upgrade } from "../script/upgrades/Rev012Upgrade.s.sol";
 import { Rev013Upgrade } from "../script/upgrades/Rev013Upgrade.s.sol";
@@ -56,7 +57,7 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
         _advanceToRev015(diamond);
         assertEq(AdminFacet(diamond).diamondVersion(), 15, "must be at rev015 before rev016");
 
-        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.refundExpired.selector);
+        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.refundExpired.selector);
 
         // Ask the diamond what the old facet was actually serving, rather than assuming it was
         // serving coreFacetSelectors(). A Replace only touches selectors the cut names: one the
@@ -70,7 +71,7 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 16, "diamondVersion must be 16 after rev016 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.refundExpired.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.refundExpired.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
 
         bytes4[] memory selectors = FacetSelectors.coreFacetSelectorsThroughRev024();

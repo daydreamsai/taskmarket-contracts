@@ -108,12 +108,21 @@ library FacetSelectors {
 
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {
         bytes4[] memory base = coreFacetSelectorsThroughRev024();
-        s = new bytes4[](base.length + 1);
+        bytes4[] memory moved = settlementFacetSelectorsFromCore();
+        s = new bytes4[](base.length - moved.length + 1);
+        uint256 n;
         for (uint256 i; i < base.length; ++i) {
-            s[i] = base[i];
+            if (!_contains(moved, base[i])) s[n++] = base[i];
         }
         // rev025: createTask with explicit settlement terms.
-        s[base.length] = ITMPTerms.createTask.selector;
+        s[n] = ITMPTerms.createTask.selector;
+    }
+
+    function _contains(bytes4[] memory list, bytes4 sel) private pure returns (bool) {
+        for (uint256 i; i < list.length; ++i) {
+            if (list[i] == sel) return true;
+        }
+        return false;
     }
 
     /// @dev The CoreFacet selector set as it stood from rev018 to rev024. Historical step scripts
@@ -138,11 +147,11 @@ library FacetSelectors {
         s[13] = CoreFacet.submitPitch.selector;
         s[14] = CoreFacet.submitProof.selector;
         s[15] = CoreFacet.submitWork.selector;
-        s[16] = CoreFacet.forfeitAndReopen.selector;
-        s[17] = CoreFacet.cancelTask.selector;
+        s[16] = ITMPDiamond.forfeitAndReopen.selector;
+        s[17] = ITMPDiamond.cancelTask.selector;
         s[18] = CoreFacet.updateTask.selector;
-        s[19] = CoreFacet.refundExpired.selector;
-        s[20] = CoreFacet.rejectSubmission.selector;
+        s[19] = ITMPDiamond.refundExpired.selector;
+        s[20] = ITMPDiamond.rejectSubmission.selector;
     }
 
     function auctionFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -208,11 +217,34 @@ library FacetSelectors {
         s[28] = RegistryFacet.getTaskHooks.selector;
     }
 
-    /// @dev rev025: settlement terms and, as later rev025 steps add them, the settlement calls.
+    /// @dev rev025: the settlement terms surface plus the settlement calls moved off CoreFacet.
     function settlementFacetSelectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory added = settlementFacetSelectorsAdded();
+        bytes4[] memory moved = settlementFacetSelectorsFromCore();
+        s = new bytes4[](added.length + moved.length);
+        for (uint256 i; i < added.length; ++i) {
+            s[i] = added[i];
+        }
+        for (uint256 i; i < moved.length; ++i) {
+            s[added.length + i] = moved[i];
+        }
+    }
+
+    /// @dev rev025: the selectors SettlementFacet introduces, which rev025 Adds.
+    function settlementFacetSelectorsAdded() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = SettlementFacet.normalizeTerms.selector;
         s[1] = SettlementFacet.getTaskTerms.selector;
         s[2] = SettlementFacet.termsBounds.selector;
+    }
+
+    /// @dev rev025: the selectors CoreFacet served through rev024 that rev025 Replaces onto
+    ///      SettlementFacet.
+    function settlementFacetSelectorsFromCore() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = SettlementFacet.rejectSubmission.selector;
+        s[1] = SettlementFacet.forfeitAndReopen.selector;
+        s[2] = SettlementFacet.cancelTask.selector;
+        s[3] = SettlementFacet.refundExpired.selector;
     }
 }

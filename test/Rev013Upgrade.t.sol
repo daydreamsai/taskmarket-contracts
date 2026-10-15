@@ -54,7 +54,7 @@ contract Rev013UpgradeTest is Test, DiamondTestHelper {
 
         // Selector set is unchanged -- rejectSubmission and evaluate still route.
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(CoreFacet.rejectSubmission.selector),
+            IDiamondLoupe(diamond).facetAddress(ITMPDiamond.rejectSubmission.selector),
             newCoreFacet,
             "CoreFacet selector set must be unchanged"
         );
