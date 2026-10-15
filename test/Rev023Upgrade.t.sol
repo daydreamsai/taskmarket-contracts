@@ -73,7 +73,11 @@ contract Rev023UpgradeTest is Test, DiamondTestHelper {
             "AcceptanceFacet"
         );
         _assertReplaced(
-            diamond, CoreFacet.cancelTask.selector, FacetSelectors.coreFacetSelectors(), oldCore, "CoreFacet"
+            diamond,
+            CoreFacet.cancelTask.selector,
+            FacetSelectors.coreFacetSelectorsThroughRev024(),
+            oldCore,
+            "CoreFacet"
         );
         _assertReplaced(
             diamond,

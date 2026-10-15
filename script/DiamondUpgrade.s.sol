@@ -12,6 +12,7 @@ import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 /// @title DiamondUpgrade — add, replace, or remove one facet in the Diamond
 /// @dev Required env vars:
@@ -112,7 +113,7 @@ contract DiamondUpgrade is Script {
             selectors[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
             selectors[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
             selectors[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-            selectors[10] = CoreFacet.createTask.selector;
+            selectors[10] = ITMPDiamond.createTask.selector;
             selectors[11] = CoreFacet.claimTask.selector;
             selectors[12] = CoreFacet.selectWorker.selector;
             selectors[13] = CoreFacet.submitPitch.selector;

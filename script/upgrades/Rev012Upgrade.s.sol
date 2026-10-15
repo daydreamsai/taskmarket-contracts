@@ -41,8 +41,9 @@ contract Rev012Upgrade is Script {
         address acceptFacet = address(new AcceptanceFacet());
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
-        cuts[0] =
-            IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectorsThroughRev024()
+        );
         cuts[1] = IDiamondCut.FacetCut(
             acceptFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()
         );

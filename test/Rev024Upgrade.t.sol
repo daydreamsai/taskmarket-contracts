@@ -93,7 +93,11 @@ contract Rev024UpgradeTest is Test, DiamondTestHelper {
             "AcceptanceFacet"
         );
         _assertReplaced(
-            diamond, CoreFacet.cancelTask.selector, FacetSelectors.coreFacetSelectors(), oldCore, "CoreFacet"
+            diamond,
+            CoreFacet.cancelTask.selector,
+            FacetSelectors.coreFacetSelectorsThroughRev024(),
+            oldCore,
+            "CoreFacet"
         );
         _assertReplaced(
             diamond,
@@ -106,7 +110,11 @@ contract Rev024UpgradeTest is Test, DiamondTestHelper {
             diamond, RatingFacet.rateTask.selector, FacetSelectors.ratingFacetSelectors(), oldRating, "RatingFacet"
         );
         _assertReplaced(
-            diamond, AdminFacet.pause.selector, FacetSelectors.adminFacetSelectors(), oldAdmin, "AdminFacet"
+            diamond,
+            AdminFacet.pause.selector,
+            FacetSelectors.adminFacetSelectorsThroughRev024(),
+            oldAdmin,
+            "AdminFacet"
         );
         assertEq(AdminFacet(diamond).minFeedbackGas(), 450_000, "Base keeps the rev023 floor");
     }

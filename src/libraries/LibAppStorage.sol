@@ -61,6 +61,16 @@ struct AppStorage {
     // set": LibTaskMarket._minFeedbackGas substitutes MIN_FEEDBACK_GAS, so a diamond that is
     // never configured keeps the rev023 floor of 450,000.
     uint256 minFeedbackGas;
+    // Rev025: settlement terms and clocks, in the order the rev025 spec fixes. Read taskTerms only
+    // through LibTerms.terms, which normalizes a pre-rev025 task on first read. taskAwarded is
+    // declared here only to hold its place in that order; nothing writes it until rateTask
+    // checks award recipients.
+    mapping(bytes32 => ITMPCore.TaskTerms) taskTerms;
+    mapping(bytes32 => ITMPCore.TaskClock) taskClocks;
+    mapping(bytes32 => mapping(address => bool)) taskAwarded;
+    // Rev025: owner-set bounds on requester-chosen terms; zero fields read as the defaults in
+    // LibTerms.
+    ITMPCore.TermsBounds termsBounds;
 }
 
 library LibAppStorage {

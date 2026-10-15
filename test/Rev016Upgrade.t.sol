@@ -73,7 +73,7 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
         address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.refundExpired.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
 
-        bytes4[] memory selectors = FacetSelectors.coreFacetSelectors();
+        bytes4[] memory selectors = FacetSelectors.coreFacetSelectorsThroughRev024();
 
         // Nothing the old facet served may be left behind on it.
         for (uint256 i; i < servedBefore.length; i++) {

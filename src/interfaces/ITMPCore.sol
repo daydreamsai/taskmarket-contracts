@@ -160,6 +160,10 @@ interface ITMPCore is IERC165 {
     // Diamond (Rev011)
     error DiamondVersionNotIncreasing();
 
+    // Settlement terms (Rev025)
+    error InvalidTerms();
+    error InvalidTermsBounds();
+
     // -------------------------------------------------------------------------
     // Types
     // -------------------------------------------------------------------------
@@ -334,6 +338,66 @@ interface ITMPCore is IERC165 {
     ///      too deep by 4 slots") even though the default via_ir profile compiled it. Grouping
     ///      them ends that pressure for good: createTask now takes five calldata pointers, and a
     ///      seventh task-shape field becomes a struct member rather than another signature change.
+    /// @notice Rev025: who receives a forfeited worker stake.
+    enum PenaltyTo {
+        Requester,
+        Protocol
+    }
+
+    /// @notice Rev025: whether a claimed worker may release the claim. Default resolves to Allowed.
+    enum ReleaseAllowed {
+        Default,
+        Allowed,
+        Disallowed
+    }
+
+    /// @notice Rev025: what a rejected delivery does to the rest of the escrow. Default resolves
+    ///         per mode: Reopen on Claim and Pitch, Refund on Auction.
+    enum RejectOutcome {
+        Default,
+        Reopen,
+        Refund
+    }
+
+    /// @notice Rev025: a task's settlement terms, packed into one storage slot (24 of 32 bytes).
+    /// @dev A zero window term means the protocol default. releaseGraceBps, rejectFeeBps and
+    ///      maxRevisions store the value plus one so that zero can mean "default" while "no
+    ///      grace", "no fee" and "no revisions" stay expressible. version 0 means the task predates
+    ///      rev025 and has not been normalized; createTask ignores the caller's version and stores 1.
+    struct TaskTerms {
+        uint8 version;
+        bool stakeRequired;
+        uint16 stakeBps;
+        PenaltyTo penaltyTo;
+        uint32 reviewWindowSecs;
+        uint32 decisionWindowSecs;
+        uint32 reopenExtensionSecs;
+        ReleaseAllowed releaseAllowed;
+        uint16 releaseGraceBps;
+        RejectOutcome rejectOutcome;
+        uint16 rejectFeeBps;
+        uint8 maxRevisions;
+    }
+
+    /// @notice Rev025: per-task settlement clocks.
+    /// @dev deliveredAt is zero when there is no undecided delivery. decisionStartAt is set only
+    ///      when a pre-rev025 task is normalized, and is zero otherwise.
+    struct TaskClock {
+        uint64 deliveredAt;
+        uint64 decisionStartAt;
+        uint8 revisionsUsed;
+    }
+
+    /// @notice Rev025: owner-settable bounds on the terms a requester may choose. Every field
+    ///         reads as its protocol default while zero; maxRejectFeeBps and maxRevisions store
+    ///         the value plus one so a bound of zero is expressible.
+    struct TermsBounds {
+        uint32 minWindowSecs;
+        uint32 maxWindowSecs;
+        uint16 maxRejectFeeBps;
+        uint8 maxRevisions;
+    }
+
     struct TaskConfig {
         uint256 reward;
         uint256 duration;
@@ -366,6 +430,14 @@ interface ITMPCore is IERC165 {
     /// @notice Rev024: the per-chain gas floor checked before a swallowed giveFeedback call
     ///         changed.
     event MinFeedbackGasUpdated(uint256 minFeedbackGas);
+
+    /// @notice Rev025: a task's settlement terms were recorded, at creation or on normalization
+    ///         of a pre-rev025 task.
+    event TaskTermsSet(bytes32 indexed taskId, TaskTerms terms);
+
+    /// @notice Rev025: the owner changed the bounds on requester-chosen terms. Values are the
+    ///         effective bounds, not the stored encodings.
+    event TermsBoundsUpdated(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions);
 
     /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy
     ///         hook cannot block fund recovery; this event makes failures observable on-chain.

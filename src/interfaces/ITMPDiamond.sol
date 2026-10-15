@@ -32,6 +32,8 @@ interface ITMPDiamond {
         ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
     ) external returns (bytes32);
 
+    // Rev025: the createTask overload taking ITMPCore.TaskTerms is declared on ITMPTerms, not
+    // here, so `abi.encodeCall(market.createTask, ...)` stays unambiguous for existing callers.
     function claimTask(bytes32 taskId, uint256 stakeAmount) external;
     function selectWorker(bytes32 taskId, address worker) external;
     function submitPitch(bytes32 taskId, bytes32 pitchHash) external;
@@ -166,7 +168,20 @@ interface ITMPDiamond {
     // Rev024: per-chain floor on the gas left before a swallowed giveFeedback call.
     function minFeedbackGas() external view returns (uint256);
     function setMinFeedbackGas(uint256 newMinimum) external;
+    // Rev025: owner-only bounds on requester-chosen settlement terms (read via termsBounds).
+    function setTermsBounds(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions)
+        external;
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
+
+    // -------------------------------------------------------------------------
+    // SettlementFacet (Rev025)
+    // -------------------------------------------------------------------------
+    function normalizeTerms(bytes32[] calldata taskIds) external;
+    function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory);
+    function termsBounds()
+        external
+        view
+        returns (uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions);
 
     // -------------------------------------------------------------------------
     // DiamondLoupeFacet

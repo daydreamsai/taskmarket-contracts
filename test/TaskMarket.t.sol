@@ -27,6 +27,7 @@ import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock USDC", "USDC") {
@@ -3334,7 +3335,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
     function test_CreateTask_LegacySelectorIsUnrouted() public view {
         assertNotEq(
-            IDiamondLoupe(address(market)).facetAddress(CoreFacet.createTask.selector),
+            IDiamondLoupe(address(market)).facetAddress(ITMPDiamond.createTask.selector),
             address(0),
             "evaluator-aware createTask must route"
         );

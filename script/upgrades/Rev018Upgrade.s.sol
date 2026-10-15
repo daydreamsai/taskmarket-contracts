@@ -7,6 +7,7 @@ import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
+import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev018Upgrade — createTask takes evaluator configuration, so assignment is atomic
 /// @dev Before this revision, a task with an evaluator needed two transactions: `createTask`,
@@ -20,7 +21,7 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///
 ///      CoreFacet — `createTask`'s signature changed (evaluator terms added, and the task-shape
 ///        scalars grouped into ITMPCore.TaskConfig), so there is a new selector
-///        (CoreFacet.createTask.selector). The pre-rev018 nine-parameter selector
+///        (ITMPDiamond.createTask.selector). The pre-rev018 nine-parameter selector
 ///        (FacetSelectors.LEGACY_CREATE_TASK) is NOT removed: it stays routed to the same newly
 ///        deployed CoreFacet, where a deprecated overload forwards it to the shared body with an
 ///        empty evaluator configuration. So this is Replace(existing, including the legacy
@@ -79,7 +80,7 @@ contract Rev018Upgrade is Script {
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, _corePreRev018Selectors());
 
         bytes4[] memory newCreateTask = new bytes4[](1);
-        newCreateTask[0] = CoreFacet.createTask.selector;
+        newCreateTask[0] = ITMPDiamond.createTask.selector;
         cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCreateTask);
 
         cuts[2] =
@@ -97,7 +98,7 @@ contract Rev018Upgrade is Script {
     }
 
     /// @dev The 21 CoreFacet selectors a diamond at rev017 already routes -- everything in
-    ///      FacetSelectors.coreFacetSelectors() except rev018's new createTask overload, which is
+    ///      FacetSelectors.coreFacetSelectorsThroughRev024() except rev018's new createTask overload, which is
     ///      Added separately above because Replace requires the selector to already exist. The
     ///      legacy createTask selector is in this list, not in a Remove cut: it keeps routing,
     ///      now to the deprecated shim on the new CoreFacet.

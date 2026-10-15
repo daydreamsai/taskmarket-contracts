@@ -14,6 +14,7 @@ import { Rev015Upgrade } from "../script/upgrades/Rev015Upgrade.s.sol";
 import { Rev018Upgrade } from "../script/upgrades/Rev018Upgrade.s.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev018UpgradeTest
 /// @dev Rev018 adds a createTask overload carrying evaluator terms, keeps the pre-rev018
@@ -69,7 +70,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         address coreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.claimTask.selector);
 
         bytes4[] memory newSel = new bytes4[](1);
-        newSel[0] = CoreFacet.createTask.selector;
+        newSel[0] = ITMPDiamond.createTask.selector;
         bytes4[] memory legacySel = new bytes4[](1);
         legacySel[0] = FacetSelectors.LEGACY_CREATE_TASK;
 
@@ -86,7 +87,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 17, "must be at rev017 before rev018");
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector),
+            IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector),
             address(0),
             "new selector must be absent pre-upgrade"
         );
@@ -98,7 +99,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 18, "diamondVersion must be 18 after rev018 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
         assertNotEq(newCoreFacet, address(0), "evaluator-aware createTask must route");
         assertNotEq(newCoreFacet, oldCoreFacet, "CoreFacet must be replaced");
 
@@ -162,7 +163,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
     function _createTaskCalldata() private pure returns (bytes memory) {
         return abi.encodeWithSelector(
-            CoreFacet.createTask.selector,
+            ITMPDiamond.createTask.selector,
             ITMPCore.TaskConfig({
                 reward: 1,
                 duration: 1 days,

@@ -50,8 +50,9 @@ contract Rev023Upgrade is Script {
         cuts[0] = IDiamondCut.FacetCut(
             acceptanceFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()
         );
-        cuts[1] =
-            IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectors());
+        cuts[1] = IDiamondCut.FacetCut(
+            coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectorsThroughRev024()
+        );
         cuts[2] = IDiamondCut.FacetCut(
             evaluatorFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.evalFacetSelectors()
         );

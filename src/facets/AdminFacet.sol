@@ -7,6 +7,7 @@ import { LibDiamond } from "../libraries/LibDiamond.sol";
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibRevision } from "../libraries/LibRevision.sol";
+import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFees } from "../interfaces/ITMPFees.sol";
 import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
@@ -221,6 +222,30 @@ contract AdminFacet is Initializable {
         }
         LibAppStorage.appStorage().minFeedbackGas = newMinimum;
         emit ITMPCore.MinFeedbackGasUpdated(newMinimum);
+    }
+
+    // -------------------------------------------------------------------------
+    // Settlement terms bounds (Rev025)
+    // -------------------------------------------------------------------------
+
+    /// @notice Set the bounds on requester-chosen terms (owner only). The window bounds apply to
+    ///         the review, decision and reopen-extension windows alike. A task whose term is zero
+    ///         uses the protocol default whatever the bounds, and a task already created keeps
+    ///         the terms it was created with.
+    function setTermsBounds(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions)
+        external
+        onlyOwner
+    {
+        if (minWindowSecs == 0 || minWindowSecs > maxWindowSecs || maxRejectFeeBps > 10000 || maxRevisions == 255) {
+            revert ITMPCore.InvalidTermsBounds();
+        }
+        LibAppStorage.appStorage().termsBounds = ITMPCore.TermsBounds({
+            minWindowSecs: minWindowSecs,
+            maxWindowSecs: maxWindowSecs,
+            maxRejectFeeBps: maxRejectFeeBps + 1,
+            maxRevisions: maxRevisions + 1
+        });
+        emit ITMPCore.TermsBoundsUpdated(minWindowSecs, maxWindowSecs, maxRejectFeeBps, maxRevisions);
     }
 
     // -------------------------------------------------------------------------

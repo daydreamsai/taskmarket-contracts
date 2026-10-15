@@ -6,6 +6,7 @@ import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
+import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev014Upgrade — replace CoreFacet to add stakeRequired/stakeBps to createTask
 /// @dev createTask's signature changed (a new StakeConfig calldata struct param inserted before
@@ -53,7 +54,7 @@ contract Rev014Upgrade is Script {
 
         bytes4[] memory newCreateTask = new bytes4[](1);
         // The nine-parameter signature this step introduced. Rev018 added a second createTask
-        // overload, so it is no longer reachable as `CoreFacet.createTask.selector`; it is named
+        // overload, so it is no longer reachable as `ITMPDiamond.createTask.selector`; it is named
         // "legacy" from rev018's perspective, but it is exactly what rev014 added here.
         newCreateTask[0] = FacetSelectors.LEGACY_CREATE_TASK;
         cuts[2] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCreateTask);
@@ -69,7 +70,7 @@ contract Rev014Upgrade is Script {
     }
 
     /// @dev The 20 CoreFacet selectors whose signature is unaffected by rev014 (everything in
-    ///      FacetSelectors.coreFacetSelectors() except createTask, which changed).
+    ///      FacetSelectors.coreFacetSelectorsThroughRev024() except createTask, which changed).
     function _coreUnchangedSelectors() private pure returns (bytes4[] memory s) {
         s = new bytes4[](20);
         s[0] = bytes4(keccak256("BOUNTY()"));

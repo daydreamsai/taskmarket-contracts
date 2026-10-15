@@ -14,6 +14,7 @@ import { Rev019Upgrade } from "../script/upgrades/Rev019Upgrade.s.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev019UpgradeTest
 /// @dev Rev019 is the contract half of rev018's expand-then-contract: it removes the pre-rev018
@@ -64,7 +65,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
 
         // Reconstruct rev018 routing: the legacy selector routed alongside the new one, both on
         // the same CoreFacet.
-        address coreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address coreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
         bytes4[] memory legacySel = new bytes4[](1);
         legacySel[0] = FacetSelectors.LEGACY_CREATE_TASK;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
@@ -95,7 +96,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
         // CoreFacet's bytecode changed with the shim's deletion, so the diamond must be pointed
         // at a new deployment. Removing the route while leaving the old facet in place would
         // recover none of the bytecode the revision exists to recover.
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
         assertNotEq(newCoreFacet, address(0), "evaluator-aware createTask must still route");
         assertNotEq(newCoreFacet, oldCoreFacet, "CoreFacet must be replaced");
 
@@ -185,7 +186,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
 
     function _createTaskCalldata() private pure returns (bytes memory) {
         return abi.encodeWithSelector(
-            CoreFacet.createTask.selector,
+            ITMPDiamond.createTask.selector,
             taskConfig(1, 1 days, bytes4(0)),
             ITMPCore.StakeConfig({ required: false, bps: 0 }),
             ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),

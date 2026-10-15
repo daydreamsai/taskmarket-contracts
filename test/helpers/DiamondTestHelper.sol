@@ -13,6 +13,7 @@ import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
+import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { FacetSelectors } from "../../script/lib/FacetSelectors.sol";
 
@@ -24,48 +25,48 @@ abstract contract DiamondTestHelper is Test {
         internal
         returns (ITMPDiamond)
     {
-        // Deploy facet implementations
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
-        DiamondLoupeFacet loupeFacet = new DiamondLoupeFacet();
-        AdminFacet adminFacet = new AdminFacet();
-        CoreFacet coreFacet = new CoreFacet();
-        AuctionFacet auctionFacet = new AuctionFacet();
-        AcceptanceFacet acceptFacet = new AcceptanceFacet();
-        EvaluatorFacet evalFacet = new EvaluatorFacet();
-        RatingFacet ratingFacet = new RatingFacet();
-        RegistryFacet regFacet = new RegistryFacet();
-
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
-        cuts[0] =
-            IDiamondCut.FacetCut(address(cutFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
-        cuts[1] = IDiamondCut.FacetCut(
-            address(loupeFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors()
-        );
-        cuts[2] = IDiamondCut.FacetCut(
-            address(adminFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors()
-        );
-        cuts[3] = IDiamondCut.FacetCut(
-            address(coreFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.coreFacetSelectors()
-        );
-        cuts[4] = IDiamondCut.FacetCut(
-            address(auctionFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.auctionFacetSelectors()
-        );
-        cuts[5] = IDiamondCut.FacetCut(
-            address(acceptFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectors()
-        );
-        cuts[6] = IDiamondCut.FacetCut(
-            address(evalFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.evalFacetSelectors()
-        );
-        cuts[7] = IDiamondCut.FacetCut(
-            address(ratingFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.ratingFacetSelectors()
-        );
-        cuts[8] = IDiamondCut.FacetCut(
-            address(regFacet), IDiamondCut.FacetCutAction.Add, FacetSelectors.registryFacetSelectors()
-        );
+        IDiamondCut.FacetCut[] memory cuts = _facetCuts();
+        address adminFacet = cuts[2].facetAddress;
 
         bytes memory initData = abi.encodeCall(AdminFacet.initialize, (_usdc, _feeRecipient, _feeBps));
-        Diamond diamond = new Diamond(_owner, cuts, address(adminFacet), initData);
+        Diamond diamond = new Diamond(_owner, cuts, adminFacet, initData);
         return ITMPDiamond(address(diamond));
+    }
+
+    /// @dev Deploys every facet and returns the full Add cut. Separate from deployDiamond so the
+    ///      ten facet cuts do not share one stack frame with the deploy.
+    function _facetCuts() internal returns (IDiamondCut.FacetCut[] memory cuts) {
+        cuts = new IDiamondCut.FacetCut[](10);
+        cuts[0] = IDiamondCut.FacetCut(
+            address(new DiamondCutFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors()
+        );
+        cuts[1] = IDiamondCut.FacetCut(
+            address(new DiamondLoupeFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors()
+        );
+        cuts[2] = IDiamondCut.FacetCut(
+            address(new AdminFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors()
+        );
+        cuts[3] = IDiamondCut.FacetCut(
+            address(new CoreFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.coreFacetSelectors()
+        );
+        cuts[4] = IDiamondCut.FacetCut(
+            address(new AuctionFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.auctionFacetSelectors()
+        );
+        cuts[5] = IDiamondCut.FacetCut(
+            address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectors()
+        );
+        cuts[6] = IDiamondCut.FacetCut(
+            address(new EvaluatorFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.evalFacetSelectors()
+        );
+        cuts[7] = IDiamondCut.FacetCut(
+            address(new RatingFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.ratingFacetSelectors()
+        );
+        cuts[8] = IDiamondCut.FacetCut(
+            address(new RegistryFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.registryFacetSelectors()
+        );
+        cuts[9] = IDiamondCut.FacetCut(
+            address(new SettlementFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectors()
+        );
     }
 
     /// @dev A fresh deploy placed at an earlier revision, for the RevNNNUpgrade step tests.

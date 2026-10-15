@@ -71,7 +71,7 @@ contract DiamondTest is DiamondTestHelper {
     function test_DiamondCut_Add_DuplicateSelectorReverts() public {
         CoreFacet newCore = new CoreFacet();
         bytes4[] memory sels = new bytes4[](1);
-        sels[0] = CoreFacet.createTask.selector; // already registered
+        sels[0] = ITMPDiamond.createTask.selector; // already registered
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(newCore), IDiamondCut.FacetCutAction.Add, sels);
@@ -252,11 +252,11 @@ contract DiamondTest is DiamondTestHelper {
     function test_Loupe_FacetAddresses_NonEmpty() public view {
         address[] memory addrs = IDiamondLoupe(address(diamond)).facetAddresses();
         assertGt(addrs.length, 0, "Must have at least one facet registered");
-        assertEq(addrs.length, 9, "Exactly 9 facets expected");
+        assertEq(addrs.length, 10, "Exactly 10 facets expected");
     }
 
     function test_Loupe_FacetAddress_CreateTask() public view {
-        address facet = IDiamondLoupe(address(diamond)).facetAddress(CoreFacet.createTask.selector);
+        address facet = IDiamondLoupe(address(diamond)).facetAddress(ITMPDiamond.createTask.selector);
         assertNotEq(facet, address(0), "createTask must route to a facet");
     }
 
@@ -267,7 +267,7 @@ contract DiamondTest is DiamondTestHelper {
 
     function test_Loupe_Facets_ReturnsAllFacetsWithSelectors() public view {
         IDiamondLoupe.Facet[] memory allFacets = IDiamondLoupe(address(diamond)).facets();
-        assertEq(allFacets.length, 9, "Exactly 9 facets expected");
+        assertEq(allFacets.length, 10, "Exactly 10 facets expected");
         for (uint256 i = 0; i < allFacets.length; i++) {
             assertNotEq(allFacets[i].facetAddress, address(0), "Facet address must be non-zero");
             assertGt(allFacets[i].functionSelectors.length, 0, "Each facet must expose at least one selector");

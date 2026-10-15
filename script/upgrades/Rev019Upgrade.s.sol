@@ -57,8 +57,9 @@ contract Rev019Upgrade is Script {
 
         // Replace first, then Remove. The other order works too, but this way every selector the
         // diamond routes points at the new facet at all times.
-        cuts[0] =
-            IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectorsThroughRev024()
+        );
 
         bytes4[] memory legacyCreateTask = new bytes4[](1);
         legacyCreateTask[0] = FacetSelectors.LEGACY_CREATE_TASK;

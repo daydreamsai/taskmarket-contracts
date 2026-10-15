@@ -88,8 +88,9 @@ contract Rev017Upgrade is Script {
         }
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
-        cuts[0] =
-            IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectors());
+        cuts[0] = IDiamondCut.FacetCut(
+            coreFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectorsThroughRev024()
+        );
         cuts[1] = IDiamondCut.FacetCut(
             auctionFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.auctionFacetSelectors()
         );

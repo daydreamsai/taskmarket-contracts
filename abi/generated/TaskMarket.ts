@@ -525,6 +525,34 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "setTermsBounds",
+    "inputs": [
+      {
+        "name": "minWindowSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxWindowSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxRejectFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxRevisions",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -706,6 +734,37 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "TermsBoundsUpdated",
+    "inputs": [
+      {
+        "name": "minWindowSecs",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxWindowSecs",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxRejectFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxRevisions",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Unpaused",
     "inputs": [
       {
@@ -765,6 +824,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidRecipient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTermsBounds",
     "inputs": []
   },
   {
@@ -1006,6 +1070,200 @@ export const TaskMarketABI = [
         ]
       },
       {
+        "name": "hookConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.HookConfig",
+        "components": [
+          {
+            "name": "contracts",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "content",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskContent",
+        "components": [
+          {
+            "name": "contentHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "contentURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "tags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          }
+        ]
+      },
+      {
+        "name": "evaluatorConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskEvaluatorConfig",
+        "components": [
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "evaluationWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "appealWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "name": "terms",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskTerms",
+        "components": [
+          {
+            "name": "version",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "stakeRequired",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stakeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "penaltyTo",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.PenaltyTo"
+          },
+          {
+            "name": "reviewWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "decisionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "reopenExtensionSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "releaseAllowed",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.ReleaseAllowed"
+          },
+          {
+            "name": "releaseGraceBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "rejectOutcome",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.RejectOutcome"
+          },
+          {
+            "name": "rejectFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxRevisions",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createTask",
+    "inputs": [
+      {
+        "name": "config",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskConfig",
+        "components": [
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "duration",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "pitchDeadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bidDeadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "auctionSubtype",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          }
+        ]
+      },
+      {
         "name": "stakeConfig",
         "type": "tuple",
         "internalType": "struct ITMPCore.StakeConfig",
@@ -1101,7 +1359,7 @@ export const TaskMarketABI = [
     ],
     "outputs": [
       {
-        "name": "taskId",
+        "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -1773,6 +2031,87 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "TaskTermsSet",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "terms",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ITMPCore.TaskTerms",
+        "components": [
+          {
+            "name": "version",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "stakeRequired",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stakeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "penaltyTo",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.PenaltyTo"
+          },
+          {
+            "name": "reviewWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "decisionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "reopenExtensionSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "releaseAllowed",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.ReleaseAllowed"
+          },
+          {
+            "name": "releaseGraceBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "rejectOutcome",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.RejectOutcome"
+          },
+          {
+            "name": "rejectFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxRevisions",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TaskUpdated",
     "inputs": [
       {
@@ -1923,6 +2262,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidRequester",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTerms",
     "inputs": []
   },
   {
@@ -3715,6 +4059,128 @@ export const TaskMarketABI = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTaskTerms",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskTerms",
+        "components": [
+          {
+            "name": "version",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "stakeRequired",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stakeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "penaltyTo",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.PenaltyTo"
+          },
+          {
+            "name": "reviewWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "decisionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "reopenExtensionSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "releaseAllowed",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.ReleaseAllowed"
+          },
+          {
+            "name": "releaseGraceBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "rejectOutcome",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.RejectOutcome"
+          },
+          {
+            "name": "rejectFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxRevisions",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "normalizeTerms",
+    "inputs": [
+      {
+        "name": "taskIds",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "termsBounds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "minWindowSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxWindowSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxRejectFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxRevisions",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"

@@ -13,6 +13,7 @@ import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
+import { SettlementFacet } from "../src/facets/SettlementFacet.sol";
 import { DeployTarget } from "./lib/DeployTarget.sol";
 import { FacetSelectors } from "./lib/FacetSelectors.sol";
 
@@ -114,6 +115,7 @@ contract DiamondDeploy is Script {
         console.log("EvaluatorFacet:     ", address(evalFacet));
         console.log("RatingFacet:        ", address(ratingFacet));
         console.log("RegistryFacet:      ", address(regFacet));
+        console.log("SettlementFacet:    ", cuts[9].facetAddress);
     }
 
     function _buildCuts(
@@ -126,8 +128,8 @@ contract DiamondDeploy is Script {
         address eval,
         address rating,
         address registry
-    ) internal pure returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](9);
+    ) internal returns (IDiamondCut.FacetCut[] memory cuts) {
+        cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
         cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors());
         cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors());
@@ -138,5 +140,8 @@ contract DiamondDeploy is Script {
         cuts[7] = IDiamondCut.FacetCut(rating, IDiamondCut.FacetCutAction.Add, FacetSelectors.ratingFacetSelectors());
         cuts[8] =
             IDiamondCut.FacetCut(registry, IDiamondCut.FacetCutAction.Add, FacetSelectors.registryFacetSelectors());
+        cuts[9] = IDiamondCut.FacetCut(
+            address(new SettlementFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectors()
+        );
     }
 }

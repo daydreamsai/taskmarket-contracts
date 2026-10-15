@@ -7,6 +7,8 @@ import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
+import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { LibRevision } from "../src/libraries/LibRevision.sol";
 import { Rev012Upgrade } from "../script/upgrades/Rev012Upgrade.s.sol";
 import { Rev013Upgrade } from "../script/upgrades/Rev013Upgrade.s.sol";
@@ -21,7 +23,9 @@ import { Rev021Upgrade } from "../script/upgrades/Rev021Upgrade.s.sol";
 import { Rev022Upgrade } from "../script/upgrades/Rev022Upgrade.s.sol";
 import { Rev023Upgrade } from "../script/upgrades/Rev023Upgrade.s.sol";
 import { Rev024Upgrade } from "../script/upgrades/Rev024Upgrade.s.sol";
+import { Rev025Upgrade } from "../script/upgrades/Rev025Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 /// @title DiamondSelectorParityTest
 /// @dev The two properties that keep `diamondVersion` and the diamond's routing honest:
@@ -82,7 +86,8 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     ///        - the pre-rev014 nine-parameter createTask selector is added back (rev014 Removes
     ///          it);
     ///        - rev017's two AdminFacet selectors are removed (rev017 Adds them);
-    ///        - rev024's two AdminFacet feedback-gas-floor selectors are removed (rev024 Adds them).
+    ///        - rev024's two AdminFacet feedback-gas-floor selectors are removed (rev024 Adds them);
+    ///        - rev025's settlement-terms selectors are removed (rev025 Adds them).
     ///
     ///      Only routing is reconstructed, never bytecode: this repo contains no historical facet
     ///      source, so every facet here is built from current code. That limitation is inherent
@@ -94,7 +99,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     ///      `FacetSelectors.coreFacetSelectors()` list and a Replace on an unrouted selector
     ///      reverts. See _runFullSequence for the consequence.
     function _rewindToRev011(address diamond) internal {
-        address coreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.createTask.selector);
+        address coreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
 
         bytes4[] memory preRev014CreateTask = new bytes4[](1);
         preRev014CreateTask[0] = PRE_REV014_CREATE_TASK;
@@ -107,15 +112,28 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         rev024AdminSelectors[0] = AdminFacet.minFeedbackGas.selector;
         rev024AdminSelectors[1] = AdminFacet.setMinFeedbackGas.selector;
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        bytes4[] memory rev025Selectors = _rev025Selectors();
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, preRev014CreateTask);
         cuts[1] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev017AdminSelectors);
         cuts[2] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev024AdminSelectors);
+        cuts[3] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev025Selectors);
 
         vm.prank(owner);
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         placeAtVersion(diamond, 11);
+    }
+
+    function _rev025Selectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory settlement = FacetSelectors.settlementFacetSelectors();
+        s = new bytes4[](settlement.length + 2);
+        s[0] = ITMPTerms.createTask.selector;
+        s[1] = AdminFacet.setTermsBounds.selector;
+        for (uint256 i; i < settlement.length; ++i) {
+            s[i + 2] = settlement[i];
+        }
     }
 
     /// @dev Runs every step script from rev012 to the head of the sequence.
@@ -154,13 +172,14 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         new Rev022Upgrade().run();
         new Rev023Upgrade().run();
         new Rev024Upgrade().run();
+        new Rev025Upgrade().run();
     }
 
     /// @dev The one reconstruction _runFullSequence documents: unroute the evaluator-aware
     ///      createTask selector so rev018 can Add it, as it did on a real rev017 diamond.
     function _dropCurrentCreateTaskSelector(address diamond) internal {
         bytes4[] memory sel = new bytes4[](1);
-        sel[0] = CoreFacet.createTask.selector;
+        sel[0] = ITMPDiamond.createTask.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, sel);
         vm.prank(owner);

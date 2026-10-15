@@ -10,6 +10,9 @@ import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
+import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
+import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
+import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 
 /// @title FacetSelectors — single source of truth for each facet's current (steady-state)
 ///        selector set.
@@ -51,6 +54,17 @@ library FacetSelectors {
     }
 
     function adminFacetSelectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory base = adminFacetSelectorsThroughRev024();
+        s = new bytes4[](base.length + 1);
+        for (uint256 i; i < base.length; ++i) {
+            s[i] = base[i];
+        }
+        // rev025: the owner-only bounds on requester-chosen settlement terms.
+        s[base.length] = AdminFacet.setTermsBounds.selector;
+    }
+
+    /// @dev The AdminFacet selector set as it stood at rev024, cut by the rev024 and rev025 steps.
+    function adminFacetSelectorsThroughRev024() internal pure returns (bytes4[] memory s) {
         // initialize is NOT included -- it is called once via the Diamond constructor's
         // _init delegatecall, never added as a routable selector.
         bytes4[] memory base = adminFacetSelectorsThroughRev023();
@@ -93,6 +107,19 @@ library FacetSelectors {
     }
 
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory base = coreFacetSelectorsThroughRev024();
+        s = new bytes4[](base.length + 1);
+        for (uint256 i; i < base.length; ++i) {
+            s[i] = base[i];
+        }
+        // rev025: createTask with explicit settlement terms.
+        s[base.length] = ITMPTerms.createTask.selector;
+    }
+
+    /// @dev The CoreFacet selector set as it stood from rev018 to rev024. Historical step scripts
+    ///      Replace this rather than coreFacetSelectors(), so they cut exactly the set they cut
+    ///      on-chain and never name a selector that did not yet exist.
+    function coreFacetSelectorsThroughRev024() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](21);
         // public constant getters -- must use keccak256; .selector syntax does not apply to constants
         s[0] = bytes4(keccak256("BOUNTY()"));
@@ -105,7 +132,7 @@ library FacetSelectors {
         s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-        s[10] = CoreFacet.createTask.selector;
+        s[10] = ITMPDiamond.createTask.selector;
         s[11] = CoreFacet.claimTask.selector;
         s[12] = CoreFacet.selectWorker.selector;
         s[13] = CoreFacet.submitPitch.selector;
@@ -179,5 +206,13 @@ library FacetSelectors {
         s[26] = RegistryFacet.taskHasSubmissions.selector;
         s[27] = RegistryFacet.taskRejectedWorkers.selector;
         s[28] = RegistryFacet.getTaskHooks.selector;
+    }
+
+    /// @dev rev025: settlement terms and, as later rev025 steps add them, the settlement calls.
+    function settlementFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = SettlementFacet.normalizeTerms.selector;
+        s[1] = SettlementFacet.getTaskTerms.selector;
+        s[2] = SettlementFacet.termsBounds.selector;
     }
 }

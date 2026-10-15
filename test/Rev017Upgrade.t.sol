@@ -14,6 +14,7 @@ import { Rev013Upgrade } from "../script/upgrades/Rev013Upgrade.s.sol";
 import { Rev015Upgrade } from "../script/upgrades/Rev015Upgrade.s.sol";
 import { Rev017Upgrade } from "../script/upgrades/Rev017Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev017UpgradeTest
 /// @dev Deploys a diamond placed at rev011 (the step tests' baseline), advances it through
@@ -108,7 +109,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         // Rev018 added a second createTask overload and rev019 removed the legacy one again, so
         // `CoreFacet.createTask` names the single surviving entry point -- which is what the
         // CoreFacet this path deploys actually serves.
-        _assertRoutes(diamond, CoreFacet.createTask.selector, newCore, "createTask");
+        _assertRoutes(diamond, ITMPDiamond.createTask.selector, newCore, "createTask");
         _assertRoutes(diamond, CoreFacet.claimTask.selector, newCore, "claimTask");
         _assertRoutes(diamond, CoreFacet.submitWork.selector, newCore, "submitWork");
         _assertRoutes(diamond, CoreFacet.cancelTask.selector, newCore, "cancelTask");

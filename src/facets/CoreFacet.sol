@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
@@ -51,14 +52,43 @@ contract CoreFacet {
     ///                        to do it without a race: the task is Open, and so claimable, the
     ///                        instant this transaction mines, and `assignEvaluator` reverts
     ///                        `TaskNotOpen` once a worker has claimed.
-    // solhint-disable-next-line code-complexity
+    ///      Records the protocol default settlement terms with this call's stake (rev025). Kept
+    ///      for existing callers; removed in the revision after rev025.
     function createTask(
         ITMPCore.TaskConfig calldata config,
         ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content,
         ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
-    ) external returns (bytes32 taskId) {
+    ) external returns (bytes32) {
+        return _createTask(
+            config, hookConfig, content, evaluatorConfig, LibTerms.defaults(stakeConfig.required, stakeConfig.bps)
+        );
+    }
+
+    /// @notice Create a task with explicit settlement terms (rev025). Same parameters as the
+    ///         legacy overload, except that the stake requirement is carried in `terms`.
+    /// @param terms Settlement terms. Zero fields take the protocol defaults; see ITMPCore.TaskTerms
+    ///              for the encodings. Reverts InvalidTerms outside the owner-set bounds, or for
+    ///              a Reopen reject outcome on an auction. `terms.version` is ignored.
+    function createTask(
+        ITMPCore.TaskConfig calldata config,
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
+        ITMPCore.TaskTerms calldata terms
+    ) external returns (bytes32) {
+        return _createTask(config, hookConfig, content, evaluatorConfig, terms);
+    }
+
+    // solhint-disable-next-line code-complexity
+    function _createTask(
+        ITMPCore.TaskConfig calldata config,
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
+        ITMPCore.TaskTerms memory terms
+    ) private returns (bytes32 taskId) {
         AppStorage storage s = LibAppStorage.appStorage();
         LibTaskMarket._requireForwarder(s);
         LibTaskMarket._requireNotPaused(s);
@@ -77,7 +107,7 @@ contract CoreFacet {
                         || config.auctionSubtype == AUCTION_REVERSE_DUTCH
                         || config.auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert ITMPCore.InvalidAuctionSubtype();
         }
-        if (stakeConfig.bps > 10000) revert ITMPCore.StakeBpsTooHigh();
+        LibTerms.validate(s, terms, config.mode);
 
         taskId = keccak256(abi.encode(block.chainid, address(this), requester, s.requesterNonce[requester]++));
 
@@ -89,8 +119,10 @@ contract CoreFacet {
         t.status = ITMPCore.TaskStatus.Open;
         t.mode = config.mode;
         t.feeBps = s.defaultFeeBps;
-        t.stakeRequired = stakeConfig.required;
-        t.stakeBps = stakeConfig.bps;
+        t.stakeRequired = terms.stakeRequired;
+        t.stakeBps = terms.stakeBps;
+        terms.version = LibTerms.TERMS_VERSION;
+        s.taskTerms[taskId] = terms;
 
         ITMPCore.TaskMetadata storage meta = s.taskMetadata[taskId];
         meta.createdAt = block.timestamp;
@@ -125,9 +157,10 @@ contract CoreFacet {
             config.reward,
             config.mode,
             block.timestamp + config.duration,
-            stakeConfig.required,
-            stakeConfig.bps
+            terms.stakeRequired,
+            terms.stakeBps
         );
+        emit ITMPCore.TaskTermsSet(taskId, terms);
         LibTaskMarket._nonReentrantAfter(s);
     }
 
