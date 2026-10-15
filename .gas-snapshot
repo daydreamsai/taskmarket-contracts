@@ -45,7 +45,7 @@ DiamondReentrancyTest:test_Token_AcceptSubmission_ReentryIntoCancelRejected() (g
 DiamondReentrancyTest:test_Token_AcceptSubmissions_ReentryRejected() (gas: 1822133)
 DiamondReentrancyTest:test_Token_CancelTask_ReentryRejected() (gas: 1099460)
 DiamondReentrancyTest:test_Token_RefundExpired_ReentryRejected() (gas: 1067794)
-DiamondSelectorParityTest:test_FreshDeployVersion_MatchesHighestUpgradeStep() (gas: 367678)
+DiamondSelectorParityTest:test_FreshDeployVersion_MatchesHighestUpgradeStep() (gas: 72226)
 DiamondSelectorParityTest:test_FreshDeploy_MatchesFullUpgradeSequence() (gas: 156143797)
 DiamondTest:test_DiamondCut_Add_DuplicateSelectorReverts() (gas: 102413)
 DiamondTest:test_DiamondCut_Add_NewSelectorRoutes() (gas: 324218)

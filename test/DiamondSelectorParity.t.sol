@@ -178,7 +178,10 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     function test_FreshDeployVersion_MatchesHighestUpgradeStep() public {
         address diamond = address(deployDiamond(owner, USDC, FEE_RECIPIENT, FEE_BPS));
 
+        // readDir returns absolute paths, so its gas would make the snapshot depend on checkout location.
+        vm.pauseGasMetering();
         uint256 highest = _highestUpgradeStepTarget();
+        vm.resumeGasMetering();
         assertGt(highest, 0, "no RevNNNUpgrade step scripts found -- is the fs_permissions path right?");
         assertEq(
             AdminFacet(diamond).diamondVersion(),
