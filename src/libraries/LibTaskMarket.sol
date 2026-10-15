@@ -6,6 +6,7 @@ import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { IPGTRForwarder } from "../interfaces/IPGTRForwarder.sol";
+import { IPGTRPaymentForwarder } from "../interfaces/IPGTRPaymentForwarder.sol";
 import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTaskMarket — shared internal helpers for TaskMarket facets
@@ -98,6 +99,19 @@ library LibTaskMarket {
             return IPGTRForwarder(msg.sender).pgtrSender();
         }
         return msg.sender;
+    }
+
+    /// @notice Reverts StakePaymentMismatch unless the calling forwarder reports a payment equal
+    ///         to stakeAmount for this call.
+    /// @dev Caller must already have passed _requireForwarder. A forwarder that cannot report an
+    ///      amount is accepted only for a zero stake, so an earlier forwarder keeps relaying
+    ///      unstaked claims while both are trusted.
+    function _requireStakePayment(uint256 stakeAmount) internal view {
+        try IPGTRPaymentForwarder(msg.sender).pgtrPaymentAmount() returns (uint256 paid) {
+            if (paid != stakeAmount) revert ITMPCore.StakePaymentMismatch();
+        } catch {
+            if (stakeAmount != 0) revert ITMPCore.StakePaymentMismatch();
+        }
     }
 
     // -------------------------------------------------------------------------

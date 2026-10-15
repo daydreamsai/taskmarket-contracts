@@ -2,15 +2,17 @@
 pragma solidity ^0.8.24;
 
 import { IPGTRForwarder } from "../../src/interfaces/IPGTRForwarder.sol";
+import { IPGTRPaymentForwarder } from "../../src/interfaces/IPGTRPaymentForwarder.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /// @dev Test double for a PGTR forwarder (ERC-8194).
 ///      Holds USDC on behalf of payers and sets pgtrSender atomically
 ///      during each relayed call to the destination contract.
-contract MockPGTRForwarder is IPGTRForwarder {
+contract MockPGTRForwarder is IPGTRPaymentForwarder {
     IERC20 public usdc;
     address private _pgtrSenderValue;
+    uint256 private _pgtrPaymentAmountValue;
 
     constructor(address _usdc) {
         usdc = IERC20(_usdc);
@@ -24,12 +26,17 @@ contract MockPGTRForwarder is IPGTRForwarder {
         return _pgtrSenderValue;
     }
 
+    function pgtrPaymentAmount() external view override returns (uint256) {
+        return _pgtrPaymentAmountValue;
+    }
+
     function isTrustedForwarder(address addr) external view override returns (bool) {
         return addr == address(this);
     }
 
     function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
-        return interfaceId == type(IPGTRForwarder).interfaceId || interfaceId == type(IERC165).interfaceId;
+        return interfaceId == type(IPGTRPaymentForwarder).interfaceId || interfaceId == type(IPGTRForwarder).interfaceId
+            || interfaceId == type(IERC165).interfaceId;
     }
 
     function relay(address target, address pgtrSenderAddr, uint256 paymentAmount, bytes calldata data)
@@ -40,8 +47,10 @@ contract MockPGTRForwarder is IPGTRForwarder {
             require(usdc.transfer(target, paymentAmount), "USDC transfer failed");
         }
         _pgtrSenderValue = pgtrSenderAddr;
+        _pgtrPaymentAmountValue = paymentAmount;
         (bool success, bytes memory result) = target.call(data);
         _pgtrSenderValue = address(0);
+        _pgtrPaymentAmountValue = 0;
         if (!success) {
             if (result.length > 0) {
                 assembly { revert(add(result, 32), mload(result)) }

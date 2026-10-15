@@ -136,6 +136,7 @@ interface ITMPCore is IERC165 {
     error RefundFailed();
     error ForfeitTransferFailed();
     error StakeTransferFailed();
+    error StakePaymentMismatch();
     error EvaluatorPaymentFailed();
     error RequesterRefundFailed();
     error USDCRefundFailed();

@@ -2356,6 +2356,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "StakePaymentMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StakeReturnFailed",
     "inputs": []
   },

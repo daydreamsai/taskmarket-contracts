@@ -180,6 +180,7 @@ contract CoreFacet {
         if (task.mode != CLAIM) revert ITMPCore.NotAClaimTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
+        LibTaskMarket._requireStakePayment(stakeAmount);
 
         task.worker = worker;
         task.stakeAmount = stakeAmount;
