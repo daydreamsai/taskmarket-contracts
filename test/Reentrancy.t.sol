@@ -7,7 +7,7 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
-import { LibTaskMarket } from "../src/libraries/LibTaskMarket.sol";
+import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { TaskMarketForwarder } from "../src/TaskMarketForwarder.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
@@ -207,7 +207,7 @@ contract DiamondReentrancyTest is DiamondTestHelper {
 
     function _assertGuardRejected(bytes memory revertData) internal pure {
         assertEq(revertData.length, 4, "re-entry reverted with a bare custom error");
-        assertEq(bytes4(revertData), LibTaskMarket.ReentrancyGuardReentrantCall.selector, "reentrancy guard");
+        assertEq(bytes4(revertData), LibGuards.ReentrancyGuardReentrantCall.selector, "reentrancy guard");
     }
 
     function _assertTokenReentryRejected() internal view {

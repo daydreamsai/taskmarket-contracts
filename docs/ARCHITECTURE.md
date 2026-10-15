@@ -33,6 +33,15 @@ No `__gap` is needed: the struct lives at a fixed `keccak256` slot and appending
 safe. New fields zero-initialise by default; use lazy-init in the facet function body if a
 non-zero default is needed.
 
+## Shared Libraries
+
+Facets share internal helpers through three libraries in `src/libraries/`:
+
+- `LibGuards` -- forwarder, pause and reentrancy guards, effective-sender resolution and the
+  claim stake-payment check
+- `LibHooks` -- hook resolution, hook context and bounded hook dispatch
+- `LibTaskMarket` -- evaluator configuration, appeal window and feedback gas helpers
+
 ---
 
 ## Task Struct Split
@@ -89,7 +98,7 @@ be in one of these states at a time.
 
 ## PGTR-Only Mutating Functions
 
-User-facing task-flow functions call `LibTaskMarket._requireForwarder(s)`. Direct calls from
+User-facing task-flow functions call `LibGuards._requireForwarder(s)`. Direct calls from
 EOAs or non-registered contracts will revert. The following functions are explicitly exempt
 and may be called without a PGTR forwarder:
 
@@ -99,10 +108,14 @@ and may be called without a PGTR forwarder:
 - All `AdminFacet` functions — owner-only via `LibDiamond.enforceIsContractOwner`
 - `diamondCut` — owner-only
 
-`LibTaskMarket._effectiveSender(s)` returns `IPGTRForwarder(msg.sender).pgtrSender()` when
+`LibGuards._effectiveSender(s)` returns `IPGTRForwarder(msg.sender).pgtrSender()` when
 the caller is a trusted forwarder, otherwise `msg.sender`. The `msg.sender` branch is
 unreachable for PGTR-gated functions in normal operation but is retained as a defensive
 fallback for the exempt paths above.
+
+`claimTask` also calls `LibGuards._requireStakePayment(stakeAmount)`, which reverts
+`StakePaymentMismatch` unless the forwarder's `pgtrPaymentAmount()` equals the stake. A
+forwarder that does not implement `pgtrPaymentAmount()` is accepted only for a zero stake.
 
 ---
 
@@ -165,7 +178,7 @@ The contracts rely on three off-chain parties; `SECURITY.md` states each in full
 
 The reentrancy guard uses `AppStorage.reentrancyStatus` directly (not OpenZeppelin's
 `ReentrancyGuard`) because all facets run via `delegatecall` into the Diamond's storage.
-`LibTaskMarket._nonReentrantBefore` and `_nonReentrantAfter` wrap every state-mutating
+`LibGuards._nonReentrantBefore` and `_nonReentrantAfter` wrap every state-mutating
 function body.
 
 ---

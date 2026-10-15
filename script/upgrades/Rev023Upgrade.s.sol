@@ -12,7 +12,7 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 
 /// @title Rev023Upgrade -- gas guards on every swallowed reputation call and on settlement hooks
-/// @dev The guards live in LibTaskMarket, an internal library, so they are compiled into each facet
+/// @dev The guards live in LibGuards, an internal library, so they are compiled into each facet
 ///      that uses them. Replaces AcceptanceFacet, CoreFacet, EvaluatorFacet and RatingFacet with
 ///      their full selector lists: a facet left out would keep the old, unguarded bytecode.
 ///      acceptSubmission(s), cancelTask, refundExpired and rateTask revert below a minimum gas floor

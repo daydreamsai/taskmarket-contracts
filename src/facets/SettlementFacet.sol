@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -31,7 +33,7 @@ contract SettlementFacet {
     ///         is already normalized, terminal or nonexistent is skipped, so a batch may repeat.
     function normalizeTerms(bytes32[] calldata taskIds) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireNotPaused(s);
+        LibGuards._requireNotPaused(s);
         for (uint256 i; i < taskIds.length; ++i) {
             LibTerms.normalize(s, taskIds[i]);
         }
@@ -63,11 +65,11 @@ contract SettlementFacet {
     ///         are rejected, cancelTask becomes available.
     function rejectSubmission(bytes32 taskId, address worker) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (requester != task.requester) revert ITMPCore.NotRequester();
@@ -91,18 +93,18 @@ contract SettlementFacet {
         }
 
         emit ITMPCore.SubmissionRejected(taskId, worker);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Forfeit worker's stake and reopen Claim task.
     ///         The requester is the authenticated actor (pgtrSender).
     function forfeitAndReopen(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.mode != CLAIM) revert ITMPCore.NotAClaimTask();
@@ -125,19 +127,19 @@ contract SettlementFacet {
         if (forfeited > 0) emit ITMPCore.StakeForfeited(taskId, forfeiter, forfeited);
         emit ITMPCore.TaskReopened(taskId);
 
-        LibTaskMarket._onForfeitHooks(taskId, forfeiter, s);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibHooks._onForfeitHooks(taskId, forfeiter, s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Cancel an open task and refund escrowed reward.
     ///         The requester is the authenticated actor (pgtrSender).
     function cancelTask(bytes32 taskId, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (requester != task.requester) revert ITMPCore.NotRequester();
@@ -182,8 +184,8 @@ contract SettlementFacet {
         }
 
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refundAmount);
-        LibTaskMarket._onCancelHooks(taskId, s);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibHooks._onCancelHooks(taskId, s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Refund expired task reward to requester.
@@ -193,8 +195,8 @@ contract SettlementFacet {
     // solhint-disable-next-line code-complexity
     function refundExpired(bytes32 taskId, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
@@ -219,7 +221,7 @@ contract SettlementFacet {
         } else {
             _refundExpiredNormal(taskId, task, s, requesterAgentId);
         }
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @dev The evaluator stake is pulled from the requester when the evaluator is assigned, and only
@@ -272,7 +274,7 @@ contract SettlementFacet {
             }
 
             emit ITMPCore.TaskExpired(taskId, requesterAddr, refundAmount);
-            LibTaskMarket._onExpireHooks(taskId, s);
+            LibHooks._onExpireHooks(taskId, s);
             return;
         }
 
@@ -303,7 +305,7 @@ contract SettlementFacet {
             evidenceHash: bytes32(0),
             awards: awards
         });
-        LibTaskMarket._onCompleteHooks(taskId, s, verdict);
+        LibHooks._onCompleteHooks(taskId, s, verdict);
     }
 
     function _refundExpiredNormal(
@@ -373,7 +375,7 @@ contract SettlementFacet {
         }
 
         // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch (dispatchAfterHooks).
-        LibTaskMarket._onExpireHooks(taskId, s);
+        LibHooks._onExpireHooks(taskId, s);
     }
 
     function _modeName(bytes4 mode) private pure returns (string memory) {

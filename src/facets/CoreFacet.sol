@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -87,11 +89,11 @@ contract CoreFacet {
         ITMPCore.TaskTerms memory terms
     ) private returns (bytes32 taskId) {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         if (requester == address(0)) revert ITMPCore.InvalidRequester();
         if (config.reward == 0) revert ITMPCore.RewardMustBeGreaterThanZero();
         if (config.duration == 0) revert ITMPCore.DurationMustBeGreaterThanZero();
@@ -158,7 +160,7 @@ contract CoreFacet {
             terms.stakeBps
         );
         emit ITMPCore.TaskTermsSet(taskId, terms);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Claim a Claim-mode task. The worker is the authenticated actor (pgtrSender).
@@ -166,28 +168,28 @@ contract CoreFacet {
     /// @param stakeAmount USDC stake amount (0 = no stake required)
     function claimTask(bytes32 taskId, uint256 stakeAmount) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (worker == address(0)) revert ITMPCore.InvalidWorker();
         if (task.mode != CLAIM) revert ITMPCore.NotAClaimTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
-        LibTaskMarket._requireStakePayment(stakeAmount);
+        LibGuards._requireStakePayment(stakeAmount);
 
         task.worker = worker;
         task.stakeAmount = stakeAmount;
         task.status = ITMPCore.TaskStatus.Claimed;
         s.taskMetadata[taskId].claimedAt = block.timestamp;
 
-        LibTaskMarket._checkClaimHooks(taskId, worker, s);
+        LibHooks._checkClaimHooks(taskId, worker, s);
 
         emit ITMPCore.TaskClaimed(taskId, worker, stakeAmount);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Select a worker for Pitch mode. The requester is the authenticated actor (pgtrSender).
@@ -195,11 +197,11 @@ contract CoreFacet {
     /// @param worker Selected worker address
     function selectWorker(bytes32 taskId, address worker) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.mode != PITCH) revert ITMPCore.NotAPitchTask();
@@ -211,10 +213,10 @@ contract CoreFacet {
         task.worker = worker;
         task.status = ITMPCore.TaskStatus.WorkerSelected;
 
-        LibTaskMarket._checkSelectWorkerHooks(taskId, worker, s);
+        LibHooks._checkSelectWorkerHooks(taskId, worker, s);
 
         emit ITMPCore.TaskWorkerSelected(taskId, worker);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Anchor a pitch-content hash on-chain. The worker is the authenticated actor.
@@ -222,11 +224,11 @@ contract CoreFacet {
     /// @param pitchHash Content hash (typically keccak256(abi.encode(taskId, worker, pitchText)))
     function submitPitch(bytes32 taskId, bytes32 pitchHash) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (task.mode != PITCH) revert ITMPCore.NotAPitchTask();
@@ -238,7 +240,7 @@ contract CoreFacet {
         s.taskPitchHashes[taskId].push(pitchHash);
 
         emit ITMPCore.PitchSubmitted(taskId, worker, pitchHash);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Anchor a benchmark-proof hash on-chain. The worker is the authenticated actor.
@@ -248,11 +250,11 @@ contract CoreFacet {
     /// @param metricValue Task-specific numeric score
     function submitProof(bytes32 taskId, bytes32 proofHash, bytes32 proofType, uint256 metricValue) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (task.mode != BENCHMARK) revert ITMPCore.NotABenchmarkTask();
@@ -263,7 +265,7 @@ contract CoreFacet {
         s.taskProofHashes[taskId].push(proofHash);
 
         emit ITMPCore.ProofSubmitted(taskId, worker, proofHash, proofType, metricValue);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Record that a worker has submitted deliverable work.
@@ -274,11 +276,11 @@ contract CoreFacet {
     // solhint-disable-next-line code-complexity
     function submitWork(bytes32 taskId, bytes32 deliverable) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
@@ -320,10 +322,10 @@ contract CoreFacet {
             }
         }
 
-        LibTaskMarket._checkSubmitHooks(taskId, worker, deliverable, s);
+        LibHooks._checkSubmitHooks(taskId, worker, deliverable, s);
 
         emit ITMPCore.TaskSubmitted(taskId, worker, deliverable);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Update an open task's parameters. Pass 0 for any field to leave unchanged.
@@ -338,11 +340,11 @@ contract CoreFacet {
         uint256 newPitchDeadline
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (requester != task.requester) revert ITMPCore.NotRequester();
@@ -405,7 +407,7 @@ contract CoreFacet {
             || (newPitchDeadline != 0 && newPitchDeadline != originalPitchDeadline && task.mode == PITCH);
 
         if (changed) emit ITMPCore.TaskUpdated(taskId, task.reward, task.expiryTime);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @dev Creation-side wrapper around the shared evaluator-config body. Kept in its own frame
@@ -457,6 +459,6 @@ contract CoreFacet {
             }
             th.push(h);
         }
-        LibTaskMarket._checkFundHooks(taskId, th, hookConfig.data, s);
+        LibHooks._checkFundHooks(taskId, th, hookConfig.data, s);
     }
 }

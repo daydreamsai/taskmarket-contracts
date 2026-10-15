@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
@@ -25,11 +27,11 @@ contract AcceptanceFacet {
     /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
     function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
 
@@ -56,7 +58,7 @@ contract AcceptanceFacet {
         // frame to keep this function's local count under the --ir-minimum stack limit.
         _completeAcceptance(taskId, task, worker, requester, requesterAgentId, mode, verdict, s);
 
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     // Complexity is inherent: handles four modes × payment/stake/auction/hook/event branches.
@@ -77,11 +79,11 @@ contract AcceptanceFacet {
         uint256 workerPayment = paymentAmount - fee;
         if (fee > 0) s.totalFeesCollected += fee;
 
-        address[] memory hooks = LibTaskMarket._resolveHooks(taskId, s);
+        address[] memory hooks = LibHooks._resolveHooks(taskId, s);
         if (hooks.length > 0) {
-            LibTaskMarket._dispatchCheckHooks(
+            LibHooks._dispatchCheckHooks(
                 hooks,
-                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict)),
+                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibHooks._buildContext(taskId, s), verdict)),
                 ITMPCore.HookCheckCompleteRejected.selector
             );
         }
@@ -129,8 +131,8 @@ contract AcceptanceFacet {
             }
         }
 
-        LibTaskMarket._dispatchAfterHooksFullGas(
-            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
+        LibHooks._dispatchAfterHooksFullGas(
+            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibHooks._buildContext(taskId, s), verdict))
         );
     }
 
@@ -154,13 +156,13 @@ contract AcceptanceFacet {
         uint256 requesterAgentId
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         _acceptSubmissions(taskId, requester, workers, shares, deliverables, requesterAgentId, s);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     // Complexity is inherent: validates four distinct task modes plus evaluator/deliverable variants.
@@ -286,11 +288,11 @@ contract AcceptanceFacet {
         }
         if (totalFee > 0) s.totalFeesCollected += totalFee;
 
-        address[] memory hooks = LibTaskMarket._resolveHooks(taskId, s);
+        address[] memory hooks = LibHooks._resolveHooks(taskId, s);
         if (hooks.length > 0) {
-            LibTaskMarket._dispatchCheckHooks(
+            LibHooks._dispatchCheckHooks(
                 hooks,
-                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict)),
+                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibHooks._buildContext(taskId, s), verdict)),
                 ITMPCore.HookCheckCompleteRejected.selector
             );
         }
@@ -332,8 +334,8 @@ contract AcceptanceFacet {
             }
         }
 
-        LibTaskMarket._dispatchAfterHooksFullGas(
-            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibTaskMarket._buildContext(taskId, s), verdict))
+        LibHooks._dispatchAfterHooksFullGas(
+            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibHooks._buildContext(taskId, s), verdict))
         );
     }
 

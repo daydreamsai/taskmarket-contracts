@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Initializable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 import { LibDiamond } from "../libraries/LibDiamond.sol";
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibRevision } from "../libraries/LibRevision.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
@@ -42,7 +43,7 @@ contract AdminFacet is Initializable {
         s.usdcToken = IERC20(_usdcToken);
         s.feeRecipient = _feeRecipient;
         s.defaultFeeBps = _defaultFeeBps;
-        s.reentrancyStatus = LibTaskMarket.NOT_ENTERED;
+        s.reentrancyStatus = LibGuards.NOT_ENTERED;
         // A fresh deploy already includes today's full steady-state selector set
         // (FacetSelectors.sol), so it starts at the current revision rather than 0. Rev020 moved
         // this from the hardcoded literal 11 to LibRevision.CURRENT_REVISION, which tracks the

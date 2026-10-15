@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage } from "../libraries/LibAppStorage.sol";
-import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 
 /// @title RegistryFacet — all read-only view functions for tasks, workers, and protocol state
@@ -42,7 +42,7 @@ contract RegistryFacet {
 
     /// @notice Get task context snapshot (for hooks and integrations).
     function getTaskContext(bytes32 taskId) external view returns (ITMPCore.TaskContext memory) {
-        return LibTaskMarket._buildContext(taskId, LibAppStorage.appStorage());
+        return LibHooks._buildContext(taskId, LibAppStorage.appStorage());
     }
 
     /// @notice Get stored verdict (issued = false until evaluate() is called).
@@ -186,6 +186,6 @@ contract RegistryFacet {
     /// @notice Returns the hook list stored for a task. Hooks are committed at creation
     ///         time with protocol default hooks prepended before any requester-supplied hooks.
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory) {
-        return LibTaskMarket._resolveHooks(taskId, LibAppStorage.appStorage());
+        return LibHooks._resolveHooks(taskId, LibAppStorage.appStorage());
     }
 }

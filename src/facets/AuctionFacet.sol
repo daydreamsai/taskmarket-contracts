@@ -2,7 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
-import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import {
@@ -30,11 +31,11 @@ contract AuctionFacet {
     /// @param price  Bid price in USDC base units (must be <= maxPrice)
     function submitBid(bytes32 taskId, uint256 price) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
@@ -55,7 +56,7 @@ contract AuctionFacet {
         s.taskBids[taskId].push(ITMPCore.Bid({ worker: worker, price: price }));
 
         emit ITMPCore.BidSubmitted(taskId, worker, price);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Select the lowest bidder after bid deadline.
@@ -63,9 +64,9 @@ contract AuctionFacet {
     /// @param taskId Task identifier
     function selectLowestBidder(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
@@ -83,10 +84,10 @@ contract AuctionFacet {
         task.stakeAmount = auctionCfg.lowestBidPrice;
         task.status = ITMPCore.TaskStatus.Claimed;
 
-        LibTaskMarket._checkSelectWorkerHooks(taskId, auctionCfg.lowestBidder, s);
+        LibHooks._checkSelectWorkerHooks(taskId, auctionCfg.lowestBidder, s);
 
         emit ITMPCore.TaskWorkerSelected(taskId, auctionCfg.lowestBidder);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Directly award an open auction task to a worker at a given price.
@@ -96,11 +97,11 @@ contract AuctionFacet {
     /// @param price  Accepted price in USDC base units (must be <= task maxPrice)
     function acceptAuction(bytes32 taskId, uint256 price) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
@@ -116,9 +117,9 @@ contract AuctionFacet {
         task.stakeAmount = price;
         task.status = ITMPCore.TaskStatus.Claimed;
 
-        LibTaskMarket._checkSelectWorkerHooks(taskId, worker, s);
+        LibHooks._checkSelectWorkerHooks(taskId, worker, s);
 
         emit ITMPCore.AuctionAccepted(taskId, worker, price);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 }

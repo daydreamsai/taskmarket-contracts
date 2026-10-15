@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
@@ -41,11 +43,11 @@ contract EvaluatorFacet {
         address disputeResolver
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
@@ -66,7 +68,7 @@ contract EvaluatorFacet {
             s
         );
 
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Submit an evaluation verdict.
@@ -86,11 +88,11 @@ contract EvaluatorFacet {
         ITMPCore.Award[] calldata awards
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address evaluatorAddr = LibTaskMarket._effectiveSender(s);
+        address evaluatorAddr = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
         if (evaluatorAddr != evalCfg.evaluator) revert ITMPCore.NotEvaluator();
@@ -130,7 +132,7 @@ contract EvaluatorFacet {
         }
         task.status = ITMPCore.TaskStatus.Appealing;
 
-        LibTaskMarket._checkEvaluateHooks(taskId, evaluatorAddr, s);
+        LibHooks._checkEvaluateHooks(taskId, evaluatorAddr, s);
 
         emit ITMPEvaluator.TaskEvaluated(taskId, evaluatorAddr, uint8(verdictType), score);
 
@@ -139,18 +141,18 @@ contract EvaluatorFacet {
                 revert ITMPCore.EvaluatorPaymentFailed();
             }
         }
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Appeal the evaluator's verdict.
     ///         Only task.worker may call this while status == Appealing and within the window.
     function appeal(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address worker = LibTaskMarket._effectiveSender(s);
+        address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         // Bounty/Benchmark verdicts issued with an empty awards array leave task.worker
         // unset even though real submitters exist in taskSubmissionHashes (populated by
@@ -179,15 +181,15 @@ contract EvaluatorFacet {
         emit ITMPEvaluator.TaskAppealed(taskId, worker);
         emit ITMPEvaluator.TaskDisputed(taskId, dr);
 
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Finalize the verdict after the appeal window has expired.
     ///         Anyone may call this once block.timestamp >= appeal deadline.
     function finalizeVerdict(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.status != ITMPCore.TaskStatus.Appealing) revert ITMPCore.NotInAppealingState();
@@ -201,7 +203,7 @@ contract EvaluatorFacet {
         } else {
             _payAwards(taskId, task, v, s);
         }
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @dev REJECT refunds the (post-evaluator-fee) remainder to the requester in full, so the task
@@ -226,7 +228,7 @@ contract EvaluatorFacet {
         }
         _forfeitClaimStake(taskId, task, claimant, s);
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
-        LibTaskMarket._onCancelHooks(taskId, s);
+        LibHooks._onCancelHooks(taskId, s);
     }
 
     /// @dev Settles a Claim worker's stake when a verdict or a dispute resolution ends the task.
@@ -271,12 +273,12 @@ contract EvaluatorFacet {
         external
     {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.status != ITMPCore.TaskStatus.Disputed) revert ITMPCore.NotInDisputedState();
-        address caller = s.trustedForwarders[msg.sender] ? LibTaskMarket._effectiveSender(s) : msg.sender;
+        address caller = s.trustedForwarders[msg.sender] ? LibGuards._effectiveSender(s) : msg.sender;
         if (caller != s.taskEvaluatorConfigs[taskId].disputeResolver) revert ITMPCore.NotDisputeResolver();
         if (verdictType == ITMPCore.VerdictType.REJECT) revert ITMPCore.DisputeResolutionMustAwardWorkers();
         if (awards.length == 0) revert ITMPCore.AwardsRequired();
@@ -290,18 +292,18 @@ contract EvaluatorFacet {
         }
 
         _payAwards(taskId, task, v, s);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
     ///         Only the requester may call this.
     function evaluatorTimeout(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
-        LibTaskMarket._nonReentrantBefore(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.status != ITMPCore.TaskStatus.Review) revert ITMPCore.NotInReviewState();
@@ -320,7 +322,7 @@ contract EvaluatorFacet {
         }
 
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, forfeited);
-        LibTaskMarket._nonReentrantAfter(s);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @dev Ensures every award recipient is a legitimate party for this task: the locked
@@ -388,10 +390,10 @@ contract EvaluatorFacet {
         // stack-too-deep under --ir-minimum coverage compilation.
         uint256 totalAwarded = _commitEvalAccounting(v, task.feeBps, remaining, s);
 
-        LibTaskMarket._checkCompleteHooks(taskId, s, verdictMem);
+        LibHooks._checkCompleteHooks(taskId, s, verdictMem);
         _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
         _settleClaimStake(taskId, task, totalAwarded > 0, s);
-        LibTaskMarket._onCompleteHooks(taskId, s, verdictMem);
+        LibHooks._onCompleteHooks(taskId, s, verdictMem);
     }
 
     /// @dev Tallies awards, increments worker stats, commits fees, and validates escrow. No transfers.

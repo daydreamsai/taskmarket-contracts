@@ -8,7 +8,7 @@ import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { TMP_CLAIM, TMP_PITCH, TMP_AUCTION, TMP_AUCTION_DUTCH, TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { LibAppStorage, AppStorage } from "../src/libraries/LibAppStorage.sol";
-import { LibTaskMarket } from "../src/libraries/LibTaskMarket.sol";
+import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { LibTerms } from "../src/libraries/LibTerms.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
@@ -458,7 +458,7 @@ contract TaskTermsTest is DiamondTestHelper {
         bytes32 taskId = _legacyTask(TMP_CLAIM);
         vm.prank(owner);
         market.pause();
-        vm.expectRevert(LibTaskMarket.EnforcedPause.selector);
+        vm.expectRevert(LibGuards.EnforcedPause.selector);
         market.normalizeTerms(_ids(taskId));
     }
 

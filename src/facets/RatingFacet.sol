@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
@@ -38,10 +39,10 @@ contract RatingFacet {
         bytes32 feedbackHash
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibTaskMarket._requireForwarder(s);
-        LibTaskMarket._requireNotPaused(s);
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
 
-        address requester = LibTaskMarket._effectiveSender(s);
+        address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.status != ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskNotAccepted();
