@@ -1992,6 +1992,11 @@
   },
   {
     "type": "error",
+    "name": "TermsFrozen",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "USDCRefundFailed",
     "inputs": []
   },

@@ -366,6 +366,7 @@ contract CoreFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (task.mode == AUCTION && s.taskBids[taskId].length != 0) revert ITMPCore.BidsExist();
 

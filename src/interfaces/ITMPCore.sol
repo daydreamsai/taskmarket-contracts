@@ -172,6 +172,8 @@ interface ITMPCore is IERC165 {
     error DecisionWindowLapsed();
     error RevisionsExhausted();
     error TooManyWinners();
+    /// @notice A task's terms cannot change once a worker is committed or a submission is active.
+    error TermsFrozen();
     error ReleaseNotAllowed();
 
     // -------------------------------------------------------------------------

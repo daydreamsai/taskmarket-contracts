@@ -2000,6 +2000,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "TermsFrozen",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "USDCRefundFailed",
     "inputs": []
   },

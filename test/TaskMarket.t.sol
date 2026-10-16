@@ -1052,30 +1052,30 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(task.deliverable, bytes32(0));
     }
 
-    function test_UpdateTask_BountyWithSubmissions_StillOpen() public {
+    function test_RevertWhen_UpdateTask_BountyWithSubmissions_TermsFrozen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _submitWork(taskId, worker1, keccak256("work"));
-        // Bounty stays Open after a submission, so the requester can still extend the
-        // expiry and raise the reward while the contest is live.
+        // Bounty stays Open after a submission, but an active submission freezes its terms:
+        // neither the expiry nor the reward can change under a submitter.
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
 
         uint256 newExpiry = block.timestamp + DURATION * 2;
+        vm.expectRevert(ITMPCore.TermsFrozen.selector);
         _updateTask(taskId, requester, 0, 0, newExpiry, 0, 0);
-        assertEq(market.getTask(taskId).expiryTime, newExpiry);
 
         uint256 newReward = REWARD * 2;
+        vm.expectRevert(ITMPCore.TermsFrozen.selector);
         _updateTask(taskId, requester, newReward - REWARD, newReward, 0, 0, 0);
-        assertEq(market.getTask(taskId).reward, newReward);
     }
 
-    function test_UpdateTask_BenchmarkWithSubmissions_StillOpen() public {
+    function test_RevertWhen_UpdateTask_BenchmarkWithSubmissions_TermsFrozen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
         _submitWork(taskId, worker1, keccak256("proof"));
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
 
         uint256 newExpiry = block.timestamp + DURATION * 2;
+        vm.expectRevert(ITMPCore.TermsFrozen.selector);
         _updateTask(taskId, requester, 0, 0, newExpiry, 0, 0);
-        assertEq(market.getTask(taskId).expiryTime, newExpiry);
     }
 
     function test_RefundExpired_OpenBountyWithSubmissions_Reverts() public {
@@ -2091,11 +2091,18 @@ contract TaskMarketTest is DiamondTestHelper {
         _updateTask(taskId, worker1, 0, REWARD * 2, 0, 0, 0);
     }
 
-    function test_RevertWhen_UpdateTask_TaskNotOpen() public {
+    function test_RevertWhen_UpdateTask_TermsFrozen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, 0);
-        vm.expectRevert(ITMPCore.TaskNotOpen.selector);
+        vm.expectRevert(ITMPCore.TermsFrozen.selector);
         _updateTask(taskId, requester, 0, REWARD * 2, 0, 0, 0);
+    }
+
+    function test_RevertWhen_UpdateTask_TaskNotOpen() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _cancelTask(taskId, requester);
+        vm.expectRevert(ITMPCore.TaskNotOpen.selector);
+        _updateTask(taskId, requester, 0, 0, block.timestamp + DURATION * 2, 0, 0);
     }
 
     function test_RevertWhen_UpdateTask_AuctionHasBids() public {
@@ -4825,9 +4832,22 @@ contract TaskMarketTest is DiamondTestHelper {
         );
     }
 
-    function test_RevertWhen_AssignEvaluator_TaskNotOpen() public {
+    function test_RevertWhen_AssignEvaluator_TermsFrozen() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, 0);
+        vm.expectRevert(ITMPCore.TermsFrozen.selector);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(1 days), uint32(1 days), address(0))
+            )
+        );
+    }
+
+    function test_RevertWhen_AssignEvaluator_TaskNotOpen() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _cancelTask(taskId, requester);
         vm.expectRevert(ITMPCore.TaskNotOpen.selector);
         _relay(
             requester,

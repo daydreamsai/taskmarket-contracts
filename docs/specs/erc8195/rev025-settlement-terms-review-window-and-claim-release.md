@@ -152,6 +152,10 @@ after rev025.
 claimed or selected worker (including an auction's selected bidder) or an active submission. This
 applies to every task. A bid alone does not freeze terms: no worker is committed until selection.
 As a result a requester can no longer raise a bounty after submissions arrive.
+The check runs before the status check, so a committed task reverts `TermsFrozen` and a terminal
+task (Accepted, Expired, Cancelled) still reverts `TaskNotOpen`. A reopened Claim or Pitch task
+with no worker is editable again. An Auction's `updateTask` still reverts `BidsExist` once any bid
+is placed, as before; `assignEvaluator` is not frozen by bids alone.
 
 #### `getTaskTerms(bytes32 taskId) view returns (TaskTerms)`
 

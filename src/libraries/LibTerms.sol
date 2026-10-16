@@ -10,6 +10,18 @@ import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "..
 ///      non-terminal task created before rev025 the first time it is read. A terminal pre-rev025
 ///      task is never normalized and keeps reading as all zeros.
 library LibTerms {
+    /// @notice Reverts TermsFrozen once a worker is committed (claimed, selected, or past
+    ///         delivery) or a Bounty or Benchmark submission is active. A bid alone commits no one.
+    function requireTermsOpen(AppStorage storage s, bytes32 taskId, ITMPCore.Task storage task) internal view {
+        ITMPCore.TaskStatus st = task.status;
+        if (
+            st == ITMPCore.TaskStatus.Claimed || st == ITMPCore.TaskStatus.WorkerSelected
+                || st == ITMPCore.TaskStatus.PendingApproval || st == ITMPCore.TaskStatus.Review
+                || st == ITMPCore.TaskStatus.Appealing || st == ITMPCore.TaskStatus.Disputed
+                || s.taskActiveSubmissionCount[taskId] > 0
+        ) revert ITMPCore.TermsFrozen();
+    }
+
     uint8 internal constant TERMS_VERSION = 1;
 
     uint32 internal constant DEFAULT_REVIEW_WINDOW_SECS = 72 hours;

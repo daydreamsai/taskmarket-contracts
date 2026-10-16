@@ -52,6 +52,7 @@ contract EvaluatorFacet {
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
 
         // Remaining validation, storage writes, stake pull and event live in LibTaskMarket so
