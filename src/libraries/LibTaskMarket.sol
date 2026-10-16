@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
+import { LibGuards } from "./LibGuards.sol";
 import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTaskMarket — evaluator configuration, appeal window and feedback gas helpers
@@ -20,6 +21,10 @@ library LibTaskMarket {
     // gas cap would make acceptance unreachable; 5M is well above the worst measured registry
     // cost (about 1.8M on Tempo) and well below any supported chain's cap.
     uint256 internal constant MAX_FEEDBACK_GAS = 5_000_000;
+
+    // Rev025: most winners one Bounty or Benchmark settlement may pay. 50 winners measured about
+    // 3.6M gas on Base and 9M on Tempo, under the 16M relay ceiling; 100 would exceed it on Tempo.
+    uint256 internal constant MAX_SUBMISSION_WINNERS = 50;
 
     // Rev017: default floor for assignEvaluator's appealWindowSecs, used whenever
     // s.minAppealWindowSecs has never been set. Five minutes is sized for a worker that
@@ -57,6 +62,7 @@ library LibTaskMarket {
         bytes32 taskId,
         address requester,
         ITMPCore.TaskEvaluatorConfig memory cfg,
+        uint256 otherForwardedFunds,
         AppStorage storage s
     ) internal {
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
@@ -74,9 +80,10 @@ library LibTaskMarket {
         evalCfg.appealWindow = cfg.appealWindow;
         evalCfg.disputeResolver = cfg.disputeResolver;
 
-        if (cfg.evaluatorStake > 0) {
-            // Pull stake from the requester. Pulling from an arbitrary evaluator address would
-            // let a malicious requester drain any address that has pre-approved this contract.
+        // A paying forwarder (v2) has already moved the stake into escrow as part of the relayed
+        // payment, alongside otherForwardedFunds (the reward on createTask). A v1 forwarder
+        // reports no payment, so the stake is still pulled from the requester's allowance.
+        if (!LibGuards._requireReportedPayment(otherForwardedFunds + cfg.evaluatorStake) && cfg.evaluatorStake > 0) {
             // requester = _effectiveSender(s) = authenticated PGTR forwarder caller; not arbitrary
             // slither-disable-next-line arbitrary-send-erc20
             if (!s.usdcToken.transferFrom(requester, address(this), cfg.evaluatorStake)) {

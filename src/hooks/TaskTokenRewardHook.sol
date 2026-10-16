@@ -11,6 +11,7 @@ import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/Mes
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
+import { TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
 import { IRewardVault } from "../interfaces/IRewardVault.sol";
 import { EpochBudget } from "./EpochBudget.sol";
 
@@ -56,6 +57,25 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         bool reserved; // true for Claim/Pitch/Auction (pre-reserved)
         bool paid;
         uint64 consumedEpoch;
+    }
+
+    /// @notice A reserve release that was due, kept until both dependencies have released it.
+    /// @dev A snapshot rather than a view of `RewardState`, because a reopened task can be
+    ///      reserved again for a new worker, which rewrites `RewardState` before an earlier
+    ///      failed release has been retried.
+    struct ReleaseProgress {
+        uint256 tokenAmount;
+        uint256 usdAmount;
+        address requester;
+        address worker;
+        uint64 consumedEpoch;
+        bool vaultReleased;
+        bool budgetReleased;
+    }
+
+    enum ReleaseDependency {
+        Vault,
+        Budget
     }
 
     /// @notice All hook state, held at a fixed slot rather than in sequential storage.
@@ -109,6 +129,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         bool walletHistorySealed;
         // One-way: once true, in-flight reward state can never be seeded again.
         bool rewardStateSealed;
+        mapping(bytes32 => ReleaseProgress) releaseProgress;
     }
 
     bytes32 private constant HOOK_STORAGE_SLOT = keccak256("taskmarket.tokenrewardhook.storage.v1");
@@ -217,6 +238,10 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         );
     }
 
+    function releaseProgress(bytes32 taskId) external view returns (ReleaseProgress memory) {
+        return _s().releaseProgress[taskId];
+    }
+
     function usedWithdrawNonce(bytes32 key) external view returns (bool) {
         return _s().usedWithdrawNonce[key];
     }
@@ -240,6 +265,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         uint256 tokenAmount
     );
     event RewardReserveReleased(bytes32 indexed taskId, uint256 releasedAmount);
+    event RewardVaultReleased(bytes32 indexed taskId, uint256 tokenAmount);
+    event RewardBudgetReleased(bytes32 indexed taskId, uint256 usdAmount);
+    event RewardReleaseFailed(bytes32 indexed taskId, ReleaseDependency dependency);
     event RewardsWithdrawn(address indexed wallet, address indexed destination, uint256 amount);
     event WalletBanned(address indexed wallet);
     event WalletUnbanned(address indexed wallet);
@@ -273,6 +301,8 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     error InvalidBps();
     error InvalidRamp();
     error InsufficientSweepable();
+    error ReleaseNotDue(bytes32 taskId);
+    error NothingToRecover(bytes32 taskId);
 
     modifier onlyDiamond() {
         if (msg.sender != _s().diamond) revert CallerNotDiamond();
@@ -562,15 +592,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         override
         onlyDiamond
     {
-        // Payment was already handled in checkComplete. Defensive: if somehow
-        // reserved but not paid, release the reserve.
-        RewardState storage state = _s().rewardStates[taskId];
-        if (state.reserved && !state.paid && state.reservedTokenAmount > 0) {
-            try _s().vault.release(taskId, state.reservedTokenAmount) { } catch { }
-            try _s().epochBudget.release(state.requester, state.worker, state.usdBonusValue, state.consumedEpoch) { }
-                catch { }
-            emit RewardReserveReleased(taskId, state.reservedTokenAmount);
-        }
+        // Payment was already handled in checkComplete. A completion that skips the check hooks
+        // (settleLapsedReview) leaves the reservation unpaid, so release it.
+        _releaseReserve(taskId);
     }
 
     function onForfeit(
@@ -605,6 +629,29 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         override
         onlyDiamond
     {
+        _releaseReserve(taskId);
+    }
+
+    /// @notice Finish a reserve release that a failed dependency call or a failed after-hook
+    ///         left incomplete. Permissionless: it only ever releases what the task's own
+    ///         state on the Diamond shows is due, and each dependency at most once.
+    /// @dev Due means the task is Cancelled or Expired, is a Claim or Pitch task back in Open
+    ///      with no worker, or is Accepted without checkComplete having paid the reservation
+    ///      (settleLapsedReview). A task that is claimed, selected, under review or paid out is
+    ///      never released.
+    function recoverReserve(bytes32 taskId) external {
+        ITMPCore.Task memory task = ITMPCore(_s().diamond).getTask(taskId);
+        RewardState storage state = _s().rewardStates[taskId];
+        ITMPCore.TaskStatus status = task.status;
+        bool reopened = (task.mode == TMP_CLAIM || task.mode == TMP_PITCH) && status == ITMPCore.TaskStatus.Open
+            && task.worker == address(0);
+        bool unpaidAccept = status == ITMPCore.TaskStatus.Accepted && (!state.paid || _releasePending(taskId));
+        bool due = status == ITMPCore.TaskStatus.Cancelled || status == ITMPCore.TaskStatus.Expired || reopened
+            || unpaidAccept;
+        if (!due) revert ReleaseNotDue(taskId);
+
+        bool stale = state.reserved && !state.paid && state.reservedTokenAmount > 0;
+        if (!_releasePending(taskId) && !stale) revert NothingToRecover(taskId);
         _releaseReserve(taskId);
     }
 
@@ -906,7 +953,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         // trusted owner-set contracts (no _s().token transfer, no calls to attacker-
         // controlled addresses), so the state writes further below in this function
         // being "after" this external call is not an exploitable reentrancy path.
-        if (state.reserved && !state.paid) {
+        // Also retries an earlier release still pending for this task, before the vault holds a
+        // second reservation under the same taskId.
+        if ((state.reserved && !state.paid) || _releasePending(taskId)) {
             // slither-disable-next-line reentrancy-no-eth
             _releaseReserve(taskId);
         }
@@ -954,18 +1003,62 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         return true;
     }
 
+    /// @dev Moves a due reservation into `releaseProgress` and attempts each dependency.
+    ///      An earlier incomplete release is retried first; while it is still incomplete the
+    ///      current reservation stays in `RewardState`, because one task has one progress
+    ///      record and overwriting it would orphan the earlier amounts.
     function _releaseReserve(bytes32 taskId) internal {
+        if (_releasePending(taskId)) {
+            _attemptRelease(taskId);
+            if (_releasePending(taskId)) return;
+        }
         RewardState storage state = _s().rewardStates[taskId];
         if (!state.reserved || state.paid || state.reservedTokenAmount == 0) return;
-        uint256 tokenAmount = state.reservedTokenAmount;
-        uint256 usdAmount = state.usdBonusValue;
-        // Clear state before external calls to prevent double-release on re-entry or
-        // a second terminal dispatch emitting a phantom RewardReserveReleased event.
+        _s().releaseProgress[taskId] = ReleaseProgress({
+            tokenAmount: state.reservedTokenAmount,
+            usdAmount: state.usdBonusValue,
+            requester: state.requester,
+            worker: state.worker,
+            consumedEpoch: state.consumedEpoch,
+            vaultReleased: false,
+            budgetReleased: false
+        });
         state.reserved = false;
         state.reservedTokenAmount = 0;
-        try _s().vault.release(taskId, tokenAmount) { } catch { }
-        try _s().epochBudget.release(state.requester, state.worker, usdAmount, state.consumedEpoch) { } catch { }
-        emit RewardReserveReleased(taskId, tokenAmount);
+        _attemptRelease(taskId);
+    }
+
+    function _releasePending(bytes32 taskId) internal view returns (bool) {
+        ReleaseProgress storage p = _s().releaseProgress[taskId];
+        return p.tokenAmount != 0 && !(p.vaultReleased && p.budgetReleased);
+    }
+
+    /// @dev Each flag is set before its call so a re-entrant attempt cannot release twice, and
+    ///      cleared again if the call fails. `RewardVault.release` reverts on over-release, so
+    ///      a retry can never release more than was reserved. `EpochBudget.release` returns
+    ///      without effect once the epoch has rolled, which counts as done: the usage it
+    ///      would have returned has already reset.
+    function _attemptRelease(bytes32 taskId) internal {
+        ReleaseProgress storage p = _s().releaseProgress[taskId];
+        if (!p.vaultReleased) {
+            p.vaultReleased = true;
+            try _s().vault.release(taskId, p.tokenAmount) {
+                emit RewardVaultReleased(taskId, p.tokenAmount);
+            } catch {
+                p.vaultReleased = false;
+                emit RewardReleaseFailed(taskId, ReleaseDependency.Vault);
+            }
+        }
+        if (!p.budgetReleased) {
+            p.budgetReleased = true;
+            try _s().epochBudget.release(p.requester, p.worker, p.usdAmount, p.consumedEpoch) {
+                emit RewardBudgetReleased(taskId, p.usdAmount);
+            } catch {
+                p.budgetReleased = false;
+                emit RewardReleaseFailed(taskId, ReleaseDependency.Budget);
+            }
+        }
+        if (p.vaultReleased && p.budgetReleased) emit RewardReserveReleased(taskId, p.tokenAmount);
     }
 
     function _min3(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {

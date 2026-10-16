@@ -4,8 +4,11 @@ pragma solidity ^0.8.24;
 import { Script, console } from "forge-std/Script.sol";
 import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
+import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
+import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
+import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
@@ -15,9 +18,13 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      CoreFacet (its rev024 selectors less the settlement calls) and AdminFacet with their rev024
 ///      selector lists, Adds the createTask overload taking TaskTerms to CoreFacet and
 ///      setTermsBounds to AdminFacet, Adds SettlementFacet (normalizeTerms, getTaskTerms,
-///      termsBounds) and Replaces rejectSubmission, forfeitAndReopen, cancelTask and refundExpired
-///      from CoreFacet onto SettlementFacet. The legacy createTask records the default terms. Run normalizeTerms over
-///      every live task id after this step, before any other post-upgrade pass over task ids.
+///      termsBounds, reviewDeadline, rejectDelivery, requestRevision, settleLapsedReview,
+///      MAX_SUBMISSION_WINNERS, releaseClaim), Replaces EvaluatorFacet (deferred evaluator fee,
+///      winner cap, award records), AcceptanceFacet (winner cap, award records) and RatingFacet
+///      (rateTask only award recipients), and Replaces rejectSubmission, forfeitAndReopen,
+///      cancelTask and refundExpired from CoreFacet onto SettlementFacet. The legacy createTask
+///      records the default terms. Run normalizeTerms over every live task id after this step,
+///      before any other post-upgrade pass over task ids.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_TESTNET  -- Diamond proxy on Base Sepolia (chain 84532)
@@ -43,6 +50,9 @@ contract Rev025Upgrade is Script {
         address coreFacet = address(new CoreFacet());
         address adminFacet = address(new AdminFacet());
         address settlementFacet = address(new SettlementFacet());
+        address evaluatorFacet = address(new EvaluatorFacet());
+        address acceptanceFacet = address(new AcceptanceFacet());
+        address ratingFacet = address(new RatingFacet());
 
         bytes4[] memory newCore = new bytes4[](1);
         newCore[0] = ITMPTerms.createTask.selector;
@@ -55,7 +65,7 @@ contract Rev025Upgrade is Script {
             keptCore[i] = core[i];
         }
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, keptCore);
         cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCore);
         cuts[2] = IDiamondCut.FacetCut(
@@ -69,6 +79,17 @@ contract Rev025Upgrade is Script {
             settlementFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.settlementFacetSelectorsFromCore()
         );
 
+        cuts[6] = IDiamondCut.FacetCut(
+            evaluatorFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.evalFacetSelectors()
+        );
+
+        cuts[7] = IDiamondCut.FacetCut(
+            acceptanceFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()
+        );
+        cuts[8] = IDiamondCut.FacetCut(
+            ratingFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.ratingFacetSelectors()
+        );
+
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         AdminFacet(diamond).setDiamondVersion(TARGET_VERSION);
 
@@ -78,6 +99,9 @@ contract Rev025Upgrade is Script {
         console.log("CoreFacet:      ", coreFacet);
         console.log("SettlementFacet:", settlementFacet);
         console.log("AdminFacet:     ", adminFacet);
+        console.log("EvaluatorFacet: ", evaluatorFacet);
+        console.log("AcceptanceFacet:", acceptanceFacet);
+        console.log("RatingFacet:    ", ratingFacet);
         console.log("diamondVersion: ", TARGET_VERSION);
     }
 }

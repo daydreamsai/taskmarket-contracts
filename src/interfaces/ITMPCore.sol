@@ -138,6 +138,7 @@ interface ITMPCore is IERC165 {
     error ForfeitTransferFailed();
     error StakeTransferFailed();
     error StakePaymentMismatch();
+    error ForwardedPaymentMismatch();
     error EvaluatorPaymentFailed();
     error RequesterRefundFailed();
     error USDCRefundFailed();
@@ -165,6 +166,13 @@ interface ITMPCore is IERC165 {
     // Settlement terms (Rev025)
     error InvalidTerms();
     error InvalidTermsBounds();
+    error DeliveryPending();
+    error ReviewWindowOpen();
+    error ReviewWindowClosed();
+    error DecisionWindowLapsed();
+    error RevisionsExhausted();
+    error TooManyWinners();
+    error ReleaseNotAllowed();
 
     // -------------------------------------------------------------------------
     // Types
@@ -388,6 +396,9 @@ interface ITMPCore is IERC165 {
         uint64 deliveredAt;
         uint64 decisionStartAt;
         uint8 revisionsUsed;
+        // Resubmission deadline of an open revision request; 0 when none is open. Once it passes
+        // without a resubmission, the superseded delivery is back under review from this time.
+        uint64 revisionDueAt;
     }
 
     /// @notice Rev025: owner-settable bounds on the terms a requester may choose. Every field
@@ -436,6 +447,21 @@ interface ITMPCore is IERC165 {
     /// @notice Rev025: a task's settlement terms were recorded, at creation or on normalization
     ///         of a pre-rev025 task.
     event TaskTermsSet(bytes32 indexed taskId, TaskTerms terms);
+
+    /// @notice Rev025: the requester rejected a delivery inside its review window.
+    event DeliveryRejected(bytes32 indexed taskId, address indexed worker, uint256 rejectFee, uint256 stakeForfeited);
+
+    /// @notice Rev025: a delivery's review window lapsed undecided and the worker was paid.
+    event ReviewLapsed(bytes32 indexed taskId, address indexed worker);
+
+    /// @notice Rev025: the claimed worker released the claim before delivery and expiry.
+    event ClaimReleased(bytes32 indexed taskId, address indexed worker, uint256 penalty, uint256 returned);
+
+    /// @notice Rev025: the requester asked for a revision of a delivery.
+    event RevisionRequested(bytes32 indexed taskId, address indexed worker, uint8 revisionsUsed);
+
+    /// @notice Rev025: a reopen or a revision request moved the task's expiryTime later.
+    event TaskExpiryExtended(bytes32 indexed taskId, uint256 newExpiry);
 
     /// @notice Rev025: the owner changed the bounds on requester-chosen terms. Values are the
     ///         effective bounds, not the stored encodings.
@@ -529,6 +555,7 @@ interface ITMPCore is IERC165 {
     ///           "cancelled_after_submissions" — requester cancelled after all submissions were rejected
     ///           "expired_no_action"           — task expired with no submissions ever
     ///           "expired_after_rejections"    — task expired after all submissions were rejected
+    ///           "decision_deadline_lapsed"    — accepted after the decision deadline (emitted with "completed")
     ///         submissionCount is 0 for cancelled/expired-after-rejection (rejectSubmission decrements
     ///         taskActiveSubmissionCount; the event_ field is the authoritative discriminator).
     event RequesterReputation(

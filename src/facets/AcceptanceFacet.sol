@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibReview } from "../libraries/LibReview.sol";
+import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
@@ -37,6 +39,7 @@ contract AcceptanceFacet {
 
         bytes4 mode = task.mode;
         _validateAcceptSubmission(task, taskId, worker, deliverable, s);
+        _signalDecisionLapsed(taskId, task, s);
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker, amount: task.reward, rank: 1 });
@@ -53,6 +56,7 @@ contract AcceptanceFacet {
         task.status = ITMPCore.TaskStatus.Accepted;
         task.worker = worker;
         s.workerStats[worker].completedTasks++;
+        if (mode == CLAIM || mode == PITCH || mode == AUCTION) s.taskAwarded[taskId][worker] = true;
 
         // Fee computation, transfers, events, and hook dispatch are isolated in a separate
         // frame to keep this function's local count under the --ir-minimum stack limit.
@@ -156,6 +160,9 @@ contract AcceptanceFacet {
         bytes32[] calldata deliverables,
         uint256 requesterAgentId
     ) external {
+        if (workers.length > LibTaskMarket.MAX_SUBMISSION_WINNERS) {
+            revert ITMPCore.TooManyWinners();
+        }
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
@@ -164,6 +171,20 @@ contract AcceptanceFacet {
         address requester = LibGuards._effectiveSender(s);
         _acceptSubmissions(taskId, requester, workers, shares, deliverables, requesterAgentId, s);
         LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @dev Requester reputation signal for settling a Bounty or Benchmark after its decision
+    ///      deadline. Runs before the payout changes the active submission count.
+    function _signalDecisionLapsed(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
+        if (!LibReview.decisionLapsed(s, taskId, task)) return;
+        emit ITMPCore.RequesterReputation(
+            taskId,
+            task.requester,
+            keccak256("decision_deadline_lapsed"),
+            task.reward,
+            uint32(s.taskActiveSubmissionCount[taskId]),
+            false
+        );
     }
 
     // Complexity is inherent: validates four distinct task modes plus evaluator/deliverable variants.
@@ -177,9 +198,7 @@ contract AcceptanceFacet {
     ) private {
         // Bounty/Benchmark: expiryTime is the submission window deadline only; acceptance
         // is open-ended once submissions exist. Claim/Pitch/Auction: expiryTime still applies.
-        if (task.mode != BOUNTY && task.mode != BENCHMARK) {
-            if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
-        }
+        if (task.mode != BOUNTY && task.mode != BENCHMARK) _checkReviewWindow(task, taskId, s);
         address evaluator = s.taskEvaluatorConfigs[taskId].evaluator;
         if (task.mode == CLAIM) {
             if (evaluator != address(0)) revert ITMPCore.UseEvaluate();
@@ -216,6 +235,24 @@ contract AcceptanceFacet {
         }
     }
 
+    /// @dev A delivery under review may be accepted until its review deadline, before or after
+    ///      expiryTime; none may be accepted while a revision is open for resubmission. Without a
+    ///      delivery under review, expiryTime applies as before.
+    function _checkReviewWindow(ITMPCore.Task storage task, bytes32 taskId, AppStorage storage s) private {
+        if (LibReview.singlePayee(s, taskId, task)) {
+            ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
+            if (LibReview.revisionOpen(clock)) revert ITMPCore.DeliveryPending();
+            ITMPCore.TaskTerms storage t = LibTerms.terms(s, taskId);
+            uint256 start = LibReview.reviewStart(clock);
+            if (start != 0) {
+                if (block.timestamp > start + LibReview.reviewWindow(t)) revert ITMPCore.ReviewWindowClosed();
+                LibReview.clear(clock);
+                return;
+            }
+        }
+        if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
+    }
+
     // Validates, resolves deliverables, and builds the awards array before delegating
     // payment/hooks/events to _payMultiAwards. Split to stay under the --ir-minimum stack limit:
     // workers/shares calldata each consume two stack slots (offset + length) in viaIR mode.
@@ -243,6 +280,7 @@ contract AcceptanceFacet {
         if (pinnedDeliverables.length != 0 && pinnedDeliverables.length != n) revert ITMPCore.LengthMismatch();
 
         bytes32[] memory deliverables = _resolveDeliverables(taskId, workers, shares, pinnedDeliverables, s);
+        _signalDecisionLapsed(taskId, task, s);
 
         uint256 reward = task.reward;
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](n);

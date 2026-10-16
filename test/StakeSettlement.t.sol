@@ -78,7 +78,7 @@ contract StakeSettlementTest is DiamondTestHelper {
         return abi.decode(
             _relay(
                 requester,
-                config.reward,
+                config.reward + evalCfg.evaluatorStake,
                 abi.encodeCall(
                     market.createTask,
                     (
@@ -199,9 +199,9 @@ contract StakeSettlementTest is DiamondTestHelper {
         vm.prank(resolver);
         market.resolveDispute(taskId, ITMPCore.VerdictType.PARTIAL, _award(0));
 
-        uint256 evalFee = (REWARD * EVAL_FEE_BPS) / 10000;
         assertEq(usdc.balanceOf(worker), workerBefore, "resolved against the worker");
-        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - evalFee + CLAIM_STAKE);
+        assertEq(usdc.balanceOf(evaluator), 0, "an overturned verdict earns no fee");
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD + CLAIM_STAKE);
         _assertDiamondEmpty();
     }
 
@@ -229,13 +229,15 @@ contract StakeSettlementTest is DiamondTestHelper {
     function test_CancelTask_RefundsEvaluatorStakeToRequester() public {
         uint256 requesterStart = usdc.balanceOf(requester);
         bytes32 taskId = _create(taskConfig(REWARD, DURATION, TMP_CLAIM), _evalConfig(EVAL_STAKE, address(0)));
-        assertEq(usdc.balanceOf(requester), requesterStart - EVAL_STAKE, "stake pulled from requester");
+        assertEq(usdc.balanceOf(requester), requesterStart, "stake arrives with the forwarded payment");
 
         vm.expectEmit(true, true, false, true, address(market));
         emit ITMPEvaluator.EvaluatorStakeRefunded(taskId, requester, EVAL_STAKE);
         _relay(requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
 
-        assertEq(usdc.balanceOf(requester), requesterStart + REWARD, "reward and evaluator stake both returned");
+        assertEq(
+            usdc.balanceOf(requester), requesterStart + REWARD + EVAL_STAKE, "reward and evaluator stake both returned"
+        );
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, 0, "stake settled exactly once");
         _assertDiamondEmpty();
     }
@@ -310,30 +312,217 @@ contract StakeSettlementTest is DiamondTestHelper {
 
         uint256 evalBefore = usdc.balanceOf(evaluator);
         _evaluate(taskId, ITMPCore.VerdictType.APPROVE, _award(price));
-        uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
-        assertEq(usdc.balanceOf(evaluator), evalBefore + evalFee, "fee on the 40 price, not the 100 cap");
+        assertEq(usdc.balanceOf(evaluator), evalBefore, "fee held until the verdict is final");
+        assertEq(usdc.balanceOf(address(market)), REWARD);
 
         vm.warp(block.timestamp + APPEAL_WINDOW);
         uint256 requesterBefore = usdc.balanceOf(requester);
         uint256 workerBefore = usdc.balanceOf(worker);
         market.finalizeVerdict(taskId);
 
+        uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
+        assertEq(usdc.balanceOf(evaluator), evalBefore + evalFee, "fee on the 40 price, not the 100 cap");
         assertEq(usdc.balanceOf(worker), workerBefore + price - (price * PLATFORM_FEE_BPS) / 10000);
         assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - evalFee - price, "refund grows with the fee");
         _assertDiamondEmpty();
     }
 
-    function test_Auction_RefundExpiredAfterVerdict_DeductsPriceBasedFee() public {
+    function test_Auction_RefundExpiredAfterVerdict_FinalizesReject() public {
         uint256 price = 40e6;
         bytes32 taskId = _auctionToReview(price);
         _evaluate(taskId, ITMPCore.VerdictType.REJECT, new ITMPCore.Award[](0));
 
         vm.warp(market.getTask(taskId).expiryTime + 1);
         uint256 requesterBefore = usdc.balanceOf(requester);
+        uint256 evalBefore = usdc.balanceOf(evaluator);
         market.refundExpired(taskId, 0);
 
         uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Cancelled), "verdict applied");
+        assertEq(usdc.balanceOf(evaluator), evalBefore + evalFee, "fee on the settled price");
         assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - evalFee);
+        _assertDiamondEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // Deferred evaluator fee
+    // -------------------------------------------------------------------------
+
+    uint256 internal constant EVAL_FEE = (REWARD * EVAL_FEE_BPS) / 10000;
+
+    function _bountyToEvaluated(ITMPCore.VerdictType verdict, uint256 award) internal returns (bytes32 taskId) {
+        taskId = _create(taskConfig(REWARD, DURATION, TMP_BOUNTY), _evalConfig(0, resolver));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _evaluate(taskId, verdict, award == 0 ? new ITMPCore.Award[](0) : _award(award));
+        assertEq(usdc.balanceOf(evaluator), 0, "evaluate pays no fee");
+        assertEq(usdc.balanceOf(address(market)), REWARD, "fee stays in escrow");
+    }
+
+    function _net(uint256 amount) internal pure returns (uint256) {
+        return amount - (amount * PLATFORM_FEE_BPS) / 10000;
+    }
+
+    function test_EvalFee_FinalizeApprove_PaysEvaluatorAfterWindow() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.APPROVE, REWARD - EVAL_FEE);
+        vm.expectRevert(ITMPCore.AppealWindowStillOpen.selector);
+        market.finalizeVerdict(taskId);
+
+        vm.warp(block.timestamp + APPEAL_WINDOW);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.finalizeVerdict(taskId);
+
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(worker), _net(REWARD - EVAL_FEE));
+        assertEq(usdc.balanceOf(requester), requesterBefore);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_FinalizeReject_PaysEvaluatorAfterWindow() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.REJECT, 0);
+        vm.warp(block.timestamp + APPEAL_WINDOW);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.finalizeVerdict(taskId);
+
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - EVAL_FEE);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_ExpiryWithOpenWindow_RevertsApprove() public {
+        _assertOpenWindowReverts(ITMPCore.VerdictType.APPROVE, REWARD - EVAL_FEE);
+    }
+
+    function test_EvalFee_ExpiryWithOpenWindow_RevertsReject() public {
+        _assertOpenWindowReverts(ITMPCore.VerdictType.REJECT, 0);
+    }
+
+    function _assertOpenWindowReverts(ITMPCore.VerdictType verdict, uint256 award) internal {
+        bytes32 taskId = _bountyToEvaluated(verdict, award);
+        vm.expectRevert(ITMPCore.AppealWindowStillOpen.selector);
+        market.refundExpired(taskId, 0);
+        assertEq(usdc.balanceOf(address(market)), REWARD, "nothing moves");
+        assertEq(usdc.balanceOf(evaluator), 0);
+    }
+
+    function test_EvalFee_ExpiryAfterWindow_SettlesApprove() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.APPROVE, REWARD - EVAL_FEE);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(worker), _net(REWARD - EVAL_FEE));
+        assertEq(usdc.balanceOf(requester), requesterBefore);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_ExpiryAfterWindow_SettlesReject() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.REJECT, 0);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Cancelled));
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - EVAL_FEE);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_UnresolvedDisputeAtExpiry_ApproveStands() public {
+        uint256 award = REWARD - EVAL_FEE;
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.APPROVE, award);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+        vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
+        market.refundExpired(taskId, 0);
+
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(worker), _net(award));
+        assertEq(usdc.balanceOf(requester), requesterBefore);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_UnresolvedDisputeAtExpiry_RejectStands() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.REJECT, 0);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Cancelled));
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(worker), 0);
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - EVAL_FEE);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_ResolverBeforeExpiry_Wins() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.REJECT, 0);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+        vm.warp(market.getTask(taskId).expiryTime);
+        uint256 award = REWARD - EVAL_FEE;
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        vm.prank(resolver);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, _award(award));
+
+        vm.warp(block.timestamp + 1);
+        vm.expectRevert(ITMPCore.TaskAlreadyAccepted.selector);
+        market.refundExpired(taskId, 0);
+        assertEq(usdc.balanceOf(evaluator), 0);
+        assertEq(usdc.balanceOf(worker), _net(award));
+        assertEq(usdc.balanceOf(requester), requesterBefore + EVAL_FEE);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_DisputeUpheld_PaysEvaluator() public {
+        uint256 award = REWARD - EVAL_FEE;
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.APPROVE, award);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+        assertEq(usdc.balanceOf(address(market)), REWARD);
+
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        vm.prank(resolver);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, _award(award));
+
+        assertEq(usdc.balanceOf(evaluator), EVAL_FEE);
+        assertEq(usdc.balanceOf(worker), _net(award));
+        assertEq(usdc.balanceOf(requester), requesterBefore);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_DisputeOverturnsApprove_FeeToRequester() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.APPROVE, REWARD - EVAL_FEE);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+
+        uint256 award = 30e6;
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        vm.prank(resolver);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.PARTIAL, _award(award));
+
+        assertEq(usdc.balanceOf(evaluator), 0, "an overturned verdict earns no fee");
+        assertEq(usdc.balanceOf(worker), _net(award));
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - EVAL_FEE - award + EVAL_FEE);
+        _assertDiamondEmpty();
+    }
+
+    function test_EvalFee_DisputeOverturnsReject_FeeToRequester() public {
+        bytes32 taskId = _bountyToEvaluated(ITMPCore.VerdictType.REJECT, 0);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+
+        uint256 award = REWARD - EVAL_FEE;
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        vm.prank(resolver);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, _award(award));
+
+        assertEq(usdc.balanceOf(evaluator), 0, "an overturned verdict earns no fee");
+        assertEq(usdc.balanceOf(worker), _net(award));
+        assertEq(usdc.balanceOf(requester), requesterBefore + EVAL_FEE);
         _assertDiamondEmpty();
     }
 

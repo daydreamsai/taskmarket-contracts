@@ -5,6 +5,7 @@ import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import {
@@ -179,7 +180,11 @@ contract CoreFacet {
         if (task.mode != CLAIM) revert ITMPCore.NotAClaimTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
+        if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
         LibGuards._requireStakePayment(stakeAmount);
+        if (stakeAmount < LibTerms.minStake(LibTerms.pendingTerms(s, taskId), task.reward)) {
+            revert ITMPCore.StakePaymentMismatch();
+        }
 
         task.worker = worker;
         task.stakeAmount = stakeAmount;
@@ -209,6 +214,7 @@ contract CoreFacet {
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         // pitchDeadline closes new submissions but does not block worker selection;
         // the requester may review and select from received pitches after the window closes.
+        if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
 
         task.worker = worker;
         task.status = ITMPCore.TaskStatus.WorkerSelected;
@@ -301,15 +307,13 @@ contract CoreFacet {
         } else if (task.mode == CLAIM) {
             if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();
-            if (task.deliverable != bytes32(0)) revert ITMPCore.DeliverableAlreadySet();
-            task.deliverable = deliverable;
+            _recordDelivery(taskId, task, deliverable, s);
         } else if (task.mode == PITCH || task.mode == AUCTION) {
             if (task.status != ITMPCore.TaskStatus.WorkerSelected && task.status != ITMPCore.TaskStatus.Claimed) {
                 revert ITMPCore.WorkerNotSelected();
             }
             if (worker != task.worker) revert ITMPCore.WorkerMismatch();
-            if (task.deliverable != bytes32(0)) revert ITMPCore.DeliverableAlreadySet();
-            task.deliverable = deliverable;
+            _recordDelivery(taskId, task, deliverable, s);
         }
 
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
@@ -326,6 +330,20 @@ contract CoreFacet {
 
         emit ITMPCore.TaskSubmitted(taskId, worker, deliverable);
         LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @dev A single-payee task without an evaluator opens its review window at delivery; a
+    ///      resubmission is allowed only while a revision request is open.
+    function _recordDelivery(bytes32 taskId, ITMPCore.Task storage task, bytes32 deliverable, AppStorage storage s)
+        private
+    {
+        ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
+        if (task.deliverable != bytes32(0) && !LibReview.revisionOpen(clock)) revert ITMPCore.DeliverableAlreadySet();
+        task.deliverable = deliverable;
+        if (s.taskEvaluatorConfigs[taskId].evaluator == address(0)) {
+            clock.deliveredAt = uint64(block.timestamp);
+            clock.revisionDueAt = 0;
+        }
     }
 
     /// @notice Update an open task's parameters. Pass 0 for any field to leave unchanged.
@@ -367,6 +385,9 @@ contract CoreFacet {
         if (newReward != 0 && newReward == task.reward) revert ITMPCore.NoRewardChange();
 
         uint256 refund = 0;
+        // A paying forwarder must have moved exactly the increase into escrow, and nothing on
+        // an update that raises no reward.
+        bool paymentReported = LibGuards._requireReportedPayment(newReward > task.reward ? newReward - task.reward : 0);
         if (newReward != 0 && newReward != task.reward) {
             if (newReward < task.reward) {
                 refund = task.reward - newReward;
@@ -378,7 +399,7 @@ contract CoreFacet {
                 // acute failure mode where no funding transfer happened at all (e.g. a
                 // relayed paymentAmount of 0 due to a backend bug), instead of silently
                 // promising a reward the Diamond cannot pay.
-                if (s.usdcToken.balanceOf(address(this)) < newReward) {
+                if (!paymentReported && s.usdcToken.balanceOf(address(this)) < newReward) {
                     revert ITMPCore.RewardIncreaseNotFunded();
                 }
             }
@@ -420,7 +441,7 @@ contract CoreFacet {
         AppStorage storage s
     ) private {
         if (evaluatorConfig.evaluator != address(0)) {
-            LibTaskMarket._applyEvaluatorConfig(taskId, requester, evaluatorConfig, s);
+            LibTaskMarket._applyEvaluatorConfig(taskId, requester, evaluatorConfig, s.tasks[taskId].reward, s);
             return;
         }
         // Evaluator terms with no evaluator to apply them to would be silently dropped, leaving
@@ -434,6 +455,10 @@ contract CoreFacet {
         ) {
             revert ITMPCore.InvalidEvaluator();
         }
+        // The reward is the whole payment of an evaluator-less create; a v1 forwarder is trusted
+        // to have funded it. Called for its revert; whether a payment was reported does not matter.
+        // slither-disable-next-line unused-return
+        LibGuards._requireReportedPayment(s.tasks[taskId].reward);
     }
 
     function _buildAndCheckHooks(bytes32 taskId, ITMPCore.HookConfig calldata hookConfig, AppStorage storage s)

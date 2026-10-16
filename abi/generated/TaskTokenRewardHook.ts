@@ -1373,6 +1373,75 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "function",
+    "name": "recoverReserve",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseProgress",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct TaskTokenRewardHook.ReleaseProgress",
+        "components": [
+          {
+            "name": "tokenAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "usdAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "consumedEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "vaultReleased",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "budgetReleased",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "renounceOwnership",
     "inputs": [],
     "outputs": [],
@@ -1932,6 +2001,25 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "event",
+    "name": "RewardBudgetReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "usdAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardConfigured",
     "inputs": [
       {
@@ -1988,6 +2076,25 @@ export const TaskTokenRewardHookABI = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardReleaseFailed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dependency",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum TaskTokenRewardHook.ReleaseDependency"
       }
     ],
     "anonymous": false
@@ -2066,6 +2173,25 @@ export const TaskTokenRewardHookABI = [
       },
       {
         "name": "reservedTokenAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardVaultReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "tokenAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2280,6 +2406,17 @@ export const TaskTokenRewardHookABI = [
   },
   {
     "type": "error",
+    "name": "NothingToRecover",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "OwnableInvalidOwner",
     "inputs": [
       {
@@ -2297,6 +2434,17 @@ export const TaskTokenRewardHookABI = [
         "name": "account",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReleaseNotDue",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },

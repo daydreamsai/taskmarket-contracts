@@ -263,7 +263,7 @@ contract TaskTermsTest is DiamondTestHelper {
         t.releaseGraceBps = 10001;
         t.rejectFeeBps = 5001;
         t.maxRevisions = 6;
-        t.stakeBps = 10000;
+        t.stakeBps = 5000;
         bytes32 taskId = _createWithTerms(TMP_PITCH, t);
         assertEq(market.getTaskTerms(taskId).rejectFeeBps, 5001, "50% reject fee stored as 5001");
         assertEq(market.getTaskTerms(taskId).maxRevisions, 6, "five revisions stored as 6");
@@ -318,7 +318,7 @@ contract TaskTermsTest is DiamondTestHelper {
 
     function test_CreateTaskWithTerms_StakeBpsTooHigh() public {
         ITMPCore.TaskTerms memory t;
-        t.stakeBps = 10001;
+        t.stakeBps = 5001;
         bytes memory data = _createData(TMP_CLAIM, t);
         vm.expectRevert(ITMPCore.StakeBpsTooHigh.selector);
         forwarder.relay(address(market), requester, REWARD, data);
@@ -474,6 +474,111 @@ contract TaskTermsTest is DiamondTestHelper {
         bytes32 taskId = _createWithTerms(TMP_CLAIM, t);
         market.normalizeTerms(_ids(taskId));
         assertEq(market.getTaskTerms(taskId).rejectFeeBps, 1, "chosen terms survive");
+    }
+
+    // -------------------------------------------------------------------------
+    // Claim stake enforcement
+    // -------------------------------------------------------------------------
+
+    function _createStaked(uint256 reward, uint16 bps) internal returns (bytes32) {
+        return abi.decode(
+            _relay(
+                requester,
+                reward,
+                abi.encodeCall(
+                    market.createTask,
+                    (
+                        taskConfig(reward, DURATION, TMP_CLAIM),
+                        ITMPCore.StakeConfig({ required: true, bps: bps }),
+                        _hooks(),
+                        _content(),
+                        noEvaluatorConfig()
+                    )
+                )
+            ),
+            (bytes32)
+        );
+    }
+
+    function _claimWith(bytes32 taskId, uint256 stake) internal {
+        _relay(worker, stake, abi.encodeCall(market.claimTask, (taskId, stake)));
+    }
+
+    function test_ClaimStake_ExactCeilMinimum_Succeeds() public {
+        bytes32 taskId = _createStaked(REWARD + 1, 1500);
+        _claimWith(taskId, 15_000_001);
+        assertEq(market.getTask(taskId).stakeAmount, 15_000_001);
+    }
+
+    function test_ClaimStake_BelowCeilMinimum_Reverts() public {
+        bytes32 taskId = _createStaked(REWARD + 1, 1500);
+        vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
+        _claimWith(taskId, 15_000_000);
+    }
+
+    function test_ClaimStake_AboveMinimum_Succeeds() public {
+        bytes32 taskId = _createStaked(REWARD, 1500);
+        _claimWith(taskId, 20e6);
+        assertEq(market.getTask(taskId).stakeAmount, 20e6);
+    }
+
+    function test_ClaimStake_NotRequired_ZeroStakeOk() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        _claimWith(taskId, 0);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed));
+    }
+
+    function test_ClaimStake_RequiredZeroBps_ZeroStakeOk() public {
+        bytes32 taskId = _createStaked(REWARD, 0);
+        _claimWith(taskId, 0);
+        assertEq(market.getTask(taskId).worker, worker);
+    }
+
+    function test_ClaimStake_PaymentDiffersFromStake_Reverts() public {
+        bytes32 taskId = _createStaked(REWARD, 1500);
+        vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
+        _relay(worker, 15e6 - 1, abi.encodeCall(market.claimTask, (taskId, 15e6)));
+    }
+
+    function test_ClaimStake_LegacyTaskUsesStoredStakeFields() public {
+        bytes32 taskId = _legacyTask(TMP_CLAIM);
+        vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
+        _claimWith(taskId, 15e6 - 1);
+        _claimWith(taskId, 15e6);
+        assertEq(market.getTask(taskId).stakeAmount, 15e6);
+    }
+
+    function test_ClaimStake_AcceptReturnsExactlyRecordedStake() public {
+        bytes32 taskId = _createStaked(REWARD, 1500);
+        _claimWith(taskId, 15e6);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 before = usdc.balanceOf(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 fee = (REWARD * 500) / 10000;
+        assertEq(usdc.balanceOf(worker) - before, REWARD - fee + 15e6);
+    }
+
+    function test_StakeBps_AboveHalf_Reverts() public {
+        vm.expectRevert(ITMPCore.StakeBpsTooHigh.selector);
+        _relay(
+            requester,
+            REWARD,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    _config(TMP_CLAIM),
+                    ITMPCore.StakeConfig({ required: true, bps: 5001 }),
+                    _hooks(),
+                    _content(),
+                    noEvaluatorConfig()
+                )
+            )
+        );
+    }
+
+    function test_StakeBps_HalfAccepted() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, true, 5000);
+        assertEq(market.getTask(taskId).stakeBps, 5000);
     }
 
     // -------------------------------------------------------------------------

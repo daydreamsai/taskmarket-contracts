@@ -437,10 +437,10 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.warp(block.timestamp + DURATION + 1);
 
-        uint256 feeRecipientBalanceBefore = usdc.balanceOf(feeRecipient);
+        uint256 requesterBalanceBefore = usdc.balanceOf(requester);
         _forfeitAndReopen(taskId, requester);
 
-        assertEq(usdc.balanceOf(feeRecipient), feeRecipientBalanceBefore + stakeAmount);
+        assertEq(usdc.balanceOf(requester), requesterBalanceBefore + stakeAmount, "default penaltyTo is the requester");
 
         ITMPCore.Task memory task = market.getTask(taskId);
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Open));
@@ -582,12 +582,12 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     function test_RevertWhen_AcceptExpiredTask_Claim() public {
-        // Claim still enforces expiryTime on acceptSubmission.
+        // A delivered Claim is accepted until its review deadline, which here precedes expiry.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, 0);
         _submitWork(taskId, worker1, keccak256("work"));
         vm.warp(block.timestamp + DURATION + 1);
-        vm.expectRevert(ITMPCore.TaskIsExpired.selector);
+        vm.expectRevert(ITMPCore.ReviewWindowClosed.selector);
         forwarder.relay(
             address(market),
             requester,
@@ -881,7 +881,7 @@ contract TaskMarketTest is DiamondTestHelper {
             market.createTask,
             (
                 taskConfig(REWARD, DURATION, market.BOUNTY(), 0, 0, bytes4(0)),
-                ITMPCore.StakeConfig({ required: true, bps: 10001 }),
+                ITMPCore.StakeConfig({ required: true, bps: 5001 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
                 noEvaluatorConfig()
@@ -1224,7 +1224,7 @@ contract TaskMarketTest is DiamondTestHelper {
         usdc.approve(address(market), stakeAmount);
         _relay(
             requester,
-            0,
+            stakeAmount,
             abi.encodeCall(
                 market.assignEvaluator, (taskId, evaluator, stakeAmount, 0, evalWindowSecs, uint32(1 days), address(0))
             )
@@ -1647,7 +1647,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Expired));
     }
 
-    function test_RefundExpired_Auction_WithWinner() public {
+    function test_LapsedReview_Auction_WithWinner() public {
         uint256 acceptPrice = 40 * 10 ** 6;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         _acceptAuction(taskId, worker1, acceptPrice);
@@ -1665,7 +1665,9 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.expectEmit(true, true, true, true);
         emit ITMPCore.TaskCompleted(taskId, requester, worker1, expectedWorkerPayment, fee);
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
         market.refundExpired(taskId, 0);
+        market.settleLapsedReview(taskId);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + expectedWorkerPayment);
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore + expectedRequesterRefund);
@@ -1677,7 +1679,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(market.getWorkerStats(worker1).completedTasks, 1);
     }
 
-    function test_RefundExpired_Auction_WithWinner_ZeroRefund() public {
+    function test_LapsedReview_Auction_WithWinner_ZeroRefund() public {
         uint256 acceptPrice = REWARD;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         _acceptAuction(taskId, worker1, acceptPrice);
@@ -1691,7 +1693,9 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 worker1BalanceBefore = usdc.balanceOf(worker1);
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
 
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
         market.refundExpired(taskId, 0);
+        market.settleLapsedReview(taskId);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + expectedWorkerPayment);
         assertEq(usdc.balanceOf(requester), requesterBalanceBefore);
@@ -1737,7 +1741,7 @@ contract TaskMarketTest is DiamondTestHelper {
         usdc.approve(address(market), stakeAmount);
         _relay(
             requester,
-            0,
+            stakeAmount,
             abi.encodeCall(
                 market.assignEvaluator, (taskId, evaluator, stakeAmount, 0, uint32(2 days), uint32(1 days), address(0))
             )
@@ -2016,13 +2020,13 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     function test_RevertWhen_UpdateTask_RewardIncrease_NotFunded() public {
-        // No paymentAmount funds the increase this time (additionalPayment = 0) -- the
-        // Diamond's balance can't cover the new reward, so the increase must revert instead
-        // of silently promising a reward the escrow doesn't actually hold.
+        // No paymentAmount funds the increase this time (additionalPayment = 0): a forwarder that
+        // reports its payment must forward exactly the increase, so the update reverts instead
+        // of promising a reward the escrow doesn't hold.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         uint256 newReward = REWARD * 2;
 
-        vm.expectRevert(ITMPCore.RewardIncreaseNotFunded.selector);
+        vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
         _updateTask(taskId, requester, 0, newReward, 0, 0, 0);
     }
 
@@ -2273,6 +2277,100 @@ contract TaskMarketTest is DiamondTestHelper {
         }
         bytes32[] memory emptyDeliverables = new bytes32[](0);
         _relay(_req, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, emptyDeliverables, 0)));
+    }
+
+    function _winnerCapWorkers(bytes32 taskId, uint256 n) internal returns (address[] memory workers) {
+        workers = new address[](n);
+        for (uint256 i; i < n; ++i) {
+            workers[i] = address(uint160(0xC0FFEE00 + i));
+            _submitWork(taskId, workers[i], keccak256(abi.encode("winner", i)));
+        }
+    }
+
+    function _winnerCapAccept(bytes4 mode, uint256 n) internal returns (bytes32 taskId, bytes memory call) {
+        taskId = _createTask(requester, REWARD, DURATION, mode, 0, 0);
+        address[] memory workers = _winnerCapWorkers(taskId, n);
+        uint16[] memory shares = new uint16[](n);
+        for (uint256 i; i < n; ++i) {
+            shares[i] = uint16(10_000 / n);
+        }
+        shares[0] += uint16(10_000 - (10_000 / n) * n);
+        call = abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, new bytes32[](0), 0));
+    }
+
+    function _winnerCapAwards(address[] memory workers) internal pure returns (ITMPCore.Award[] memory awards) {
+        awards = new ITMPCore.Award[](workers.length);
+        for (uint256 i; i < workers.length; ++i) {
+            awards[i] = ITMPCore.Award({ worker: workers[i], amount: REWARD / 100, rank: uint16(i + 1) });
+        }
+    }
+
+    function _winnerCapEvalTask(bytes4 mode, address resolver, uint256 n)
+        internal
+        returns (bytes32 taskId, ITMPCore.Award[] memory awards)
+    {
+        taskId = _createTask(requester, REWARD, DURATION, mode, 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), resolver))
+        );
+        awards = _winnerCapAwards(_winnerCapWorkers(taskId, n));
+    }
+
+    function test_MaxSubmissionWinners_GetterReturns50() public view {
+        assertEq(market.MAX_SUBMISSION_WINNERS(), 50);
+    }
+
+    function test_AcceptSubmissions_WinnerCap_FiftyPaysFiftyOneReverts() public {
+        bytes4[2] memory modes = [market.BOUNTY(), market.BENCHMARK()];
+        for (uint256 m; m < modes.length; ++m) {
+            (bytes32 okId, bytes memory okCall) = _winnerCapAccept(modes[m], 50);
+            uint256 gasBefore = gasleft();
+            _relay(requester, 0, okCall);
+            emit log_named_uint("acceptSubmissions gas, 50 winners", gasBefore - gasleft());
+            assertEq(uint256(market.getTask(okId).status), uint256(ITMPCore.TaskStatus.Accepted));
+
+            (, bytes memory tooMany) = _winnerCapAccept(modes[m], 51);
+            vm.expectRevert(ITMPCore.TooManyWinners.selector);
+            _relay(requester, 0, tooMany);
+        }
+    }
+
+    function test_Evaluate_WinnerCap_FiftyAwardsFiftyOneReverts() public {
+        bytes4[2] memory modes = [market.BOUNTY(), market.BENCHMARK()];
+        for (uint256 m; m < modes.length; ++m) {
+            (bytes32 okId, ITMPCore.Award[] memory okAwards) = _winnerCapEvalTask(modes[m], address(0), 50);
+            _evaluate(okId, evaluator, ITMPCore.VerdictType.PARTIAL, 1000, okAwards);
+            vm.warp(vm.getBlockTimestamp() + 1 days + 1);
+            market.finalizeVerdict(okId);
+            assertEq(uint256(market.getTask(okId).status), uint256(ITMPCore.TaskStatus.Accepted));
+
+            (bytes32 badId, ITMPCore.Award[] memory badAwards) = _winnerCapEvalTask(modes[m], address(0), 51);
+            vm.expectRevert(ITMPCore.TooManyWinners.selector);
+            _evaluate(badId, evaluator, ITMPCore.VerdictType.PARTIAL, 1000, badAwards);
+        }
+    }
+
+    function test_ResolveDispute_WinnerCap_FiftyAwardsFiftyOneReverts() public {
+        address resolver = address(20);
+        bytes4[2] memory modes = [market.BOUNTY(), market.BENCHMARK()];
+        for (uint256 m; m < modes.length; ++m) {
+            for (uint256 n = 50; n <= 51; ++n) {
+                (bytes32 taskId, ITMPCore.Award[] memory awards) = _winnerCapEvalTask(modes[m], resolver, n);
+                ITMPCore.Award[] memory one = new ITMPCore.Award[](1);
+                one[0] = awards[0];
+                _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, one);
+                _appeal(taskId, awards[0].worker);
+                bytes memory call =
+                    abi.encodeCall(market.resolveDispute, (taskId, ITMPCore.VerdictType.PARTIAL, awards));
+                if (n == 51) vm.expectRevert(ITMPCore.TooManyWinners.selector);
+                _relay(resolver, 0, call);
+                if (n == 50) {
+                    assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+                }
+            }
+        }
     }
 
     function test_AcceptSubmission_Bounty_RequiresNonZeroDeliverable() public {
@@ -2768,6 +2866,28 @@ contract TaskMarketTest is DiamondTestHelper {
         _expectRateRevert(taskId, worker2, ITMPCore.NotAwarded.selector);
     }
 
+    function test_RateTask_EvaluatorBenchmark_EveryPaidWinnerRateable() public {
+        address loser = address(0xBEEF);
+        bytes32 taskId = _createTaskWithEvaluatorForMode(market.BENCHMARK(), bytes4(0));
+        _submitWork(taskId, worker1, keccak256("A"));
+        _submitWork(taskId, worker2, keccak256("B"));
+        _submitWork(taskId, loser, keccak256("C"));
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](3);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2, rank: 1 });
+        awards[1] = ITMPCore.Award({ worker: worker2, amount: REWARD / 4, rank: 2 });
+        awards[2] = ITMPCore.Award({ worker: loser, amount: 0, rank: 3 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+
+        _rateTask(taskId, requester, worker1, 90, 0, 0, "", bytes32(0));
+        _rateTask(taskId, requester, worker2, 60, 0, 0, "", bytes32(0));
+        _expectRateRevert(taskId, loser, ITMPCore.NotAwarded.selector);
+        _expectRateRevert(taskId, address(0xCAFE), ITMPCore.NotAwarded.selector);
+        assertEq(market.getWorkerStats(worker1).ratedTasks, 1, "first evaluator-awarded winner rated");
+        assertEq(market.getWorkerStats(worker2).ratedTasks, 1, "second evaluator-awarded winner rated");
+    }
+
     function test_RateTask_EvaluatorLockedWorker_ZeroAwardNotRateable() public {
         bytes32 taskId = _nextTaskId(requester);
         _assertZeroOnlyAwardsPreserveLockedWorker(market.CLAIM());
@@ -3142,7 +3262,7 @@ contract TaskMarketTest is DiamondTestHelper {
     ) internal returns (bytes memory) {
         return (_relay(
                 _req,
-                REWARD,
+                REWARD + _stake,
                 abi.encodeCall(
                     market.createTask,
                     (
@@ -3241,18 +3361,17 @@ contract TaskMarketTest is DiamondTestHelper {
 
     function test_CreateTask_WithEvaluator_NonZeroStake_TransfersFromRequester() public {
         uint256 stakeAmount = REWARD / 10;
-        usdc.mint(requester, stakeAmount);
-        vm.prank(requester);
-        usdc.approve(address(market), stakeAmount);
 
         uint256 requesterBefore = usdc.balanceOf(requester);
+        uint256 marketBefore = usdc.balanceOf(address(market));
         bytes32 taskId = abi.decode(
             _createTaskWithEvaluator(requester, evaluator, stakeAmount, 0, uint32(2 days), uint32(1 days), address(0)),
             (bytes32)
         );
 
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, stakeAmount, "stake recorded");
-        assertEq(usdc.balanceOf(requester), requesterBefore - stakeAmount, "stake pulled from requester");
+        assertEq(usdc.balanceOf(address(market)), marketBefore + REWARD + stakeAmount, "reward and stake forwarded");
+        assertEq(usdc.balanceOf(requester), requesterBefore, "nothing pulled from requester");
     }
 
     function test_CreateTask_WithoutEvaluator_LeavesConfigEmpty() public {
@@ -3792,7 +3911,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertGt(usdc.balanceOf(worker1), before);
     }
 
-    function test_RefundExpired_Auction_WithWinner_CallsOnCompleteHook() public {
+    function test_LapsedReview_Auction_WithWinner_CallsOnCompleteHook() public {
         // Bug fix: the AUCTION+Claimed path in refundExpired must call onComplete hook.
         MockTaskHook hook = new MockTaskHook();
         uint256 acceptPrice = 40 * 10 ** 6;
@@ -3819,7 +3938,9 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.warp(block.timestamp + DURATION + 1);
         assertEq(hook.onCompleteCalls(), 0);
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
         market.refundExpired(taskId, 0);
+        market.settleLapsedReview(taskId);
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
         assertEq(hook.onCompleteCalls(), 1);
         // onExpire must NOT have been called — this is a completion, not an expiry.
@@ -3980,7 +4101,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         // Still inside the appeal window (phaseDeadline), which is also the new expiryTime.
         vm.warp(block.timestamp + 1 days);
-        vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
+        vm.expectRevert(ITMPCore.AppealWindowStillOpen.selector);
         market.refundExpired(taskId, 0);
     }
 
@@ -3995,7 +4116,7 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2, rank: 1 });
         _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, awards);
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
 
@@ -4006,7 +4127,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertGt(usdc.balanceOf(requester), before);
     }
 
-    function test_RefundExpired_DuringAppealing_DeductsAlreadyPaidEvaluatorFee() public {
+    function test_RefundExpired_DuringAppealing_SettlesVerdictFirst() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         uint16 evalFeeBps = 1000; // 10%
         uint32 evalWindow = uint32(2 days);
@@ -4019,12 +4140,11 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD - (REWARD * evalFeeBps) / 10000, rank: 1 });
 
         uint256 evaluatorBalanceBefore = usdc.balanceOf(evaluator);
         _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, awards);
-        uint256 evalFee = (REWARD * evalFeeBps) / 10000;
-        assertEq(usdc.balanceOf(evaluator), evaluatorBalanceBefore + evalFee);
+        assertEq(usdc.balanceOf(evaluator), evaluatorBalanceBefore, "fee held until the verdict is final");
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
 
         // Let the appeal window (and thus the extended expiry) pass without an appeal,
@@ -4033,10 +4153,10 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 requesterBefore = usdc.balanceOf(requester);
         market.refundExpired(taskId, 0);
 
-        // The requester must only recover reward - evalFee (already paid to the evaluator),
-        // not the full original reward stacked on top of it (that would drain other tasks'
-        // pooled escrow).
-        assertEq(usdc.balanceOf(requester), requesterBefore + (REWARD - evalFee));
+        // Expiry settles the APPROVE verdict as finalizeVerdict would: nothing refunds over it.
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(usdc.balanceOf(requester), requesterBefore);
+        assertEq(usdc.balanceOf(evaluator), evaluatorBalanceBefore + (REWARD * evalFeeBps) / 10000);
     }
 
     function test_RevertWhen_RefundExpired_DuringDisputed_BeforeExtendedExpiry() public {
@@ -4247,28 +4367,19 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 stakeAmount = 10 * 10 ** 6;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
 
-        // Stake is pulled from the requester (not the evaluator parameter) to avoid
-        // the arbitrary-from vulnerability: a malicious requester could otherwise drain
-        // any address that has pre-approved this contract.
-        usdc.mint(requester, stakeAmount);
-        vm.prank(requester);
-        usdc.approve(address(forwarder), stakeAmount);
-        // The forwarder pulls payment from requester; the contract pulls stake from requester too.
-        vm.prank(requester);
-        usdc.approve(address(market), stakeAmount);
-
+        // The stake arrives with the forwarded payment; nothing is pulled from any other address.
         uint256 reqBefore = usdc.balanceOf(requester);
         uint256 contractBefore = usdc.balanceOf(address(market));
 
         _relay(
             requester,
-            0,
+            stakeAmount,
             abi.encodeCall(
                 market.assignEvaluator, (taskId, evaluator, stakeAmount, 0, uint32(2 days), uint32(1 days), address(0))
             )
         );
 
-        assertEq(usdc.balanceOf(requester), reqBefore - stakeAmount);
+        assertEq(usdc.balanceOf(requester), reqBefore);
         assertEq(usdc.balanceOf(address(market)), contractBefore + stakeAmount);
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, stakeAmount);
     }
@@ -4284,7 +4395,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         _relay(
             requester,
-            0,
+            stakeAmount,
             abi.encodeCall(
                 market.assignEvaluator, (taskId, evaluator, stakeAmount, 0, uint32(2 days), uint32(1 days), address(0))
             )
@@ -5457,7 +5568,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         _relay(
             requester,
-            0,
+            stakeAmount,
             abi.encodeCall(
                 market.assignEvaluator, (taskId, evaluator, stakeAmount, 0, evalWindow, uint32(1 days), address(0))
             )

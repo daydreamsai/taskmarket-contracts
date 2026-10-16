@@ -23,6 +23,7 @@ library LibTerms {
     uint32 internal constant DEFAULT_MAX_WINDOW_SECS = 30 days;
     uint16 internal constant DEFAULT_MAX_REJECT_FEE_BPS = 5000;
     uint8 internal constant DEFAULT_MAX_MAX_REVISIONS = 5;
+    uint16 internal constant MAX_STAKE_BPS = 5000;
 
     /// @dev releaseGraceBps is stored as grace + 1, and grace may run to 100% of the claim span.
     uint16 internal constant MAX_STORED_RELEASE_GRACE_BPS = 10001;
@@ -31,6 +32,30 @@ library LibTerms {
     function terms(AppStorage storage s, bytes32 taskId) internal returns (ITMPCore.TaskTerms storage t) {
         t = s.taskTerms[taskId];
         if (t.version == 0) _normalize(s, taskId);
+    }
+
+    /// @notice Send a worker-stake penalty to the task's penaltyTo destination: the requester, or
+    ///         the fee recipient booked as protocol fees. Worker stakes only; evaluator stakes keep
+    ///         their own destinations. The caller clears the stake and emits its event.
+    function payWorkerPenalty(AppStorage storage s, bytes32 taskId, uint256 amount) internal {
+        address to = s.tasks[taskId].requester;
+        if (terms(s, taskId).penaltyTo == ITMPCore.PenaltyTo.Protocol) {
+            to = s.feeRecipient;
+            s.totalFeesCollected += amount;
+        }
+        if (amount > 0 && !s.usdcToken.transfer(to, amount)) revert ITMPCore.ForfeitTransferFailed();
+    }
+
+    /// @notice expiryTime = max(expiryTime, now + reopenExtensionSecs), so a reopened task can be claimed.
+    function extendOnReopen(AppStorage storage s, bytes32 taskId) internal {
+        uint32 secs = terms(s, taskId).reopenExtensionSecs;
+        uint256 ext = secs == 0 ? DEFAULT_REOPEN_EXTENSION_SECS : secs;
+        ITMPCore.Task storage task = s.tasks[taskId];
+        uint256 newExpiry = block.timestamp + ext;
+        if (task.expiryTime < newExpiry) {
+            task.expiryTime = newExpiry;
+            emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
+        }
     }
 
     /// @notice Normalize one task if it exists, is not terminal and is still at version 0.
@@ -67,6 +92,12 @@ library LibTerms {
 
     /// @notice The record `terms` holds, or would write on first read, for a task. Being a view
     ///         it never writes; a terminal or nonexistent version 0 task reads as stored.
+    /// @notice Smallest stake a claim must post under `terms`: ceil(reward * stakeBps / 10000).
+    function minStake(ITMPCore.TaskTerms memory terms, uint256 reward) internal pure returns (uint256) {
+        if (!terms.stakeRequired) return 0;
+        return (reward * terms.stakeBps + 9999) / 10000;
+    }
+
     function pendingTerms(AppStorage storage s, bytes32 taskId) internal view returns (ITMPCore.TaskTerms memory) {
         ITMPCore.TaskTerms memory stored = s.taskTerms[taskId];
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -98,7 +129,7 @@ library LibTerms {
 
     /// @notice Revert unless `t` is within the protocol's bounds for a task of `mode`.
     function validate(AppStorage storage s, ITMPCore.TaskTerms memory t, bytes4 mode) internal view {
-        if (t.stakeBps > 10000) revert ITMPCore.StakeBpsTooHigh();
+        if (t.stakeBps > MAX_STAKE_BPS) revert ITMPCore.StakeBpsTooHigh();
         (uint32 minWindow, uint32 maxWindow, uint16 maxRejectFee, uint8 maxRevisions) = bounds(s);
         if (!_windowOk(t.reviewWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
         if (!_windowOk(t.decisionWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();

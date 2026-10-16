@@ -1984,4 +1984,345 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.expectRevert(TaskTokenRewardHook.CallerNotDiamond.selector);
         hook.checkComplete(bytes32(0), ctx, verdict);
     }
+
+    // ─── Retryable reserve release ────────────────────────────────────────────
+
+    bytes32 constant VAULT_RELEASED_SIG = keccak256("RewardVaultReleased(bytes32,uint256)");
+    bytes32 constant BUDGET_RELEASED_SIG = keccak256("RewardBudgetReleased(bytes32,uint256)");
+    bytes32 constant RESERVE_RELEASED_SIG = keccak256("RewardReserveReleased(bytes32,uint256)");
+    bytes32 constant RELEASE_FAILED_SIG = keccak256("RewardReleaseFailed(bytes32,uint8)");
+
+    function _claimedPastExpiry() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+        vm.warp(block.timestamp + 2 days);
+    }
+
+    function _failVault() internal {
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(RewardVault.release.selector), "vault down");
+    }
+
+    function _failBudget() internal {
+        vm.mockCallRevert(address(budget), abi.encodeWithSelector(EpochBudget.release.selector), "budget down");
+    }
+
+    function _count(Vm.Log[] memory logs, bytes32 sig) internal view returns (uint256 n) {
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == sig) n++;
+        }
+    }
+
+    function _failedDependency(Vm.Log[] memory logs) internal view returns (uint8 dep) {
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == RELEASE_FAILED_SIG) {
+                return abi.decode(logs[i].data, (uint8));
+            }
+        }
+        revert("no failure event");
+    }
+
+    function _assertProgress(bytes32 taskId, bool vaultDone, bool budgetDone) internal view {
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertEq(p.tokenAmount, EXPECTED_REWARD_1000_DREAMS, "progress token amount");
+        assertEq(p.usdAmount, REWARD_100_USDC, "progress usd amount");
+        assertEq(p.worker, worker);
+        assertEq(p.requester, requester);
+        assertEq(p.vaultReleased, vaultDone, "vaultReleased");
+        assertEq(p.budgetReleased, budgetDone, "budgetReleased");
+        (,,, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0);
+        assertFalse(reserved);
+    }
+
+    function _assertFullyReleased(bytes32 taskId, uint256 availBefore) internal view {
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.totalReserved(), 0);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), 0);
+        assertEq(budget.workerUsed(worker), 0);
+        assertEq(budget.requesterUsed(requester), 0);
+    }
+
+    function test_release_bothSucceed_emitsEachStepAndCompletion() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        vm.recordLogs();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        assertEq(_count(logs, RELEASE_FAILED_SIG), 0);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_release_vaultOnlyFailure_keepsVaultPendingAndRecovers() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failVault();
+        vm.recordLogs();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 0);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0, "no completion while vault is pending");
+        assertEq(_failedDependency(logs), uint8(TaskTokenRewardHook.ReleaseDependency.Vault));
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        assertEq(vault.available(), availBefore);
+        assertEq(budget.globalUsed(), 0);
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0, "budget is not released twice");
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_budgetOnlyFailure_keepsBudgetPendingAndRecovers() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failBudget();
+        vm.recordLogs();
+        market.refundExpired(taskId, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0);
+        assertEq(_failedDependency(logs), uint8(TaskTokenRewardHook.ReleaseDependency.Budget));
+        _assertProgress(taskId, true, false);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 0, "vault is not released twice");
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_bothFail_repeatedRecovery() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failVault();
+        _failBudget();
+        vm.recordLogs();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, RELEASE_FAILED_SIG), 2);
+        assertEq(_count(logs, VAULT_RELEASED_SIG) + _count(logs, BUDGET_RELEASED_SIG), 0);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0);
+        _assertProgress(taskId, false, false);
+
+        // Still failing: recovery changes nothing and reports both failures again.
+        vm.recordLogs();
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, RELEASE_FAILED_SIG), 2);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0);
+        _assertProgress(taskId, false, false);
+        assertEq(vault.available(), availBefore);
+
+        // Vault recovers first.
+        vm.clearMockedCalls();
+        _failBudget();
+        hook.recoverReserve(taskId);
+        _assertProgress(taskId, true, false);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+
+        vm.clearMockedCalls();
+        hook.recoverReserve(taskId);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_afterCallbackFailure_recoveredFromReopenedTask() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onForfeit.selector), "hook down");
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        vm.clearMockedCalls();
+
+        ITMPCore.Task memory task = market.getTask(taskId);
+        assertEq(uint8(task.status), uint8(ITMPCore.TaskStatus.Open));
+        (,,, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertTrue(reserved, "after-hook never ran");
+        assertEq(reservedAmt, EXPECTED_REWARD_1000_DREAMS);
+        assertEq(vault.available(), availBefore);
+
+        vm.recordLogs();
+        hook.recoverReserve(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_settleLapsedReview_vaultFailure_recovers() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+        vm.warp(market.reviewDeadline(taskId) + 1);
+
+        _failVault();
+        vm.recordLogs();
+        market.settleLapsedReview(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 0);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0, "no completion while vault is pending");
+        assertEq(_failedDependency(logs), uint8(TaskTokenRewardHook.ReleaseDependency.Vault));
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "vault reservation still held");
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0, "budget is not released twice");
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_release_pitchRejectDelivery_onForfeitFailure_recovers() public {
+        bytes32 taskId = _createReservedTask(market.PITCH(), bytes4(0));
+        _relay(worker, 0, abi.encodeCall(market.submitPitch, (taskId, keccak256("pitch"))));
+        _relay(requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 reservedAmt0 = vault.taskReserve(taskId);
+        assertGt(reservedAmt0, 0, "selection reserved the reward");
+        uint256 availBefore = vault.available();
+
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onForfeit.selector), "hook down");
+        _relay(requester, 0, abi.encodeCall(market.rejectDelivery, (taskId)));
+        vm.clearMockedCalls();
+
+        ITMPCore.Task memory task = market.getTask(taskId);
+        assertEq(uint8(task.status), uint8(ITMPCore.TaskStatus.Open), "back to selection");
+        assertEq(task.worker, address(0));
+        (,,, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertTrue(reserved, "after-hook never ran");
+        assertEq(reservedAmt, reservedAmt0);
+        assertEq(vault.taskReserve(taskId), reservedAmt0);
+
+        vm.recordLogs();
+        hook.recoverReserve(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertTrue(p.vaultReleased && p.budgetReleased, "release complete");
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.available(), availBefore + reservedAmt0);
+        assertEq(budget.globalUsed(), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_recoverReserve_rejectsClaimedTask() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+    }
+
+    function test_recoverReserve_rejectsPaidTask() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_recoverReserve_rejectsOpenTaskWithNothingPending() public {
+        bytes32 taskId = _createClaimTask();
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_reclaim_retriesPendingReleaseBeforeReserving() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failVault();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        vm.clearMockedCalls();
+        _assertProgress(taskId, false, true);
+
+        // Driven directly: a forfeited task is past expiry, so the Diamond cannot re-claim it.
+        ITMPCore.TaskContext memory ctx;
+        ctx.taskId = taskId;
+        ctx.requester = requester;
+        ctx.reward = REWARD_100_USDC;
+        vm.prank(address(market));
+        hook.checkClaim(taskId, ctx, makeAddr("workerB"));
+        assertTrue(hook.releaseProgress(taskId).vaultReleased);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "only the new reservation");
+        assertEq(vault.available(), availBefore);
+    }
+
+    function test_hookStorage_layoutIsAppendOnly() public {
+        bytes32 base = keccak256("taskmarket.tokenrewardhook.storage.v1");
+        assertEq(address(uint160(uint256(vm.load(address(hook), base)))), address(vault), "vault @0");
+        assertEq(
+            address(uint160(uint256(vm.load(address(hook), bytes32(uint256(base) + 1))))), address(budget), "budget @1"
+        );
+        assertEq(
+            address(uint160(uint256(vm.load(address(hook), bytes32(uint256(base) + 2))))), address(market), "diamond @2"
+        );
+        assertEq(uint256(vm.load(address(hook), bytes32(uint256(base) + 3))), DREAMS_PER_USDC, "dreamsPerUsdc @3");
+        assertEq(uint256(vm.load(address(hook), bytes32(uint256(base) + 4))), BONUS_BPS, "bonusBps @4");
+        assertEq(
+            address(uint160(uint256(vm.load(address(hook), bytes32(uint256(base) + 9))))),
+            address(dreamsToken),
+            "token @9"
+        );
+        assertEq(
+            address(uint160(uint256(vm.load(address(hook), bytes32(uint256(base) + 10))))),
+            authorizedRelayer,
+            "relayer @10"
+        );
+
+        vm.startPrank(owner);
+        hook.sealWalletHistory();
+        hook.sealRewardState();
+        vm.stopPrank();
+        assertEq(uint256(vm.load(address(hook), bytes32(uint256(base) + 15))), 0x0101, "seal flags @15");
+
+        bytes32 taskId = _claimedPastExpiry();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        bytes32 rewardStatesSlot = keccak256(abi.encode(taskId, uint256(base) + 13));
+        assertEq(uint256(vm.load(address(hook), rewardStatesSlot)), REWARD_100_USDC, "rewardStates @13");
+        bytes32 progressSlot = keccak256(abi.encode(taskId, uint256(base) + 16));
+        assertEq(uint256(vm.load(address(hook), progressSlot)), EXPECTED_REWARD_1000_DREAMS, "releaseProgress @16");
+    }
 }

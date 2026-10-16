@@ -182,6 +182,13 @@ interface ITMPDiamond {
         external
         view
         returns (uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions);
+    function reviewDeadline(bytes32 taskId) external view returns (uint256);
+    // solhint-disable-next-line func-name-mixedcase
+    function MAX_SUBMISSION_WINNERS() external pure returns (uint256);
+    function rejectDelivery(bytes32 taskId) external;
+    function requestRevision(bytes32 taskId) external;
+    function settleLapsedReview(bytes32 taskId) external;
+    function releaseClaim(bytes32 taskId) external;
 
     // -------------------------------------------------------------------------
     // DiamondLoupeFacet

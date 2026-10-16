@@ -134,7 +134,7 @@ the actor from `pgtrSender`, as existing task functions do, unless marked permis
 - **Access:** any requester, through the forwarder.
 - **Preconditions:** the existing `createTask` checks; `terms` is validated and reverts
   `InvalidTerms` when a nonzero window term is outside its bounds, `releaseGraceBps` exceeds 10001,
-  `stakeBps` exceeds the existing stake limit (`StakeBpsTooHigh` keeps applying), `rejectFeeBps` is
+  `stakeBps` exceeds 5000, half the reward (`StakeBpsTooHigh`, on both `createTask` overloads), `rejectFeeBps` is
   outside its bounds, or `rejectOutcome` is `Reopen` on an auction.
 - **Effects:** stores `terms` with `version = 1`; the Task's legacy `stakeRequired` and `stakeBps`
   are written from the same values.
@@ -246,6 +246,8 @@ it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the pa
 - **Events:** the acceptance events, then `ReviewLapsed(taskId, worker)`.
 - Called by a keeper or the backend wallet directly, not through the forwarder, with a hook-aware
   gas limit like `cancelTask`.
+- `checkComplete` hooks are deliberately not called. The review window has already decided the
+  payout, and no hook may block it; `onComplete` hooks still run.
 
 #### `refundExpired` (changed)
 
@@ -253,6 +255,11 @@ it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the pa
 - The pay-at-expiry branch of `_refundAuctionClaimed` is removed: a delivered auction goes through
   the review window like any single-payee task. The undelivered-auction refund is unchanged.
 - Reverts `DecisionWindowLapsed` on a Bounty or Benchmark per the decision deadline below.
+- Never refunds over a recorded verdict. On a task in `Appealing` it reverts
+  `AppealWindowStillOpen` until the appeal window has passed, then settles the verdict exactly as
+  `finalizeVerdict` would: the outcome is applied and the evaluator fee is paid to the evaluator.
+- On a task in `Disputed` past `expiryTime`, the appeal lapses and the original verdict stands:
+  it settles exactly as `finalizeVerdict` would. A resolution before expiry still decides it.
 
 #### `forfeitAndReopen` (changed)
 
@@ -330,11 +337,18 @@ remains the single computation.
 
 #### `penaltyTo` destination
 
-`penaltyTo` governs worker stakes only: `forfeitAndReopen`, `rejectDelivery` with a zero reject
-fee, the `releaseClaim`
-penalty, and rev024's forfeits when a REJECT verdict is finalized or a dispute resolution upholds a
+`penaltyTo` governs worker stakes only: `forfeitAndReopen`, the `releaseClaim` penalty, and rev024's forfeits when a REJECT verdict is finalized or a dispute resolution upholds a
 reject. `Requester` pays the task's requester; `Protocol` books it as protocol fees as
 `forfeitAndReopen` does today. Evaluator stakes keep their rev024 destinations.
+
+#### A rejected delivery returns the stake
+
+Once a Claim worker has delivered, `rejectDelivery` returns the full claim stake on every outcome,
+whatever the reject fee. A stake is forfeited only for never delivering: `forfeitAndReopen` after
+expiry, the `releaseClaim` penalty, or a finalized REJECT verdict under the existing rules. Tying
+the stake to the reject fee let a requester set a zero reject fee and `penaltyTo = Requester`, then
+reject honest work and keep each successive worker's stake. Returning the stake removes that
+incentive; the reject fee stays the only payment a rejection makes to the worker.
 
 #### Pause
 
@@ -357,9 +371,12 @@ Benchmark after its decision deadline emits `RequesterReputation` with
 
 - **Errors:** `TermsFrozen`, `InvalidTerms`, `DeliveryPending`, `ReviewWindowOpen`,
   `ReviewWindowClosed`, `DecisionWindowLapsed`, `ReleaseNotAllowed`, `StakePaymentMismatch`,
-  `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`.
+  `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
-  `RevisionRequested`.
+  `RevisionRequested`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
+  whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
+  `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
+  extension, so an indexer can track `expiryTime` from events alone.
 - **Views:** `getTaskTerms`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`.
 
 ### Forwarder
@@ -367,6 +384,21 @@ Benchmark after its decision deadline emits `RequesterReputation` with
 `TaskMarketForwarder` gains `pgtrPaymentAmount()`, set alongside `pgtrSender` for the duration of
 `relay()` and reset after it. The forwarder is not upgradeable (no proxy, immutable `usdc`), so each
 chain deploys a new one; both are trusted between `addForwarder` and `removeForwarder`.
+
+#### Funding checks against the reported payment
+
+When the calling forwarder reports its payment (`pgtrPaymentAmount()`), the market checks that the
+payment equals exactly what the call escrows and reverts `ForwardedPaymentMismatch` otherwise:
+
+- `createTask` (both overloads): `reward + evaluatorStake`. The evaluator stake arrives with the
+  forwarded payment and is no longer pulled from the requester with `transferFrom`.
+- `assignEvaluator`: `evaluatorStake`, likewise forwarded rather than pulled.
+- `updateTask`: the reward increase (zero when the reward does not increase).
+
+A forwarder that cannot report an amount keeps the earlier behaviour: the evaluator stake is pulled
+from the requester and `updateTask` checks the escrow balance (`RewardIncreaseNotFunded`). Checking
+the exact amount means the market never records escrow it did not receive and never keeps an
+overpayment the requester did not intend.
 
 ### TaskTokenRewardHook reserve release
 
@@ -378,9 +410,13 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   `RewardReleaseFailed(taskId, dependency)` and leaves the flag unset. `RewardReserveReleased` is
   emitted only once both steps are done.
 - `recoverReserve(taskId)`, permissionless, retries the unset steps. It is allowed only when the
-  diamond's task state shows the release was due: a reopened Claim task (Open with no worker, after
-  `onForfeit`, `rejectDelivery` or `releaseClaim`) or a Cancelled or Expired task. It never releases
-  a task that is still claimed or that paid out.
+  diamond's task state shows the release was due: a reopened Claim or Pitch task (Open with no
+  worker, after `onForfeit`, `rejectDelivery` or `releaseClaim`), a Cancelled or Expired task, or
+  an Accepted task whose reservation `checkComplete` never paid (`settleLapsedReview`). It never
+  releases a task that is still claimed or selected, or that paid out.
+- `onComplete` releases an unpaid reservation through the same progress-tracked path, so a
+  `settleLapsedReview` completion, which skips `checkComplete`, leaves a retryable record rather
+  than a one-shot release.
 - `RewardVault` and `EpochBudget` are unchanged: the proxy address, and so their `hook`, stays the
   same; `RewardVault.release` reverts on over-release, so a retry cannot double-release;
   `EpochBudget.release` is a no-op once the epoch has rolled, which the hook records as done because
@@ -395,8 +431,8 @@ rule. Stakes follow `penaltyTo` where marked.
 | --- | --- | --- | --- | --- |
 | Claim | none | accept within window, or `settleLapsedReview` | worker (less fee) | returned |
 | Claim, Pitch, Auction | none | `requestRevision` (up to `maxRevisions`), then resubmit and a new review window | unchanged until accept, reject or lapse | held (Claim) |
-| Claim | none | `rejectDelivery`, `Reopen` (default), then reclaim or `refundExpired` | reject fee to worker (less platform fee); rest to next worker, or requester | returned if reject fee > 0, else `penaltyTo` |
-| Claim | none | `rejectDelivery`, `Refund` | reject fee to worker (less platform fee); rest to requester | returned if reject fee > 0, else `penaltyTo` |
+| Claim | none | `rejectDelivery`, `Reopen` (default), then reclaim or `refundExpired` | reject fee to worker (less platform fee); rest to next worker, or requester | returned |
+| Claim | none | `rejectDelivery`, `Refund` | reject fee to worker (less platform fee); rest to requester | returned |
 | Claim | none | `releaseClaim` then reclaim or `refundExpired` | next worker, or requester | penalty to `penaltyTo`, rest to worker |
 | Claim | none | `forfeitAndReopen` (never delivered) | stays in escrow, task reopened | `penaltyTo` |
 | Claim | none | `refundExpired` (undelivered, or Open) | requester | returned (if any) |
@@ -489,7 +525,8 @@ One pass per chain, in this order:
   missed resubmission returns the superseded deliverable to review; release and forfeit revert
   during a revision; every exit reverts while paused.
 - An overturned approve and an overturned reject each send the evaluator fee to the requester.
-- `TooManyWinners` at 51 winners; gas at 50 winners measured on Base and Tempo.
+- `TooManyWinners` at 51 winners in `acceptSubmissions`, `evaluate` and `resolveDispute`; 50 winners
+  settle. In the Foundry suite a 50-winner Bounty `acceptSubmissions` used 3,602,207 gas end to end.
 - Reward hook: vault-only failure, budget-only failure, both, a diamond after-callback failure and
   repeated recovery, asserting partial-progress state, no double release, truthful events and
   restored `RewardVault.available()`.

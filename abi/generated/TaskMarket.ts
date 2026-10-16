@@ -1860,6 +1860,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ForwardedPaymentMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "HookCheckFundRejected",
     "inputs": []
   },
@@ -2392,6 +2397,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "DeliveryPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DuplicateAwardWorker",
     "inputs": []
   },
@@ -2432,6 +2442,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ReviewWindowClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SharesMustSumTo10000",
     "inputs": []
   },
@@ -2443,6 +2458,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "SubmissionNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyWinners",
     "inputs": []
   },
   {
@@ -3891,6 +3911,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "MAX_SUBMISSION_WINNERS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "cancelTask",
     "inputs": [
       {
@@ -4034,6 +4067,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "rejectDelivery",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "rejectSubmission",
     "inputs": [
       {
@@ -4045,6 +4091,64 @@ export const TaskMarketABI = [
         "name": "worker",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseClaim",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "requestRevision",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reviewDeadline",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "settleLapsedReview",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -4080,6 +4184,68 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "ClaimReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "penalty",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "returned",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DeliveryRejected",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "rejectFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "stakeForfeited",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "EvaluatorStakeRefunded",
     "inputs": [
       {
@@ -4099,6 +4265,50 @@ export const TaskMarketABI = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReviewLapsed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RevisionRequested",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "revisionsUsed",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -4149,6 +4359,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "TaskExpiryExtended",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newExpiry",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TaskReopened",
     "inputs": [
       {
@@ -4162,12 +4391,27 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "DecisionWindowLapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NoActiveSubmissions",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "RequesterRefundFailed",
+    "name": "ReleaseNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReviewWindowOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RevisionsExhausted",
     "inputs": []
   },
   {

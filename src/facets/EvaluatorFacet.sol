@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
@@ -18,7 +19,8 @@ contract EvaluatorFacet {
 
     /// @notice Assign an evaluator to an open task that was created without one.
     ///         Only the requester may call this, only while the task is Open.
-    ///         If stakeAmount > 0, the contract pulls from the requester via transferFrom.
+    ///         A stake arrives with the forwarded payment when the forwarder reports one (which must
+    ///         equal stakeAmount); otherwise it is pulled from the requester via transferFrom.
     /// @dev A requester who knows at creation time that the task needs an evaluator should pass
     ///      the configuration to `createTask` instead: the task is claimable the instant
     ///      `createTask` mines, so a second transaction races the first worker to claim and can
@@ -28,7 +30,7 @@ contract EvaluatorFacet {
     ///      would change the terms the worker committed to.
     /// @param taskId               Task identifier
     /// @param evaluator            Evaluator address
-    /// @param stakeAmount          USDC stake amount pulled from requester (0 = no stake)
+    /// @param stakeAmount          Evaluator stake: the relayed payment through a paying forwarder, else pulled from the requester (0 = no stake)
     /// @param feeBps               Evaluator fee in basis points (max 10000)
     /// @param evaluationWindowSecs Seconds from assignment for evaluator to submit verdict
     /// @param appealWindowSecs     Seconds after verdict for worker to appeal
@@ -65,6 +67,7 @@ contract EvaluatorFacet {
                 appealWindow: appealWindowSecs,
                 disputeResolver: disputeResolver
             }),
+            0,
             s
         );
 
@@ -122,7 +125,6 @@ contract EvaluatorFacet {
             }
         }
 
-        uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         uint256 stakeReturn = evalCfg.evaluatorStake;
         evalCfg.evaluatorStake = 0;
         uint256 appealDeadline = block.timestamp + evalCfg.appealWindow;
@@ -136,8 +138,8 @@ contract EvaluatorFacet {
 
         emit ITMPEvaluator.TaskEvaluated(taskId, evaluatorAddr, uint8(verdictType), score);
 
-        if (evalFee + stakeReturn > 0) {
-            if (!s.usdcToken.transfer(evalCfg.evaluator, evalFee + stakeReturn)) {
+        if (stakeReturn > 0) {
+            if (!s.usdcToken.transfer(evalCfg.evaluator, stakeReturn)) {
                 revert ITMPCore.EvaluatorPaymentFailed();
             }
         }
@@ -201,12 +203,12 @@ contract EvaluatorFacet {
         if (v.verdictType == ITMPCore.VerdictType.REJECT) {
             _finalizeReject(taskId, task, s);
         } else {
-            _payAwards(taskId, task, v, s);
+            _payAwards(taskId, task, v, s, true);
         }
         LibGuards._nonReentrantAfter(s);
     }
 
-    /// @dev REJECT refunds the (post-evaluator-fee) remainder to the requester in full, so the task
+    /// @dev REJECT pays the evaluator fee and refunds the remainder to the requester in full, so the task
     ///      is done -- not reopened. Terminal status here mirrors cancelTask's pattern (refund +
     ///      Cancelled), and dispatches the same _onCancelHooks release so any reward-hook reservation
     ///      is cleaned up rather than left dangling. Reopening would advertise the task as
@@ -216,6 +218,7 @@ contract EvaluatorFacet {
         uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         uint256 refund = task.reward - evalFee;
         address requesterAddr = task.requester;
+        address evaluatorAddr = evalCfg.evaluator;
         address claimant = task.worker;
         task.status = ITMPCore.TaskStatus.Cancelled;
         task.worker = address(0);
@@ -227,6 +230,9 @@ contract EvaluatorFacet {
             if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
         }
         _forfeitClaimStake(taskId, task, claimant, s);
+        if (evalFee > 0) {
+            if (!s.usdcToken.transfer(evaluatorAddr, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
+        }
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
         LibHooks._onCancelHooks(taskId, s);
     }
@@ -249,8 +255,7 @@ contract EvaluatorFacet {
     }
 
     /// @dev The stake exists to make submitting work that will not pass costly, so work an
-    ///      evaluator rejects forfeits it. It goes to the requester, whose task the rejected work
-    ///      held up. forfeitAndReopen, the missed-deadline forfeit, still pays the fee recipient.
+    ///      evaluator rejects forfeits it. It goes to the task's penaltyTo destination.
     function _forfeitClaimStake(bytes32 taskId, ITMPCore.Task storage task, address claimant, AppStorage storage s)
         private
     {
@@ -259,7 +264,7 @@ contract EvaluatorFacet {
         if (stake == 0) return;
         task.stakeAmount = 0;
         s.stakeForfeit[taskId] = stake;
-        if (!s.usdcToken.transfer(task.requester, stake)) revert ITMPCore.ForfeitTransferFailed();
+        LibTerms.payWorkerPenalty(s, taskId, stake);
         emit ITMPCore.StakeForfeited(taskId, claimant, stake);
     }
 
@@ -285,14 +290,31 @@ contract EvaluatorFacet {
         _validateAwardRecipients(task, taskId, awards, s);
 
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
+        bool upheld = _sameVerdict(v, verdictType, awards);
         v.verdictType = verdictType;
         delete v.awards;
         for (uint256 i; i < awards.length; ++i) {
             v.awards.push(awards[i]);
         }
 
-        _payAwards(taskId, task, v, s);
+        _payAwards(taskId, task, v, s, upheld);
         LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @dev A resolution upholds the verdict only when it repeats it exactly: same type and the same
+    ///      awards in the same order. A REJECT can never be upheld, since a resolution must award.
+    function _sameVerdict(
+        ITMPCore.Verdict storage v,
+        ITMPCore.VerdictType verdictType,
+        ITMPCore.Award[] calldata awards
+    ) private view returns (bool) {
+        if (v.verdictType != verdictType || v.awards.length != awards.length) {
+            return false;
+        }
+        for (uint256 i; i < awards.length; ++i) {
+            if (v.awards[i].worker != awards[i].worker || v.awards[i].amount != awards[i].amount) return false;
+        }
+        return true;
     }
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
@@ -343,6 +365,7 @@ contract EvaluatorFacet {
         AppStorage storage s
     ) private view {
         bool bountyLike = task.mode == BOUNTY || task.mode == BENCHMARK;
+        if (bountyLike && awards.length > LibTaskMarket.MAX_SUBMISSION_WINNERS) revert ITMPCore.TooManyWinners();
         for (uint256 i; i < awards.length; ++i) {
             if (awards[i].amount == 0) continue;
             address worker = awards[i].worker;
@@ -357,9 +380,13 @@ contract EvaluatorFacet {
 
     // Complexity is inherent: iterates N winners applying per-winner fee, transfer, hook, and event; handles excess refund.
     // solhint-disable-next-line code-complexity
-    function _payAwards(bytes32 taskId, ITMPCore.Task storage task, ITMPCore.Verdict storage v, AppStorage storage s)
-        private
-    {
+    function _payAwards(
+        bytes32 taskId,
+        ITMPCore.Task storage task,
+        ITMPCore.Verdict storage v,
+        AppStorage storage s,
+        bool feeToEvaluator
+    ) private {
         // Validate recipients before touching any state.
         uint256 awardLen = v.awards.length;
         for (uint256 i; i < awardLen; i++) {
@@ -393,7 +420,20 @@ contract EvaluatorFacet {
         LibHooks._checkCompleteHooks(taskId, s, verdictMem);
         _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
         _settleClaimStake(taskId, task, totalAwarded > 0, s);
+        _payEvaluatorFee(taskId, task, feeToEvaluator, s);
         LibHooks._onCompleteHooks(taskId, s, verdictMem);
+    }
+
+    /// @dev The fee stays in escrow from evaluate until the verdict is final. A verdict an appeal
+    ///      overturns earns nothing, so its fee goes back to the requester.
+    function _payEvaluatorFee(bytes32 taskId, ITMPCore.Task storage task, bool toEvaluator, AppStorage storage s)
+        private
+    {
+        ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
+        uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
+        if (evalFee == 0) return;
+        address to = toEvaluator ? evalCfg.evaluator : task.requester;
+        if (!s.usdcToken.transfer(to, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
     }
 
     /// @dev Tallies awards, increments worker stats, commits fees, and validates escrow. No transfers.

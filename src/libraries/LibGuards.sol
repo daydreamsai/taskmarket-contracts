@@ -61,6 +61,24 @@ library LibGuards {
     /// @dev Caller must already have passed _requireForwarder. A forwarder that cannot report an
     ///      amount is accepted only for a zero stake, so an earlier forwarder keeps relaying
     ///      unstaked claims while both are trusted.
+    /// @notice The payment the calling forwarder reports for this call, and whether it reports
+    ///         one at all. A forwarder without pgtrPaymentAmount (v1) reports none.
+    function _forwardedPayment() internal view returns (bool reported, uint256 paid) {
+        try IPGTRPaymentForwarder(msg.sender).pgtrPaymentAmount() returns (uint256 amount) {
+            return (true, amount);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /// @notice Reverts ForwardedPaymentMismatch when the calling forwarder reports a payment
+    ///         other than `expected`; returns false, checking nothing, when it reports none.
+    function _requireReportedPayment(uint256 expected) internal view returns (bool reported) {
+        uint256 paid;
+        (reported, paid) = _forwardedPayment();
+        if (reported && paid != expected) revert ITMPCore.ForwardedPaymentMismatch();
+    }
+
     function _requireStakePayment(uint256 stakeAmount) internal view {
         try IPGTRPaymentForwarder(msg.sender).pgtrPaymentAmount() returns (uint256 paid) {
             if (paid != stakeAmount) revert ITMPCore.StakePaymentMismatch();
