@@ -2702,8 +2702,97 @@ contract TaskMarketTest is DiamondTestHelper {
         _selectWorker(taskId, requester, worker1);
         _acceptSubmission(taskId, requester, worker1);
 
-        vm.expectRevert(ITMPCore.WorkerMismatch.selector);
+        vm.expectRevert(ITMPCore.NotAwarded.selector);
         _rateTask(taskId, requester, worker2, 50, 0, 0, "", bytes32(0));
+        _rateTask(taskId, requester, worker1, 50, 0, 0, "", bytes32(0));
+    }
+
+    function _rateData(bytes32 taskId, address _worker) internal pure returns (bytes memory) {
+        return abi.encodeCall(ITMPDiamond.rateTask, (taskId, _worker, 50, 0, 0, "", bytes32(0)));
+    }
+
+    function _expectRateRevert(bytes32 taskId, address _worker, bytes4 err) internal {
+        bytes memory data = _rateData(taskId, _worker);
+        vm.expectRevert(err);
+        forwarder.relay(address(market), requester, 0, data);
+    }
+
+    function test_RateTask_Bounty_SingleWinnerOnly() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker2, keccak256("loser"));
+        _submitWork(taskId, worker1, keccak256("winner"));
+        _acceptSubmission(taskId, requester, worker1, keccak256("winner"));
+
+        _rateTask(taskId, requester, worker1, 80, 0, 0, "", bytes32(0));
+        _expectRateRevert(taskId, worker1, ITMPCore.WorkerAlreadyRated.selector);
+        _expectRateRevert(taskId, worker2, ITMPCore.NotAwarded.selector);
+        _expectRateRevert(taskId, address(0xBEEF), ITMPCore.NotAwarded.selector);
+        _expectRateRevert(taskId, address(0), ITMPCore.NotAwarded.selector);
+    }
+
+    function test_RateTask_Benchmark_MultiWinnerEachOnce() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BENCHMARK(), 0, 0);
+        _submitWork(taskId, address(0xBEEF), keccak256("C"));
+        address[] memory workers = new address[](2);
+        workers[0] = worker1;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 7000;
+        shares[1] = 3000;
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A");
+        deliverables[1] = keccak256("B");
+        _acceptSubmissions(taskId, requester, workers, shares, deliverables);
+
+        _rateTask(taskId, requester, worker1, 90, 0, 0, "", bytes32(0));
+        _rateTask(taskId, requester, worker2, 60, 0, 0, "", bytes32(0));
+        _expectRateRevert(taskId, worker1, ITMPCore.WorkerAlreadyRated.selector);
+        _expectRateRevert(taskId, worker2, ITMPCore.WorkerAlreadyRated.selector);
+        _expectRateRevert(taskId, address(0xBEEF), ITMPCore.NotAwarded.selector);
+        _expectRateRevert(taskId, address(0xCAFE), ITMPCore.NotAwarded.selector);
+    }
+
+    function test_RateTask_EvaluatorBounty_ZeroAwardNotRateable() public {
+        bytes32 taskId = _createTaskWithEvaluatorForMode(market.BOUNTY(), bytes4(0));
+        _submitWork(taskId, worker1, keccak256("A"));
+        _submitWork(taskId, worker2, keccak256("B"));
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](2);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2, rank: 1 });
+        awards[1] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 2 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+
+        _rateTask(taskId, requester, worker1, 80, 0, 0, "", bytes32(0));
+        _expectRateRevert(taskId, worker1, ITMPCore.WorkerAlreadyRated.selector);
+        _expectRateRevert(taskId, worker2, ITMPCore.NotAwarded.selector);
+    }
+
+    function test_RateTask_EvaluatorLockedWorker_ZeroAwardNotRateable() public {
+        bytes32 taskId = _nextTaskId(requester);
+        _assertZeroOnlyAwardsPreserveLockedWorker(market.CLAIM());
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        _expectRateRevert(taskId, worker1, ITMPCore.NotAwarded.selector);
+    }
+
+    function test_RateTask_Claim_WorkerOnly() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _acceptSubmission(taskId, requester, worker1);
+        _expectRateRevert(taskId, worker2, ITMPCore.NotAwarded.selector);
+        _rateTask(taskId, requester, worker1, 70, 0, 0, "", bytes32(0));
+        _expectRateRevert(taskId, worker1, ITMPCore.WorkerAlreadyRated.selector);
+    }
+
+    function test_RateTask_Auction_WinnerOnly() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
+        _acceptAuction(taskId, worker1, REWARD);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _acceptSubmission(taskId, requester, worker1);
+        _expectRateRevert(taskId, worker2, ITMPCore.NotAwarded.selector);
+        _rateTask(taskId, requester, worker1, 70, 0, 0, "", bytes32(0));
+        _expectRateRevert(taskId, worker1, ITMPCore.WorkerAlreadyRated.selector);
     }
 
     // -------------------------------------------------------------------------

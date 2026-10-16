@@ -78,6 +78,7 @@ contract AcceptanceFacet {
         uint256 fee = (paymentAmount * task.feeBps) / 10000;
         uint256 workerPayment = paymentAmount - fee;
         if (fee > 0) s.totalFeesCollected += fee;
+        if (paymentAmount > 0) s.taskAwarded[taskId][worker] = true;
 
         address[] memory hooks = LibHooks._resolveHooks(taskId, s);
         if (hooks.length > 0) {
@@ -285,6 +286,7 @@ contract AcceptanceFacet {
             if (awards[i].amount == 0) revert ITMPCore.ZeroPayoutPerPair();
             totalFee += (awards[i].amount * uint256(task.feeBps)) / 10000;
             s.workerStats[awards[i].worker].completedTasks++;
+            s.taskAwarded[taskId][awards[i].worker] = true;
         }
         if (totalFee > 0) s.totalFeesCollected += totalFee;
 

@@ -21,7 +21,7 @@ contract RatingFacet {
 
     /// @notice Rate a completed task and submit ERC-8004 feedback.
     ///         The requester is the authenticated actor (pgtrSender).
-    ///         For Bounty/Benchmark modes, each (taskId, worker) pair can be rated once.
+    ///         Only an award recipient can be rated, once per (taskId, worker) pair.
     /// @param taskId        Task identifier
     /// @param worker        Worker address being rated
     /// @param rating        Rating (0-100)
@@ -48,10 +48,15 @@ contract RatingFacet {
         if (task.status != ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskNotAccepted();
         if (rating > 100) revert ITMPCore.RatingMustBe0To100();
 
-        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
-            if (worker == address(0)) revert ITMPCore.WorkerRequired();
-        } else {
-            if (worker != task.worker) revert ITMPCore.WorkerMismatch();
+        if (!s.taskAwarded[taskId][worker]) {
+            // A task accepted before rev025 has no award record (terms version 0).
+            if (s.taskTerms[taskId].version != 0) revert ITMPCore.NotAwarded();
+            if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+                if (worker == address(0)) revert ITMPCore.WorkerRequired();
+                if (s.taskSubmissionHashes[taskId][worker].length == 0) revert ITMPCore.NotAwarded();
+            } else {
+                if (worker != task.worker) revert ITMPCore.WorkerMismatch();
+            }
         }
 
         if (s.taskWorkerRated[taskId][worker]) revert ITMPCore.WorkerAlreadyRated();

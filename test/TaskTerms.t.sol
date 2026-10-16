@@ -23,6 +23,10 @@ contract TermsProbeFacet {
         delete LibAppStorage.appStorage().taskTerms[taskId];
     }
 
+    function probeClearAwarded(bytes32 taskId, address worker) external {
+        delete LibAppStorage.appStorage().taskAwarded[taskId][worker];
+    }
+
     function probeTerms(bytes32 taskId) external returns (ITMPCore.TaskTerms memory) {
         return LibTerms.terms(LibAppStorage.appStorage(), taskId);
     }
@@ -64,6 +68,7 @@ contract TermsProbeFacet {
 
 interface ITermsProbe {
     function probeWipeTerms(bytes32 taskId) external;
+    function probeClearAwarded(bytes32 taskId, address worker) external;
     function probeTerms(bytes32 taskId) external returns (ITMPCore.TaskTerms memory);
     function probeClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory);
     function probeTermsSlots(bytes32 taskId) external returns (uint256 first, uint256 second);
@@ -91,12 +96,13 @@ contract TaskTermsTest is DiamondTestHelper {
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
 
-        bytes4[] memory sels = new bytes4[](5);
+        bytes4[] memory sels = new bytes4[](6);
         sels[0] = TermsProbeFacet.probeWipeTerms.selector;
         sels[1] = TermsProbeFacet.probeTerms.selector;
         sels[2] = TermsProbeFacet.probeClock.selector;
         sels[3] = TermsProbeFacet.probeTermsSlots.selector;
         sels[4] = TermsProbeFacet.probeClockSlots.selector;
+        sels[5] = TermsProbeFacet.probeClearAwarded.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(new TermsProbeFacet()), IDiamondCut.FacetCutAction.Add, sels);
         IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
@@ -468,5 +474,58 @@ contract TaskTermsTest is DiamondTestHelper {
         bytes32 taskId = _createWithTerms(TMP_CLAIM, t);
         market.normalizeTerms(_ids(taskId));
         assertEq(market.getTaskTerms(taskId).rejectFeeBps, 1, "chosen terms survive");
+    }
+
+    // -------------------------------------------------------------------------
+    // rateTask on a task accepted before rev025 (no award record)
+    // -------------------------------------------------------------------------
+
+    function _rate(bytes32 taskId, address who) internal {
+        _relay(requester, 0, abi.encodeCall(ITMPDiamond.rateTask, (taskId, who, 50, 0, 0, "", bytes32(0))));
+    }
+
+    function _expectRate(bytes32 taskId, address who, bytes4 err) internal {
+        bytes memory data = abi.encodeCall(ITMPDiamond.rateTask, (taskId, who, 50, 0, 0, "", bytes32(0)));
+        vm.expectRevert(err);
+        forwarder.relay(address(market), requester, 0, data);
+    }
+
+    function test_RateTask_PreRev025Bounty_FallsBackToSubmitters() public {
+        address loser = address(0xC1);
+        bytes32 taskId = _createLegacy(TMP_BOUNTY, false, 0);
+        _relay(loser, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("L"))));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("W"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("W"), 0)));
+        probe.probeWipeTerms(taskId);
+        probe.probeClearAwarded(taskId, worker);
+
+        _rate(taskId, worker);
+        _rate(taskId, loser);
+        _expectRate(taskId, worker, ITMPCore.WorkerAlreadyRated.selector);
+        _expectRate(taskId, address(0xBEEF), ITMPCore.NotAwarded.selector);
+        _expectRate(taskId, address(0), ITMPCore.WorkerRequired.selector);
+    }
+
+    function test_RateTask_PreRev025Claim_FallsBackToTaskWorker() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("W"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("W"), 0)));
+        probe.probeWipeTerms(taskId);
+        probe.probeClearAwarded(taskId, worker);
+
+        _expectRate(taskId, address(0xBEEF), ITMPCore.WorkerMismatch.selector);
+        _rate(taskId, worker);
+        _expectRate(taskId, worker, ITMPCore.WorkerAlreadyRated.selector);
+    }
+
+    function test_RateTask_Rev025Task_NoFallback() public {
+        address loser = address(0xC1);
+        bytes32 taskId = _createLegacy(TMP_BOUNTY, false, 0);
+        _relay(loser, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("L"))));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("W"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("W"), 0)));
+        _expectRate(taskId, loser, ITMPCore.NotAwarded.selector);
+        _rate(taskId, worker);
     }
 }

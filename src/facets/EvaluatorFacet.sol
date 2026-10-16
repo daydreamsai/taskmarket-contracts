@@ -388,7 +388,7 @@ contract EvaluatorFacet {
         // Commit award accounting (worker stats + fees) and validate escrow before the check hook;
         // transfers happen after. Accounting and distribution live in separate frames to avoid
         // stack-too-deep under --ir-minimum coverage compilation.
-        uint256 totalAwarded = _commitEvalAccounting(v, task.feeBps, remaining, s);
+        uint256 totalAwarded = _commitEvalAccounting(taskId, v, task.feeBps, remaining, s);
 
         LibHooks._checkCompleteHooks(taskId, s, verdictMem);
         _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
@@ -397,10 +397,13 @@ contract EvaluatorFacet {
     }
 
     /// @dev Tallies awards, increments worker stats, commits fees, and validates escrow. No transfers.
-    function _commitEvalAccounting(ITMPCore.Verdict storage v, uint16 feeBps, uint256 remaining, AppStorage storage s)
-        private
-        returns (uint256 totalAwarded)
-    {
+    function _commitEvalAccounting(
+        bytes32 taskId,
+        ITMPCore.Verdict storage v,
+        uint16 feeBps,
+        uint256 remaining,
+        AppStorage storage s
+    ) private returns (uint256 totalAwarded) {
         uint256 n = v.awards.length;
         uint256 totalFee = 0;
         for (uint256 i; i < n; ++i) {
@@ -409,6 +412,7 @@ contract EvaluatorFacet {
             totalAwarded += amt;
             totalFee += (amt * feeBps) / 10000;
             s.workerStats[v.awards[i].worker].completedTasks++;
+            s.taskAwarded[taskId][v.awards[i].worker] = true;
         }
         if (totalAwarded > remaining) revert ITMPCore.AwardsExceedEscrow();
         if (totalFee > 0) s.totalFeesCollected += totalFee;

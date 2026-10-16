@@ -3000,6 +3000,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "NotAwarded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RatingMustBe0To100",
     "inputs": []
   },
