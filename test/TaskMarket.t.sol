@@ -5642,6 +5642,83 @@ contract TaskMarketTest is DiamondTestHelper {
         market.finalizeVerdict(taskId);
     }
 
+    // Past task expiry an approved verdict settles without running check* hooks, so a hook
+    // that rejects or reverts on checkComplete cannot lock the escrow forever.
+
+    function _approvedVerdictWithHook(MockTaskHook hook, address resolver) internal returns (bytes32 taskId) {
+        taskId = _createTaskWithHook(requester, REWARD, DURATION, market.CLAIM(), address(hook));
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), resolver))
+        );
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+    }
+
+    function test_FinalizeVerdict_Hook_CheckComplete_Reverting_StillGatesBeforeExpiry() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _approvedVerdictWithHook(hook, address(0));
+        hook.setRevertOnCheckComplete(true);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        assertLe(block.timestamp, market.getTask(taskId).expiryTime, "still before expiry");
+        vm.expectRevert(ITMPCore.HookCheckCompleteRejected.selector);
+        market.finalizeVerdict(taskId);
+
+        // refundExpired cannot be used to bypass the hook before expiry either.
+        vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
+        market.refundExpired(taskId, 0);
+    }
+
+    function test_RefundExpired_AppealingPastExpiry_SkipsRevertingCheckHookAndPaysAward() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _approvedVerdictWithHook(hook, address(0));
+        hook.setRevertOnCheckComplete(true);
+
+        vm.warp(uint256(market.getTask(taskId).expiryTime) + 1);
+        uint256 before = usdc.balanceOf(worker1);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(usdc.balanceOf(worker1), before, "award paid");
+        assertEq(hook.checkCompleteCalls(), 0, "check hook skipped past expiry");
+    }
+
+    function test_FinalizeVerdict_PastExpiry_SkipsRejectingCheckHook() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _approvedVerdictWithHook(hook, address(0));
+        hook.setRejectOnCheckComplete(true);
+
+        vm.warp(uint256(market.getTask(taskId).expiryTime) + 1);
+        uint256 before = usdc.balanceOf(worker1);
+        market.finalizeVerdict(taskId);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(usdc.balanceOf(worker1), before, "award paid");
+        assertEq(hook.checkCompleteCalls(), 0, "check hook skipped past expiry");
+    }
+
+    function test_RefundExpired_DisputedPastExpiry_SkipsRevertingCheckHookAndPaysAward() public {
+        MockTaskHook hook = new MockTaskHook();
+        bytes32 taskId = _approvedVerdictWithHook(hook, disputeResolver);
+        _appeal(taskId, worker1);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Disputed));
+        hook.setRevertOnCheckComplete(true);
+
+        vm.warp(uint256(market.getTask(taskId).expiryTime) + 1);
+        uint256 before = usdc.balanceOf(worker1);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(usdc.balanceOf(worker1), before, "award paid");
+        assertEq(hook.checkCompleteCalls(), 0, "check hook skipped past expiry");
+    }
+
     // -------------------------------------------------------------------------
     // AuctionFacet: hook reject path for acceptAuction
     // -------------------------------------------------------------------------

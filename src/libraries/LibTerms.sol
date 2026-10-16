@@ -91,10 +91,7 @@ library LibTerms {
             bytes4 mode = task.mode;
             if (mode == TMP_BOUNTY || mode == TMP_BENCHMARK) {
                 s.taskClocks[taskId].decisionStartAt = uint64(block.timestamp);
-            } else if (
-                (mode == TMP_CLAIM || mode == TMP_PITCH || mode == TMP_AUCTION) && task.deliverable != bytes32(0)
-                    && (task.status == ITMPCore.TaskStatus.Claimed || task.status == ITMPCore.TaskStatus.WorkerSelected)
-            ) {
+            } else if (_deliveryAwaitingReview(task)) {
                 s.taskClocks[taskId].deliveredAt = uint64(block.timestamp);
             }
         }
@@ -102,14 +99,28 @@ library LibTerms {
         emit ITMPCore.TaskTermsSet(taskId, t);
     }
 
-    /// @notice The record `terms` holds, or would write on first read, for a task. Being a view
-    ///         it never writes; a terminal or nonexistent version 0 task reads as stored.
     /// @notice Smallest stake a claim must post under `terms`: ceil(reward * stakeBps / 10000).
     function minStake(ITMPCore.TaskTerms memory terms, uint256 reward) internal pure returns (uint256) {
         if (!terms.stakeRequired) return 0;
         return (reward * terms.stakeBps + 9999) / 10000;
     }
 
+    /// @notice Whether a pre-rev025 task still holds a delivery awaiting review that normalization
+    ///         would start a review window for (no evaluator, not yet normalized).
+    function legacyDeliveryAwaitingReview(AppStorage storage s, bytes32 taskId) internal view returns (bool) {
+        ITMPCore.Task storage task = s.tasks[taskId];
+        return s.taskTerms[taskId].version == 0 && s.taskEvaluatorConfigs[taskId].evaluator == address(0)
+            && _deliveryAwaitingReview(task);
+    }
+
+    function _deliveryAwaitingReview(ITMPCore.Task storage task) private view returns (bool) {
+        bytes4 mode = task.mode;
+        return (mode == TMP_CLAIM || mode == TMP_PITCH || mode == TMP_AUCTION) && task.deliverable != bytes32(0)
+            && (task.status == ITMPCore.TaskStatus.Claimed || task.status == ITMPCore.TaskStatus.WorkerSelected);
+    }
+
+    /// @notice The record `terms` holds, or would write on first read, for a task. Being a view
+    ///         it never writes; a terminal or nonexistent version 0 task reads as stored.
     function pendingTerms(AppStorage storage s, bytes32 taskId) internal view returns (ITMPCore.TaskTerms memory) {
         ITMPCore.TaskTerms memory stored = s.taskTerms[taskId];
         ITMPCore.Task storage task = s.tasks[taskId];

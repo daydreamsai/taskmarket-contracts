@@ -184,7 +184,9 @@ Delivery itself stays closed after `expiryTime`, as today.
 
 #### `reviewDeadline(bytes32 taskId) view returns (uint256)`
 
-Returns `deliveredAt + reviewWindowSecs`, or zero when there is no undecided delivery.
+Returns `deliveredAt + reviewWindowSecs`, or zero when there is no undecided delivery. A
+pre-rev025 delivery that normalization has not reached yet reads as `now + reviewWindowSecs`,
+because normalization starts its window at that moment.
 
 #### `acceptSubmission` (changed)
 
@@ -264,6 +266,10 @@ it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the pa
   `finalizeVerdict` would: the outcome is applied and the evaluator fee is paid to the evaluator.
 - On a task in `Disputed` past `expiryTime`, the appeal lapses and the original verdict stands:
   it settles exactly as `finalizeVerdict` would. A resolution before expiry still decides it.
+- Past `expiryTime`, `finalizeVerdict` (and so this settlement) skips the `check*` hooks; the
+  `on*` hooks still run and cannot revert. `refundExpired` has always bypassed hooks so that a
+  reverting hook cannot lock a task's escrow, and routing it through `finalizeVerdict` keeps that
+  guarantee. Before expiry, `finalizeVerdict` still runs the check hooks.
 
 #### `forfeitAndReopen` (changed)
 
@@ -353,6 +359,28 @@ expiry, the `releaseClaim` penalty, or a finalized REJECT verdict under the exis
 the stake to the reject fee let a requester set a zero reject fee and `penaltyTo = Requester`, then
 reject honest work and keep each successive worker's stake. Returning the stake removes that
 incentive; the reject fee stays the only payment a rejection makes to the worker.
+
+#### Hooks and forced exits
+
+Hooks follow two rules. `check*` hooks are gates: they run before a voluntary action (fund, claim,
+select, submit, evaluate, accept) and a rejection reverts it. `on*` hooks are notifications: they
+run after the state change and a failure only emits `HookCallFailed`.
+
+A hook may veto a voluntary action but never a forced exit. Any path that settles a task because
+time ran out or a party lapsed runs no `check*` hook, so a broken or malicious hook cannot lock
+escrow:
+
+| Path | Hooks run |
+| --- | --- |
+| `refundExpired` (no verdict) | `onExpire` only |
+| `refundExpired` on an expired `Appealing` or `Disputed` task, via `finalizeVerdict` | `onComplete` (or `onCancel` for a REJECT verdict); no `checkComplete` |
+| `finalizeVerdict` after `expiryTime` | as above; before expiry `checkComplete` still gates |
+| `settleLapsedReview` | `onComplete` only |
+| `forfeitAndReopen`, `releaseClaim`, `rejectDelivery` | `onForfeit` only |
+| `evaluatorTimeout` | none |
+
+A reward-hook bonus that cannot be paid never blocks the USDC settlement, and any reservation it
+leaves is recoverable through `recoverReserve`.
 
 #### Pause
 

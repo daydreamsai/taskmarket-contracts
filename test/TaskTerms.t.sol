@@ -23,6 +23,10 @@ contract TermsProbeFacet {
         delete LibAppStorage.appStorage().taskTerms[taskId];
     }
 
+    function probeWipeClock(bytes32 taskId) external {
+        delete LibAppStorage.appStorage().taskClocks[taskId];
+    }
+
     function probeClearAwarded(bytes32 taskId, address worker) external {
         delete LibAppStorage.appStorage().taskAwarded[taskId][worker];
     }
@@ -68,6 +72,7 @@ contract TermsProbeFacet {
 
 interface ITermsProbe {
     function probeWipeTerms(bytes32 taskId) external;
+    function probeWipeClock(bytes32 taskId) external;
     function probeClearAwarded(bytes32 taskId, address worker) external;
     function probeTerms(bytes32 taskId) external returns (ITMPCore.TaskTerms memory);
     function probeClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory);
@@ -96,13 +101,14 @@ contract TaskTermsTest is DiamondTestHelper {
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
 
-        bytes4[] memory sels = new bytes4[](6);
+        bytes4[] memory sels = new bytes4[](7);
         sels[0] = TermsProbeFacet.probeWipeTerms.selector;
         sels[1] = TermsProbeFacet.probeTerms.selector;
         sels[2] = TermsProbeFacet.probeClock.selector;
         sels[3] = TermsProbeFacet.probeTermsSlots.selector;
         sels[4] = TermsProbeFacet.probeClockSlots.selector;
         sels[5] = TermsProbeFacet.probeClearAwarded.selector;
+        sels[6] = TermsProbeFacet.probeWipeClock.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(new TermsProbeFacet()), IDiamondCut.FacetCutAction.Add, sels);
         IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
@@ -409,6 +415,47 @@ contract TaskTermsTest is DiamondTestHelper {
         assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
         assertEq(probe.probeClock(taskId).deliveredAt, block.timestamp, "review window runs from normalization");
         assertEq(probe.probeClock(taskId).decisionStartAt, 0, "no decision clock on a single-payee task");
+    }
+
+    /// @dev A pre-rev025 delivery recorded neither terms nor a delivery clock. Until it is
+    ///      normalized its review window reads as starting now, so reviewDeadline never reports
+    ///      "not under review" for a delivery that is awaiting review.
+    function test_ReviewDeadline_UnnormalizedLegacyDelivery_ReadsFromNow() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        probe.probeWipeTerms(taskId);
+        probe.probeWipeClock(taskId);
+
+        vm.warp(block.timestamp + 10 days);
+        assertEq(
+            market.reviewDeadline(taskId),
+            block.timestamp + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
+            "unnormalized delivery reads a full window from now"
+        );
+        vm.warp(block.timestamp + 1 hours);
+        assertEq(
+            market.reviewDeadline(taskId),
+            block.timestamp + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
+            "the pending window keeps tracking now until normalized"
+        );
+
+        uint256 normalizedAt = block.timestamp;
+        market.normalizeTerms(_ids(taskId));
+        vm.warp(block.timestamp + 1 hours);
+        assertEq(
+            market.reviewDeadline(taskId),
+            normalizedAt + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
+            "normalized delivery is fixed to the normalization time"
+        );
+    }
+
+    function test_ReviewDeadline_UnnormalizedLegacyUndelivered_IsZero() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        probe.probeWipeTerms(taskId);
+        probe.probeWipeClock(taskId);
+        assertEq(market.reviewDeadline(taskId), 0, "nothing to review");
     }
 
     function test_NormalizeTerms_UndeliveredClaimHasNoDeliveredAt() public {

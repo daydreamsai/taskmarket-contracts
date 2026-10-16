@@ -303,20 +303,23 @@ contract SettlementFacet {
     // Review window (Claim, Pitch and Auction without an evaluator)
     // -------------------------------------------------------------------------
 
-    /// @notice End of the current review window, or zero when no delivery awaits review. While a
-    ///         revision is open, the deadline the superseded delivery gets if none is resubmitted.
     /// @notice Most winners one Bounty or Benchmark settlement may pay.
     // solhint-disable-next-line func-name-mixedcase
     function MAX_SUBMISSION_WINNERS() external pure returns (uint256) {
         return LibTaskMarket.MAX_SUBMISSION_WINNERS;
     }
 
+    /// @notice End of the current review window, or zero when no delivery awaits review. While a
+    ///         revision is open, the deadline the superseded delivery gets if none is resubmitted.
+    ///         A pre-rev025 delivery not yet normalized reads as if normalized now, since
+    ///         normalization starts its window at that moment.
     function reviewDeadline(bytes32 taskId) external view returns (uint256) {
         AppStorage storage s = LibAppStorage.appStorage();
         ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
         uint256 start = clock.deliveredAt != 0 ? clock.deliveredAt : clock.revisionDueAt;
-        if (start == 0) return 0;
-        return start + LibReview.reviewWindow(LibTerms.pendingTerms(s, taskId));
+        uint256 window = LibReview.reviewWindow(LibTerms.pendingTerms(s, taskId));
+        if (start != 0) return start + window;
+        return LibTerms.legacyDeliveryAwaitingReview(s, taskId) ? block.timestamp + window : 0;
     }
 
     /// @notice Reject a delivery inside its review window. The worker is paid the reject fee less

@@ -204,7 +204,9 @@ contract EvaluatorFacet {
         if (v.verdictType == ITMPCore.VerdictType.REJECT) {
             _finalizeReject(taskId, task, s);
         } else {
-            _payAwards(taskId, task, v, s, true);
+            // Past expiry no check hook may block settlement, as refundExpired never runs hooks:
+            // a reverting hook would otherwise lock the escrow for good.
+            _payAwards(taskId, task, v, s, true, block.timestamp <= task.expiryTime);
         }
         LibGuards._nonReentrantAfter(s);
     }
@@ -298,7 +300,7 @@ contract EvaluatorFacet {
             v.awards.push(awards[i]);
         }
 
-        _payAwards(taskId, task, v, s, upheld);
+        _payAwards(taskId, task, v, s, upheld, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -386,7 +388,8 @@ contract EvaluatorFacet {
         ITMPCore.Task storage task,
         ITMPCore.Verdict storage v,
         AppStorage storage s,
-        bool feeToEvaluator
+        bool feeToEvaluator,
+        bool runCheckHooks
     ) private {
         // Validate recipients before touching any state.
         uint256 awardLen = v.awards.length;
@@ -418,7 +421,7 @@ contract EvaluatorFacet {
         // stack-too-deep under --ir-minimum coverage compilation.
         uint256 totalAwarded = _commitEvalAccounting(taskId, v, task.feeBps, remaining, s);
 
-        LibHooks._checkCompleteHooks(taskId, s, verdictMem);
+        if (runCheckHooks) LibHooks._checkCompleteHooks(taskId, s, verdictMem);
         _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
         _settleClaimStake(taskId, task, totalAwarded > 0, s);
         _payEvaluatorFee(taskId, task, feeToEvaluator, s);
