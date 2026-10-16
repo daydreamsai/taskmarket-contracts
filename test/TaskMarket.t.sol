@@ -1197,7 +1197,8 @@ contract TaskMarketTest is DiamondTestHelper {
         market.refundExpired(taskId, 0);
     }
 
-    function test_RefundExpired_Claim_ReturnsStake() public {
+    /// @dev A worker who never delivered forfeits the stake to penaltyTo (the requester by default).
+    function test_RefundExpired_Claim_UndeliveredForfeitsStake() public {
         uint256 stakeAmount = REWARD / 10;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, stakeAmount);
@@ -1209,8 +1210,8 @@ contract TaskMarketTest is DiamondTestHelper {
 
         market.refundExpired(taskId, 0);
 
-        assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD);
-        assertEq(usdc.balanceOf(worker1), worker1BalanceBefore + stakeAmount);
+        assertEq(usdc.balanceOf(requester), requesterBalanceBefore + REWARD + stakeAmount);
+        assertEq(usdc.balanceOf(worker1), worker1BalanceBefore);
     }
 
     function test_RefundExpired_Review_ForfeitsEvaluatorStake() public {
@@ -3870,7 +3871,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(market.getTask(taskId).worker, worker1, "finalize must preserve locked worker");
     }
 
-    function test_EvaluatorTimeout_ForfeitsStakeAndOpensPendingApproval() public {
+    function test_EvaluatorTimeout_ForfeitsStakeAndReopensReview() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         uint32 evalWindowSecs = uint32(2 days);
         _relay(
@@ -3887,7 +3888,8 @@ contract TaskMarketTest is DiamondTestHelper {
         // Advance past evaluation window
         vm.warp(block.timestamp + evalWindowSecs + 1);
         _relay(requester, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.PendingApproval));
+        // A delivered Claim task returns to the requester's review window, not PendingApproval.
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed));
     }
 
     function test_EvaluatorTimeout_ClearsEvaluator_AllowsAcceptSubmission() public {
@@ -3906,7 +3908,8 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.warp(block.timestamp + evalWindowSecs + 1);
         _relay(requester, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.PendingApproval));
+        // A delivered Claim task returns to the requester's review window, not PendingApproval.
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed));
 
         // Evaluator field must be cleared or acceptSubmission will revert.
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0));

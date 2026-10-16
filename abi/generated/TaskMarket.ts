@@ -1052,6 +1052,150 @@ export const TaskMarketABI = [
         ]
       },
       {
+        "name": "stakeConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.StakeConfig",
+        "components": [
+          {
+            "name": "required",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "bps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      },
+      {
+        "name": "hookConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.HookConfig",
+        "components": [
+          {
+            "name": "contracts",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "content",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskContent",
+        "components": [
+          {
+            "name": "contentHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "contentURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "tags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          }
+        ]
+      },
+      {
+        "name": "evaluatorConfig",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskEvaluatorConfig",
+        "components": [
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "evaluationWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "appealWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createTask",
+    "inputs": [
+      {
+        "name": "config",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskConfig",
+        "components": [
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "duration",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "pitchDeadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bidDeadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "auctionSubtype",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          }
+        ]
+      },
+      {
         "name": "hookConfig",
         "type": "tuple",
         "internalType": "struct ITMPCore.HookConfig",
@@ -1191,150 +1335,11 @@ export const TaskMarketABI = [
             "name": "maxRevisions",
             "type": "uint8",
             "internalType": "uint8"
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "createTask",
-    "inputs": [
-      {
-        "name": "config",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskConfig",
-        "components": [
-          {
-            "name": "reward",
-            "type": "uint256",
-            "internalType": "uint256"
           },
           {
-            "name": "duration",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "mode",
-            "type": "bytes4",
-            "internalType": "bytes4"
-          },
-          {
-            "name": "pitchDeadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "bidDeadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "auctionSubtype",
-            "type": "bytes4",
-            "internalType": "bytes4"
-          }
-        ]
-      },
-      {
-        "name": "stakeConfig",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.StakeConfig",
-        "components": [
-          {
-            "name": "required",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "bps",
-            "type": "uint16",
-            "internalType": "uint16"
-          }
-        ]
-      },
-      {
-        "name": "hookConfig",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.HookConfig",
-        "components": [
-          {
-            "name": "contracts",
-            "type": "address[]",
-            "internalType": "address[]"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "content",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskContent",
-        "components": [
-          {
-            "name": "contentHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "contentURI",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tags",
-            "type": "bytes32[]",
-            "internalType": "bytes32[]"
-          }
-        ]
-      },
-      {
-        "name": "evaluatorConfig",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskEvaluatorConfig",
-        "components": [
-          {
-            "name": "evaluator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "evaluatorStake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "evaluatorFeeBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "evaluationWindow",
+            "name": "resolutionWindowSecs",
             "type": "uint32",
             "internalType": "uint32"
-          },
-          {
-            "name": "appealWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "disputeResolver",
-            "type": "address",
-            "internalType": "address"
           }
         ]
       }
@@ -1743,6 +1748,11 @@ export const TaskMarketABI = [
             "name": "maxRevisions",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "resolutionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -2812,6 +2822,25 @@ export const TaskMarketABI = [
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskExpiryExtended",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newExpiry",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -4033,8 +4062,26 @@ export const TaskMarketABI = [
             "name": "maxRevisions",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "resolutionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isSettling",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -4355,25 +4402,6 @@ export const TaskMarketABI = [
       },
       {
         "name": "refundAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskExpiryExtended",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "newExpiry",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

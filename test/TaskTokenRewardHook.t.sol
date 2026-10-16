@@ -11,6 +11,7 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import "./mocks/MockPGTRForwarder.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
+import { MockSettlingProbeHook } from "./mocks/MockSettlingProbeHook.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -2340,6 +2341,125 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertTrue(hook.releaseProgress(taskId).vaultReleased);
         assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "only the new reservation");
         assertEq(vault.available(), availBefore);
+    }
+
+    /// @dev While the first worker's release is still pending, later workers reserve nothing:
+    ///      a fresh reservation could not move into the occupied progress record on the next
+    ///      reopen and would be orphaned in the vault once a later worker overwrote it.
+    function test_reclaim_whileReleasePending_reservesNothingAndOrphansNothing() public {
+        address worker2 = makeAddr("worker2");
+        address worker3 = makeAddr("worker3");
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+
+        // First reopen: the vault release fails and stays pending.
+        _failVault();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        _assertProgress(taskId, false, true);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Open), "reopened");
+
+        // Second worker claims while the vault is still failing: the retry fails, so no reservation.
+        _relay(worker2, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        (,,, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertTrue(reserved, "worker2 locked in");
+        assertEq(reservedAmt, 0, "worker2 reserves nothing while a release is pending");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "only the first reservation held");
+        assertFalse(hook.releaseProgress(taskId).vaultReleased, "original release still pending");
+
+        // Second reopen with the vault still failing, then a third worker claims.
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        _relay(worker3, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        (,,, reservedAmt,,,,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0, "worker3 reserves nothing while a release is pending");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "still only the first reservation");
+
+        // The task expires with the vault still down, then the vault recovers.
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.refundExpired(taskId, 0);
+        vm.clearMockedCalls();
+        hook.recoverReserve(taskId);
+
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertTrue(p.vaultReleased && p.budgetReleased, "original release complete");
+        assertEq(p.tokenAmount, EXPECTED_REWARD_1000_DREAMS, "progress is the first worker's release");
+        assertEq(vault.taskReserve(taskId), 0, "nothing orphaned under the task");
+        assertEq(vault.totalReserved(), 0, "nothing orphaned in the vault");
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), 0);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    // ─── isSettling: a co-hook cannot release a reservation mid-settlement ────
+
+    /// @dev Claim task whose hooks are `probe` first, then the reward hook, claimed and delivered.
+    function _deliveredWithProbe(MockSettlingProbeHook probe) internal returns (bytes32 taskId) {
+        address[] memory hooks = new address[](2);
+        hooks[0] = address(probe);
+        hooks[1] = address(hook);
+        taskId = abi.decode(
+            _relay(
+                requester,
+                REWARD_100_USDC,
+                abi.encodeCall(
+                    market.createTask,
+                    (
+                        taskConfig(REWARD_100_USDC, 1 days, market.CLAIM(), 0, 0, bytes4(0)),
+                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
+                        ITMPCore.HookConfig({ contracts: hooks, data: "" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig()
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "reserved");
+    }
+
+    function test_isSettling_falseAtRest() public view {
+        assertFalse(market.isSettling());
+    }
+
+    function test_isSettling_trueInsideCheckComplete() public {
+        MockSettlingProbeHook probe = new MockSettlingProbeHook(address(market));
+        bytes32 taskId = _deliveredWithProbe(probe);
+        assertFalse(market.isSettling(), "not settling before accept");
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertTrue(probe.checkCompleteCalled(), "probe ran");
+        assertTrue(probe.sawSettling(), "settling inside checkComplete");
+        assertFalse(market.isSettling(), "not settling after accept");
+    }
+
+    /// @dev A co-hook dispatched before the reward hook sees the task Accepted but unpaid. Its
+    ///      recoverReserve must not release the reservation the reward hook is about to pay.
+    function test_recoverReserve_fromCoHookDuringSettlement_revertsAndRewardPaid() public {
+        MockSettlingProbeHook probe = new MockSettlingProbeHook(address(market));
+        probe.setRecoveryTarget(address(hook));
+        bytes32 taskId = _deliveredWithProbe(probe);
+        uint256 claimableBefore = hook.claimable(worker);
+
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertTrue(probe.recoverAttempted(), "co-hook tried to recover");
+        assertFalse(probe.recoverSucceeded(), "recovery refused mid-settlement");
+        assertEq(
+            probe.recoverRevertData(),
+            abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId),
+            "ReleaseNotDue"
+        );
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted), "accepted");
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid, "reward paid");
+        assertEq(hook.claimable(worker) - claimableBefore, EXPECTED_REWARD_1000_DREAMS, "worker credited");
+        assertEq(vault.taskReserve(taskId), 0, "reservation consumed by the payout");
+
+        // After settlement the task is paid, so there is nothing due to recover.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
     }
 
     function test_hookStorage_layoutIsAppendOnly() public {

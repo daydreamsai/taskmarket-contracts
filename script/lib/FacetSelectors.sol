@@ -232,7 +232,7 @@ library FacetSelectors {
 
     /// @dev rev025: the selectors SettlementFacet introduces, which rev025 Adds.
     function settlementFacetSelectorsAdded() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = SettlementFacet.normalizeTerms.selector;
         s[1] = SettlementFacet.getTaskTerms.selector;
         s[2] = SettlementFacet.termsBounds.selector;
@@ -242,6 +242,7 @@ library FacetSelectors {
         s[6] = SettlementFacet.settleLapsedReview.selector;
         s[7] = SettlementFacet.MAX_SUBMISSION_WINNERS.selector;
         s[8] = SettlementFacet.releaseClaim.selector;
+        s[9] = SettlementFacet.isSettling.selector;
     }
 
     /// @dev rev025: the selectors CoreFacet served through rev024 that rev025 Replaces onto

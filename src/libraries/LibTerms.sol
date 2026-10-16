@@ -27,6 +27,7 @@ library LibTerms {
     uint32 internal constant DEFAULT_REVIEW_WINDOW_SECS = 72 hours;
     uint32 internal constant DEFAULT_DECISION_WINDOW_SECS = 7 days;
     uint32 internal constant DEFAULT_REOPEN_EXTENSION_SECS = 72 hours;
+    uint32 internal constant DEFAULT_RESOLUTION_WINDOW_SECS = 72 hours;
     uint16 internal constant DEFAULT_RELEASE_GRACE_BPS = 1000;
     uint16 internal constant DEFAULT_REJECT_FEE_BPS = 2000;
     uint8 internal constant DEFAULT_MAX_REVISIONS = 2;
@@ -56,6 +57,18 @@ library LibTerms {
             s.totalFeesCollected += amount;
         }
         if (amount > 0 && !s.usdcToken.transfer(to, amount)) revert ITMPCore.ForfeitTransferFailed();
+    }
+
+    /// @notice expiryTime = max(expiryTime, now + resolutionWindowSecs) when a verdict is appealed, so
+    ///         the dispute resolver has the whole window before refundExpired can lapse the dispute.
+    function extendOnAppeal(AppStorage storage s, bytes32 taskId) internal {
+        uint32 secs = terms(s, taskId).resolutionWindowSecs;
+        uint256 newExpiry = block.timestamp + (secs == 0 ? DEFAULT_RESOLUTION_WINDOW_SECS : secs);
+        ITMPCore.Task storage task = s.tasks[taskId];
+        if (task.expiryTime < newExpiry) {
+            task.expiryTime = newExpiry;
+            emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
+        }
     }
 
     /// @notice expiryTime = max(expiryTime, now + reopenExtensionSecs), so a reopened task can be claimed.
@@ -92,7 +105,9 @@ library LibTerms {
             if (mode == TMP_BOUNTY || mode == TMP_BENCHMARK) {
                 s.taskClocks[taskId].decisionStartAt = uint64(block.timestamp);
             } else if (_deliveryAwaitingReview(task)) {
-                s.taskClocks[taskId].deliveredAt = uint64(block.timestamp);
+                // Only a delivery with no clock yet: one recorded after the cut keeps its window.
+                ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
+                if (clock.deliveredAt == 0 && clock.revisionDueAt == 0) clock.deliveredAt = uint64(block.timestamp);
             }
         }
 
@@ -157,6 +172,7 @@ library LibTerms {
         if (!_windowOk(t.reviewWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
         if (!_windowOk(t.decisionWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
         if (!_windowOk(t.reopenExtensionSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
+        if (!_windowOk(t.resolutionWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
         if (t.releaseGraceBps > MAX_STORED_RELEASE_GRACE_BPS) revert ITMPCore.InvalidTerms();
         if (t.rejectFeeBps != 0 && t.rejectFeeBps - 1 > maxRejectFee) revert ITMPCore.InvalidTerms();
         if (t.maxRevisions != 0 && t.maxRevisions - 1 > maxRevisions) revert ITMPCore.InvalidTerms();

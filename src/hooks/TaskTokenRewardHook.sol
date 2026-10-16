@@ -11,9 +11,14 @@ import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/Mes
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
+
 import { TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
 import { IRewardVault } from "../interfaces/IRewardVault.sol";
 import { EpochBudget } from "./EpochBudget.sol";
+
+interface ISettlementStatus {
+    function isSettling() external view returns (bool);
+}
 
 /// @title TaskTokenRewardHook
 /// @notice Hook that credits DREAMS tokens to workers and requesters on task completion.
@@ -642,6 +647,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///      (settleLapsedReview). A task that is claimed, selected, under review or paid out is
     ///      never released.
     function recoverReserve(bytes32 taskId) external {
+        // A settlement still dispatching hooks holds the diamond's lock and has set Accepted before
+        // checkComplete runs, so its reservation is not yet due; a finished one has released it.
+        if (_diamondSettling()) revert ReleaseNotDue(taskId);
         ITMPCore.Task memory task = ITMPCore(_s().diamond).getTask(taskId);
         RewardState storage state = _s().rewardStates[taskId];
         ITMPCore.TaskStatus status = task.status;
@@ -655,6 +663,15 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         bool stale = state.reserved && !state.paid && state.reservedTokenAmount > 0;
         if (!_releasePending(taskId) && !stale) revert NothingToRecover(taskId);
         _releaseReserve(taskId);
+    }
+
+    /// @dev A diamond without isSettling (before rev025) reads as not settling.
+    function _diamondSettling() internal view returns (bool) {
+        try ISettlementStatus(_s().diamond).isSettling() returns (bool settling) {
+            return settling;
+        } catch {
+            return false;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -973,6 +990,11 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         // _s().token conversion below), not an algebraic simplification opportunity.
         // slither-disable-next-line divide-before-multiply
         uint256 bonusUsd = rewardUsd * _s().bonusBps / 10000;
+        // While an earlier release is still pending the progress record is occupied, so a fresh
+        // reservation could not be moved there on the next reopen and would be orphaned when a
+        // later worker overwrote it. The new worker reserves nothing until the release completes.
+        bool releaseStillPending = _releasePending(taskId);
+        if (releaseStillPending) bonusUsd = 0;
         state.startPrice = rate;
         state.usdBonusValue = bonusUsd;
         state.worker = worker;

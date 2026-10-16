@@ -9,13 +9,15 @@ import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
-import { TMP_BOUNTY, TMP_BENCHMARK, TMP_CLAIM } from "../interfaces/ITMPModes.sol";
+import { TMP_BOUNTY, TMP_BENCHMARK, TMP_CLAIM, TMP_PITCH, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title EvaluatorFacet — ERC-8195 evaluator flow: assign, evaluate, appeal, finalize, dispute
 contract EvaluatorFacet {
     bytes4 private constant BOUNTY = TMP_BOUNTY;
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
     bytes4 private constant CLAIM = TMP_CLAIM;
+    bytes4 private constant PITCH = TMP_PITCH;
+    bytes4 private constant AUCTION = TMP_AUCTION;
 
     /// @notice Assign an evaluator to an open task that was created without one.
     ///         Only the requester may call this, only while the task is Open.
@@ -181,6 +183,7 @@ contract EvaluatorFacet {
         if (dr == address(0)) revert ITMPCore.NoDisputeResolver();
 
         task.status = ITMPCore.TaskStatus.Disputed;
+        LibTerms.extendOnAppeal(s, taskId);
         emit ITMPEvaluator.TaskAppealed(taskId, worker);
         emit ITMPEvaluator.TaskDisputed(taskId, dr);
 
@@ -339,7 +342,17 @@ contract EvaluatorFacet {
         uint256 forfeited = evalCfg.evaluatorStake;
         evalCfg.evaluatorStake = 0;
         evalCfg.evaluator = address(0);
-        task.status = ITMPCore.TaskStatus.PendingApproval;
+        bytes4 mode = task.mode;
+        if ((mode == CLAIM || mode == PITCH || mode == AUCTION) && task.deliverable != bytes32(0)) {
+            // A delivered single-payee task goes back under the requester's review window from now,
+            // so the requester cannot time out the evaluator and refund at expiry over the work.
+            task.status = mode == PITCH ? ITMPCore.TaskStatus.WorkerSelected : ITMPCore.TaskStatus.Claimed;
+            ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
+            clock.deliveredAt = uint64(block.timestamp);
+            clock.revisionDueAt = 0;
+        } else {
+            task.status = ITMPCore.TaskStatus.PendingApproval;
+        }
 
         if (forfeited > 0) {
             s.totalFeesCollected += forfeited;

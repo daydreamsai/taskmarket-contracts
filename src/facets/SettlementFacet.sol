@@ -303,6 +303,13 @@ contract SettlementFacet {
     // Review window (Claim, Pitch and Auction without an evaluator)
     // -------------------------------------------------------------------------
 
+    /// @notice Whether the diamond is inside a state-changing call (its reentrancy lock is held), as
+    ///         during settlement while check hooks are dispatched. Lets a hook tell a settlement in
+    ///         progress from one that finished.
+    function isSettling() external view returns (bool) {
+        return LibAppStorage.appStorage().reentrancyStatus == LibGuards.ENTERED;
+    }
+
     /// @notice Most winners one Bounty or Benchmark settlement may pay.
     // solhint-disable-next-line func-name-mixedcase
     function MAX_SUBMISSION_WINNERS() external pure returns (uint256) {
@@ -611,8 +618,18 @@ contract SettlementFacet {
         if (!s.usdcToken.transfer(task.requester, refundAmount)) revert ITMPCore.RefundFailed();
 
         if (task.mode == CLAIM && task.stakeAmount > 0) {
-            if (!s.usdcToken.transfer(task.worker, task.stakeAmount)) revert ITMPCore.StakeReturnFailed();
-            emit ITMPCore.StakeReturned(taskId, task.worker, task.stakeAmount);
+            uint256 stake = task.stakeAmount;
+            task.stakeAmount = 0;
+            if (task.deliverable == bytes32(0)) {
+                // A worker who never delivered forfeits the whole stake, as releaseClaim's penalty
+                // reaches the full stake at expiry; otherwise refundExpired would let them keep it.
+                s.stakeForfeit[taskId] = stake;
+                LibTerms.payWorkerPenalty(s, taskId, stake);
+                emit ITMPCore.StakeForfeited(taskId, task.worker, stake);
+            } else {
+                if (!s.usdcToken.transfer(task.worker, stake)) revert ITMPCore.StakeReturnFailed();
+                emit ITMPCore.StakeReturned(taskId, task.worker, stake);
+            }
         }
 
         if (evaluatorForfeited > 0) {

@@ -255,7 +255,7 @@ contract ForcedExitHooksTest is DiamondTestHelper {
 
         _relay(requester, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
 
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.PendingApproval), "pending approval");
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed), "back under review");
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "evaluator cleared");
         assertEq(_bal(address(market)), REWARD, "escrow intact");
     }

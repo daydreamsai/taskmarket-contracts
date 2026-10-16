@@ -185,6 +185,7 @@ interface ITMPDiamond {
     function reviewDeadline(bytes32 taskId) external view returns (uint256);
     // solhint-disable-next-line func-name-mixedcase
     function MAX_SUBMISSION_WINNERS() external pure returns (uint256);
+    function isSettling() external view returns (bool);
     function rejectDelivery(bytes32 taskId) external;
     function requestRevision(bytes32 taskId) external;
     function settleLapsedReview(bytes32 taskId) external;

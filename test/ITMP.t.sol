@@ -452,8 +452,9 @@ contract ITMPCompliance is DiamondTestHelper {
 
         market.refundExpired(taskId, 0);
 
-        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "Requester recovers reward");
-        assertEq(usdc.balanceOf(worker1), worker1Before + stake, "Claimer recovers stake");
+        // A claimer who never delivered forfeits the stake to the requester (default penaltyTo).
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD + stake, "Requester recovers reward and stake");
+        assertEq(usdc.balanceOf(worker1), worker1Before, "Undelivered claimer forfeits stake");
     }
 
     // -------------------------------------------------------------------------

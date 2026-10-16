@@ -2,7 +2,7 @@
 
 ## Status
 
-Specified. Not yet implemented.
+Implemented. Not yet deployed.
 
 ## Problem
 
@@ -74,6 +74,7 @@ struct TaskTerms {
     RejectOutcome rejectOutcome;
         uint16 rejectFeeBps;        // stored as fee + 1: 0 = default, 1 = no fee, 2001 = 20%
     uint8 maxRevisions;         // stored as value + 1: 0 = default, 1 = none, 3 = two
+    uint32 resolutionWindowSecs; // 0 = protocol default
 }
 
 struct TaskClock {
@@ -98,6 +99,7 @@ Protocol defaults:
 | `reviewWindowSecs` | 72 hours | 24 hours to 30 days |
 | `decisionWindowSecs` | 7 days | 24 hours to 30 days |
 | `reopenExtensionSecs` | 72 hours | 24 hours to 30 days |
+| `resolutionWindowSecs` | 72 hours | 24 hours to 30 days |
 | `releaseAllowed` | Allowed | -- |
 | `releaseGraceBps` | 10% (stored 1001) | 0% to 100% (stored 1 to 10001) |
 | `penaltyTo` | Requester | -- |
@@ -167,7 +169,9 @@ version 0 it returns the record normalization would write.
 - Runs the `LibTerms.terms` normalization for each id. Idempotent: an id that is already at
   version 1, terminal, or nonexistent is skipped without reverting.
 - For a single-payee task (Claim, Pitch or Auction) without an evaluator that already holds an
-  undecided deliverable, it also sets `taskClocks[taskId].deliveredAt` to the normalization time.
+  undecided deliverable and no review clock yet (`deliveredAt` and `revisionDueAt` both zero), it
+  also sets `taskClocks[taskId].deliveredAt` to the normalization time. A delivery recorded after
+  the cut already has its clock, and normalizing it later never restarts that window.
   The requester of a task delivered before the cut therefore gets a full review window from the
   upgrade, rather than a window that may already have lapsed against a delivery time the chain
   never recorded.
@@ -258,6 +262,12 @@ it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the pa
 #### `refundExpired` (changed)
 
 - Reverts `DeliveryPending` while a single-payee task holds an undecided deliverable.
+- A Claim worker who never delivered forfeits the whole claim stake on this path, paid to
+  `penaltyTo` as `forfeitAndReopen` does. This is not a configurable term: `releaseClaim`'s penalty
+  already reaches the full stake at expiry, and `refundExpired` becomes callable at the same moment
+  as `forfeitAndReopen`, so returning the stake here would let a worker who never delivered call it
+  at `expiryTime + 1` and keep everything. A requester who wants no penalty sets no stake, or a
+  small `stakeBps`.
 - The pay-at-expiry branch of `_refundAuctionClaimed` is removed: a delivered auction goes through
   the review window like any single-payee task. The undelivered-auction refund is unchanged.
 - Reverts `DecisionWindowLapsed` on a Bounty or Benchmark per the decision deadline below.
@@ -270,6 +280,23 @@ it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the pa
   `on*` hooks still run and cannot revert. `refundExpired` has always bypassed hooks so that a
   reverting hook cannot lock a task's escrow, and routing it through `finalizeVerdict` keeps that
   guarantee. Before expiry, `finalizeVerdict` still runs the check hooks.
+
+#### `appeal` (changed)
+
+An appeal sets `expiryTime = max(expiryTime, now + resolutionWindowSecs)` and emits
+`TaskExpiryExtended`, so the dispute resolver always has the task's whole resolution window
+before `refundExpired` can lapse the dispute. Without it, a late delivery left the resolver as
+little as the minimum appeal window, after which the requester could lapse the dispute and keep a
+REJECT. The resolution window is its own term, separate from the evaluation window: an evaluator
+that answers in an hour and a human resolver who needs days are set independently.
+
+#### `evaluatorTimeout` (changed)
+
+When the evaluator times out on a single-payee task (Claim, Pitch or Auction) that holds a
+delivery, the task returns to `Claimed` (Pitch: `WorkerSelected`) with `deliveredAt` set to the
+timeout, so the requester's review window applies from then: accept, reject or request a revision,
+or the worker settles once it lapses. Otherwise the requester could time out an idle evaluator,
+wait for expiry and refund over delivered work. Other tasks move to `PendingApproval` as before.
 
 #### `forfeitAndReopen` (changed)
 
@@ -409,7 +436,9 @@ Benchmark after its decision deadline emits `RequesterReputation` with
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
   `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
   extension, so an indexer can track `expiryTime` from events alone.
-- **Views:** `getTaskTerms`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`.
+- **Views:** `getTaskTerms`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
+  is true while the diamond holds its reentrancy lock, which lets a hook tell a settlement still
+  dispatching hooks from one that finished.
 
 ### Forwarder
 
@@ -453,6 +482,12 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   the reservation through the progress record rather than with one-shot calls whose failures were
   discarded, so a failed release stays pending for `recoverReserve` instead of stranding the
   reservation. The USDC settlement is never blocked by the bonus.
+- While an earlier release for the task is still pending, a newly claimed or selected worker
+  reserves nothing. One task has one progress record, so a fresh reservation could not move there
+  on the next reopen and would be orphaned when a later worker overwrote it.
+- `recoverReserve` refuses while the diamond's `isSettling()` is true. A settlement sets the task
+  `Accepted` before it dispatches `checkComplete`, so without this a co-hook could release the
+  reservation mid-settlement. A diamond without `isSettling` reads as not settling.
 - `RewardVault` and `EpochBudget` are unchanged: the proxy address, and so their `hook`, stays the
   same; `RewardVault.release` reverts on over-release, so a retry cannot double-release;
   `EpochBudget.release` is a no-op once the epoch has rolled, which the hook records as done because
@@ -471,11 +506,11 @@ rule. Stakes follow `penaltyTo` where marked.
 | Claim | none | `rejectDelivery`, `Refund` | reject fee to worker (less platform fee); rest to requester | returned |
 | Claim | none | `releaseClaim` then reclaim or `refundExpired` | next worker, or requester | penalty to `penaltyTo`, rest to worker |
 | Claim | none | `forfeitAndReopen` (never delivered) | stays in escrow, task reopened | `penaltyTo` |
-| Claim | none | `refundExpired` (undelivered, or Open) | requester | returned (if any) |
+| Claim | none | `refundExpired` (undelivered, or Open) | requester | `penaltyTo` (undelivered claim); none held (Open) |
 | Claim | none | `cancelTask` (Open) | requester | none held |
 | Claim | yes | `finalizeVerdict` / `resolveDispute` award | awarded worker | returned |
 | Claim | yes | REJECT finalized or upheld, or zero award | requester | `penaltyTo` |
-| Claim | yes | `evaluatorTimeout` then accept or expiry | as the no-evaluator rows | as those rows |
+| Claim | yes | `evaluatorTimeout`: a delivered task returns to the review window from the timeout; undelivered as the no-evaluator rows | as the no-evaluator rows | as those rows |
 | Pitch | none | accept within window, or `settleLapsedReview` | worker | none held |
 | Pitch | none | `rejectDelivery`, `Reopen` (default): back to selection among remaining pitches, or `refundExpired` | reject fee to worker (less platform fee); rest to next worker, or requester | none held |
 | Pitch | none | `rejectDelivery`, `Refund` | reject fee to worker (less platform fee); rest to requester | none held |

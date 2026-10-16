@@ -389,6 +389,7 @@ interface ITMPCore is IERC165 {
         RejectOutcome rejectOutcome;
         uint16 rejectFeeBps;
         uint8 maxRevisions;
+        uint32 resolutionWindowSecs;
     }
 
     /// @notice Rev025: per-task settlement clocks.

@@ -27,6 +27,12 @@ contract TermsProbeFacet {
         delete LibAppStorage.appStorage().taskClocks[taskId];
     }
 
+    function probeSetClock(bytes32 taskId, uint64 deliveredAt, uint64 revisionDueAt) external {
+        ITMPCore.TaskClock storage c = LibAppStorage.appStorage().taskClocks[taskId];
+        c.deliveredAt = deliveredAt;
+        c.revisionDueAt = revisionDueAt;
+    }
+
     function probeClearAwarded(bytes32 taskId, address worker) external {
         delete LibAppStorage.appStorage().taskAwarded[taskId][worker];
     }
@@ -73,6 +79,7 @@ contract TermsProbeFacet {
 interface ITermsProbe {
     function probeWipeTerms(bytes32 taskId) external;
     function probeWipeClock(bytes32 taskId) external;
+    function probeSetClock(bytes32 taskId, uint64 deliveredAt, uint64 revisionDueAt) external;
     function probeClearAwarded(bytes32 taskId, address worker) external;
     function probeTerms(bytes32 taskId) external returns (ITMPCore.TaskTerms memory);
     function probeClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory);
@@ -101,7 +108,7 @@ contract TaskTermsTest is DiamondTestHelper {
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
 
-        bytes4[] memory sels = new bytes4[](7);
+        bytes4[] memory sels = new bytes4[](8);
         sels[0] = TermsProbeFacet.probeWipeTerms.selector;
         sels[1] = TermsProbeFacet.probeTerms.selector;
         sels[2] = TermsProbeFacet.probeClock.selector;
@@ -109,6 +116,7 @@ contract TaskTermsTest is DiamondTestHelper {
         sels[4] = TermsProbeFacet.probeClockSlots.selector;
         sels[5] = TermsProbeFacet.probeClearAwarded.selector;
         sels[6] = TermsProbeFacet.probeWipeClock.selector;
+        sels[7] = TermsProbeFacet.probeSetClock.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(new TermsProbeFacet()), IDiamondCut.FacetCutAction.Add, sels);
         IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
@@ -247,7 +255,8 @@ contract TaskTermsTest is DiamondTestHelper {
             releaseGraceBps: 1,
             rejectOutcome: ITMPCore.RejectOutcome.Refund,
             rejectFeeBps: 1,
-            maxRevisions: 1
+            maxRevisions: 1,
+            resolutionWindowSecs: 0
         });
         bytes32 expectedId = keccak256(abi.encode(block.chainid, address(market), requester, uint256(0)));
         ITMPCore.TaskTerms memory stored = t;
@@ -296,6 +305,16 @@ contract TaskTermsTest is DiamondTestHelper {
         t.decisionWindowSecs = 0;
         t.reopenExtensionSecs = 1;
         _expectInvalid(TMP_CLAIM, t);
+    }
+
+    function test_InvalidTerms_ResolutionWindowOutsideBounds() public {
+        ITMPCore.TaskTerms memory t;
+        t.resolutionWindowSecs = 1 hours;
+        _expectInvalid(TMP_CLAIM, t);
+        t.resolutionWindowSecs = 30 days + 1;
+        _expectInvalid(TMP_CLAIM, t);
+        t.resolutionWindowSecs = 2 days;
+        assertEq(market.getTaskTerms(_createWithTerms(TMP_CLAIM, t)).resolutionWindowSecs, 2 days, "stored");
     }
 
     function test_InvalidTerms_GraceAboveFullSpan() public {
@@ -407,7 +426,9 @@ contract TaskTermsTest is DiamondTestHelper {
         bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        // A pre-rev025 delivery recorded neither terms nor a delivery clock.
         probe.probeWipeTerms(taskId);
+        probe.probeWipeClock(taskId);
 
         vm.warp(block.timestamp + DURATION + 30 days);
         market.normalizeTerms(_ids(taskId));
@@ -415,6 +436,48 @@ contract TaskTermsTest is DiamondTestHelper {
         assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
         assertEq(probe.probeClock(taskId).deliveredAt, block.timestamp, "review window runs from normalization");
         assertEq(probe.probeClock(taskId).decisionStartAt, 0, "no decision clock on a single-payee task");
+    }
+
+    /// @dev A task created before the cut but delivered after it already has a delivery clock.
+    ///      Normalizing it later must keep that window, not restart it from the normalization time.
+    function test_NormalizeTerms_KeepsDeliveredAtRecordedAfterCut() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        uint64 deliveredAt = uint64(block.timestamp + 1 hours);
+        vm.warp(deliveredAt);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        // Version-0 terms with the delivery clock the post-cut submitWork recorded.
+        probe.probeWipeTerms(taskId);
+        probe.probeSetClock(taskId, deliveredAt, 0);
+
+        vm.warp(block.timestamp + 2 days);
+        market.normalizeTerms(_ids(taskId));
+
+        assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
+        assertEq(probe.probeClock(taskId).deliveredAt, deliveredAt, "existing delivery clock kept");
+        assertEq(
+            market.reviewDeadline(taskId),
+            uint256(deliveredAt) + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
+            "window still runs from the delivery"
+        );
+    }
+
+    /// @dev An open revision request already carries the review clock in revisionDueAt, so
+    ///      normalization must not seed deliveredAt over it.
+    function test_NormalizeTerms_OpenRevisionKeepsDeliveredAtZero() public {
+        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        probe.probeWipeTerms(taskId);
+        uint64 dueAt = uint64(block.timestamp + 1 days);
+        probe.probeSetClock(taskId, 0, dueAt);
+
+        vm.warp(block.timestamp + 2 hours);
+        market.normalizeTerms(_ids(taskId));
+
+        assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
+        assertEq(probe.probeClock(taskId).deliveredAt, 0, "deliveredAt not seeded over a revision");
+        assertEq(probe.probeClock(taskId).revisionDueAt, dueAt, "revision deadline kept");
     }
 
     /// @dev A pre-rev025 delivery recorded neither terms nor a delivery clock. Until it is

@@ -159,6 +159,73 @@ contract PenaltyToTest is DiamondTestHelper {
         _forfeitAndReopen(ITMPCore.PenaltyTo.Protocol);
     }
 
+    // -------------------------------------------------------------------------
+    // refundExpired on an undelivered staked Claim task
+    // -------------------------------------------------------------------------
+
+    /// @dev A worker who claimed and never delivered forfeits the whole stake at expiry, to the
+    ///      same destination as forfeitAndReopen, and the requester also recovers the reward.
+    function _refundExpiredUndelivered(ITMPCore.PenaltyTo to) internal {
+        bytes32 taskId = _create(_terms(to), noEvaluatorConfig());
+        _claim(taskId, worker);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+
+        uint256 reqBefore = usdc.balanceOf(requester);
+        uint256 feeBefore = usdc.balanceOf(feeRecipient);
+        uint256 feesBefore = market.totalFeesCollected();
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPCore.StakeForfeited(taskId, worker, STAKE);
+        market.refundExpired(taskId, 0);
+
+        _assertRouted(to, usdc.balanceOf(requester) - reqBefore, REWARD, feeBefore, feesBefore);
+        assertEq(usdc.balanceOf(worker), 0, "worker gets no stake back");
+        assertEq(RegistryFacet(address(market)).stakeForfeit(taskId), STAKE, "forfeit recorded");
+        ITMPCore.Task memory task = market.getTask(taskId);
+        assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Expired), "expired");
+        assertEq(task.stakeAmount, 0, "stake cleared");
+        assertEq(usdc.balanceOf(address(market)), 0, "diamond holds nothing");
+    }
+
+    function test_RefundExpired_Undelivered_ForfeitsStake_PenaltyToRequester() public {
+        _refundExpiredUndelivered(ITMPCore.PenaltyTo.Requester);
+    }
+
+    function test_RefundExpired_Undelivered_ForfeitsStake_PenaltyToProtocol() public {
+        _refundExpiredUndelivered(ITMPCore.PenaltyTo.Protocol);
+    }
+
+    /// @dev Racing refundExpired ahead of the requester's forfeitAndReopen yields the same stake
+    ///      forfeit, so a keeper calling refundExpired first cannot hand the stake back to the worker.
+    function test_RefundExpired_RacingForfeitAndReopen_SameForfeit() public {
+        bytes32 forfeited = _create(_terms(ITMPCore.PenaltyTo.Requester), noEvaluatorConfig());
+        _claim(forfeited, worker);
+        bytes32 refunded = _create(_terms(ITMPCore.PenaltyTo.Requester), noEvaluatorConfig());
+        _claim(refunded, worker2);
+        vm.warp(market.getTask(refunded).expiryTime + 1);
+
+        uint256 reqBefore = usdc.balanceOf(requester);
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (forfeited)));
+        uint256 viaForfeit = usdc.balanceOf(requester) - reqBefore;
+
+        reqBefore = usdc.balanceOf(requester);
+        market.refundExpired(refunded, 0);
+        uint256 viaRefund = usdc.balanceOf(requester) - reqBefore - REWARD;
+
+        assertEq(viaForfeit, STAKE, "forfeitAndReopen pays the stake");
+        assertEq(viaRefund, viaForfeit, "refundExpired forfeits the same stake");
+        assertEq(usdc.balanceOf(worker), 0, "first worker keeps nothing");
+        assertEq(usdc.balanceOf(worker2), 0, "second worker keeps nothing");
+        assertEq(
+            RegistryFacet(address(market)).stakeForfeit(refunded),
+            RegistryFacet(address(market)).stakeForfeit(forfeited),
+            "same forfeit recorded"
+        );
+
+        // The refunded task is terminal: the requester's forfeitAndReopen now comes too late.
+        vm.expectRevert();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (refunded)));
+    }
+
     function test_ForfeitAndReopen_CustomExtension_KeepsLaterExpiry() public {
         ITMPCore.TaskTerms memory t = _terms(ITMPCore.PenaltyTo.Requester);
         t.reopenExtensionSecs = 2 days;

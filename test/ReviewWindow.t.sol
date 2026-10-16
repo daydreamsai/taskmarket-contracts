@@ -26,6 +26,7 @@ contract ReviewWindowTest is DiamondTestHelper {
     address internal worker = address(0xC0);
     address internal worker2 = address(0xC1);
     address internal keeper = address(0xD0);
+    address internal evaluator = address(0xE0);
 
     uint256 internal constant REWARD = 100e6;
     uint256 internal constant PRICE = 60e6;
@@ -59,6 +60,13 @@ contract ReviewWindowTest is DiamondTestHelper {
     }
 
     function _create(bytes4 mode, ITMPCore.TaskTerms memory terms) internal returns (bytes32) {
+        return _createWith(mode, terms, noEvaluatorConfig());
+    }
+
+    function _createWith(bytes4 mode, ITMPCore.TaskTerms memory terms, ITMPCore.TaskEvaluatorConfig memory evalCfg)
+        internal
+        returns (bytes32)
+    {
         ITMPCore.TaskConfig memory cfg = mode == TMP_PITCH
             ? taskConfig(REWARD, DURATION, mode, 1 days, 0, bytes4(0))
             : mode == TMP_AUCTION
@@ -70,7 +78,7 @@ contract ReviewWindowTest is DiamondTestHelper {
                 cfg,
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                noEvaluatorConfig(),
+                evalCfg,
                 terms
             )
         );
@@ -276,6 +284,170 @@ contract ReviewWindowTest is DiamondTestHelper {
         assertEq(_bal(requester), REWARD);
         assertEq(_bal(worker), 0);
         assertEq(_bal(address(market)), 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // evaluatorTimeout on a delivered single-payee task
+    // -------------------------------------------------------------------------
+
+    uint32 internal constant EVAL_WINDOW = 2 days;
+
+    function _evalCfg() internal view returns (ITMPCore.TaskEvaluatorConfig memory) {
+        return ITMPCore.TaskEvaluatorConfig({
+            evaluator: evaluator,
+            evaluatorStake: 0,
+            evaluatorFeeBps: 0,
+            evaluationWindow: EVAL_WINDOW,
+            appealWindow: 1 days,
+            disputeResolver: address(0)
+        });
+    }
+
+    /// @dev Delivered one hour before expiry to an evaluator who never evaluates; the requester
+    ///      times the evaluator out after the evaluation window, which runs past the expiry.
+    function _evaluatorTimedOut(bytes4 mode) internal returns (bytes32 taskId, uint256 timedOutAt) {
+        taskId = _createWith(mode, _terms(), _evalCfg());
+        _take(taskId, mode, worker);
+        vm.warp(market.getTask(taskId).expiryTime - 1 hours);
+        _submit(taskId, worker, WORK);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Review), "in review");
+        vm.warp(vm.getBlockTimestamp() + EVAL_WINDOW + 1);
+        timedOutAt = vm.getBlockTimestamp();
+        _relay(requester, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+    }
+
+    function test_EvaluatorTimeout_Claim_ReturnsToReviewWindow() public {
+        (bytes32 taskId, uint256 timedOutAt) = _evaluatorTimedOut(TMP_CLAIM);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed), "claimed");
+        assertEq(market.reviewDeadline(taskId), timedOutAt + WINDOW, "window runs from the timeout");
+        assertGt(vm.getBlockTimestamp(), market.getTask(taskId).expiryTime, "past expiry");
+
+        // The requester cannot refund over the delivered work at expiry.
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
+        market.refundExpired(taskId, 0);
+        _expectRelayRevert(
+            requester, abi.encodeCall(market.forfeitAndReopen, (taskId)), ITMPCore.DeliveryPending.selector
+        );
+
+        // Once the window lapses the worker is paid.
+        vm.warp(timedOutAt + WINDOW + 1);
+        market.settleLapsedReview(taskId);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted), "accepted");
+        assertEq(_bal(worker), REWARD - REWARD * FEE_BPS / 10000 + STAKE, "worker paid and stake returned");
+    }
+
+    function test_EvaluatorTimeout_Pitch_ReturnsToWorkerSelected() public {
+        (bytes32 taskId, uint256 timedOutAt) = _evaluatorTimedOut(TMP_PITCH);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.WorkerSelected), "selected");
+        assertEq(market.reviewDeadline(taskId), timedOutAt + WINDOW, "window runs from the timeout");
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
+        market.refundExpired(taskId, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // appeal extends expiry by the resolution window
+    // -------------------------------------------------------------------------
+
+    address internal resolver = address(0xE1);
+    uint32 internal constant APPEAL_WINDOW = 1 days;
+
+    function _disputeCfg() internal view returns (ITMPCore.TaskEvaluatorConfig memory) {
+        return ITMPCore.TaskEvaluatorConfig({
+            evaluator: evaluator,
+            evaluatorStake: 0,
+            evaluatorFeeBps: 0,
+            evaluationWindow: EVAL_WINDOW,
+            appealWindow: APPEAL_WINDOW,
+            disputeResolver: resolver
+        });
+    }
+
+    /// @dev Claim task with an evaluator and a dispute resolver, delivered `before` seconds ahead
+    ///      of expiry and rejected at once, so the verdict sits in its appeal window.
+    function _rejectedVerdict(ITMPCore.TaskTerms memory terms, uint256 before) internal returns (bytes32 taskId) {
+        taskId = _createWith(TMP_CLAIM, terms, _disputeCfg());
+        _take(taskId, TMP_CLAIM, worker);
+        vm.warp(market.getTask(taskId).expiryTime - before);
+        _submit(taskId, worker, WORK);
+        _relay(
+            evaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.REJECT, 0, 1000, bytes32(0), new ITMPCore.Award[](0))
+            )
+        );
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Appealing), "appealing");
+    }
+
+    function _appeal(bytes32 taskId) internal {
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+    }
+
+    /// @dev Delivered one hour before expiry: the verdict's appeal deadline is the expiry, so
+    ///      without the extension the resolver would have one second before the dispute lapses.
+    function test_Appeal_LateDelivery_ExtendsExpiryByDefaultResolutionWindow() public {
+        bytes32 taskId = _rejectedVerdict(_terms(), 1 hours);
+        uint256 oldExpiry = market.getTask(taskId).expiryTime;
+        vm.warp(vm.getBlockTimestamp() + APPEAL_WINDOW - 1); // just before the appeal deadline
+        uint256 newExpiry = vm.getBlockTimestamp() + 72 hours;
+        vm.expectEmit(true, false, false, true, address(market));
+        emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
+        _appeal(taskId);
+        assertEq(market.getTask(taskId).expiryTime, newExpiry, "expiry extended");
+
+        vm.warp(oldExpiry + 1);
+        vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
+        market.refundExpired(taskId, 0);
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker, amount: REWARD, rank: 1 });
+        vm.prank(resolver);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, awards);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted), "resolved");
+    }
+
+    function test_Appeal_LateDelivery_UnresolvedDisputeLapsesAfterResolutionWindow() public {
+        bytes32 taskId = _rejectedVerdict(_terms(), 1 hours);
+        vm.warp(vm.getBlockTimestamp() + APPEAL_WINDOW - 1); // just before the appeal deadline
+        uint256 oldExpiry = market.getTask(taskId).expiryTime;
+        _appeal(taskId);
+        uint256 newExpiry = market.getTask(taskId).expiryTime;
+        assertGt(newExpiry, oldExpiry, "appeal extended expiry");
+
+        vm.warp(newExpiry);
+        vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
+        market.refundExpired(taskId, 0);
+
+        vm.warp(newExpiry + 1);
+        market.refundExpired(taskId, 0);
+        // The original REJECT verdict stands.
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Cancelled), "lapsed");
+    }
+
+    function test_Appeal_CustomResolutionWindow_ExtendsByTerms() public {
+        ITMPCore.TaskTerms memory t = _terms();
+        t.resolutionWindowSecs = 2 days;
+        bytes32 taskId = _rejectedVerdict(t, 1 hours);
+        vm.warp(vm.getBlockTimestamp() + APPEAL_WINDOW - 1); // just before the appeal deadline
+        uint256 newExpiry = vm.getBlockTimestamp() + 2 days;
+        vm.expectEmit(true, false, false, true, address(market));
+        emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
+        _appeal(taskId);
+        assertEq(market.getTask(taskId).expiryTime, newExpiry, "extended by the custom window");
+    }
+
+    function test_Appeal_ExpiryAlreadyCovers_NoExtension() public {
+        bytes32 taskId = _rejectedVerdict(_terms(), 5 days);
+        uint256 expiry = market.getTask(taskId).expiryTime;
+        vm.recordLogs();
+        _appeal(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0) continue;
+            assertTrue(logs[i].topics[0] != ITMPCore.TaskExpiryExtended.selector, "no extension log");
+        }
+        assertEq(market.getTask(taskId).expiryTime, expiry, "expiry unchanged");
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Disputed), "disputed");
     }
 
     // -------------------------------------------------------------------------
