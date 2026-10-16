@@ -489,11 +489,13 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             } catch { }
 
             if (!paid) {
-                try _s().vault.release(taskId, tokenReward) { } catch { }
-                try _s()
-                    .epochBudget
-                    .release(state.requester, state.worker, state.usdBonusValue, state.consumedEpoch) { }
-                    catch { }
+                // Nothing was paid out, so release the reservation through the progress record:
+                // a release that fails here stays pending and recoverReserve can finish it.
+                // If an earlier release is still pending the reservation stays in RewardState
+                // and unpaid, so recoverReserve still sees it as stale.
+                state.paid = false;
+                _releaseReserve(taskId);
+                if (!state.reserved) state.paid = true;
                 return true;
             }
 

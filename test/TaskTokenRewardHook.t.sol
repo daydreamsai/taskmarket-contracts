@@ -2210,6 +2210,58 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         hook.recoverReserve(taskId);
     }
 
+    function _failVaultPay() internal {
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(RewardVault.pay.selector), "pay down");
+    }
+
+    function test_checkComplete_vaultPayFails_releaseFails_recovers() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+
+        _failVaultPay();
+        _failVault();
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertEq(
+            uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted), "USDC settlement not blocked"
+        );
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "vault reservation still held");
+        assertEq(hook.claimable(worker), 0, "no bonus credited");
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0, "budget is not released twice");
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+
+        // Paid out with nothing pending: a release is no longer due.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_checkComplete_vaultPayFails_releaseSucceeds_nothingPending() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+
+        _failVaultPay();
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+        // Paid out with nothing pending: a release is no longer due.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
     function test_release_pitchRejectDelivery_onForfeitFailure_recovers() public {
         bytes32 taskId = _createReservedTask(market.PITCH(), bytes4(0));
         _relay(worker, 0, abi.encodeCall(market.submitPitch, (taskId, keccak256("pitch"))));

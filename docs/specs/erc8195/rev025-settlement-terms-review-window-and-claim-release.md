@@ -417,6 +417,10 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
 - `onComplete` releases an unpaid reservation through the same progress-tracked path, so a
   `settleLapsedReview` completion, which skips `checkComplete`, leaves a retryable record rather
   than a one-shot release.
+- `checkComplete` does the same when it cannot pay the reserved bonus from the vault: it releases
+  the reservation through the progress record rather than with one-shot calls whose failures were
+  discarded, so a failed release stays pending for `recoverReserve` instead of stranding the
+  reservation. The USDC settlement is never blocked by the bonus.
 - `RewardVault` and `EpochBudget` are unchanged: the proxy address, and so their `hook`, stays the
   same; `RewardVault.release` reverts on over-release, so a retry cannot double-release;
   `EpochBudget.release` is a no-op once the epoch has rolled, which the hook records as done because
