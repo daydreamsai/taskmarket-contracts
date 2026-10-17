@@ -371,7 +371,7 @@ interface ITMPCore is IERC165 {
         Refund
     }
 
-    /// @notice Rev025: a task's settlement terms, packed into one storage slot (24 of 32 bytes).
+    /// @notice Rev025: a task's settlement terms, packed into one storage slot (28 of 32 bytes).
     /// @dev A zero window term means the protocol default. releaseGraceBps, rejectFeeBps and
     ///      maxRevisions store the value plus one so that zero can mean "default" while "no
     ///      grace", "no fee" and "no revisions" stay expressible. version 0 means the task predates

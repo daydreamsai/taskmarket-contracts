@@ -88,7 +88,7 @@ The field widths are the implementation's choice so long as the struct stays in 
 field order and encodings above are fixed. Four terms use explicit encodings because zero is a
 meaningful value for them: `releaseAllowed` distinguishes "use the default" from "allowed" and
 "disallowed", and `releaseGraceBps`, `rejectFeeBps` and `maxRevisions` store the value plus one so that
-"no grace", "no fee" and "no revisions" are expressible. The struct uses 24 of its 32 bytes.
+"no grace", "no fee" and "no revisions" are expressible. The struct uses 28 of its 32 bytes.
 `penaltyTo` is an enum rather than an address so the term fits in the same slot and cannot name an
 arbitrary third party.
 
@@ -175,6 +175,10 @@ version 0 it returns the record normalization would write.
   The requester of a task delivered before the cut therefore gets a full review window from the
   upgrade, rather than a window that may already have lapsed against a delivery time the chain
   never recorded.
+- A Claim stake taken before the cut is treated as any other claim stake: if the worker has not
+  delivered by `expiryTime`, `refundExpired` or `forfeitAndReopen` forfeits the whole stake to the
+  `penaltyTo` destination, under the rules in force at expiry. Normalization does not
+  exempt these claims.
 - For a Bounty or Benchmark without an evaluator, it sets `taskClocks[taskId].decisionStartAt` to
   the normalization time, so the decision deadline of a task already past `expiryTime` runs from
   the upgrade and no task locks at the cut.
@@ -499,6 +503,13 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
 - `recoverReserve` refuses while the diamond's `isSettling()` is true. A settlement sets the task
   `Accepted` before it dispatches `checkComplete`, so without this a co-hook could release the
   reservation mid-settlement. A diamond without `isSettling` reads as not settling.
+- Known limits, accepted:
+  - A worker who claims or is selected while an earlier release for the task is still pending gets
+    no bonus for that task, even once the release is recovered, because nothing was reserved for
+    them.
+  - `isSettling()` is true for any call that holds the diamond's reentrancy lock, not only a
+    settlement, so `recoverReserve` also refuses when reached from inside any other state-changing
+    diamond call. Call it in its own transaction.
 - `RewardVault` and `EpochBudget` are unchanged: the proxy address, and so their `hook`, stays the
   same; `RewardVault.release` reverts on over-release, so a retry cannot double-release;
   `EpochBudget.release` is a no-op once the epoch has rolled, which the hook records as done because
@@ -545,10 +556,10 @@ reject.
 
 One pass per chain, in this order:
 
-1. **Evaluator-fee check.** Confirm on chain that no task has a recorded verdict awaiting
-   `finalizeVerdict` or `resolveDispute`. Such a verdict's fee was already paid by the pre-rev025
-   `evaluate`, and there is no contract guard against paying it again at finalization. If any
-   exist, let their appeal windows run and finalize them first.
+1. **Evaluator fee: no pre-check.** A verdict recorded before the cut had its fee paid by the
+   pre-rev025 `evaluate`, and finalizing it after the cut (`finalizeVerdict` or an upheld
+   `resolveDispute`) pays the evaluator again. This is accepted, not guarded: the cut adds no
+   contract guard and the rollout neither checks for nor waits on `Appealing` or `Disputed` tasks.
 2. **Reward-hook implementation upgrade.** May go first; it does not depend on the cut.
 3. **Backend funds claim stakes through the relayer.** Without this every stake-required claim
    reverts once stakes are enforced.
