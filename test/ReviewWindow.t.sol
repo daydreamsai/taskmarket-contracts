@@ -344,6 +344,40 @@ contract ReviewWindowTest is DiamondTestHelper {
         market.refundExpired(taskId, 0);
     }
 
+    /// @dev Delivered one hour before expiry to an evaluator who never evaluates, left in Review
+    ///      past both the evaluation window and the expiry.
+    function _staleReview(bytes4 mode) internal returns (bytes32 taskId) {
+        taskId = _createWith(mode, _terms(), _evalCfg());
+        _take(taskId, mode, worker);
+        vm.warp(market.getTask(taskId).expiryTime - 1 hours);
+        _submit(taskId, worker, WORK);
+        vm.warp(vm.getBlockTimestamp() + EVAL_WINDOW + 1);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Review), "in review");
+        assertGt(vm.getBlockTimestamp(), market.getTask(taskId).expiryTime, "past expiry");
+    }
+
+    function test_RefundExpired_DeliveredInReview_RevertsDeliveryPending() public {
+        bytes4[3] memory modes = [TMP_CLAIM, TMP_PITCH, TMP_AUCTION];
+        for (uint256 i; i < modes.length; ++i) {
+            bytes32 taskId = _staleReview(modes[i]);
+            vm.expectRevert(ITMPCore.DeliveryPending.selector);
+            market.refundExpired(taskId, 0);
+        }
+    }
+
+    function test_EvaluatorTimeout_WorkerReturnsDeliveryToReview() public {
+        bytes32 taskId = _staleReview(TMP_CLAIM);
+        uint256 timedOutAt = vm.getBlockTimestamp();
+        _relay(worker, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed), "claimed");
+        assertEq(market.reviewDeadline(taskId), timedOutAt + WINDOW, "window runs from the timeout");
+
+        vm.warp(timedOutAt + WINDOW + 1);
+        market.settleLapsedReview(taskId);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted), "accepted");
+        assertEq(_bal(worker), REWARD - REWARD * FEE_BPS / 10000 + STAKE, "worker paid and stake returned");
+    }
+
     // -------------------------------------------------------------------------
     // appeal extends expiry by the resolution window
     // -------------------------------------------------------------------------

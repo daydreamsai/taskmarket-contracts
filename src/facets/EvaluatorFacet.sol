@@ -324,16 +324,16 @@ contract EvaluatorFacet {
     }
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
-    ///         Only the requester may call this.
+    ///         Anyone may call this once the window has passed.
     function evaluatorTimeout(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
-        address requester = LibGuards._effectiveSender(s);
+        // Permissionless: once the evaluation window has passed anyone, including the worker, may
+        // time out the evaluator, so a requester cannot leave a delivered task stuck in Review.
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
         if (task.status != ITMPCore.TaskStatus.Review) revert ITMPCore.NotInReviewState();
         if (block.timestamp <= s.phaseDeadline[taskId]) revert ITMPCore.EvaluationWindowNotExpired();
 

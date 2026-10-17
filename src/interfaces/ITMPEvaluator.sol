@@ -88,9 +88,9 @@ interface ITMPEvaluator is IERC165 {
     function resolveDispute(bytes32 taskId, ITMPCore.VerdictType verdictType, ITMPCore.Award[] calldata awards) external;
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
-    ///         Only the requester may call this.
-    ///         Forfeits the evaluator stake to the fee recipient and transitions
-    ///         the task to PendingApproval so the requester can call acceptSubmission.
+    ///         Anyone may call this once the window has passed, so the worker can return a
+    ///         delivered task to review. Forfeits the evaluator stake to the fee recipient and
+    ///         returns a delivered Claim/Pitch/Auction task to the review window, else PendingApproval.
     function evaluatorTimeout(bytes32 taskId) external;
 
     /// @notice Returns the evaluator assigned to a task (address(0) if none).

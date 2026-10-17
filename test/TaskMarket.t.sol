@@ -1214,7 +1214,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore);
     }
 
-    function test_RefundExpired_Review_ForfeitsEvaluatorStake() public {
+    function test_RefundExpired_Review_RevertsThenEvaluatorTimeoutForfeitsStake() public {
         uint256 stakeAmount = REWARD / 10;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         uint32 evalWindowSecs = uint32(2 days);
@@ -1242,16 +1242,21 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
         uint256 requesterBefore = usdc.balanceOf(requester);
 
+        // The delivery cannot be refunded over at expiry.
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
+        market.refundExpired(taskId, 0);
+
+        // Anyone, here the worker, times out the evaluator instead.
         vm.expectEmit(true, true, false, true);
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, evaluator, stakeAmount);
-
-        market.refundExpired(taskId, 0);
+        _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
 
         assertEq(
             usdc.balanceOf(feeRecipient), feeRecipientBefore + stakeAmount, "evaluator stake forfeited to fee recipient"
         );
-        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "reward refunded to requester");
+        assertEq(usdc.balanceOf(requester), requesterBefore, "no refund");
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, 0, "stake zeroed");
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed), "back under review");
     }
 
     // -----------------------------------------------------------------------
@@ -4083,7 +4088,7 @@ contract TaskMarketTest is DiamondTestHelper {
         market.refundExpired(taskId, 0);
     }
 
-    function test_RefundExpired_DuringReview_AfterExtendedExpiry() public {
+    function test_RevertWhen_RefundExpired_DuringReview_AfterExtendedExpiry() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         uint32 evalWindow = uint32(2 days);
         _assignEvaluator(taskId, requester, evaluator, 0, evalWindow, uint32(1 days));
@@ -4093,9 +4098,8 @@ contract TaskMarketTest is DiamondTestHelper {
 
         // Warp past both the original expiryTime and the evaluationWindow extension.
         vm.warp(block.timestamp + DURATION + evalWindow + 1);
-        uint256 before = usdc.balanceOf(requester);
+        vm.expectRevert(ITMPCore.DeliveryPending.selector);
         market.refundExpired(taskId, 0);
-        assertGt(usdc.balanceOf(requester), before);
     }
 
     function test_RevertWhen_RefundExpired_DuringAppealing_BeforeExtendedExpiry() public {
@@ -4998,14 +5002,14 @@ contract TaskMarketTest is DiamondTestHelper {
     // evaluatorTimeout: revert guards
     // -------------------------------------------------------------------------
 
-    function test_RevertWhen_EvaluatorTimeout_NotRequester() public {
+    function test_EvaluatorTimeout_AnyoneAfterWindow() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
         _claimTask(taskId, worker1, 0);
         _submitWork(taskId, worker1, keccak256("work"));
         vm.warp(block.timestamp + 2 days + 1);
-        vm.expectRevert(ITMPCore.NotRequester.selector);
-        _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        _relay(worker2, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed));
     }
 
     function test_RevertWhen_EvaluatorTimeout_NotInReview() public {

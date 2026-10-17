@@ -262,6 +262,10 @@ it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the pa
 #### `refundExpired` (changed)
 
 - Reverts `DeliveryPending` while a single-payee task holds an undecided deliverable.
+- Also reverts `DeliveryPending` for a delivered Claim, Pitch or Auction task still in `Review`
+  with an evaluator. Without it, a requester who never times out an idle evaluator could wait for
+  expiry, refund the whole reward and keep the work. Such a task settles through `evaluate`, or
+  through `evaluatorTimeout`, which returns it to the requester's review window.
 - A Claim worker who never delivered forfeits the whole claim stake on this path, paid to
   `penaltyTo` as `forfeitAndReopen` does. This is not a configurable term: `releaseClaim`'s penalty
   already reaches the full stake at expiry, and `refundExpired` becomes callable at the same moment
@@ -297,6 +301,13 @@ delivery, the task returns to `Claimed` (Pitch: `WorkerSelected`) with `delivere
 timeout, so the requester's review window applies from then: accept, reject or request a revision,
 or the worker settles once it lapses. Otherwise the requester could time out an idle evaluator,
 wait for expiry and refund over delivered work. Other tasks move to `PendingApproval` as before.
+
+Access changes too: once the evaluation window has passed, anyone may call `evaluatorTimeout`, not
+only the requester. A requester who leaves a stalled evaluator in place can no longer hold a
+delivered task in `Review` (where `refundExpired` now reverts), since the worker can time the
+evaluator out and start the review window, which `settleLapsedReview` closes in the worker's
+favour if the requester does not decide. The evaluator's stake still goes to the fee recipient,
+whoever calls.
 
 #### `forfeitAndReopen` (changed)
 

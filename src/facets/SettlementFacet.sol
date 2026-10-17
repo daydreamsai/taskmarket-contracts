@@ -284,12 +284,17 @@ contract SettlementFacet {
             revert ITMPCore.SubmissionsExist();
         }
         // A delivery under review (or superseded by an open revision) settles only by accept,
-        // rejectDelivery or settleLapsedReview.
-        if (
-            task.deliverable != bytes32(0)
-                && (task.status == ITMPCore.TaskStatus.Claimed || task.status == ITMPCore.TaskStatus.WorkerSelected)
-                && LibReview.singlePayee(s, taskId, task)
-        ) revert ITMPCore.DeliveryPending();
+        // rejectDelivery or settleLapsedReview. A delivery with an evaluator (Review) settles by
+        // evaluate, or by evaluatorTimeout returning it to the requester's review window; it is
+        // never refunded over the work at expiry.
+        if (task.deliverable != bytes32(0)) {
+            ITMPCore.TaskStatus st = task.status;
+            bool underReview = (st == ITMPCore.TaskStatus.Claimed || st == ITMPCore.TaskStatus.WorkerSelected)
+                && LibReview.singlePayee(s, taskId, task);
+            bool withEvaluator =
+                st == ITMPCore.TaskStatus.Review && (task.mode == CLAIM || task.mode == PITCH || task.mode == AUCTION);
+            if (underReview || withEvaluator) revert ITMPCore.DeliveryPending();
+        }
 
         if (task.mode == AUCTION && task.status == ITMPCore.TaskStatus.Claimed) {
             _refundAuctionClaimed(taskId, task, s);
