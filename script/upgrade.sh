@@ -15,6 +15,13 @@
 # (the diamond must be at the expected prior version) and reverts rather than silently
 # re-applying or skipping ahead.
 #
+# Rev024 is never applied on its own. Its step deploys today's CoreFacet, which no longer
+# implements cancelTask, refundExpired, rejectSubmission and forfeitAndReopen (rev025 moved them
+# to SettlementFacet), yet still routes those selectors to it; only Rev025 routes them back. So an
+# explicit "rev024" argument is refused, a pending run that would end at Rev024 is refused before
+# anything broadcasts, and if Rev024's cut lands but its command fails afterwards (for example on
+# block-explorer verification) the run carries on to Rev025 instead of stopping in between.
+#
 # Adding a new revision requires no changes to this script or the Makefile: drop a new
 # script/upgrades/RevNNNUpgrade.s.sol file (contract name RevNNNUpgrade) and it is picked up
 # automatically on the next `make upgrade` run.
@@ -72,6 +79,12 @@ current_version() {
 
 # Explicit single-step target, e.g. "rev012" -> Rev012Upgrade.
 if [ -n "$REV" ]; then
+  if [ "$(printf '%s' "$REV" | tr '[:upper:]' '[:lower:]')" = "rev024" ]; then
+    echo "Refusing to apply rev024 on its own: it leaves cancelTask, refundExpired, rejectSubmission" >&2
+    echo "and forfeitAndReopen routed to a CoreFacet that lacks them until Rev025 lands. Run" >&2
+    echo "'make upgrade $NETWORK' with no revision argument to apply Rev024 and Rev025 in one run." >&2
+    exit 1
+  fi
   NAME="$(printf '%s' "${REV:0:1}" | tr '[:lower:]' '[:upper:]')${REV:1}Upgrade"
   echo "Applying $NAME directly..."
   run_script "script/upgrades/${NAME}.s.sol:${NAME}"
@@ -87,12 +100,39 @@ if [ -z "$VERSION" ] || [ "$VERSION" = "0" ]; then
 fi
 
 shopt -s nullglob
+PENDING=()
 for f in $(printf '%s\n' script/upgrades/Rev*Upgrade.s.sol | sort); do
   NAME="$(basename "$f" .s.sol)"
   TARGET="$(printf '%s' "$NAME" | grep -oE '[0-9]+' | head -1 | sed 's/^0*//')"
   if [ "$TARGET" -gt "$VERSION" ]; then
+    PENDING+=("$NAME")
+  fi
+done
+
+# Refuse, before anything broadcasts, a run whose last step would be Rev024.
+if [ "${#PENDING[@]}" -gt 0 ] && [ "${PENDING[${#PENDING[@]}-1]}" = "Rev024Upgrade" ]; then
+  echo "Refusing to run: Rev024Upgrade would be the last step, but Rev024 must always be followed by" >&2
+  echo "Rev025Upgrade in the same run (script/upgrades/Rev025Upgrade.s.sol is missing)." >&2
+  exit 1
+fi
+
+for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
+  TARGET="$(printf '%s' "$NAME" | grep -oE '[0-9]+' | head -1 | sed 's/^0*//')"
+  if [ "$TARGET" -gt "$VERSION" ]; then
     echo "Applying $NAME (target rev $TARGET, current rev $VERSION)..."
-    run_script "script/upgrades/${NAME}.s.sol:${NAME}"
+    if [ "$NAME" = "Rev024Upgrade" ] && [ "$DRY_RUN" != "1" ]; then
+      if ! run_script "script/upgrades/${NAME}.s.sol:${NAME}"; then
+        if [ "$(current_version)" = "24" ]; then
+          echo "Rev024Upgrade's cut landed but the command failed afterwards (likely verification);" >&2
+          echo "continuing to Rev025Upgrade. Verify the Rev024 contracts by hand afterwards." >&2
+        else
+          echo "Rev024Upgrade failed before its cut landed; nothing to continue." >&2
+          exit 1
+        fi
+      fi
+    else
+      run_script "script/upgrades/${NAME}.s.sol:${NAME}"
+    fi
     if [ "$DRY_RUN" = "1" ]; then
       echo "Dry run: stopping after the first pending step ($NAME) -- later steps can't be simulated until this one actually broadcasts."
       exit 0
