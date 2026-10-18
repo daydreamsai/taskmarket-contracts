@@ -70,6 +70,9 @@ struct AppStorage {
     // Rev025: owner-set bounds on requester-chosen terms; zero fields read as the defaults in
     // LibTerms.
     ITMPCore.TermsBounds termsBounds;
+    // Rev025: owner-set per-chain limits on tags and hooks per task; zero fields read as the
+    // defaults in LibTaskLimits.
+    ITMPCore.TaskLimits taskLimits;
 }
 
 library LibAppStorage {

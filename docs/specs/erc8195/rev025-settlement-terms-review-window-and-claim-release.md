@@ -117,6 +117,29 @@ documentation changes from "write-once" to "cleared whenever the task returns to
 `Task.stakeRequired` and `Task.stakeBps` stay in `Task` as dead storage. `getTask` keeps returning
 their creation values; after a task is normalized, no settlement code reads them.
 
+### Task limits
+
+A task's tags are copied into the hook context of every hook dispatch, and every hook is owed a
+forced gas stipend at settlement. Neither had a creation-time bound that the owner could tune per
+chain: tags were unbounded and the hook count was a compiled `8`. rev025 appends
+`TaskLimits taskLimits` (`uint16 maxTags`, `uint8 maxHooks`) to `AppStorage` after `termsBounds`.
+
+| Limit | Default (stored zero) | Owner may set |
+| --- | --- | --- |
+| `maxTags` | 10 | 1 to 64 |
+| `maxHooks` | 8 | 1 to 16, and at least the number of default hooks set |
+
+- `createTask` (both overloads) reverts `TooManyTags` when `content.tags` is longer than
+  `maxTags`, and `TooManyHooks` when default plus requester hooks exceed `maxHooks`.
+  `setDefaultHooks` reverts `TooManyHooks` above `maxHooks`.
+- `setTaskLimits(uint16 maxTags, uint8 maxHooks)` is owner-only, reverts `InvalidTaskLimits`
+  outside the ranges above and emits `TaskLimitsUpdated(maxTags, maxHooks)`.
+- `taskLimits() view returns (uint256 maxTags, uint256 maxHooks)` returns the effective limits,
+  defaults included. Both live on `AdminFacet`.
+- A limit applies at creation only; a task already created keeps its tags and hooks.
+- Tags are 32-byte values on chain (clients store a hash of each tag string), so a per-tag byte
+  length cannot be checked here. Clients bound each tag string to 64 bytes before hashing.
+
 ### Reading terms
 
 `LibTerms.terms(taskId)` is the only reader of `taskTerms`. On a non-terminal task at version 0 it
@@ -482,13 +505,14 @@ Benchmark after its decision deadline emits `RequesterReputation` with
 - **Errors:** `TermsFrozen`, `InvalidTerms`, `DeliveryPending`, `ReviewWindowOpen`,
   `ReviewWindowClosed`, `DecisionWindowLapsed`, `ReleaseNotAllowed`, `StakePaymentMismatch`,
   `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`,
-  `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`.
+  `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`, `TooManyTags`,
+  `InvalidTaskLimits`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
-  `RevisionRequested`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
+  `RevisionRequested`, `TaskLimitsUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
   `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
   extension, so an indexer can track `expiryTime` from events alone.
-- **Views:** `getTaskTerms`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
+- **Views:** `getTaskTerms`, `taskLimits`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
   is true while the diamond holds its reentrancy lock, which lets a hook tell a settlement still
   dispatching hooks from one that finished.
 

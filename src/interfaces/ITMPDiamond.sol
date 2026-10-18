@@ -172,6 +172,9 @@ interface ITMPDiamond {
     // Rev025: owner-only bounds on requester-chosen settlement terms (read via termsBounds).
     function setTermsBounds(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions)
         external;
+    // Rev025: owner-only per-chain limits on tags and hooks per task.
+    function setTaskLimits(uint16 maxTags, uint8 maxHooks) external;
+    function taskLimits() external view returns (uint256 maxTags, uint256 maxHooks);
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
 
     // -------------------------------------------------------------------------

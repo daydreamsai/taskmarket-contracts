@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { LibTaskLimits } from "../libraries/LibTaskLimits.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Initializable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 import { LibDiamond } from "../libraries/LibDiamond.sol";
@@ -160,10 +161,10 @@ contract AdminFacet is Initializable {
     /// @notice Replace the protocol default hook list (owner only).
     ///         These hooks are prepended to every new task's hook list at createTask().
     ///         Does not affect tasks already created.
-    ///         Maximum 8 default hooks to bound hook dispatch gas cost.
+    ///         At most maxHooks default hooks to bound hook dispatch gas cost.
     function setDefaultHooks(address[] calldata hooks) external onlyOwner {
-        if (hooks.length > 8) revert ITMPCore.TooManyHooks();
         AppStorage storage s = LibAppStorage.appStorage();
+        if (hooks.length > LibTaskLimits.maxHooks(s)) revert ITMPCore.TooManyHooks();
         delete s.defaultHooks;
         for (uint256 i; i < hooks.length; i++) {
             if (hooks[i] == address(0)) revert ITMPCore.InvalidHookAddress();
@@ -247,6 +248,34 @@ contract AdminFacet is Initializable {
             maxRevisions: maxRevisions + 1
         });
         emit ITMPCore.TermsBoundsUpdated(minWindowSecs, maxWindowSecs, maxRejectFeeBps, maxRevisions);
+    }
+
+    // -------------------------------------------------------------------------
+    // Task limits (Rev025)
+    // -------------------------------------------------------------------------
+
+    /// @notice Set the per-chain limits on tags and hooks per task (owner only). Applies to
+    ///         tasks created afterwards; a task already created keeps what it has. maxHooks
+    ///         counts default and requester hooks together and may not fall below the number of
+    ///         default hooks already set.
+    function setTaskLimits(uint16 maxTags_, uint8 maxHooks_) external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        if (
+            maxTags_ == 0 || maxTags_ > LibTaskLimits.MAX_MAX_TAGS || maxHooks_ == 0
+                || maxHooks_ > LibTaskLimits.MAX_MAX_HOOKS || maxHooks_ < s.defaultHooks.length
+        ) {
+            revert ITMPCore.InvalidTaskLimits();
+        }
+        s.taskLimits = ITMPCore.TaskLimits({ maxTags: maxTags_, maxHooks: maxHooks_ });
+        emit ITMPCore.TaskLimitsUpdated(maxTags_, maxHooks_);
+    }
+
+    /// @notice Return the effective per-task limits. Each reads as its default (10 tags, 8 hooks)
+    ///         until the owner sets it.
+    function taskLimits() external view returns (uint256 maxTags_, uint256 maxHooks_) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        maxTags_ = LibTaskLimits.maxTags(s);
+        maxHooks_ = LibTaskLimits.maxHooks(s);
     }
 
     // -------------------------------------------------------------------------

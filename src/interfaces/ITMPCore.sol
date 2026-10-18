@@ -168,6 +168,8 @@ interface ITMPCore is IERC165 {
     // Settlement terms (Rev025)
     error InvalidTerms();
     error InvalidTermsBounds();
+    error TooManyTags();
+    error InvalidTaskLimits();
     error DeliveryPending();
     error ReviewWindowOpen();
     error ReviewWindowClosed();
@@ -417,6 +419,13 @@ interface ITMPCore is IERC165 {
         uint8 maxRevisions;
     }
 
+    /// @notice Rev025: owner-settable per-chain limits on what a task may carry. A zero field
+    ///         reads as its default (10 tags, 8 hooks).
+    struct TaskLimits {
+        uint16 maxTags;
+        uint8 maxHooks;
+    }
+
     struct TaskConfig {
         uint256 reward;
         uint256 duration;
@@ -471,6 +480,7 @@ interface ITMPCore is IERC165 {
 
     /// @notice Rev025: the owner changed the bounds on requester-chosen terms. Values are the
     ///         effective bounds, not the stored encodings.
+    event TaskLimitsUpdated(uint16 maxTags, uint8 maxHooks);
     event TermsBoundsUpdated(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions);
 
     /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy

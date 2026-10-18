@@ -525,6 +525,24 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "setTaskLimits",
+    "inputs": [
+      {
+        "name": "maxTags_",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxHooks_",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTermsBounds",
     "inputs": [
       {
@@ -550,6 +568,24 @@ export const TaskMarketABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "taskLimits",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "maxTags_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxHooks_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -734,6 +770,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "TaskLimitsUpdated",
+    "inputs": [
+      {
+        "name": "maxTags",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxHooks",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TermsBoundsUpdated",
     "inputs": [
       {
@@ -824,6 +879,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidRecipient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTaskLimits",
     "inputs": []
   },
   {
@@ -2027,6 +2087,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "TermsFrozen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyTags",
     "inputs": []
   },
   {
