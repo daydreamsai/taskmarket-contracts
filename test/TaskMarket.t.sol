@@ -5392,6 +5392,30 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitBid(taskId, worker1, REWARD / 2);
     }
 
+    /// One party filling every bid slot must not block a strictly lower bid: once the list is
+    /// full, a lower bid still becomes the running minimum and wins selection.
+    function test_SubmitBid_LimitReached_LowerBidStillWins() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_ENGLISH());
+        address attacker = makeAddr("bid-filler");
+        uint256 limit = market.MAX_BIDS_PER_TASK();
+        for (uint256 i; i < limit; ++i) {
+            _submitBid(taskId, attacker, REWARD - 1);
+        }
+        assertEq(market.getBids(taskId).length, limit);
+
+        // A bid at or above the running minimum is still refused once the list is full.
+        vm.expectRevert(ITMPCore.BidLimitReached.selector);
+        _submitBid(taskId, worker2, REWARD - 1);
+
+        _submitBid(taskId, worker1, REWARD / 2);
+        assertEq(market.getBids(taskId).length, limit, "an over-cap bid is not stored in the list");
+
+        vm.warp(block.timestamp + 1 days);
+        _selectLowestBidder(taskId);
+        assertEq(market.getTask(taskId).worker, worker1);
+        assertEq(market.getTask(taskId).stakeAmount, REWARD / 2);
+    }
+
     // -------------------------------------------------------------------------
     // RegistryFacet view coverage: taskMode, totalFeesCollected, getTaskMetadata
     // -------------------------------------------------------------------------

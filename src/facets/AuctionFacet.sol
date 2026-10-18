@@ -46,14 +46,21 @@ contract AuctionFacet {
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp >= auctionCfg.bidDeadline) revert ITMPCore.BidDeadlinePassed();
         if (price > auctionCfg.maxPrice) revert ITMPCore.BidExceedsMaxPrice();
-        if (s.taskBids[taskId].length >= MAX_BIDS_PER_TASK) revert ITMPCore.BidLimitReached();
+        uint256 bidCount = s.taskBids[taskId].length;
+        bool lowest = bidCount == 0 || price < auctionCfg.lowestBidPrice;
+        // Once the list is full, a strictly lower bid still becomes the running minimum; it is
+        // just not stored in taskBids, which only feeds the getBids view. Otherwise one party
+        // could fill every slot and lock in its own price.
+        if (bidCount >= MAX_BIDS_PER_TASK && !(lowest && auctionCfg.lowestBidder != address(0))) {
+            revert ITMPCore.BidLimitReached();
+        }
 
-        if (s.taskBids[taskId].length == 0 || price < auctionCfg.lowestBidPrice) {
+        if (lowest) {
             auctionCfg.lowestBidPrice = price;
             auctionCfg.lowestBidder = worker;
         }
 
-        s.taskBids[taskId].push(ITMPCore.Bid({ worker: worker, price: price }));
+        if (bidCount < MAX_BIDS_PER_TASK) s.taskBids[taskId].push(ITMPCore.Bid({ worker: worker, price: price }));
 
         emit ITMPCore.BidSubmitted(taskId, worker, price);
         LibGuards._nonReentrantAfter(s);

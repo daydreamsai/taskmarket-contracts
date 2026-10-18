@@ -627,6 +627,17 @@ Also in the hook implementation upgrade:
   scaled by the award, so once the cut's `acceptSubmission` reports the accepted price it pays only
   the accepted price's share.
 
+### Bid cap
+
+`AuctionFacet.submitBid` keeps the per-task cap of `MAX_BIDS_PER_TASK` stored bids, but a full list
+no longer refuses a bid strictly below `lowestBidPrice`. That bid becomes the running minimum
+(`lowestBidPrice`, `lowestBidder`) and is not pushed to `taskBids`, which only feeds the `getBids`
+view. Any other bid on a full list still reverts with `BidLimitReached`. Before this, one party could
+fill every slot at its own price soon after an English or reverse-English auction opened and shut
+out every later bid, including lower ones; a per-bidder limit would not help, since addresses are
+free. `getBids` can therefore omit the winning bid on a task that reached the cap; `getTask` after
+selection, and the `BidSubmitted` event, still name it.
+
 ## Settlement by mode
 
 "Review window" means the single-payee rule above; "decision deadline" the Bounty and Benchmark
