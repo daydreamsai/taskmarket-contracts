@@ -581,10 +581,12 @@ reject.
 
 One pass per chain, in this order:
 
-1. **Evaluator fee: no pre-check.** A verdict recorded before the cut had its fee paid by the
-   pre-rev025 `evaluate`, and finalizing it after the cut (`finalizeVerdict` or an upheld
-   `resolveDispute`) pays the evaluator again. This is accepted, not guarded: the cut adds no
-   contract guard and the rollout neither checks for nor waits on `Appealing` or `Disputed` tasks.
+1. **Evaluator fee: no verdict pending across the cut.** A verdict recorded before the cut had its
+   fee paid by the pre-rev025 `evaluate`, and finalizing it after the cut (`finalizeVerdict` or an
+   upheld `resolveDispute`) would pay the evaluator again from pooled escrow. The cut adds no
+   contract guard. Instead, immediately before each cut a read-only check lists the chain's tasks
+   with a recorded but unfinalized verdict (`Appealing` or `Disputed`); those tasks are finalized,
+   or the operator waits until the list is empty, before cutting.
 2. **Reward-hook implementation upgrade.** May go first; it does not depend on the cut.
 3. **Backend funds claim stakes through the relayer.** Without this every stake-required claim
    reverts once stakes are enforced.
