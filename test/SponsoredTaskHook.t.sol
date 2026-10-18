@@ -483,6 +483,52 @@ contract SponsoredTaskHookTest is Test {
         assertEq(settled.sponsoredTaskOutstanding, 9_950);
     }
 
+    function _nativePayoutPoolOf(bytes32 taskId) private view returns (uint256 pool) {
+        (,,,,,,,,, pool) = hook.taskAllocationFunding(taskId);
+    }
+
+    /// An auction escrows its price cap in `reward` but pays out of the accepted price, so a
+    /// PARTIAL verdict that awards the whole accepted price (net of the evaluator fee) must
+    /// unlock the whole sponsorship, not just price/cap of it.
+    function testAuctionPartialScalesSponsorshipOnAcceptedPrice() external {
+        bytes32 auctionTaskId = keccak256("auction-partial");
+        market.primeTask(auctionTaskId, MANAGER, address(usdc), NATIVE_REWARD, TMP_AUCTION, address(hook));
+        ITMPCore.TaskEvaluatorConfig memory config;
+        config.evaluator = BOB;
+        config.evaluatorFeeBps = 500;
+        market.setEvaluator(auctionTaskId, config);
+        _fundLocalTask(auctionTaskId);
+        uint256 price = NATIVE_REWARD / 4;
+        market.setWorkerAndStake(auctionTaskId, ALICE, price, keccak256("delivered"));
+        market.setStatus(auctionTaskId, ITMPCore.TaskStatus.Accepted);
+
+        uint256 pool = price - (price * 500) / 10_000;
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: ALICE, amount: pool, rank: 1 });
+        market.callCheckComplete(hook, auctionTaskId, _verdict(ITMPCore.VerdictType.PARTIAL, awards));
+        assertEq(_nativePayoutPoolOf(auctionTaskId), pool, "pool is the accepted price net of the fee");
+
+        hook.finalizeSettlement(auctionTaskId, awards);
+        SponsoredTaskTypes.Allocation memory settled = _vaultAllocation(vault, auctionTaskId);
+        assertEq(settled.distributedGross, GROSS);
+        assertEq(settled.releasedAmount, 0);
+    }
+
+    function testAuctionReconcileBuildsPoolFromAcceptedPriceNetOfFee() external {
+        bytes32 auctionTaskId = keccak256("auction-reconcile-fee");
+        market.primeTask(auctionTaskId, MANAGER, address(usdc), NATIVE_REWARD, TMP_AUCTION, address(hook));
+        ITMPCore.TaskEvaluatorConfig memory config;
+        config.evaluator = BOB;
+        config.evaluatorFeeBps = 500;
+        market.setEvaluator(auctionTaskId, config);
+        _fundLocalTask(auctionTaskId);
+        market.setWorkerAndStake(auctionTaskId, ALICE, 400_000, keccak256("delivered"));
+        market.setStatus(auctionTaskId, ITMPCore.TaskStatus.Accepted);
+
+        assertEq(uint8(hook.reconcile(auctionTaskId)), uint8(SponsoredTaskHook.HookStatus.SettlementPrepared));
+        assertEq(_nativePayoutPoolOf(auctionTaskId), 400_000 - 20_000);
+    }
+
     function testEvaluatorApproveWithNoAwardsReleasesReservation() external {
         bytes32 claimTaskId = keccak256("claim-evaluated");
         market.primeTask(claimTaskId, MANAGER, address(usdc), NATIVE_REWARD, TMP_CLAIM, address(hook));

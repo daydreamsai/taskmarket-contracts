@@ -408,6 +408,8 @@ SponsoredTaskForfeitReconcileTest:testSwallowedForfeitThenCancellationReleasesEx
 SponsoredTaskHookTest:testAcceptedMultiAwardWithoutStoredVerdictStillRequiresAwards() (gas: 1142838)
 SponsoredTaskHookTest:testAcceptedSubmissionWithSwallowedCallbackReconcilesFromTask() (gas: 1930604)
 SponsoredTaskHookTest:testAuctionAcceptedWithoutCheckCompleteCanReconcileSoleWinner() (gas: 1845658)
+SponsoredTaskHookTest:testAuctionPartialScalesSponsorshipOnAcceptedPrice() (gas: 2040014)
+SponsoredTaskHookTest:testAuctionReconcileBuildsPoolFromAcceptedPriceNetOfFee() (gas: 1902170)
 SponsoredTaskHookTest:testAwardCountOverflowAtCompletionReleasesSponsoredTaskAndLetsUsdcSettle() (gas: 1172301)
 SponsoredTaskHookTest:testCancellationReleasesOnce() (gas: 1171107)
 SponsoredTaskHookTest:testEvaluatorApproveWithNoAwardsReleasesReservation() (gas: 1877463)

@@ -335,12 +335,21 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
             if (settled != HookStatus.CompletionCommitted) return settled;
         }
 
-        // The only current Taskmarket path that can accept without checkComplete is the auction
-        // expiry auto-payment. Its sole worker and actual winning price remain reconstructible.
+        // An accepted auction with no completion commitment: Taskmarket accepted it without running
+        // checkComplete (a verdict finalized after the task's expiry skips the check hooks). Its
+        // sole worker and accepted price (stakeAmount) remain reconstructible from the task.
         if (allocation.status == HookStatus.Reserved && task.mode == TMP_AUCTION && task.worker != address(0)) {
             ITMPCore.Award[] memory auctionAwards = new ITMPCore.Award[](1);
             auctionAwards[0] = ITMPCore.Award({ worker: task.worker, amount: task.stakeAmount, rank: 1 });
-            _commitCompletionMemory(taskId, allocation, ITMPCore.VerdictType.APPROVE, auctionAwards, task.reward, 0);
+            _commitCompletionMemory(
+                taskId,
+                allocation,
+                ITMPCore.VerdictType.APPROVE,
+                auctionAwards,
+                _nativePayoutPool(
+                    taskId, task.mode, task.reward, ITMPDiamond(diamond).getTaskEvaluatorConfig(taskId).evaluatorFeeBps
+                )
+            );
             _finalizeSettlement(taskId, allocation, auctionAwards);
             return allocation.status;
         }
@@ -512,7 +521,7 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         ITMPCore.Verdict calldata verdict
     ) private {
         if (!verdict.issued) revert VerdictNotIssued();
-        uint256 payoutPool = ctx.reward - Math.mulDiv(ctx.reward, ctx.evaluatorFeeBps, 10_000);
+        uint256 payoutPool = _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps);
         ITMPCore.Award[] memory awards = verdict.awards;
         uint256 count = awards.length;
         if (count > MAX_AWARDS) {
@@ -540,6 +549,19 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         );
     }
 
+    /// @dev The native pool PARTIAL awards scale against: the task's payment base minus the
+    ///      evaluator fee taken on that same base, matching how Taskmarket pays the awards. An
+    ///      auction escrows its price cap in `reward`, but pays out of the accepted price
+    ///      (`stakeAmount`), so the pool is built from the accepted price.
+    function _nativePayoutPool(bytes32 taskId, bytes4 mode, uint256 reward, uint256 evaluatorFeeBps)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 base = mode == TMP_AUCTION ? ITMPCore(diamond).getTask(taskId).stakeAmount : reward;
+        return base - Math.mulDiv(base, evaluatorFeeBps, 10_000);
+    }
+
     /// @dev Split out of `reconcile` to stay under `forge coverage --ir-minimum`'s stack limit.
     ///      Requester `acceptSubmission` stores no verdict; its single award is rebuilt from the
     ///      task, and a wrong reconstruction reverts on the commitment digest. Returns the status
@@ -565,8 +587,7 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         TaskAllocation storage allocation,
         ITMPCore.VerdictType verdictType,
         ITMPCore.Award[] memory awards,
-        uint256 reward,
-        uint16 evaluatorFeeBps
+        uint256 payoutPool
     ) private {
         uint256 count = awards.length;
         // Only ever called from `reconcile`'s auction-expiry path with a single reconstructed
@@ -575,7 +596,7 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         allocation.verdictType = verdictType;
         allocation.awardsDigest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdictType, awards);
         allocation.awardCount = uint32(count);
-        allocation.nativePayoutPool = reward - Math.mulDiv(reward, evaluatorFeeBps, 10_000);
+        allocation.nativePayoutPool = payoutPool;
         allocation.status = HookStatus.CompletionCommitted;
         emit CompletionCommitted(
             taskId,

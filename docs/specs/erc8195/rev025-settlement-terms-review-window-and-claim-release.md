@@ -576,6 +576,24 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   `EpochBudget.release` is a no-op once the epoch has rolled, which the hook records as done because
   the budget has already reset.
 
+### SponsoredTaskHook auction payout pool
+
+A Base-only `SponsoredTaskHook` implementation upgrade through `UpgradeSponsoredTask.s.sol`
+(UUPS, no storage or interface change, no diamond cut):
+
+- The native payout pool a PARTIAL verdict scales the sponsorship against is the task's payment
+  base minus the evaluator fee taken on that same base, matching how the diamond pays the awards.
+  For an auction the base is the accepted price (`task.stakeAmount`, read through `getTask`), not
+  the escrowed price cap in `TaskContext.reward`. Built on the cap, a PARTIAL award of the whole
+  accepted price unlocked only about price/cap of the sponsorship and released the rest to the
+  vault. Other modes keep `reward` as the base.
+- `checkComplete` and `reconcile` build the pool the same way. `reconcile`'s fallback for an
+  accepted auction with no completion commitment (a verdict finalized after the task's expiry skips
+  the check hooks) now takes the evaluator fee from the task's evaluator config instead of assuming
+  none.
+- A settlement already installed keeps its recorded pool; the change applies to completions
+  committed after the upgrade.
+
 ### TaskTokenRewardHook bonus basis
 
 Also in the hook implementation upgrade:
@@ -644,6 +662,8 @@ One pass per chain, in this order:
    with a recorded but unfinalized verdict (`Appealing` or `Disputed`); those tasks are finalized,
    or the operator waits until the list is empty, before cutting.
 2. **Reward-hook implementation upgrade.** May go first; it does not depend on the cut.
+   The `SponsoredTaskHook` implementation upgrade (Base only) is independent of the cut in the
+   same way.
 3. **Backend funds claim stakes through the relayer.** Without this every stake-required claim
    reverts once stakes are enforced.
 4. **Forwarder v2.** Deploy the new forwarder, authorise the relayer on it, `addForwarder` on the
@@ -706,3 +726,6 @@ One pass per chain, in this order:
 - Reward hook: vault-only failure, budget-only failure, both, a diamond after-callback failure and
   repeated recovery, asserting partial-progress state, no double release, truthful events and
   restored `RewardVault.available()`.
+- Sponsored task hook: an auction accepted below its cap with a PARTIAL verdict awarding the
+  accepted price net of the evaluator fee distributes the whole sponsorship; `reconcile` on an
+  accepted auction records a pool of the accepted price net of the fee.
