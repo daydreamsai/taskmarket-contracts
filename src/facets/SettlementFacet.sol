@@ -225,7 +225,7 @@ contract SettlementFacet {
                 uint32(s.taskActiveSubmissionCount[taskId]),
                 false
             );
-            if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+            if (requesterAgentId != 0 && s.reputationRegistry != address(0) && _sentByRequester(s, requesterAddr)) {
                 LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
@@ -649,7 +649,7 @@ contract SettlementFacet {
             bytes32 event_ =
                 s.taskHasSubmissions[taskId] ? keccak256("expired_after_rejections") : keccak256("expired_no_action");
             emit ITMPCore.RequesterReputation(taskId, task.requester, event_, refundAmount, 0, false);
-            if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
+            if (requesterAgentId != 0 && s.reputationRegistry != address(0) && _sentByRequester(s, task.requester)) {
                 LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
@@ -663,6 +663,14 @@ contract SettlementFacet {
 
         // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch (dispatchAfterHooks).
         LibHooks._onExpireHooks(taskId, s);
+    }
+
+    /// @dev Requester feedback names a caller-supplied agent ID, so it is sent only when the
+    ///      requester itself authenticated the call through a trusted forwarder. Anyone else
+    ///      (refundExpired is permissionless) could otherwise aim the -50 at an unrelated agent.
+    ///      The RequesterReputation event is emitted either way.
+    function _sentByRequester(AppStorage storage s, address requester) private view returns (bool) {
+        return s.trustedForwarders[msg.sender] && LibGuards._effectiveSender(s) == requester;
     }
 
     function _modeName(bytes4 mode) private pure returns (string memory) {

@@ -6374,7 +6374,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.warp(block.timestamp + DURATION + 1);
-        market.refundExpired(taskId, 42);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
         assertEq(reg.calls(), 1);
     }
 
@@ -6388,10 +6388,50 @@ contract TaskMarketTest is DiamondTestHelper {
 
         vm.expectEmit(true, true, false, true);
         emit ITMPReputation.ReputationFeedbackFailed(taskId, 42);
-        market.refundExpired(taskId, 42);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
 
         // Fund recovery must succeed regardless of the reputation registry reverting.
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    /// refundExpired is permissionless: a caller other than the requester must not be able to
+    /// aim requester feedback at an arbitrary agent ID. The event still fires.
+    function test_RefundExpired_StrangerAgentId_NoRegistryCall() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_no_action"), REWARD, 0, false);
+        vm.prank(makeAddr("stranger"));
+        market.refundExpired(taskId, 4242);
+        assertEq(reg.calls(), 0, "a stranger's agent ID is never sent to the registry");
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_RefundExpired_StrangerThroughForwarder_NoRegistryCall() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+
+        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.refundExpired, (taskId, 4242)));
+        assertEq(reg.calls(), 0);
+    }
+
+    function test_RefundExpired_RequesterDirectCall_NoRegistryCall() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+
+        vm.prank(requester);
+        market.refundExpired(taskId, 42);
+        assertEq(reg.calls(), 0, "feedback needs the requester authenticated through the forwarder");
     }
 
     // --- rev023: gas floor on every swallowed reputation call ---
@@ -6460,7 +6500,9 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.warp(block.timestamp + DURATION + 1);
 
-        assertTrue(_guardFiresForSomeGasLimit(address(market), abi.encodeCall(market.refundExpired, (taskId, 42))));
+        bytes memory inner = abi.encodeCall(market.refundExpired, (taskId, 42));
+        bytes memory data = abi.encodeCall(forwarder.relay, (address(market), requester, 0, inner));
+        assertTrue(_guardFiresForSomeGasLimit(address(forwarder), data));
     }
 
     // --- rev023: no guard when no registry call is due ---

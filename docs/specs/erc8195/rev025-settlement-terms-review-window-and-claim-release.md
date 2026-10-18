@@ -500,6 +500,16 @@ and the forfeit events count against the worker; `ClaimReleased` is neutral when
 Benchmark after its decision deadline emits `RequesterReputation` with
 `event_ = "decision_deadline_lapsed"`, which counts against the requester.
 
+`refundExpired` and `cancelTask` send their -50 requester feedback to the reputation registry
+only when the call's effective sender is `task.requester`, authenticated through a trusted
+forwarder. `refundExpired` is permissionless, and the agent ID is supplied by the caller, so
+before this anyone could let their own minimum bounty expire and aim the penalty at any agent,
+repeatedly, for the cost of gas. Any other caller, and a direct call by the requester, skips the
+registry call; the `RequesterReputation` event is still emitted, so the signal stays available
+to indexers. `cancelTask` already requires the requester through a forwarder, so it is unchanged
+in effect and shares the same check. A requester can still name an agent ID that is not theirs;
+binding the ID to the requester on chain is not part of this revision.
+
 ### Errors, events, views
 
 - **Errors:** `TermsFrozen`, `InvalidTerms`, `DeliveryPending`, `ReviewWindowOpen`,
@@ -721,6 +731,8 @@ One pass per chain, in this order:
   missed resubmission returns the superseded deliverable to review; release and forfeit revert
   during a revision; every exit reverts while paused.
 - An overturned approve and an overturned reject each send the evaluator fee to the requester.
+- `refundExpired` from a stranger, from a forwarder relaying a non-requester, and from a direct
+  requester call makes no registry call and still emits `RequesterReputation`.
 - `TooManyWinners` at 51 winners in `acceptSubmissions`, `evaluate` and `resolveDispute`; 50 winners
   settle. In the Foundry suite a 50-winner Bounty `acceptSubmissions` used 3,602,207 gas end to end.
 - Reward hook: vault-only failure, budget-only failure, both, a diamond after-callback failure and
