@@ -311,7 +311,8 @@ contract StakeSettlementTest is DiamondTestHelper {
         bytes32 taskId = _auctionToReview(price);
 
         uint256 evalBefore = usdc.balanceOf(evaluator);
-        _evaluate(taskId, ITMPCore.VerdictType.APPROVE, _award(price));
+        uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
+        _evaluate(taskId, ITMPCore.VerdictType.APPROVE, _award(price - evalFee));
         assertEq(usdc.balanceOf(evaluator), evalBefore, "fee held until the verdict is final");
         assertEq(usdc.balanceOf(address(market)), REWARD);
 
@@ -320,10 +321,46 @@ contract StakeSettlementTest is DiamondTestHelper {
         uint256 workerBefore = usdc.balanceOf(worker);
         market.finalizeVerdict(taskId);
 
-        uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
+        uint256 award = price - evalFee;
         assertEq(usdc.balanceOf(evaluator), evalBefore + evalFee, "fee on the 40 price, not the 100 cap");
-        assertEq(usdc.balanceOf(worker), workerBefore + price - (price * PLATFORM_FEE_BPS) / 10000);
-        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - evalFee - price, "refund grows with the fee");
+        assertEq(usdc.balanceOf(worker), workerBefore + award - (award * PLATFORM_FEE_BPS) / 10000);
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - price, "unused cap goes back");
+        _assertDiamondEmpty();
+    }
+
+    function test_Auction_EvaluatorAward_AboveAcceptedPriceReverts() public {
+        // The award budget is the accepted price less the evaluator fee, not the price cap.
+        uint256 price = 40e6;
+        bytes32 taskId = _auctionToReview(price);
+        uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
+
+        bytes memory overCap = abi.encodeCall(
+            market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 900, 1000, bytes32(0), _award(REWARD - evalFee))
+        );
+        vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
+        _relay(evaluator, 0, overCap);
+
+        // The accepted price itself is over budget too once the fee is taken from it.
+        bytes memory atPrice = abi.encodeCall(
+            market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 900, 1000, bytes32(0), _award(price))
+        );
+        vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
+        _relay(evaluator, 0, atPrice);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Review));
+    }
+
+    function test_Auction_EvaluatorPartialAward_RefundsCapAndUnawardedBudget() public {
+        uint256 price = 40e6;
+        bytes32 taskId = _auctionToReview(price);
+        uint256 evalFee = (price * EVAL_FEE_BPS) / 10000;
+        uint256 award = 10e6;
+        _evaluate(taskId, ITMPCore.VerdictType.APPROVE, _award(award));
+
+        vm.warp(block.timestamp + APPEAL_WINDOW);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.finalizeVerdict(taskId);
+
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD - evalFee - award);
         _assertDiamondEmpty();
     }
 

@@ -448,6 +448,13 @@ call, and `refundExpired` (which finalizes an `Appealing` task) reverted with it
 any claim stake stayed locked with no exit. `resolveDispute` validates its awards the same way. The
 settlement check in `_payAwards` stays as a backstop.
 
+For an auction the budget's base is the accepted price (`task.stakeAmount`), not the price cap held
+in `task.reward`: the award budget is `stakeAmount` less the evaluator fee, which `_evaluatorFee`
+already computed on the accepted price. On settlement the requester gets back the unawarded part of
+that budget plus the unused cap, `reward - stakeAmount`. Before rev025 the budget was the cap less
+the fee, so an evaluator or dispute resolver could award the locked worker more than the winning
+bid and the requester lost up to the cap minus the accepted price.
+
 #### `rateTask` (changed)
 
 Reverts `NotAwarded` unless `taskAwarded[taskId][worker]`, in every mode; `taskWorkerRated` still

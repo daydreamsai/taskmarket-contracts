@@ -406,13 +406,16 @@ contract EvaluatorFacet {
         if (total > _awardBudget(task, taskId, s)) revert ITMPCore.AwardsExceedEscrow();
     }
 
-    /// @dev The most a verdict may award: the task's reward less the evaluator fee.
+    /// @dev The most a verdict may award: the task's reward less the evaluator fee. For an auction
+    ///      the base is the accepted price (stakeAmount), not the price cap held in task.reward,
+    ///      matching the base _evaluatorFee uses.
     function _awardBudget(ITMPCore.Task storage task, bytes32 taskId, AppStorage storage s)
         private
         view
         returns (uint256)
     {
-        return task.reward - LibTaskMarket._evaluatorFee(task, s.taskEvaluatorConfigs[taskId].evaluatorFeeBps);
+        uint256 base = task.mode == AUCTION ? task.stakeAmount : task.reward;
+        return base - LibTaskMarket._evaluatorFee(task, s.taskEvaluatorConfigs[taskId].evaluatorFeeBps);
     }
 
     // Complexity is inherent: iterates N winners applying per-winner fee, transfer, hook, and event; handles excess refund.
@@ -453,6 +456,10 @@ contract EvaluatorFacet {
         // transfers happen after. Accounting and distribution live in separate frames to avoid
         // stack-too-deep under --ir-minimum coverage compilation.
         uint256 totalAwarded = _commitEvalAccounting(taskId, v, task.feeBps, remaining, s);
+
+        // An auction escrows the price cap but budgets awards against the accepted price, so the
+        // unused cap goes back to the requester with the rest of the unawarded budget.
+        if (task.mode == AUCTION) remaining += task.reward - task.stakeAmount;
 
         if (runCheckHooks) LibHooks._checkCompleteHooks(taskId, s, verdictMem);
         _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
