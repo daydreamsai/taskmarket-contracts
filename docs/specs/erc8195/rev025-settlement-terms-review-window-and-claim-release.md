@@ -665,6 +665,20 @@ Also in the hook implementation upgrade:
   scaled by the award, so once the cut's `acceptSubmission` reports the accepted price it pays only
   the accepted price's share.
 
+### TaskTokenRewardHook bounded Bounty awards
+
+Also in the hook implementation upgrade. The diamond calls `checkComplete` with a fixed gas stipend
+and reverts the settlement if the hook runs out, so the Bounty path (no reservation) bounds its
+work and never reverts:
+
+- A verdict with no awards returns true; it has no bonus to pay. It used to revert, which left an
+  evaluator's empty APPROVE or PARTIAL unfinalizable until expiry.
+- A zero-amount award is skipped before any state write or external call, so padding a verdict
+  with zero awards to fresh addresses costs almost nothing.
+- At most `MAX_BONUS_AWARDS` (8) nonzero awards earn a bonus, in verdict order, and the loop stops
+  once `gasleft()` falls below `BONUS_AWARD_GAS_FLOOR` (200,000). Winners past either bound get
+  their USDC award but no bonus.
+
 ### Bid cap
 
 `AuctionFacet.submitBid` keeps the per-task cap of `MAX_BIDS_PER_TASK` stored bids, but a full list

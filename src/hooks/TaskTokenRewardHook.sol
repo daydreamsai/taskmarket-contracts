@@ -137,6 +137,12 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         mapping(bytes32 => ReleaseProgress) releaseProgress;
     }
 
+    /// @notice Most nonzero Bounty awards that earn a bonus in one verdict.
+    uint256 public constant MAX_BONUS_AWARDS = 8;
+    /// @notice Gas below which the Bounty loop stops paying bonuses, so checkComplete always
+    ///         returns inside the diamond's check-hook stipend.
+    uint256 public constant BONUS_AWARD_GAS_FLOOR = 200_000;
+
     bytes32 private constant HOOK_STORAGE_SLOT = keccak256("taskmarket.tokenrewardhook.storage.v1");
 
     function _s() private pure returns (HookStorage storage hs) {
@@ -494,14 +500,23 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             uint256 rate = _s().dreamsPerUsdc;
             uint256 bonus = _s().bonusBps;
             if (rate == 0 || bonus == 0) return true;
-            if (verdict.awards.length == 0) revert NoWorkerFound(taskId);
 
-            for (uint256 i; i < verdict.awards.length; i++) {
-                address worker = verdict.awards[i].worker;
-                _touchFirstSeen(worker);
+            // Bounded work: the diamond calls this with a fixed gas stipend and reverts the whole
+            // settlement if it runs out. An empty verdict has no bonus to pay. Zero awards are
+            // skipped before any state write, at most MAX_BONUS_AWARDS nonzero awards are paid,
+            // and the loop stops once gas falls below BONUS_AWARD_GAS_FLOOR, so the remaining
+            // winners go without a bonus rather than blocking the USDC payout.
+            uint256 len = verdict.awards.length;
+            uint256 processed = 0;
+            for (uint256 i; i < len; i++) {
                 // Use per-winner pre-fee USDC amount as the task-value basis, then apply
                 // the USD bonus % to get the actual USD value converted to tokens.
                 uint256 workerUsd = verdict.awards[i].amount;
+                if (workerUsd == 0) continue;
+                if (processed == MAX_BONUS_AWARDS || gasleft() < BONUS_AWARD_GAS_FLOOR) break;
+                processed++;
+                address worker = verdict.awards[i].worker;
+                _touchFirstSeen(worker);
                 uint256 workerBonusUsd = workerUsd * bonus / 10000;
                 uint256 budgetRemaining = _s().epochBudget.remaining(ctx.requester, worker);
                 uint256 taskCapUsd = _s().epochBudget.maxUsdPerTask();

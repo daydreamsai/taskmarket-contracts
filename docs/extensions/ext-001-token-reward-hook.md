@@ -119,6 +119,12 @@ clamped to the vault's available balance (recomputing the USD amount actually co
 if the vault clamp binds). A shortfall for one winner never blocks payment to the
 others or blocks the underlying USDC payout.
 
+The loop is bounded so it always returns inside the diamond's check-hook stipend: an
+empty verdict returns without paying, zero-amount awards are skipped before any state
+write, at most `MAX_BONUS_AWARDS` (8) nonzero awards earn a bonus, and the loop stops
+once `gasleft()` falls below `BONUS_AWARD_GAS_FLOOR` (200,000). Winners past either
+bound still receive their USDC award.
+
 ---
 
 ## Reward State

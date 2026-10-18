@@ -1996,15 +1996,14 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
     // ─── Additional branch-coverage tests ────────────────────────────────────
 
-    function test_checkComplete_bounty_noWorkerFound() public {
+    function test_checkComplete_bounty_emptyVerdictReturnsTrue() public {
         bytes32 taskId = _createBountyTask();
 
         vm.prank(address(market));
         ITMPCore.TaskContext memory ctx;
         ctx.requester = requester;
         ITMPCore.Verdict memory verdict;
-        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NoWorkerFound.selector, taskId));
-        hook.checkComplete(taskId, ctx, verdict);
+        assertTrue(hook.checkComplete(taskId, ctx, verdict), "an empty verdict has no bonus to pay");
     }
 
     function test_onComplete_defensive_releasesReserveWhenPaidMissed() public {
@@ -2741,5 +2740,103 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         market.finalizeVerdict(taskId);
         assertEq(hook.claimable(worker), 0);
         assertEq(vault.available(), availBefore);
+    }
+
+    // ─── Bounded Bounty award loop ────────────────────────────────────────────
+
+    function _evaluatedBounty() internal returns (bytes32 taskId) {
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 3 days, market.BOUNTY(), 0, 0, bytes4(0)),
+                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+        _assignAwardEvaluator(taskId, 0);
+    }
+
+    function _bountyWinner(uint256 i) internal returns (address) {
+        return makeAddr(string(abi.encodePacked("bounty-winner-", vm.toString(i))));
+    }
+
+    /// @dev `nonzero` winners submit and get 1 USDC each; `zeros` more fresh addresses get 0.
+    function _manyAwardVerdict(bytes32 taskId, uint256 nonzero, uint256 zeros) internal {
+        ITMPCore.Award[] memory a = new ITMPCore.Award[](nonzero + zeros);
+        for (uint256 i; i < nonzero + zeros; ++i) {
+            address w = _bountyWinner(i);
+            if (i < nonzero) {
+                _relay(w, 0, abi.encodeCall(market.submitWork, (taskId, keccak256(abi.encode(i)))));
+                a[i] = ITMPCore.Award({ worker: w, amount: 1e6, rank: uint16(i + 1) });
+            } else {
+                a[i] = ITMPCore.Award({ worker: w, amount: 0, rank: uint16(i + 1) });
+            }
+        }
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.PARTIAL, 0, 1000, bytes32(0), a))
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+    }
+
+    function test_bountyEmptyAwardsFinalizesBeforeExpiry() public {
+        bytes32 taskId = _evaluatedBounty();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), new ITMPCore.Award[](0))
+            )
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+        assertLt(block.timestamp, market.getTask(taskId).expiryTime, "still before expiry");
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.finalizeVerdict(taskId);
+        assertEq(usdc.balanceOf(requester) - requesterBefore, REWARD_100_USDC, "requester refunded");
+    }
+
+    function test_bountyManyAwardsFinalizeAndCapBonuses() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 12, 0);
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        // Winners are new wallets, so the ramp credits nothing; count bonuses through the vault.
+        assertGt(dreamsToken.balanceOf(address(hook)), 0, "the first winners got a bonus");
+        assertLe(dreamsToken.balanceOf(address(hook)), 8 * 10e18, "at most the cap paid");
+        assertEq(usdc.balanceOf(_bountyWinner(11)), 1e6 - 1e6 * 500 / 10_000, "every winner still paid USDC");
+    }
+
+    function test_bountyZeroAwardPaddingFinalizesWithoutStateWrites() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 1, 49);
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.firstSeen(_bountyWinner(1)), 0, "zero award writes nothing");
+        assertEq(hook.firstSeen(_bountyWinner(49)), 0, "zero award writes nothing");
+        assertGt(hook.firstSeen(_bountyWinner(0)), 0);
+    }
+
+    function test_checkComplete_bounty_stopsAtGasFloor() public {
+        bytes32 taskId = keccak256("gas-floor-bounty");
+        ITMPCore.TaskContext memory ctx;
+        ctx.requester = requester;
+        ITMPCore.Verdict memory verdict;
+        verdict.awards = new ITMPCore.Award[](3);
+        for (uint256 i; i < 3; ++i) {
+            verdict.awards[i] = ITMPCore.Award({ worker: _bountyWinner(i), amount: 1e6, rank: uint16(i + 1) });
+        }
+        // Exactly the floor (200,000): gasleft() inside is already below it.
+        vm.prank(address(market));
+        assertTrue(hook.checkComplete{ gas: 200_000 }(taskId, ctx, verdict));
+        assertEq(hook.firstSeen(_bountyWinner(0)), 0, "below the floor nothing is processed");
     }
 }
