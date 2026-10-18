@@ -11,18 +11,18 @@ import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
 /// @title Rev017Upgrade — escrow payout-recipient validation and bounded hook calls
-/// @dev Deploys and cuts in the rev017 fixes for issues #316 (evaluator award recipients were
-///      never validated against the task's real worker/submitter) and #317 (a requester-supplied
-///      hook could force an out-of-gas in the caller purely by returning an oversized blob).
+/// @dev Deploys and cuts in the rev017 fixes for two bugs: (1) evaluator award recipients were
+///      never validated against the task's real worker/submitter, and (2) a requester-supplied
+///      hook could force an out-of-gas in the caller purely by returning an oversized blob.
 ///
 /// @dev Four facets are replaced, not one. Only `EvaluatorFacet` changed at the source level for
-///      #316, but #317's fix lives in `LibTaskMarket`, an `internal` library -- Solidity inlines
+///      the first fix, but the second fix's code lives in `LibTaskMarket`, an `internal` library -- Solidity inlines
 ///      internal library code into every contract that calls it, so the patched hook-dispatch
 ///      bytecode only reaches the chain by redeploying each facet that dispatches hooks:
 ///      `CoreFacet` (claimTask/submitWork/refundExpired/cancelTask/forfeitAndReopen),
 ///      `AuctionFacet` (bid/select flows), `AcceptanceFacet` (acceptSubmission(s)) and
 ///      `EvaluatorFacet` (evaluate/_payAwards). Replacing only EvaluatorFacet would leave the
-///      HIGH-severity `refundExpired` fund-freeze path in #317 live on `CoreFacet`'s old bytecode.
+///      HIGH-severity `refundExpired` fund-freeze path fixed by the second fix live on `CoreFacet`'s old bytecode.
 ///
 /// @dev A fifth facet, `AdminFacet`, is redeployed for a different reason: rev017 makes the
 ///      appeal-window floor admin-settable state (`AppStorage.minAppealWindowSecs`) rather than

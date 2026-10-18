@@ -92,7 +92,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         assertEq(AdminFacet(diamond).diamondVersion(), 17, "diamondVersion must be 17 after rev017 upgrade");
 
         // All four facets that inline LibTaskMarket's patched hook dispatch must be new
-        // implementations -- replacing only EvaluatorFacet would leave #317's refundExpired
+        // implementations -- replacing only EvaluatorFacet would leave rev017's hook-call-bounded refundExpired
         // fund-freeze path live on CoreFacet's old bytecode.
         address newAdmin = IDiamondLoupe(diamond).facetAddress(AdminFacet.pause.selector);
         address newCore = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.refundExpired.selector);

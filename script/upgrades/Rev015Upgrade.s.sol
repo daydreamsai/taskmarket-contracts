@@ -16,10 +16,10 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      selector's signature changed (only the return *type* of getTask widened), so this is a
 ///      pure Replace across every registryFacetSelectors() selector -- no Remove/Add needed,
 ///      unlike rev014's createTask (whose parameter list, and therefore selector, changed).
-/// @dev This closes the gap PR #274 worked around on the backend: mainnet's getTask() was
+/// @dev This closes the gap a backend change worked around: mainnet's getTask() was
 ///      returning 384 bytes (12 words) while the backend's ABI expected 448 bytes (14 words),
 ///      crashing the indexer's startup event-replay (`decodeFunctionResult` reading past the
-///      actual return data) the first time it read a task settled after rev014. #274 reverted
+///      actual return data) the first time it read a task settled after rev014. That change reverted
 ///      the backend's ABI to match the then-live 12-field response so it stops crashing
 ///      regardless of when this upgrade lands; after this upgrade, getTask() genuinely returns
 ///      stakeRequired/stakeBps on-chain to any caller, matching current source.

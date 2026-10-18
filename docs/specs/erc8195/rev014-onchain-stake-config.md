@@ -237,4 +237,3 @@ would only be caught later, if at all, by an off-chain consumer.
 | `apps/backend/src/routers/tasks.router.ts` | Pass `input.stakeRequired`/`input.stakeBps` to `contractCreateTask` |
 | `apps/backend/src/services/indexer.ts` | `TASK_CREATED_EVENT` ABI and `processTaskCreatedEvent` decode `stakeRequired`/`stakeBps` from the event instead of hardcoding `0` |
 | `apps/backend/src/services/settlement-contract.ts` | `SETTLEMENT_READ_ABI.getTask` gains `stakeRequired`/`stakeBps` fields |
-| `docs/adr/0028-task-created-reconciliation-cannot-recover-off-chain-only-create-inputs.md` | Status updated to `Accepted`; records this as the chosen follow-up |

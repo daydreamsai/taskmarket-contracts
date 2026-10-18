@@ -25,7 +25,7 @@ being absorbed.
 
 ---
 
-## Problem 1 — `refundExpired` is repeatable and drains other tasks' escrow (#432)
+## Problem 1 — `refundExpired` is repeatable and drains other tasks' escrow
 
 `CoreFacet.refundExpired` rejected `Accepted` and `Cancelled`, but not `Expired` — the status its
 own refund path assigns. No refund path zeroed `task.reward`. Escrow is pooled. Those three facts
@@ -44,7 +44,7 @@ unrelated, fully funded tasks become unable to pay out. The auction branch was r
 identically: `_refundAuctionClaimed`'s claimed-but-never-delivered path also sets `Expired` and
 also left the reward standing, an identical defect in a second function.
 
-Issue #198 had already fixed the neighbouring bug in this same function and passed directly over
+rev013 Problem 1 had already fixed the neighbouring bug in this same function and passed directly over
 this one; see the Rationale.
 
 ## Problem 2 — `updateTask` absorbs a duplicate reward-increase payment
@@ -64,7 +64,7 @@ Problem 1, arriving from the other side.
 
 ## Changes
 
-### 1. `CoreFacet.refundExpired` — `Expired` is terminal (#432)
+### 1. `CoreFacet.refundExpired` — `Expired` is terminal
 
 ```solidity
 // before
@@ -122,15 +122,15 @@ so they need no cut of their own. Precondition `diamondVersion == 15`; sets it t
 
 ## Rationale
 
-**Why zero the liability instead of just adding the missing status check (#432)?**
+**Why zero the liability instead of just adding the missing status check?**
 
 The status check alone is a fix for one path; it leaves the invariant unstated and unenforced
-anywhere. The history is the argument. Issue #198 fixed the neighbouring bug in this exact
+anywhere. The history is the argument. rev013 Problem 1 fixed the neighbouring bug in this exact
 function — `refundExpired` refunding an evaluator fee that `evaluate()` had already paid out — and
-#198's own suggested remedy was to reduce `task.reward`, which would have closed #432 as a side
+rev013 Problem 1's own suggested remedy was to reduce `task.reward`, which would have closed the repeatable refund as a side
 effect. The implemented fix instead deducted `evalFeeAlreadyPaid` at read time and left the reward
 liability standing. The bug was found once, the correct remedy was written down once, and the
-cheaper local fix was taken, so the same defect was still there for #432 to find in the same
+cheaper local fix was taken, so the same defect was still there for this revision to find in the same
 function. Doing it at the liability level means a future status that reaches this path cannot
 double-pay even if its guard is wrong, which is the difference between a fix and an invariant.
 
@@ -208,6 +208,4 @@ after settlement must read the `TaskCreated`/`TaskExpired` events or the indexed
 
 ## References
 
-- Issue #432 — repeatable `refundExpired`
-- Issue #198, Issue #203 — the rev013 fixes in the same two functions
 - `rev013-bounty-security-fixes.md` — the earlier fixes to `refundExpired` and `updateTask`

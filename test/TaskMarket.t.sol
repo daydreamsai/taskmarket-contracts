@@ -1376,7 +1376,7 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     /// @notice The pool must be able to satisfy every claim still standing against it, at every
-    ///         point in the lifecycle. Issue #198 asked for this invariant and it was never
+    ///         point in the lifecycle. The rev013 refundExpired fix called for this invariant and it was never
     ///         written; the repeat-refund bug is exactly what it catches.
     function test_Invariant_LiabilityNeverExceedsEscrowAcrossTransitions() public {
         bytes32 refunded = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
@@ -3024,7 +3024,7 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
-    // Issue #317: hook return-data DoS -- a malicious hook returning an oversized
+    // rev017: hook return-data DoS -- a malicious hook returning an oversized
     // blob must not be able to force an uncontrolled out-of-gas on the caller.
     // -------------------------------------------------------------------------
 
@@ -4731,7 +4731,7 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
-    // Issue #316: evaluate()/resolveDispute() payout bypass -- awards must go to the
+    // rev017: evaluate()/resolveDispute() payout bypass -- awards must go to the
     // task's real worker/submitter, never to an arbitrary caller-supplied address.
     // -------------------------------------------------------------------------
 
@@ -4970,7 +4970,7 @@ contract TaskMarketTest is DiamondTestHelper {
         );
     }
 
-    // Issue #316: a requester self-assigning as evaluator can single-handedly approve
+    // rev017: a requester self-assigning as evaluator can single-handedly approve
     // its own awards -- assignEvaluator must refuse evaluator == requester.
     function test_RevertWhen_AssignEvaluator_EvaluatorIsRequester() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
@@ -4984,7 +4984,7 @@ contract TaskMarketTest is DiamondTestHelper {
         );
     }
 
-    // Issue #316: a requester self-assigning as dispute resolver can rubber-stamp any
+    // rev017: a requester self-assigning as dispute resolver can rubber-stamp any
     // appeal in its own favor -- assignEvaluator must refuse disputeResolver == requester.
     function test_RevertWhen_AssignEvaluator_DisputeResolverIsRequester() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
@@ -4996,7 +4996,7 @@ contract TaskMarketTest is DiamondTestHelper {
         );
     }
 
-    // Issue #316: appealWindowSecs == 0 closes the worker's only recourse before it can
+    // rev017: appealWindowSecs == 0 closes the worker's only recourse before it can
     // ever fire -- assignEvaluator must enforce a protocol-level minimum.
     function test_RevertWhen_AssignEvaluator_AppealWindowTooShort() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);

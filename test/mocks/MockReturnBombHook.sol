@@ -6,7 +6,7 @@ import { ITMPHook } from "../../src/interfaces/ITMPHook.sol";
 import { ITMPCore } from "../../src/interfaces/ITMPCore.sol";
 
 /// @dev ITMPHook whose return data can be configured to a large size, simulating the
-///      return-data DoS from issue #317. All check* calls return a normal 32-byte bool by
+///      return-data DoS fixed in rev017. All check* calls return a normal 32-byte bool by
 ///      default so the hook registers/claims/etc. without issue; only the calls explicitly
 ///      armed via setBombOn* return the oversized blob instead. Declared Solidity return
 ///      types are irrelevant here -- the bomb is emitted via raw assembly `return`, which

@@ -2,8 +2,8 @@
 
 ## Motivation
 
-A security scan of `packages/contracts` produced two independently-confirmed HIGH findings (issues
-#316 and #317, 3/3 panel votes each) against code paths that move escrowed USDC. Both are escrow
+A security scan of `packages/contracts` produced two independently-confirmed HIGH findings (Problems
+1 and 2 below, 3/3 panel votes each) against code paths that move escrowed USDC. Both are escrow
 integrity bugs, and both are reachable by the requester — the party who funds the escrow and
 therefore the party the escrow exists to constrain.
 
@@ -20,7 +20,7 @@ that Solidity inlines into its callers, the deployable unit is four facets, not 
 
 ---
 
-## Problem 1 — evaluator awards are never validated against the task's real worker (#316)
+## Problem 1 — evaluator awards are never validated against the task's real worker
 
 `EvaluatorFacet.evaluate()` accepted an `awards` array from the assigned evaluator and stored it
 verbatim into `s.taskVerdicts[taskId].awards`. `resolveDispute()` did the same for the dispute
@@ -56,7 +56,7 @@ Observable exploit chain, entirely within a single requester's control:
 6. Anyone calls `finalizeVerdict(taskId)`; `_distributeEvalAwards` pays the full reward to
    address C. The worker who did the work is paid nothing and has no recourse.
 
-## Problem 2 — an oversized hook return blob can force an out-of-gas in the caller (#317)
+## Problem 2 — an oversized hook return blob can force an out-of-gas in the caller
 
 `s.taskHooks[taskId]` holds requester-chosen, requester-deployable contract addresses, validated
 at `createTask` (`CoreFacet._buildAndCheckHooks`) only for non-zero address, non-empty code, and
@@ -95,7 +95,7 @@ own relayer absorbs the waste.
 
 ## Changes
 
-### 1a. `EvaluatorFacet` — validate every award recipient (#316)
+### 1a. `EvaluatorFacet` — validate every award recipient
 
 A shared private helper is called by both `evaluate()` and `resolveDispute()` before their
 `awards` arrays are committed to storage.
@@ -149,7 +149,7 @@ Zero-amount and zero-address awards are skipped: neither triggers a transfer nor
 `task.worker`, so their recipient field is inert and rejecting them would break existing
 empty/placeholder-award verdicts for no security benefit.
 
-### 1b. `EvaluatorFacet.assignEvaluator` — self-assignment and appeal-window floor (#316)
+### 1b. `EvaluatorFacet.assignEvaluator` — self-assignment and appeal-window floor
 
 ```solidity
 // Before
@@ -210,7 +210,7 @@ rather than leaving a reader to infer it: this guard constrains requesters, not 
 owner. `MinAppealWindowUpdated` is emitted on every change so that exercising the power is at
 least a matter of public record.
 
-### 2. `LibTaskMarket` — bounded hook calls (#317)
+### 2. `LibTaskMarket` — bounded hook calls
 
 ```solidity
 // Before -- three dispatch sites
@@ -428,17 +428,17 @@ integrators in `apps/docs/src/pages/developer/hooks.md`.
 
 | File | Change |
 |------|--------|
-| `packages/contracts/src/facets/EvaluatorFacet.sol` | `assignEvaluator` self-assignment and appeal-window guards; `_validateAwardRecipients` helper called from `evaluate` and `resolveDispute` (#316) |
+| `packages/contracts/src/facets/EvaluatorFacet.sol` | `assignEvaluator` self-assignment and appeal-window guards; `_validateAwardRecipients` helper called from `evaluate` and `resolveDispute` |
 | `packages/contracts/src/facets/AdminFacet.sol` | Add `minAppealWindowSecs()` getter and owner-guarded `setMinAppealWindowSecs(uint32)` setter |
 | `packages/contracts/src/libraries/LibAppStorage.sol` | Append `uint32 minAppealWindowSecs` to the end of `AppStorage` |
 | `packages/contracts/src/interfaces/ITMPCore.sol` | Add errors `EvaluatorCannotBeRequester`, `DisputeResolverCannotBeRequester`, `AppealWindowTooShort`, `InvalidMinAppealWindow`; add event `MinAppealWindowUpdated` |
 | `packages/contracts/src/interfaces/ITMPDiamond.sol` | Add the two new `AdminFacet` functions to the aggregate interface |
-| `packages/contracts/src/libraries/LibTaskMarket.sol` | Add `HOOK_MAX_RETURN_BYTES`, `HOOK_GAS_STIPEND`, `_safeHookCall`; route `_dispatchCheckHooks`, `_dispatchAfterHooks`, `_checkFundHooks` through it (#317); add `DEFAULT_MIN_APPEAL_WINDOW_SECS` and the lazy-init `_minAppealWindowSecs` accessor |
+| `packages/contracts/src/libraries/LibTaskMarket.sol` | Add `HOOK_MAX_RETURN_BYTES`, `HOOK_GAS_STIPEND`, `_safeHookCall`; route `_dispatchCheckHooks`, `_dispatchAfterHooks`, `_checkFundHooks` through it; add `DEFAULT_MIN_APPEAL_WINDOW_SECS` and the lazy-init `_minAppealWindowSecs` accessor |
 | `packages/contracts/script/lib/FacetSelectors.sol` | `adminFacetSelectors()` gains `minAppealWindowSecs()` and `setMinAppealWindowSecs(uint32)` |
 | `packages/contracts/script/DiamondFullUpgrade.s.sol` | Path C gains an `Add` cut for the two new `AdminFacet` selectors, keeping it in parity with a fresh deploy |
 | `packages/contracts/script/upgrades/Rev017Upgrade.s.sol` | New upgrade step -- Replace `CoreFacet`/`AuctionFacet`/`AcceptanceFacet`/`EvaluatorFacet`, Replace+Add `AdminFacet`, bump `diamondVersion` to 17 |
 | `packages/contracts/test/Rev017Upgrade.t.sol` | New -- asserts the version bump, all five facet replacements, unbroken routing of every pre-existing selector, both added selectors, and that the getter answers with the default rather than a raw zero immediately after the cut |
-| `packages/contracts/test/TaskMarket.t.sol` | Regression coverage for #316 (exploit chain, award mismatch in both mode families, dispute-resolver mismatch, both self-assignment guards, appeal-window floor) and #317 (return-bomb through `_dispatchAfterHooks` and `_dispatchCheckHooks`); existing Bounty `_payAwards` tests now submit work first, since awards must go to a real submitter |
+| `packages/contracts/test/TaskMarket.t.sol` | Regression coverage for Problem 1 (exploit chain, award mismatch in both mode families, dispute-resolver mismatch, both self-assignment guards, appeal-window floor) and Problem 2 (return-bomb through `_dispatchAfterHooks` and `_dispatchCheckHooks`); existing Bounty `_payAwards` tests now submit work first, since awards must go to a real submitter |
 | `packages/contracts/test/mocks/MockReturnBombHook.sol` | New -- hook returning a configurable oversized blob from selected `check*`/`on*` entry points |
 | `packages/contracts/.gas-snapshot` | Regenerated |
 | `apps/backend/src/scripts/smoke-evaluator.ts` | Require a distinct `EVALUATOR_PRIVATE_KEY`; appeal windows raised to the new floor |
@@ -450,8 +450,6 @@ integrators in `apps/docs/src/pages/developer/hooks.md`.
 
 ## References
 
-- Issue #316 (evaluator payout never validated against the task's actual worker).
-- Issue #317 (unbounded return-data copy from attacker-controlled hooks).
 - `rev013-bounty-security-fixes.md` — the prior `EvaluatorFacet` security round, which fixed
   `appeal()`'s empty-awards authorization gap but not the award-recipient check.
 - Deploy ordering: rev016 (escrow liability) must be applied first; rev018 and rev019 follow.

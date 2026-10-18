@@ -167,4 +167,3 @@ otherwise make `diamondVersion` an unreliable source of truth for downstream too
 | `test/helpers/DiamondTestHelper.sol` | Use `FacetSelectors.*` instead of an independently maintained list |
 | `test/DiamondSelectorParity.t.sol` | New file — fresh-deploy vs. upgraded-diamond selector parity test |
 | `test/TaskMarket.t.sol` | Add `diamondVersion`/`setDiamondVersion` coverage |
-| `docs/adr/0011-diamond-selectors-single-source-and-versioned-upgrades.md` | ADR recording this decision |

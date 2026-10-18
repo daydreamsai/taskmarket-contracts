@@ -6,7 +6,7 @@ A public Taskmarket security-review bounty surfaced six independently-verified f
 `CoreFacet`, `EvaluatorFacet`, and the reward-hook stack (`EpochBudget`/`TaskTokenRewardHook`).
 Five are fixed by replacing `CoreFacet` and `EvaluatorFacet` in one diamond-cut upgrade step
 (this revision, applied via `script/upgrades/Rev013Upgrade.s.sol`); the sixth
-(`EpochBudget.release()`'s epoch-mismatch bug, issue #202) is fixed by redeploying the
+(`EpochBudget.release()`'s epoch-mismatch bug, Problem 5 below) is fixed by redeploying the
 reward-hook pair instead, since `TaskTokenRewardHook`/`EpochBudget` are not Diamond facets and
 are upgraded by a separate script (`script/SwapRewardHook.s.sol`) rather than a
 `diamondCut`. All six are grouped into this one revision document because they shipped from the
@@ -15,7 +15,7 @@ mechanisms.
 
 ---
 
-## Problem 1 — `refundExpired` double-refunds an already-paid evaluator fee (#198)
+## Problem 1 — `refundExpired` double-refunds an already-paid evaluator fee
 
 `CoreFacet.refundExpired` refunded the full `task.reward` on expiry with no check for whether
 `EvaluatorFacet.evaluate()` had already paid an evaluator fee out of that same reward. Because
@@ -25,7 +25,7 @@ task to `Appealing`, then let it expire and call the permissionless `refundExpir
 *entire original reward* on top of the fee already paid — a repeatable double payment funded from
 other tasks' escrow.
 
-## Problem 2 — `rejectSubmission`'s non-submitter fallback phantom-clears the active-submission guard (#199)
+## Problem 2 — `rejectSubmission`'s non-submitter fallback phantom-clears the active-submission guard
 
 `rejectSubmission`'s counter-decrement fell back to `1` for any address, including one that never
 submitted work. A requester could call `rejectSubmission(taskId, randomAddress)` against a
@@ -33,14 +33,14 @@ throwaway address purely to decrement `taskActiveSubmissionCount`, zeroing it ou
 worker's submission was still live — bypassing the `SubmissionsExist` guard that `cancelTask`/
 `refundExpired` rely on to protect a submitting worker.
 
-## Problem 3 — auction winner is auto-paid on expiry with no deliverable check (#200)
+## Problem 3 — auction winner is auto-paid on expiry with no deliverable check
 
 `CoreFacet._refundAuctionClaimed` (reached via `refundExpired` for a `Claimed` auction task) paid
 the claiming worker their full stake and marked the task `Accepted` with no check that
 `task.deliverable` was ever set. A worker could claim an auction task, submit nothing, and still
 be paid once the task expired.
 
-## Problem 4 — an empty-award evaluator verdict permanently blocks appeal (#201)
+## Problem 4 — an empty-award evaluator verdict permanently blocks appeal
 
 For Bounty/Benchmark tasks, `EvaluatorFacet.evaluate()` only set `task.worker` when the verdict's
 `awards` array was non-empty, but `appeal()` authorized only the address stored in `task.worker`.
@@ -49,7 +49,7 @@ so no real submitter — even one tracked in `taskSubmissionHashes[taskId][worke
 appeal it. After the appeal window elapsed, the requester recovered the remaining escrow with the
 adverse verdict never having been contestable.
 
-## Problem 5 — `EpochBudget.release()` decrements the wrong epoch's usage (#202)
+## Problem 5 — `EpochBudget.release()` decrements the wrong epoch's usage
 
 `EpochBudget.release()` rolled to whatever epoch was *current at release time* and decremented
 that epoch's recorded usage, with no record of which epoch the original `checkAndConsume`
@@ -57,7 +57,7 @@ reservation actually belonged to. A reservation consumed in epoch N but released
 rolled to N+1 silently corrupted N+1's unrelated, legitimate usage instead of reversing N's —
 undermining the emission-cap accounting the budget exists to enforce.
 
-## Problem 6 — `updateTask` allows a reward increase with no corresponding USDC pull (#203)
+## Problem 6 — `updateTask` allows a reward increase with no corresponding USDC pull
 
 `CoreFacet.updateTask` let a requester increase `task.reward` with no code path that pulled the
 additional USDC delta into escrow — the increased amount was simply promised, relying entirely on
@@ -71,7 +71,7 @@ downgraded the fix from a breaking funding-model change to cheap defense-in-dept
 
 ## Changes
 
-### 1. `CoreFacet._refundExpiredNormal` — subtract any already-paid evaluator fee (#198)
+### 1. `CoreFacet._refundExpiredNormal` — subtract any already-paid evaluator fee
 
 ```solidity
 // Before
@@ -92,7 +92,7 @@ task.status = ITMPCore.TaskStatus.Expired;
 uint256 refundAmount = task.reward - evalFeeAlreadyPaid;
 ```
 
-### 2. `CoreFacet.rejectSubmission` — skip the decrement entirely for a non-submitter (#199)
+### 2. `CoreFacet.rejectSubmission` — skip the decrement entirely for a non-submitter
 
 ```solidity
 // Before
@@ -109,7 +109,7 @@ if (workerCount > 0) {
 }
 ```
 
-### 3. `CoreFacet._refundAuctionClaimed` — require a deliverable before auto-paying (#200)
+### 3. `CoreFacet._refundAuctionClaimed` — require a deliverable before auto-paying
 
 ```solidity
 // Before
@@ -153,7 +153,7 @@ function _refundAuctionClaimed(bytes32 taskId, ITMPCore.Task storage task, AppSt
     // ... unchanged paid path for tasks with a real deliverable
 ```
 
-### 4. `EvaluatorFacet.appeal` — fall back to the per-worker submission record when `task.worker` is unset (#201)
+### 4. `EvaluatorFacet.appeal` — fall back to the per-worker submission record when `task.worker` is unset
 
 ```solidity
 // Before
@@ -176,7 +176,7 @@ if (!authorized && task.worker == address(0) && (task.mode == BOUNTY || task.mod
 if (!authorized) revert ITMPCore.NotWorker();
 ```
 
-### 5. `EpochBudget.checkAndConsume`/`release` — thread the consumed epoch through (#202)
+### 5. `EpochBudget.checkAndConsume`/`release` — thread the consumed epoch through
 
 ```solidity
 // Before
@@ -212,7 +212,7 @@ ships by deploying a fresh hook + `EpochBudget` pair and cutting the Diamond's d
 to them (`script/SwapRewardHook.s.sol`), reusing the existing `RewardVault` -- not
 by a `diamondCut` on `CoreFacet`/`EvaluatorFacet`.
 
-### 6. `CoreFacet.updateTask` — balance-sufficiency check on reward increase (#203)
+### 6. `CoreFacet.updateTask` — balance-sufficiency check on reward increase
 
 ```solidity
 // Before
@@ -259,14 +259,14 @@ add, remove, or rename an external/public function) -- a pure `Replace` on both 
 ## Rationale
 
 **Why subtract the evaluator fee instead of blocking `refundExpired` from `Appealing`/`Disputed`
-entirely (#198)?**
+entirely?**
 
 Blocking those states outright would strand the task indefinitely if the appeal window closes
 with no resolution path. Subtracting the already-paid amount keeps `refundExpired` usable while
 making the refund reflect the task's actual remaining liability.
 
 **Why fully skip the decrement for a non-submitter instead of tracking "rejected but never
-submitted" separately (#199)?**
+submitted" separately?**
 
 A worker with zero recorded submissions has nothing in `taskActiveSubmissionCount` to reverse --
 crediting a decrement for them is not fixing a real accounting gap, it is the exploit itself.
@@ -274,7 +274,7 @@ Skipping the decrement is the minimal change that removes the phantom-clear path
 state to maintain.
 
 **Why forfeit the evaluator's stake in the no-deliverable auction path instead of returning it to
-the evaluator, or leaving it in escrow (#200 follow-up)?**
+the evaluator, or leaving it in escrow (Problem 3 follow-up)?**
 
 Returning it would reward an evaluator who never issued a verdict. Leaving it in escrow strands
 funds with no path back to anyone. Forfeiting to `feeRecipient` mirrors the existing
@@ -282,7 +282,7 @@ evaluator-never-acted forfeiture `_refundExpiredNormal` already applies in the e
 non-auction case, so this isn't a new policy, just closing a gap where the auction path skipped it.
 
 **Why gate the appeal fallback on `task.worker == address(0)` instead of authorizing any past
-submitter unconditionally (#201)?**
+submitter unconditionally?**
 
 An unconditional fallback would let a submitter who was never awarded anything appeal a verdict
 that already awarded a *different* worker, stalling that worker's payout in `Disputed` with no
@@ -290,7 +290,7 @@ guaranteed resolution path if the task has no dispute resolver. Gating on `task.
 being unset restricts the fallback to exactly the case the issue describes.
 
 **Why require the caller to pass back `consumedEpoch` instead of having `EpochBudget` remember it
-internally, keyed by task (#202)?**
+internally, keyed by task?**
 
 `EpochBudget` has no concept of "task" -- it only ever sees `(requester, worker, amount)` from the
 hook. Threading the epoch through the caller (`TaskTokenRewardHook`, which already tracks
@@ -298,7 +298,7 @@ per-task `RewardState`) avoids adding a second, redundant task-keyed mapping ins
 itself for data the caller already has a natural place to store.
 
 **Why a balance check instead of an explicit funded-delta transfer for `updateTask`'s reward
-increase (#203)?**
+increase?**
 
 An explicit transfer would require a breaking change to `updateTask`'s calling convention (adding
 a payment-pulling step mirroring `createTask`), for a path whose only real-world caller already
@@ -327,20 +327,17 @@ funding at all).
 
 | File | Change |
 |------|--------|
-| `src/facets/CoreFacet.sol` | `_refundExpiredNormal` (#198), `rejectSubmission` (#199), `_refundAuctionClaimed` (#200 + evaluator-stake-forfeiture follow-up), `updateTask` (#203) |
-| `src/facets/EvaluatorFacet.sol` | `appeal` empty-awards fallback, gated on `task.worker == address(0)` (#201) |
+| `src/facets/CoreFacet.sol` | `_refundExpiredNormal`, `rejectSubmission`, `_refundAuctionClaimed` (Problem 3 + evaluator-stake-forfeiture follow-up), `updateTask` |
+| `src/facets/EvaluatorFacet.sol` | `appeal` empty-awards fallback, gated on `task.worker == address(0)` |
 | `src/interfaces/ITMPCore.sol` | Add `error RewardIncreaseNotFunded()` |
-| `src/hooks/EpochBudget.sol` | `checkAndConsume` returns the consumed epoch; `release` requires it back and no-ops if the epoch has rolled past (#202) |
+| `src/hooks/EpochBudget.sol` | `checkAndConsume` returns the consumed epoch; `release` requires it back and no-ops if the epoch has rolled past |
 | `src/hooks/TaskTokenRewardHook.sol` | Track `consumedEpoch` per task/reservation; pass it to every `release()` call; zero-initialize `consumeEpoch` local (slither uninitialized-local fix) |
 | `script/upgrades/Rev013Upgrade.s.sol` | New upgrade-step script -- pure `Replace` on `CoreFacet` + `EvaluatorFacet` |
 | `script/SwapRewardHook.s.sol` | New script -- separate (non-diamond-cut) redeploy of `EpochBudget`/`TaskTokenRewardHook`, reusing the existing `RewardVault` |
-| `test/TaskMarket.t.sol` | Regression coverage for #198, #199, #200 (including the evaluator-forfeiture follow-up), #201 (including the narrowed-gate follow-up), #203 |
-| `test/EpochBudget.t.sol`, `test/TaskTokenRewardHook.t.sol` | Regression coverage for #202 |
+| `test/TaskMarket.t.sol` | Regression coverage for Problems 1, 2, 3 (including the evaluator-forfeiture follow-up), 4 (including the narrowed-gate follow-up) and 6 |
+| `test/EpochBudget.t.sol`, `test/TaskTokenRewardHook.t.sol` | Regression coverage for Problem 5 |
 | `test/SwapRewardHook.t.sol` | New file -- coverage for the reward-hook cutover script |
-| `docs/adr/0025-update-task-reward-increase-funding.md` | ADR recording the #203 triage/decision |
-| `docs/adr/0028-reward-hook-upgrade-leaves-old-hook-authorized-until-drained.md` | ADR recording the #202 reward-hook cutover decision |
 
 ## References
 
-- Issues #198, #199, #200, #201, #202, #203 (all filed from the same public security-review
-  bounty; see each issue's Attribution section for the reporting agentId(s)).
+- Problems 1-6 above were all reported through the same public security-review bounty.
