@@ -373,7 +373,9 @@ contract EvaluatorFacet {
     ///      task.worker, so their recipient is inert. A non-zero award to address(0) reverts
     ///      here rather than at _payAwards: the verdict is one-shot on chain, so letting it
     ///      be stored would move the task to Appealing and then revert finalizeVerdict
-    ///      permanently, stranding the escrow.
+    ///      permanently, stranding the escrow. For the same reason the non-zero award total
+    ///      must fit the award budget (reward less the evaluator fee), or it reverts
+    ///      AwardsExceedEscrow.
     function _validateAwardRecipients(
         ITMPCore.Task storage task,
         bytes32 taskId,
@@ -382,8 +384,10 @@ contract EvaluatorFacet {
     ) private view {
         bool bountyLike = task.mode == BOUNTY || task.mode == BENCHMARK;
         if (bountyLike && awards.length > LibTaskMarket.MAX_SUBMISSION_WINNERS) revert ITMPCore.TooManyWinners();
+        uint256 total = 0;
         for (uint256 i; i < awards.length; ++i) {
             if (awards[i].amount == 0) continue;
+            total += awards[i].amount;
             address worker = awards[i].worker;
             if (worker == address(0)) revert ITMPCore.InvalidAwardRecipient();
             if (bountyLike) {
@@ -392,6 +396,18 @@ contract EvaluatorFacet {
                 revert ITMPCore.WorkerMismatch();
             }
         }
+        // Same bound _payAwards applies at settlement. Checking it here keeps a verdict that can
+        // never finalize from being stored; the settlement check stays as a backstop.
+        if (total > _awardBudget(task, taskId, s)) revert ITMPCore.AwardsExceedEscrow();
+    }
+
+    /// @dev The most a verdict may award: the task's reward less the evaluator fee.
+    function _awardBudget(ITMPCore.Task storage task, bytes32 taskId, AppStorage storage s)
+        private
+        view
+        returns (uint256)
+    {
+        return task.reward - LibTaskMarket._evaluatorFee(task, s.taskEvaluatorConfigs[taskId].evaluatorFeeBps);
     }
 
     // Complexity is inherent: iterates N winners applying per-winner fee, transfer, hook, and event; handles excess refund.
@@ -412,8 +428,7 @@ contract EvaluatorFacet {
             }
         }
 
-        uint256 remaining =
-            task.reward - LibTaskMarket._evaluatorFee(task, s.taskEvaluatorConfigs[taskId].evaluatorFeeBps);
+        uint256 remaining = _awardBudget(task, taskId, s);
         ITMPCore.Verdict memory verdictMem = s.taskVerdicts[taskId];
 
         task.status = ITMPCore.TaskStatus.Accepted;

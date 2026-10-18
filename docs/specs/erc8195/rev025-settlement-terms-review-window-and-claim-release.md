@@ -396,6 +396,16 @@ reserved until then.
 - Every award with a nonzero amount sets `taskAwarded[taskId][worker]`, in `acceptSubmission`,
   `acceptSubmissions`, `_payAwards` and `settleLapsedReview`.
 
+#### `evaluate` award bound (changed)
+
+`evaluate` reverts `AwardsExceedEscrow` when the non-zero award total exceeds the task's reward
+less the evaluator fee, the same budget `_payAwards` settles against. Before rev025 the bound was
+checked only at settlement, after `evaluate` had stored the verdict, moved the task to `Appealing`
+and returned the evaluator's stake. An oversized verdict then reverted `finalizeVerdict` on every
+call, and `refundExpired` (which finalizes an `Appealing` task) reverted with it, so the reward and
+any claim stake stayed locked with no exit. `resolveDispute` validates its awards the same way. The
+settlement check in `_payAwards` stays as a backstop.
+
 #### `rateTask` (changed)
 
 Reverts `NotAwarded` unless `taskAwarded[taskId][worker]`, in every mode; `taskWorkerRated` still

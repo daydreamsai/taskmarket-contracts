@@ -4465,8 +4465,8 @@ contract TaskMarketTest is DiamondTestHelper {
     // -------------------------------------------------------------------------
 
     function test_PayAwards_Reverts_WhenAwardsExceedEscrow() public {
-        // Awards summing above (reward - evalFee) must revert before any transfer.
-        // No evalFee assigned here so remaining = REWARD; REWARD+1 must revert.
+        // Awards summing above (reward - evalFee) revert at evaluate, so a verdict that could never
+        // finalize is never stored. No evalFee assigned here so the budget is REWARD.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
         _submitWork(taskId, worker1, keccak256("work"));
@@ -4474,11 +4474,43 @@ contract TaskMarketTest is DiamondTestHelper {
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD + 1, rank: 1 });
 
-        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+        _expectEvaluateRevert(taskId, awards);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Open));
+    }
 
+    function test_Evaluate_Reverts_WhenAwardsExceedEscrow_Claim() public {
+        // A Claim verdict awarding the full reward when a 10% evaluator fee applies is refused at
+        // evaluate; otherwise the reward and the claim stake would be frozen in Appealing.
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 1000, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _expectEvaluateRevert(taskId, awards);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Review));
+
+        // Exactly reward minus the evaluator fee is accepted and finalizes.
+        awards[0].amount = REWARD - (REWARD * 1000) / 10000;
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
         vm.warp(block.timestamp + 1 days + 1);
-        vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
         market.finalizeVerdict(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+    }
+
+    function _expectEvaluateRevert(bytes32 taskId, ITMPCore.Award[] memory awards) internal {
+        bytes memory call = abi.encodeCall(
+            market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, uint16(1000), uint16(10000), bytes32(0), awards)
+        );
+        vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
+        _relay(evaluator, 0, call);
     }
 
     function test_PayAwards_Reverts_WhenAwardsExceedEscrow_ViaResolveDispute() public {
@@ -4494,10 +4526,11 @@ contract TaskMarketTest is DiamondTestHelper {
         _submitWork(taskId, worker1, keccak256("work"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD + 1, rank: 1 });
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
         _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
         _appeal(taskId, worker1);
 
+        awards[0].amount = REWARD + 1;
         vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
         vm.prank(resolver);
         market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, awards);
@@ -4513,11 +4546,7 @@ contract TaskMarketTest is DiamondTestHelper {
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
 
-        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
-
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
-        market.finalizeVerdict(taskId);
+        _expectEvaluateRevert(taskId, awards);
     }
 
     function test_PayAwards_AwardsEqualRemaining_Succeeds() public {
@@ -4608,11 +4637,7 @@ contract TaskMarketTest is DiamondTestHelper {
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2 + 1, rank: 1 });
         awards[1] = ITMPCore.Award({ worker: worker2, amount: REWARD / 2 + 1, rank: 2 });
 
-        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
-
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.expectRevert(ITMPCore.AwardsExceedEscrow.selector);
-        market.finalizeVerdict(taskId);
+        _expectEvaluateRevert(taskId, awards);
     }
 
     function test_PayAwards_ZeroAmountAwards_Skipped() public {
