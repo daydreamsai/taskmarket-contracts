@@ -175,6 +175,31 @@ contract ReviewWindowTest is DiamondTestHelper {
         assertEq(market.reviewDeadline(taskId), vm.getBlockTimestamp() + WINDOW);
     }
 
+    function test_GetTaskClock_TracksDeliveryAndRevision() public {
+        bytes32 taskId = _create(TMP_CLAIM, _terms());
+        ITMPCore.TaskClock memory c = market.getTaskClock(taskId);
+        assertEq(c.deliveredAt, 0);
+        assertEq(c.revisionDueAt, 0);
+        _take(taskId, TMP_CLAIM, worker);
+        _submit(taskId, worker, WORK);
+        uint256 deliveredAt = vm.getBlockTimestamp();
+        c = market.getTaskClock(taskId);
+        assertEq(c.deliveredAt, deliveredAt, "deliveredAt set on delivery");
+        assertEq(c.revisionsUsed, 0);
+
+        vm.warp(deliveredAt + 1 hours);
+        _revise(taskId);
+        c = market.getTaskClock(taskId);
+        assertEq(c.deliveredAt, 0, "cleared by a revision request");
+        assertEq(c.revisionDueAt, deliveredAt + 1 hours + WINDOW, "resubmission deadline");
+        assertEq(c.revisionsUsed, 1);
+
+        _submit(taskId, worker, keccak256("v2"));
+        c = market.getTaskClock(taskId);
+        assertEq(c.deliveredAt, vm.getBlockTimestamp(), "resubmission restarts the clock");
+        assertEq(c.revisionDueAt, 0);
+    }
+
     function test_ReviewDeadline_CustomWindow() public {
         ITMPCore.TaskTerms memory t = _terms();
         t.reviewWindowSecs = 2 days;

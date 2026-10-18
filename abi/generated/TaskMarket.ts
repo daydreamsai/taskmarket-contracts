@@ -4075,6 +4075,47 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "getTaskClock",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskClock",
+        "components": [
+          {
+            "name": "deliveredAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "decisionStartAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "revisionsUsed",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "revisionDueAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTaskTerms",
     "inputs": [
       {

@@ -213,6 +213,14 @@ version 0 it returns the record normalization would write.
 On a Claim, Pitch or Auction task without an evaluator, records `deliveredAt = block.timestamp`.
 Delivery itself stays closed after `expiryTime`, as today.
 
+#### `getTaskClock(bytes32 taskId) view returns (TaskClock)`
+
+Returns the task's stored `TaskClock`: `deliveredAt` (when the delivery under review landed, zero
+while none is), `decisionStartAt`, `revisionsUsed` and `revisionDueAt` (the resubmission deadline
+of an open revision request, zero when none is open). A task with no clock record reads as all
+zeros. Off-chain code reads delivery and revision timing from here instead of reconstructing it
+from events. A SettlementFacet selector the rev025 cut Adds.
+
 #### `reviewDeadline(bytes32 taskId) view returns (uint256)`
 
 Returns `deliveredAt + reviewWindowSecs`, or zero when there is no undecided delivery. A
@@ -533,7 +541,7 @@ binding the ID to the requester on chain is not part of this revision.
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
   `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
   extension, so an indexer can track `expiryTime` from events alone.
-- **Views:** `getTaskTerms`, `taskLimits`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
+- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
   is true while the diamond holds its reentrancy lock, which lets a hook tell a settlement still
   dispatching hooks from one that finished.
 

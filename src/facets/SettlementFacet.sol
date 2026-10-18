@@ -46,6 +46,15 @@ contract SettlementFacet {
         return LibTerms.pendingTerms(LibAppStorage.appStorage(), taskId);
     }
 
+    /// @notice Get a task's delivery and review clock: when the current delivery landed
+    ///         (deliveredAt, zero while none is under review), when the decision clock started
+    ///         (decisionStartAt), how many revisions the requester has used, and the resubmission
+    ///         deadline of an open revision request (revisionDueAt, zero when none is open).
+    ///         All fields read zero for a task with no clock record.
+    function getTaskClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory) {
+        return LibAppStorage.appStorage().taskClocks[taskId];
+    }
+
     /// @notice Return the effective bounds on requester-chosen settlement terms. Each reads as
     ///         its compiled default until the owner sets it.
     function termsBounds()

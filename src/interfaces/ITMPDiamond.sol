@@ -182,6 +182,7 @@ interface ITMPDiamond {
     // -------------------------------------------------------------------------
     function normalizeTerms(bytes32[] calldata taskIds) external;
     function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory);
+    function getTaskClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory);
     function termsBounds()
         external
         view

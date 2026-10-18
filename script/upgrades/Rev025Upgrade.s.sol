@@ -19,7 +19,7 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      selector lists, Adds the createTask overload taking TaskTerms to CoreFacet and
 ///      setTermsBounds, setTaskLimits and taskLimits to AdminFacet, Adds SettlementFacet (normalizeTerms, getTaskTerms,
 ///      termsBounds, reviewDeadline, rejectDelivery, requestRevision, settleLapsedReview,
-///      MAX_SUBMISSION_WINNERS, releaseClaim, isSettling), Replaces EvaluatorFacet (deferred evaluator fee,
+///      MAX_SUBMISSION_WINNERS, releaseClaim, isSettling, getTaskClock), Replaces EvaluatorFacet (deferred evaluator fee,
 ///      winner cap, award records), AcceptanceFacet (winner cap, award records) and RatingFacet
 ///      (rateTask only award recipients), and Replaces rejectSubmission, forfeitAndReopen,
 ///      cancelTask and refundExpired from CoreFacet onto SettlementFacet. The legacy createTask
