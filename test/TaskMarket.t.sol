@@ -5029,6 +5029,125 @@ contract TaskMarketTest is DiamondTestHelper {
         _relay(requester, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
     }
 
+    /// @dev Brings a Pitch or Dutch Auction task with a 2-day evaluator window to Review and
+    ///      returns the evaluation deadline (submission time plus the window).
+    function _toReviewForMode(bytes4 mode) private returns (bytes32 taskId, uint256 deadline) {
+        bytes4 auctionSubtype = mode == market.AUCTION() ? market.AUCTION_DUTCH() : bytes4(0);
+        taskId = _createTaskWithEvaluatorForMode(mode, auctionSubtype);
+        if (mode == market.PITCH()) {
+            _submitPitch(taskId, worker1, keccak256("pitch"));
+            _selectWorker(taskId, requester, worker1);
+        } else {
+            _acceptAuction(taskId, worker1, REWARD);
+        }
+        _submitWork(taskId, worker1, keccak256(abi.encode(mode, "timeout work")));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Review));
+        deadline = block.timestamp + 2 days;
+    }
+
+    function test_EvaluatorTimeout_ByWorker_Pitch_ReturnsToWorkerSelected() public {
+        (bytes32 taskId, uint256 deadline) = _toReviewForMode(market.PITCH());
+        vm.warp(deadline + 1);
+        _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.WorkerSelected));
+    }
+
+    function test_EvaluatorTimeout_ByThirdParty_Pitch_ReturnsToWorkerSelected() public {
+        (bytes32 taskId, uint256 deadline) = _toReviewForMode(market.PITCH());
+        vm.warp(deadline + 1);
+        _relay(worker2, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.WorkerSelected));
+    }
+
+    function test_EvaluatorTimeout_ByWorker_Auction_ReturnsToClaimed() public {
+        (bytes32 taskId, uint256 deadline) = _toReviewForMode(market.AUCTION());
+        vm.warp(deadline + 1);
+        _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed));
+    }
+
+    function test_EvaluatorTimeout_ByThirdParty_Auction_ReturnsToClaimed() public {
+        (bytes32 taskId, uint256 deadline) = _toReviewForMode(market.AUCTION());
+        vm.warp(deadline + 1);
+        _relay(worker2, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed));
+    }
+
+    function test_RevertWhen_EvaluatorTimeout_AtExactlyPhaseDeadline() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.warp(block.timestamp + 2 days);
+        vm.expectRevert(ITMPCore.EvaluationWindowNotExpired.selector);
+        _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+    }
+
+    function test_Evaluate_AfterWindowBeforeAnyTimeout_Succeeds() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.warp(block.timestamp + 2 days + 1 hours);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, awards);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
+    }
+
+    // -------------------------------------------------------------------------
+    // Rev025: an evaluator's evaluation window is at least the terms bound's minWindow
+    // -------------------------------------------------------------------------
+
+    function test_RevertWhen_CreateTask_EvaluationWindowBelowMinWindow() public {
+        uint32 short = uint32(1 days) - 1;
+        vm.expectRevert(abi.encodeWithSelector(ITMPCore.EvaluationWindowTooShort.selector, short, uint32(1 days)));
+        _createTaskWithEvaluator(requester, evaluator, 0, 0, short, uint32(1 days), address(0));
+    }
+
+    function test_RevertWhen_CreateTask_EvaluationWindowZero() public {
+        vm.expectRevert(abi.encodeWithSelector(ITMPCore.EvaluationWindowTooShort.selector, 0, uint32(1 days)));
+        _createTaskWithEvaluator(requester, evaluator, 0, 0, 0, uint32(1 days), address(0));
+    }
+
+    function test_RevertWhen_AssignEvaluator_EvaluationWindowBelowMinWindow() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        vm.expectRevert(abi.encodeWithSelector(ITMPCore.EvaluationWindowTooShort.selector, 1, uint32(1 days)));
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, 1, uint32(1 days), address(0)))
+        );
+    }
+
+    function test_AssignEvaluator_EvaluationWindowAtMinWindow_Succeeds() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(1 days), uint32(1 days));
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluationWindow, uint32(1 days));
+    }
+
+    function test_EvaluationWindowMinimum_FollowsSetTermsBounds() public {
+        (, uint32 maxWindow, uint16 maxRejectFee, uint8 maxRevisions) = market.termsBounds();
+        vm.prank(owner);
+        market.setTermsBounds(uint32(1 hours), maxWindow, maxRejectFee, maxRevisions);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _assignEvaluator(taskId, requester, evaluator, 0, uint32(1 hours), uint32(1 days));
+
+        vm.prank(owner);
+        market.setTermsBounds(uint32(3 days), maxWindow, maxRejectFee, maxRevisions);
+        bytes32 second = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(ITMPCore.EvaluationWindowTooShort.selector, uint32(2 days), uint32(3 days))
+        );
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (second, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+    }
+
     // -------------------------------------------------------------------------
     // resolveDispute: REJECT verdict must revert
     // -------------------------------------------------------------------------

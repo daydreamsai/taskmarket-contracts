@@ -85,6 +85,8 @@ interface ITMPCore is IERC165 {
     error EvaluatorCannotBeRequester();
     error DisputeResolverCannotBeRequester();
     error AppealWindowTooShort();
+    /// @notice Rev025: an evaluator's evaluationWindow is below the terms bound's minWindowSecs.
+    error EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow);
     error InvalidMinAppealWindow();
     error InvalidMinFeedbackGas();
     error NoDisputeResolver();
@@ -246,6 +248,7 @@ interface ITMPCore is IERC165 {
         address evaluator;
         uint256 evaluatorStake;
         uint16 evaluatorFeeBps;
+        /// @dev Rev025: at least the termsBounds minWindowSecs whenever an evaluator is set.
         uint32 evaluationWindow;
         uint32 appealWindow;
         address disputeResolver;

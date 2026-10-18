@@ -313,6 +313,30 @@ evaluator out and start the review window, which `settleLapsedReview` closes in 
 favour if the requester does not decide. The evaluator's stake still goes to the fee recipient,
 whoever calls.
 
+#### Evaluation window minimum (changed, `createTask` and `assignEvaluator`)
+
+Both entry points that configure an evaluator go through `LibTaskMarket._applyEvaluatorConfig`,
+which now reverts `EvaluationWindowTooShort(evaluationWindow, minWindow)` when the evaluation
+window is below `termsBounds().minWindowSecs` (24 hours by default).
+
+The reason is the access change above. With `evaluatorTimeout` open to anyone once the window has
+passed, a window of zero or a few seconds lets the worker submit and time the evaluator out in the
+next block: the evaluator never gets a chance to judge, its stake goes to the fee recipient, and
+the task drops to the requester's review with no evaluation at all. Before rev025 only the
+requester could time the evaluator out, so a short window only hurt the party that chose it. Now
+it hurts the evaluator and defeats the point of appointing one, so the window needs a floor on
+chain rather than a client-side default that a direct caller can skip.
+
+The floor reuses the terms bound instead of adding a new one. `minWindowSecs` already sets the
+shortest review, decision, reopen and resolution windows, the evaluation window is the same kind
+of human decision period, and one bound means one owner setting (`setTermsBounds`, no upgrade) and
+one value for clients to read. A chain that needs short windows, such as a test network running
+smoke tests, can lower the bound there without a contract change. Because the check lives in the
+shared helper, `createTask` cannot validate less than `assignEvaluator`.
+
+The check applies at configuration time only. An evaluator configured before the upgrade keeps the
+window it was given; the bound is not re-checked on `evaluate` or `evaluatorTimeout`.
+
 #### `forfeitAndReopen` (changed)
 
 - Reverts `DeliveryPending` while an undecided deliverable exists. Forfeit is only for a worker who
@@ -445,7 +469,8 @@ Benchmark after its decision deadline emits `RequesterReputation` with
 
 - **Errors:** `TermsFrozen`, `InvalidTerms`, `DeliveryPending`, `ReviewWindowOpen`,
   `ReviewWindowClosed`, `DecisionWindowLapsed`, `ReleaseNotAllowed`, `StakePaymentMismatch`,
-  `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`.
+  `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`,
+  `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
   `RevisionRequested`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or

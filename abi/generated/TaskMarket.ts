@@ -1855,6 +1855,22 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "EvaluationWindowTooShort",
+    "inputs": [
+      {
+        "name": "evaluationWindow",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minWindow",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EvaluatorAlreadyAssigned",
     "inputs": []
   },

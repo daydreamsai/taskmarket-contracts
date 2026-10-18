@@ -5,6 +5,7 @@ import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { LibGuards } from "./LibGuards.sol";
+import { LibTerms } from "./LibTerms.sol";
 import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTaskMarket — evaluator configuration, appeal window and feedback gas helpers
@@ -72,6 +73,13 @@ library LibTaskMarket {
         if (evalCfg.evaluator != address(0)) revert ITMPCore.EvaluatorAlreadyAssigned();
         if (cfg.evaluatorFeeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
         if (cfg.appealWindow < _minAppealWindowSecs(s)) revert ITMPCore.AppealWindowTooShort();
+        // Rev025: evaluatorTimeout is permissionless, so a window shorter than the terms bound's
+        // minWindow would let the worker submit and time out the evaluator a block later,
+        // forfeiting the evaluator stake and skipping evaluation. See the rev025 spec.
+        (uint32 minWindow,,,) = LibTerms.bounds(s);
+        if (cfg.evaluationWindow < minWindow) {
+            revert ITMPCore.EvaluationWindowTooShort(cfg.evaluationWindow, minWindow);
+        }
 
         evalCfg.evaluator = cfg.evaluator;
         evalCfg.evaluatorStake = cfg.evaluatorStake;

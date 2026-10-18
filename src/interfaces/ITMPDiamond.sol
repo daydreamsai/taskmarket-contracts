@@ -79,6 +79,7 @@ interface ITMPDiamond {
     // -------------------------------------------------------------------------
     // EvaluatorFacet
     // -------------------------------------------------------------------------
+    /// @dev Rev025: reverts EvaluationWindowTooShort below the termsBounds minWindowSecs.
     function assignEvaluator(
         bytes32 taskId,
         address evaluator,
