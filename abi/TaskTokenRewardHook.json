@@ -975,7 +975,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "",
+        "name": "ctx",
         "type": "tuple",
         "internalType": "struct ITMPCore.TaskContext",
         "components": [
@@ -1052,7 +1052,7 @@
         ]
       },
       {
-        "name": "",
+        "name": "verdict",
         "type": "tuple",
         "internalType": "struct ITMPCore.Verdict",
         "components": [

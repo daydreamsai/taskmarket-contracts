@@ -107,6 +107,7 @@ per-task `hookData` payload is needed.
 | `submitWork` | `checkSubmit` | Validates worker matches the reserved worker (reserved tasks only). |
 | `evaluate` | `checkEvaluate` | No-op. |
 | `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays the reservation scaled by the reserved worker's award (see Reward Formula) and releases the rest; a zero award releases all of it. Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
+| `settleLapsedReview` / `finalizeVerdict` past expiry | `onComplete` | These skip `checkComplete`. A reservation still unpaid is paid here exactly as `checkComplete` would pay it, scaled by the award; a zero award releases it. After a normal `checkComplete` this is a no-op. |
 | `cancelTask` | `onCancel` | Releases the full reservation (vault tokens + USD budget) to the pools. |
 | `refundExpired` | `onExpire` | Same as cancel. |
 | `forfeitAndReopen` | `onForfeit` | Same as cancel. |

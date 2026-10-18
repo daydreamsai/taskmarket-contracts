@@ -2227,6 +2227,8 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         uint256 availBefore = vault.available();
         vm.warp(market.reviewDeadline(taskId) + 1);
 
+        // onComplete pays a lapsed review's bonus; make the payment fail so it releases instead.
+        _failVaultPay();
         _failVault();
         vm.recordLogs();
         market.settleLapsedReview(taskId);
@@ -2250,7 +2252,8 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         _assertProgress(taskId, true, true);
         _assertFullyReleased(taskId, availBefore);
 
-        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        // The release completed and the reservation is settled, so a further call is not due.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
         hook.recoverReserve(taskId);
     }
 
@@ -2671,5 +2674,72 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
         _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC * 9 / 10));
         assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "everything awardable was awarded");
+    }
+
+    // ─── Reserved bonus paid on onComplete ────────────────────────────────────
+
+    function test_onComplete_settleLapsedReviewPaysReservedBonus() public {
+        bytes32 taskId = _createLongClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(market.reviewDeadline(taskId) + 1);
+
+        market.settleLapsedReview(taskId);
+
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "lapsed review still earns the bonus");
+        assertEq(vault.taskReserve(taskId), 0);
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_onComplete_auctionLapsedReviewPaysOnAcceptedPrice() public {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), market.AUCTION_DUTCH());
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(market.reviewDeadline(taskId) + 1);
+        market.settleLapsedReview(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(vault.totalReserved(), 0);
+    }
+
+    function test_onComplete_pastExpiryFinalizePaysAwardedBonus() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate,
+                (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), _singleAward(worker, REWARD_100_USDC / 2))
+            )
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "half award, half bonus");
+        assertEq(vault.taskReserve(taskId), 0, "remainder released");
+    }
+
+    function test_onComplete_pastExpiryZeroAwardReleases() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        uint256 availBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), new ITMPCore.Award[](0))
+            )
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(hook.claimable(worker), 0);
+        assertEq(vault.available(), availBefore);
     }
 }

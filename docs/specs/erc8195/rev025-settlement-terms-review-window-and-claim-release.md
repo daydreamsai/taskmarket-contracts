@@ -561,9 +561,12 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   worker, after `onForfeit`, `rejectDelivery` or `releaseClaim`), a Cancelled or Expired task, or
   an Accepted task whose reservation `checkComplete` never paid (`settleLapsedReview`). It never
   releases a task that is still claimed or selected, or that paid out.
-- `onComplete` releases an unpaid reservation through the same progress-tracked path, so a
-  `settleLapsedReview` completion, which skips `checkComplete`, leaves a retryable record rather
-  than a one-shot release.
+- `onComplete` pays a reservation that `checkComplete` left unpaid, the same way `checkComplete`
+  pays it (scaled by the reserved worker's award, see "TaskTokenRewardHook bonus basis"). That
+  covers the completions that skip the check hooks, `settleLapsedReview` and a `finalizeVerdict`
+  past expiry, so a requester cannot deny the bonus by letting the review lapse. A zero award, or
+  a vault that cannot pay, releases through the same progress-tracked path, leaving a retryable
+  record rather than a one-shot release.
 - `checkComplete` does the same when it cannot pay the reserved bonus from the vault: it releases
   the reservation through the progress record rather than with one-shot calls whose failures were
   discarded, so a failed release stays pending for `recoverReserve` instead of stranding the

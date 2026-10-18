@@ -983,7 +983,7 @@ export const TaskTokenRewardHookABI = [
         "internalType": "bytes32"
       },
       {
-        "name": "",
+        "name": "ctx",
         "type": "tuple",
         "internalType": "struct ITMPCore.TaskContext",
         "components": [
@@ -1060,7 +1060,7 @@ export const TaskTokenRewardHookABI = [
         ]
       },
       {
-        "name": "",
+        "name": "verdict",
         "type": "tuple",
         "internalType": "struct ITMPCore.Verdict",
         "components": [

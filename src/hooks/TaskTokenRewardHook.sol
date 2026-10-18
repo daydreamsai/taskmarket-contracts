@@ -571,18 +571,22 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     // ITMPHook — on hooks (try-catch wrapped by Diamond, must not revert)
     // ─────────────────────────────────────────────────────────────────────────
 
-    function onComplete(
-        bytes32 taskId,
-        ITMPCore.TaskContext calldata,
-        /* ctx */
-        ITMPCore.Verdict calldata /* verdict */
-    )
+    function onComplete(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict)
         external
         override
         onlyDiamond
     {
-        // Payment was already handled in checkComplete. A completion that skips the check hooks
-        // (settleLapsedReview) leaves the reservation unpaid, so release it.
+        // checkComplete normally settles the reservation first, which leaves nothing here. A
+        // completion that skips the check hooks (settleLapsedReview, a finalizeVerdict past
+        // expiry) reaches this with the reservation still unpaid. The worker was paid for the
+        // work, so the bonus is paid the same way checkComplete pays it, scaled by the award;
+        // otherwise a requester could deny it by letting the review lapse.
+        RewardState storage state = _s().rewardStates[taskId];
+        if (state.reserved && !state.paid && state.reservedTokenAmount > 0 && !_releasePending(taskId)) {
+            state.paid = true;
+            _payReserved(taskId, ctx, verdict);
+            return;
+        }
         _releaseReserve(taskId);
     }
 
@@ -625,8 +629,8 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///         left incomplete. Permissionless: it only ever releases what the task's own
     ///         state on the Diamond shows is due, and each dependency at most once.
     /// @dev Due means the task is Cancelled or Expired, is a Claim or Pitch task back in Open
-    ///      with no worker, or is Accepted without checkComplete having paid the reservation
-    ///      (settleLapsedReview). A task that is claimed, selected, under review or paid out is
+    ///      with no worker, or is Accepted with the reservation unpaid (an onComplete that failed
+    ///      or could not pay). A task that is claimed, selected, under review or paid out is
     ///      never released.
     function recoverReserve(bytes32 taskId) external {
         // A settlement still dispatching hooks holds the diamond's lock and has set Accepted before
