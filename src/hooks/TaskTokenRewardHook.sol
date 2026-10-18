@@ -6,7 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
@@ -731,7 +731,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             Strings.toString(validBefore)
         );
         bytes32 digest = MessageHashUtils.toEthSignedMessageHash(bytes(message));
-        if (ECDSA.recover(digest, signature) != wallet) revert InvalidWithdrawSignature();
+        // SignatureChecker accepts an EOA's ECDSA signature and an ERC-1271 contract wallet's own
+        // validation, so a contract wallet credited as a requester or worker can withdraw too.
+        if (!SignatureChecker.isValidSignatureNow(wallet, digest, signature)) revert InvalidWithdrawSignature();
 
         _s().usedWithdrawNonce[nonceKey] = true;
 

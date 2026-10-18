@@ -14,10 +14,25 @@ import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockSettlingProbeHook } from "./mocks/MockSettlingProbeHook.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { DeployRewardHookProxy } from "../script/lib/DeployRewardHookProxy.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+/// @dev Minimal ERC-1271 wallet: a signature is valid when its owner key signed the hash.
+contract MockERC1271Wallet {
+    address public immutable owner;
+
+    constructor(address _owner) {
+        owner = _owner;
+    }
+
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(hash, signature);
+        return err == ECDSA.RecoverError.NoError && recovered == owner ? bytes4(0x1626ba7e) : bytes4(0xffffffff);
+    }
+}
 
 /// @dev Records the award amount checkComplete sees, to check what acceptSubmission reports.
 contract AwardRecorderHook is ITMPHook {
@@ -2838,5 +2853,45 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.prank(address(market));
         assertTrue(hook.checkComplete{ gas: 200_000 }(taskId, ctx, verdict));
         assertEq(hook.firstSeen(_bountyWinner(0)), 0, "below the floor nothing is processed");
+    }
+
+    // ─── ERC-1271 withdrawals ─────────────────────────────────────────────────
+
+    function _creditContractWallet(MockERC1271Wallet wallet) internal {
+        bytes32 taskId = _createClaimTask();
+        _relay(address(wallet), 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        bytes32 d = keccak256("contract-wallet-work");
+        _relay(address(wallet), 0, abi.encodeCall(market.submitWork, (taskId, d)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, address(wallet), d, 0)));
+    }
+
+    function test_withdrawFor_erc1271WalletWithdraws() public {
+        MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(workerKey));
+        _creditContractWallet(wallet);
+        uint256 amount = hook.claimable(address(wallet));
+        assertGt(amount, 0, "contract wallet credited");
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "scw-1", validBefore);
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(address(wallet), destination, "scw-1", validBefore, signature);
+
+        assertEq(dreamsToken.balanceOf(destination), amount);
+        assertEq(hook.claimable(address(wallet)), 0);
+    }
+
+    function test_withdrawFor_erc1271WalletRejectsOtherSigner() public {
+        MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(workerKey));
+        _creditContractWallet(wallet);
+        uint256 amount = hook.claimable(address(wallet));
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(uint256(keccak256("not-the-owner")), destination, "scw-1", validBefore);
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(address(wallet), destination, "scw-1", validBefore, signature);
+        assertEq(hook.claimable(address(wallet)), amount);
     }
 }

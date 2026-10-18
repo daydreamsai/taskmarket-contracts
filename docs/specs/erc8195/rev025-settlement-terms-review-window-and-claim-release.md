@@ -725,6 +725,15 @@ out every later bid, including lower ones; a per-bidder limit would not help, si
 free. `getBids` can therefore omit the winning bid on a task that reached the cap; `getTask` after
 selection, and the `BidSubmitted` event, still name it.
 
+### TaskTokenRewardHook contract-wallet withdrawals
+
+Also in the hook implementation upgrade: `withdrawFor` checks the wallet's signature with
+`SignatureChecker.isValidSignatureNow` instead of requiring `ECDSA.recover` to equal the wallet.
+An EOA signs exactly as before; an ERC-1271 contract wallet, which the forwarder and diamond accept
+as a requester or worker and which `_creditWithSplit` credits like any other address, can now
+authorise a withdrawal through its own `isValidSignature`. The relayer, expiry, nonce and signed
+message are unchanged.
+
 ## Settlement by mode
 
 "Review window" means the single-payee rule above; "decision deadline" the Bounty and Benchmark

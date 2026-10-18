@@ -218,10 +218,12 @@ callback cannot double-pay.
 
 **Withdrawal is authorized by the wallet, not by the relayer.** `withdrawFor` is called
 by the authorized relayer, which relays and pays gas — so `msg.sender` is never the wallet and
-cannot authorize anything on its behalf. The hook therefore recovers the wallet's own
+cannot authorize anything on its behalf. The hook therefore checks the wallet's own
 EIP-191 signature over
-`taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>` and reverts unless the
-signer is the wallet whose balance is being moved. `validBefore` is enforced on-chain,
+`taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>` with
+`SignatureChecker.isValidSignatureNow`, and reverts unless it is valid for the wallet whose
+balance is being moved: an ECDSA signature by an EOA wallet, or a signature an ERC-1271
+contract wallet accepts through `isValidSignature`. `validBefore` is enforced on-chain,
 and `usedWithdrawNonce` (keyed on `keccak256(wallet, nonce)`) rejects replays, so a
 captured authorization cannot be re-presented by whoever holds the relaying key.
 
