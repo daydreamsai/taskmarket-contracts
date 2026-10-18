@@ -23,11 +23,19 @@ const UPGRADE_SH = join(
   "upgrade.sh",
 );
 
-// cast prints the version held in $STATE; forge records the step it was asked to run and, unless
+// cast answers each call from CAST_PLAN in turn ("fail" exits non-zero, a number is printed as a
+// stale or wrong read) and, once the plan is used up, prints the version held in $STATE; forge records the step it was asked to run and, unless
 // that step is listed in FAIL_BEFORE, advances $STATE to the step's target revision. A step in
 // FAIL_AFTER advances the version and then exits non-zero, like a verification failure.
 const CAST = `#!/usr/bin/env bash
-cat "$STATE"
+n=$(( $(cat "$CAST_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$CAST_COUNT"
+step="$(printf '%s' "$CAST_PLAN" | awk -v n="$n" '{ print $n }')"
+case "$step" in
+  "") cat "$STATE" ;;
+  fail) exit 1 ;;
+  *) echo "$step" ;;
+esac
 `;
 const FORGE = `#!/usr/bin/env bash
 name="$(printf '%s' "$2" | sed 's/.*://')"
@@ -62,6 +70,9 @@ function run({ steps, version, args = [], env = {} }) {
         "0x0000000000000000000000000000000000000001",
       STATE: state,
       CALLS: calls,
+      CAST_COUNT: join(dir, "cast-count"),
+      CAST_PLAN: "",
+      UPGRADE_VERSION_READ_DELAY: "0",
       FAIL_BEFORE: "",
       FAIL_AFTER: "",
       ...env,
@@ -73,6 +84,7 @@ function run({ steps, version, args = [], env = {} }) {
   return {
     status: res.status,
     stderr: res.stderr,
+    stdout: res.stdout,
     ran,
     version: readFileSync(state, "utf8").trim(),
   };
@@ -135,4 +147,83 @@ test("a dry run from rev023 only simulates Rev024 and broadcasts nothing", () =>
   const r = run({ steps: ALL, version: 23, env: { DRY_RUN: "1" } });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.ran, ["Rev024Upgrade"]);
+});
+
+const RECOVERY = /make upgrade testnet' \(no revision argument\)/;
+
+test("a failed first diamondVersion read is retried", () => {
+  const r = run({ steps: ALL, version: 23, env: { CAST_PLAN: "fail fail" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ran, ["Rev024Upgrade", "Rev025Upgrade"]);
+  assert.equal(r.version, "25");
+});
+
+test("an unreadable diamondVersion is not read as 0 and prints the recovery command", () => {
+  const r = run({
+    steps: ALL,
+    version: 23,
+    env: { CAST_PLAN: "fail fail fail fail fail" },
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /could not be read/);
+  assert.doesNotMatch(r.stderr, /reads 0/);
+  assert.match(r.stderr, RECOVERY);
+  assert.deepEqual(r.ran, []);
+});
+
+test("a failed read after Rev024's cut lands is retried and the run carries on to Rev025", () => {
+  const r = run({
+    steps: ALL,
+    version: 23,
+    // The first read is the starting version; the read after Rev024 fails once.
+    env: { FAIL_AFTER: "Rev024Upgrade", CAST_PLAN: "23 fail" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ran, ["Rev024Upgrade", "Rev025Upgrade"]);
+  assert.equal(r.version, "25");
+});
+
+test("a stale read after Rev024's cut lands is not taken as 'not landed'", () => {
+  const r = run({
+    steps: ALL,
+    version: 23,
+    env: { FAIL_AFTER: "Rev024Upgrade", CAST_PLAN: "23 23 23" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ran, ["Rev024Upgrade", "Rev025Upgrade"]);
+});
+
+test("Rev024 failing with diamondVersion unreadable stops, never claiming the cut did not land", () => {
+  const r = run({
+    steps: ALL,
+    version: 23,
+    env: {
+      FAIL_AFTER: "Rev024Upgrade",
+      CAST_PLAN: "23 fail fail fail fail fail",
+    },
+  });
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stderr, /before its cut landed|nothing to continue/);
+  assert.match(r.stderr, /whether its\s+cut landed is unknown/);
+  assert.match(r.stderr, RECOVERY);
+  assert.deepEqual(r.ran, ["Rev024Upgrade"]);
+});
+
+test("Rev024 failing before its cut prints the recovery command", () => {
+  const r = run({
+    steps: ALL,
+    version: 23,
+    env: { FAIL_BEFORE: "Rev024Upgrade" },
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /still reads 23/);
+  assert.match(r.stderr, RECOVERY);
+});
+
+test("a stale read after a step that succeeded waits for the new version", () => {
+  const r = run({ steps: ALL, version: 23, env: { CAST_PLAN: "23 23" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ran, ["Rev024Upgrade", "Rev025Upgrade"]);
+  assert.match(r.stdout, /current rev 24\)/);
+  assert.match(r.stdout, /now at rev 25/);
 });

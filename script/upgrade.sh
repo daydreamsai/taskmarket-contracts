@@ -73,8 +73,52 @@ run_script() {
   fi
 }
 
+# Reads diamondVersion, retrying a failed or malformed read. Prints the version and succeeds, or
+# fails without printing anything: a read that never succeeded says nothing about the diamond, so
+# no caller may treat it as "0" or "not landed".
+VERSION_READ_ATTEMPTS="${UPGRADE_VERSION_READ_ATTEMPTS:-5}"
+VERSION_READ_DELAY="${UPGRADE_VERSION_READ_DELAY:-3}"
+read_version_once() {
+  local out
+  out="$(cast call "$DIAMOND" "diamondVersion()(uint256)" --rpc-url "$RPC_URL" 2>/dev/null)" || return 1
+  out="$(printf '%s' "$out" | tr -d '[:space:]')"
+  case "$out" in '' | *[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$out"
+}
 current_version() {
-  cast call "$DIAMOND" "diamondVersion()(uint256)" --rpc-url "$RPC_URL" 2>/dev/null | tr -d '[:space:]' || echo 0
+  local attempt v
+  for attempt in $(seq 1 "$VERSION_READ_ATTEMPTS"); do
+    if v="$(read_version_once)"; then
+      printf '%s\n' "$v"
+      return 0
+    fi
+    [ "$attempt" -lt "$VERSION_READ_ATTEMPTS" ] && sleep "$VERSION_READ_DELAY"
+  done
+  return 1
+}
+# Reads diamondVersion until it shows at least $1, so a node that has not caught up with a cut
+# that just landed is not mistaken for one that never landed. Prints the last successful read
+# (empty when every read failed); succeeds only once the version reached $1.
+version_reaching() {
+  local want="$1" attempt v last=""
+  for attempt in $(seq 1 "$VERSION_READ_ATTEMPTS"); do
+    if v="$(read_version_once)"; then
+      last="$v"
+      if [ "$v" -ge "$want" ]; then
+        printf '%s\n' "$v"
+        return 0
+      fi
+    fi
+    [ "$attempt" -lt "$VERSION_READ_ATTEMPTS" ] && sleep "$VERSION_READ_DELAY"
+  done
+  printf '%s\n' "$last"
+  return 1
+}
+recovery_hint() {
+  echo "Read it by hand before doing anything else:" >&2
+  echo "  cast call $DIAMOND 'diamondVersion()(uint256)' --rpc-url $RPC_URL" >&2
+  echo "then resume with 'make upgrade $NETWORK' (no revision argument): it applies every step" >&2
+  echo "above the version the diamond actually holds, Rev025 included." >&2
 }
 
 # Explicit single-step target, e.g. "rev012" -> Rev012Upgrade.
@@ -91,9 +135,14 @@ if [ -n "$REV" ]; then
   exit 0
 fi
 
-VERSION="$(current_version)"
-if [ -z "$VERSION" ] || [ "$VERSION" = "0" ]; then
-  echo "diamondVersion reads 0, or could not be read, for $DIAMOND on $RPC_URL." >&2
+if ! VERSION="$(current_version)"; then
+  echo "diamondVersion could not be read for $DIAMOND on $RPC_URL after $VERSION_READ_ATTEMPTS attempts;" >&2
+  echo "nothing was applied." >&2
+  recovery_hint
+  exit 1
+fi
+if [ "$VERSION" = "0" ]; then
+  echo "diamondVersion reads 0 for $DIAMOND on $RPC_URL." >&2
   echo "No automated migration exists for an untracked (pre-rev011) diamond -- the cut would have" >&2
   echo "to be reconstructed by hand. Check the address and the network before doing anything else." >&2
   exit 1
@@ -122,11 +171,18 @@ for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
     echo "Applying $NAME (target rev $TARGET, current rev $VERSION)..."
     if [ "$NAME" = "Rev024Upgrade" ] && [ "$DRY_RUN" != "1" ]; then
       if ! run_script "script/upgrades/${NAME}.s.sol:${NAME}"; then
-        if [ "$(current_version)" = "24" ]; then
+        if LANDED="$(version_reaching 24)"; then
           echo "Rev024Upgrade's cut landed but the command failed afterwards (likely verification);" >&2
           echo "continuing to Rev025Upgrade. Verify the Rev024 contracts by hand afterwards." >&2
+        elif [ -z "$LANDED" ]; then
+          echo "Rev024Upgrade failed and diamondVersion could not be read afterwards, so whether its" >&2
+          echo "cut landed is unknown. If it did, the diamond is half-cut until Rev025 lands." >&2
+          recovery_hint
+          exit 1
         else
-          echo "Rev024Upgrade failed before its cut landed; nothing to continue." >&2
+          echo "Rev024Upgrade failed and diamondVersion still reads $LANDED after $VERSION_READ_ATTEMPTS reads;" >&2
+          echo "its cut most likely did not land, but a lagging node can show the same." >&2
+          recovery_hint
           exit 1
         fi
       fi
@@ -137,7 +193,12 @@ for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
       echo "Dry run: stopping after the first pending step ($NAME) -- later steps can't be simulated until this one actually broadcasts."
       exit 0
     fi
-    VERSION="$(current_version)"
+    if ! VERSION="$(version_reaching "$TARGET")"; then
+      echo "$NAME succeeded, but diamondVersion reads '${VERSION:-unreadable}' instead of $TARGET;" >&2
+      echo "stopping rather than running the next step against a stale version." >&2
+      recovery_hint
+      exit 1
+    fi
   fi
 done
 
