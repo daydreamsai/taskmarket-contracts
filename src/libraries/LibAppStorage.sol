@@ -76,6 +76,10 @@ struct AppStorage {
     // Rev025: owner-set per-chain floor on an evaluator's evaluationWindow. Zero means "never
     // set": LibTaskMarket._minEvaluationWindowSecs substitutes DEFAULT_MIN_EVALUATION_WINDOW_SECS.
     uint32 minEvaluationWindowSecs;
+    // Rev025: owner-set ERC-8004 identity registry. When set, requester feedback on cancelTask and
+    // refundExpired is sent only for an agent ID the requester owns there; zero keeps the
+    // forwarder-authenticated requester check.
+    address identityRegistry;
 }
 
 library LibAppStorage {

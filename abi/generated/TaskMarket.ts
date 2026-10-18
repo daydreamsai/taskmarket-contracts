@@ -307,6 +307,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "identityRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "initialize",
     "inputs": [
       {
@@ -490,6 +503,19 @@ export const TaskMarketABI = [
     "inputs": [
       {
         "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setIdentityRegistry",
+    "inputs": [
+      {
+        "name": "registry",
         "type": "address",
         "internalType": "address"
       }
@@ -687,6 +713,19 @@ export const TaskMarketABI = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IdentityRegistryUpdated",
+    "inputs": [
+      {
+        "name": "newRegistry",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false

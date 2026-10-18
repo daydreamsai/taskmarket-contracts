@@ -14,6 +14,7 @@ import "./mocks/MockTaskHook.sol";
 import "./mocks/MockReturnBombHook.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./mocks/MockReputationRegistry.sol";
+import "./mocks/MockIdentityRegistry.sol";
 import "./mocks/MockRevertingReputationRegistry.sol";
 import "../src/interfaces/ITMPReputation.sol";
 import "./helpers/DiamondTestHelper.sol";
@@ -6539,6 +6540,154 @@ contract TaskMarketTest is DiamondTestHelper {
         market.refundExpired(taskId, 4242);
         assertEq(reg.calls(), 0, "a stranger's agent ID is never sent to the registry");
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    // --- Rev025: requester feedback bound to the requester's own agent ID ---
+
+    function _withRegistries() internal returns (MockReputationRegistry rep, MockIdentityRegistry ids) {
+        rep = new MockReputationRegistry();
+        ids = new MockIdentityRegistry();
+        ids.mint(42, requester);
+        ids.mint(77, worker1);
+        vm.startPrank(owner);
+        market.setReputationRegistry(address(rep));
+        market.setIdentityRegistry(address(ids));
+        vm.stopPrank();
+    }
+
+    function _expiredBounty() internal returns (bytes32 taskId) {
+        taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.warp(block.timestamp + DURATION + 1);
+    }
+
+    function _bountyAfterRejection() internal returns (bytes32 taskId) {
+        taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        _rejectSubmission(taskId, requester, worker1);
+    }
+
+    function test_SetIdentityRegistry_OwnerSetsAndEmits() public {
+        assertEq(market.identityRegistry(), address(0));
+        address registry = makeAddr("identity");
+        vm.expectEmit(true, false, false, false, address(market));
+        emit ITMPReputation.IdentityRegistryUpdated(registry);
+        vm.prank(owner);
+        market.setIdentityRegistry(registry);
+        assertEq(market.identityRegistry(), registry);
+    }
+
+    function test_RevertWhen_SetIdentityRegistry_NotOwner() public {
+        vm.prank(requester);
+        vm.expectRevert();
+        market.setIdentityRegistry(makeAddr("identity"));
+        assertEq(market.identityRegistry(), address(0));
+    }
+
+    function test_RefundExpired_IdentityRegistry_OwnAgentId_SendsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _expiredBounty();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
+        assertEq(rep.calls(), 1);
+    }
+
+    /// The identity registry is the authority while set: anyone may refund and the requester's
+    /// own agent still gets the signal.
+    function test_RefundExpired_IdentityRegistry_OwnAgentId_PermissionlessCaller() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _expiredBounty();
+        vm.prank(makeAddr("stranger"));
+        market.refundExpired(taskId, 42);
+        assertEq(rep.calls(), 1);
+    }
+
+    function test_RefundExpired_IdentityRegistry_ForeignAgentId_SkipsFeedbackKeepsEvent() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _expiredBounty();
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_no_action"), REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 77)));
+        assertEq(rep.calls(), 0, "the requester cannot aim feedback at another owner's agent");
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_RefundExpired_IdentityRegistry_NonexistentAgentId_SkipsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _expiredBounty();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 9999)));
+        assertEq(rep.calls(), 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_RefundExpired_RevertingIdentityRegistry_SkipsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        MockRevertingIdentityRegistry down = new MockRevertingIdentityRegistry();
+        vm.prank(owner);
+        market.setIdentityRegistry(address(down));
+        bytes32 taskId = _expiredBounty();
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_no_action"), REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
+        assertEq(rep.calls(), 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_RefundExpired_IdentityRegistryWithoutCode_SkipsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        vm.prank(owner);
+        market.setIdentityRegistry(makeAddr("no-code"));
+        bytes32 taskId = _expiredBounty();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
+        assertEq(rep.calls(), 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
+    }
+
+    function test_RefundExpired_IdentityRegistryUnset_KeepsForwarderCheck() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        vm.prank(owner);
+        market.setIdentityRegistry(address(0));
+        bytes32 taskId = _expiredBounty();
+        vm.prank(makeAddr("stranger"));
+        market.refundExpired(taskId, 77);
+        assertEq(rep.calls(), 0, "unset: a caller other than the requester sends nothing");
+        bytes32 second = _expiredBounty();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (second, 77)));
+        assertEq(rep.calls(), 1, "unset: the forwarder-authenticated requester is trusted as before");
+    }
+
+    function test_CancelTask_IdentityRegistry_OwnAgentId_SendsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _bountyAfterRejection();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(rep.calls(), 1);
+    }
+
+    function test_CancelTask_IdentityRegistry_ForeignAgentId_SkipsFeedbackKeepsEvent() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _bountyAfterRejection();
+        vm.expectEmit(true, true, false, false);
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("cancelled_after_submissions"), REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 77)));
+        assertEq(rep.calls(), 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    function test_CancelTask_IdentityRegistry_NonexistentAgentId_SkipsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _bountyAfterRejection();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 9999)));
+        assertEq(rep.calls(), 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    function test_CancelTask_RevertingIdentityRegistry_SkipsFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        MockRevertingIdentityRegistry down = new MockRevertingIdentityRegistry();
+        vm.prank(owner);
+        market.setIdentityRegistry(address(down));
+        bytes32 taskId = _bountyAfterRejection();
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(rep.calls(), 0);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
     }
 
     function test_RefundExpired_StrangerThroughForwarder_NoRegistryCall() public {

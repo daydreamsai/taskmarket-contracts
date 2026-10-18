@@ -546,8 +546,30 @@ before this anyone could let their own minimum bounty expire and aim the penalty
 repeatedly, for the cost of gas. Any other caller, and a direct call by the requester, skips the
 registry call; the `RequesterReputation` event is still emitted, so the signal stays available
 to indexers. `cancelTask` already requires the requester through a forwarder, so it is unchanged
-in effect and shares the same check. A requester can still name an agent ID that is not theirs;
-binding the ID to the requester on chain is not part of this revision.
+in effect and shares the same check.
+
+That check alone still let the requester name an agent ID that is not theirs: expire or cancel
+their own small bounty and aim the -50 at any agent. So rev025 also binds the ID to the requester
+through the ERC-8004 identity registry. The diamond stores the registry address
+(`address identityRegistry`, appended to `AppStorage` after `minEvaluationWindowSecs`) rather than asking the
+reputation registry for it, so the check does not depend on a third-party contract's getter or
+state and costs no extra call to find the registry.
+
+- `setIdentityRegistry(address registry)` is owner-only and emits
+  `IdentityRegistryUpdated(registry)`; zero turns the check off. `identityRegistry()` returns the
+  stored address. Both live on `AdminFacet` and are Added by the Rev025 cut. The owner sets the
+  registry on each chain after the cut.
+- While it is set, `refundExpired` and `cancelTask` send the feedback only when
+  `ownerOf(requesterAgentId)` on that registry returns `task.requester`. The read is a
+  `staticcall` capped at 100,000 gas, made after the `minFeedbackGas` check so an under-funded
+  caller cannot run it out of gas to skip the feedback. A revert (an ID that does not exist, or a
+  broken registry), a return shorter than one word, an address with no code, or a different owner
+  skips the registry call. The `RequesterReputation` event is emitted in every case.
+- Because ownership is proven on chain, the forwarder check is not applied while the registry is
+  set: a permissionless `refundExpired` caller can only send the signal to the requester's own
+  agent.
+- While it is unset (zero, the state right after the cut), the forwarder-authenticated requester
+  check above applies unchanged.
 
 ### Errors, events, views
 
@@ -557,11 +579,11 @@ binding the ID to the requester on chain is not part of this revision.
   `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`, `TooManyTags`,
   `InvalidTaskLimits`, `EvaluationWindowClosed`, `InvalidMinEvaluationWindow`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
-  `RevisionRequested`, `TaskLimitsUpdated`, `MinEvaluationWindowUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
+  `RevisionRequested`, `TaskLimitsUpdated`, `MinEvaluationWindowUpdated`, `IdentityRegistryUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
   `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
   extension, so an indexer can track `expiryTime` from events alone.
-- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `minEvaluationWindowSecs`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
+- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `minEvaluationWindowSecs`, `identityRegistry`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
   is true while the diamond holds its reentrancy lock, which lets a hook tell a settlement still
   dispatching hooks from one that finished.
 

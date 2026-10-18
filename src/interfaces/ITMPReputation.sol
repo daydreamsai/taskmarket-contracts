@@ -16,6 +16,9 @@ interface ITMPReputation is IERC165 {
     /// @notice Emitted when a reputation registry is configured or changed.
     event ReputationRegistryUpdated(address indexed newRegistry);
 
+    /// @notice Rev025: emitted when the ERC-8004 identity registry is configured or changed.
+    event IdentityRegistryUpdated(address indexed newRegistry);
+
     /// @notice Emitted when a giveFeedback() call to the reputation registry reverts.
     ///         Deliberately non-blocking (see the try/catch call sites) so a broken or
     ///         misconfigured registry can never hold up real task settlement -- but a

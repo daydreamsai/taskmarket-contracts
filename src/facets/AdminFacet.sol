@@ -154,6 +154,19 @@ contract AdminFacet is Initializable {
         emit ITMPReputation.ReputationRegistryUpdated(registry);
     }
 
+    /// @notice Set the ERC-8004 identity registry address (owner only). While set, requester
+    ///         feedback on cancelTask and refundExpired goes only to an agent ID the requester
+    ///         owns there. Zero turns the check off.
+    function setIdentityRegistry(address registry) external onlyOwner {
+        LibAppStorage.appStorage().identityRegistry = registry;
+        emit ITMPReputation.IdentityRegistryUpdated(registry);
+    }
+
+    /// @notice The ERC-8004 identity registry address, or zero when none is set.
+    function identityRegistry() external view returns (address) {
+        return LibAppStorage.appStorage().identityRegistry;
+    }
+
     // -------------------------------------------------------------------------
     // Default hooks (Rev008)
     // -------------------------------------------------------------------------

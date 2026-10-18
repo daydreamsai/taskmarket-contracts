@@ -178,6 +178,9 @@ interface ITMPDiamond {
     // Rev025: owner-only per-chain floor on an evaluator's evaluationWindow.
     function minEvaluationWindowSecs() external view returns (uint32);
     function setMinEvaluationWindowSecs(uint32 newMinimum) external;
+    // Rev025: owner-only ERC-8004 identity registry, binding requester feedback to its agent ID.
+    function setIdentityRegistry(address registry) external;
+    function identityRegistry() external view returns (address);
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
 
     // -------------------------------------------------------------------------

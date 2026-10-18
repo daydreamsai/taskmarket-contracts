@@ -10,6 +10,7 @@ import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
+import { IIdentityRegistry } from "../interfaces/IIdentityRegistry.sol";
 import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
@@ -25,6 +26,9 @@ contract SettlementFacet {
     bytes4 private constant PITCH = TMP_PITCH;
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
     bytes4 private constant AUCTION = TMP_AUCTION;
+    // Gas forwarded to the identity registry's ownerOf. A standard ERC-721 lookup needs a few
+    // thousand; the cap bounds what a misbehaving registry can burn on a refund.
+    uint256 private constant OWNER_OF_GAS = 100_000;
 
     // -------------------------------------------------------------------------
     // Terms
@@ -234,7 +238,10 @@ contract SettlementFacet {
                 uint32(s.taskActiveSubmissionCount[taskId]),
                 false
             );
-            if (requesterAgentId != 0 && s.reputationRegistry != address(0) && _sentByRequester(s, requesterAddr)) {
+            if (
+                requesterAgentId != 0 && s.reputationRegistry != address(0)
+                    && _feedbackAllowed(s, requesterAgentId, requesterAddr)
+            ) {
                 LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
@@ -658,7 +665,10 @@ contract SettlementFacet {
             bytes32 event_ =
                 s.taskHasSubmissions[taskId] ? keccak256("expired_after_rejections") : keccak256("expired_no_action");
             emit ITMPCore.RequesterReputation(taskId, task.requester, event_, refundAmount, 0, false);
-            if (requesterAgentId != 0 && s.reputationRegistry != address(0) && _sentByRequester(s, task.requester)) {
+            if (
+                requesterAgentId != 0 && s.reputationRegistry != address(0)
+                    && _feedbackAllowed(s, requesterAgentId, task.requester)
+            ) {
                 LibTaskMarket._requireFeedbackGas();
                 try IReputationRegistry(s.reputationRegistry)
                     .giveFeedback(
@@ -674,10 +684,24 @@ contract SettlementFacet {
         LibHooks._onExpireHooks(taskId, s);
     }
 
-    /// @dev Requester feedback names a caller-supplied agent ID, so it is sent only when the
-    ///      requester itself authenticated the call through a trusted forwarder. Anyone else
-    ///      (refundExpired is permissionless) could otherwise aim the -50 at an unrelated agent.
-    ///      The RequesterReputation event is emitted either way.
+    /// @dev Requester feedback names a caller-supplied agent ID. With an identity registry set,
+    ///      it is sent only when that registry reports the requester as the ID's owner, so a
+    ///      requester cannot expire or cancel their own task to aim the -50 at someone else's
+    ///      agent. The read is a gas-capped staticcall: a revert (an ID that does not exist), a
+    ///      short return or a different owner all skip the feedback. Without a registry, the
+    ///      requester must have authenticated the call through a trusted forwarder, since
+    ///      refundExpired is permissionless. The RequesterReputation event is emitted either way.
+    function _feedbackAllowed(AppStorage storage s, uint256 agentId, address requester) private view returns (bool) {
+        address registry = s.identityRegistry;
+        if (registry == address(0)) return _sentByRequester(s, requester);
+        // Checked first so an under-funded caller cannot run ownerOf out of gas to skip feedback.
+        LibTaskMarket._requireFeedbackGas();
+        (bool ok, bytes memory ret) =
+            registry.staticcall{ gas: OWNER_OF_GAS }(abi.encodeCall(IIdentityRegistry.ownerOf, (agentId)));
+        if (!ok || ret.length < 32) return false;
+        return abi.decode(ret, (uint256)) == uint256(uint160(requester));
+    }
+
     function _sentByRequester(AppStorage storage s, address requester) private view returns (bool) {
         return s.trustedForwarders[msg.sender] && LibGuards._effectiveSender(s) == requester;
     }
