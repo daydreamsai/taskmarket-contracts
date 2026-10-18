@@ -336,22 +336,9 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         }
 
         // An accepted auction with no completion commitment: Taskmarket accepted it without running
-        // checkComplete (a verdict finalized after the task's expiry skips the check hooks). Its
-        // sole worker and accepted price (stakeAmount) remain reconstructible from the task.
+        // checkComplete (a verdict finalized after the task's expiry skips the check hooks).
         if (allocation.status == HookStatus.Reserved && task.mode == TMP_AUCTION && task.worker != address(0)) {
-            ITMPCore.Award[] memory auctionAwards = new ITMPCore.Award[](1);
-            auctionAwards[0] = ITMPCore.Award({ worker: task.worker, amount: task.stakeAmount, rank: 1 });
-            _commitCompletionMemory(
-                taskId,
-                allocation,
-                ITMPCore.VerdictType.APPROVE,
-                auctionAwards,
-                _nativePayoutPool(
-                    taskId, task.mode, task.reward, ITMPDiamond(diamond).getTaskEvaluatorConfig(taskId).evaluatorFeeBps
-                )
-            );
-            _finalizeSettlement(taskId, allocation, auctionAwards);
-            return allocation.status;
+            return _reconcileUncommittedAuction(taskId, allocation, task);
         }
 
         revert AwardsRequired(taskId);
@@ -576,8 +563,46 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
             if (allocation.awardCount != 1) return allocation.status;
             ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
             awards = new ITMPCore.Award[](1);
-            awards[0] = ITMPCore.Award({ worker: task.worker, amount: task.reward, rank: 1 });
+            // Acceptance reports an auction's accepted price (stakeAmount), not its cap.
+            uint256 amount = task.mode == TMP_AUCTION ? task.stakeAmount : task.reward;
+            awards[0] = ITMPCore.Award({ worker: task.worker, amount: amount, rank: 1 });
         }
+        _finalizeSettlement(taskId, allocation, awards);
+        return allocation.status;
+    }
+
+    /// @dev Split out of `reconcile` to stay under `forge coverage --ir-minimum`'s stack limit.
+    ///      Commits what checkComplete would have committed: a stored evaluator verdict is used
+    ///      as issued (its type and awards, against the same native pool), so a PARTIAL verdict
+    ///      scales the sponsorship exactly as it would have at checkComplete. Without a stored
+    ///      verdict the sole worker is paid the accepted price (stakeAmount), as an APPROVE.
+    function _reconcileUncommittedAuction(bytes32 taskId, TaskAllocation storage allocation, ITMPCore.Task memory task)
+        private
+        returns (HookStatus)
+    {
+        ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
+        ITMPCore.VerdictType verdictType = ITMPCore.VerdictType.APPROVE;
+        ITMPCore.Award[] memory awards;
+        if (verdict.issued) {
+            verdictType = verdict.verdictType;
+            awards = verdict.awards;
+            if (awards.length > MAX_AWARDS) {
+                _releaseForAwardOverflow(taskId, allocation, awards.length);
+                return allocation.status;
+            }
+        } else {
+            awards = new ITMPCore.Award[](1);
+            awards[0] = ITMPCore.Award({ worker: task.worker, amount: task.stakeAmount, rank: 1 });
+        }
+        _commitCompletionMemory(
+            taskId,
+            allocation,
+            verdictType,
+            awards,
+            _nativePayoutPool(
+                taskId, task.mode, task.reward, ITMPDiamond(diamond).getTaskEvaluatorConfig(taskId).evaluatorFeeBps
+            )
+        );
         _finalizeSettlement(taskId, allocation, awards);
         return allocation.status;
     }
@@ -590,9 +615,8 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         uint256 payoutPool
     ) private {
         uint256 count = awards.length;
-        // Only ever called from `reconcile`'s auction-expiry path with a single reconstructed
-        // award, so `count` can never exceed `MAX_AWARDS` here -- the overflow release path in
-        // `_commitCompletion` is what handles evaluator-submitted multi-winner verdicts.
+        // Only ever called from `_reconcileUncommittedAuction`, which releases an oversized stored
+        // verdict through `_releaseForAwardOverflow` first, so `count` never exceeds `MAX_AWARDS`.
         allocation.verdictType = verdictType;
         allocation.awardsDigest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdictType, awards);
         allocation.awardCount = uint32(count);

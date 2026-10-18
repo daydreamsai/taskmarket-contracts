@@ -529,6 +529,66 @@ contract SponsoredTaskHookTest is Test {
         assertEq(_nativePayoutPoolOf(auctionTaskId), 400_000 - 20_000);
     }
 
+    function _primeAuction(bytes32 auctionTaskId, uint256 price) private {
+        market.primeTask(auctionTaskId, MANAGER, address(usdc), NATIVE_REWARD, TMP_AUCTION, address(hook));
+        _fundLocalTask(auctionTaskId);
+        market.setWorkerAndStake(auctionTaskId, ALICE, price, keccak256("delivered"));
+        market.setStatus(auctionTaskId, ITMPCore.TaskStatus.Accepted);
+    }
+
+    /// A PARTIAL verdict finalized after expiry skips checkComplete; reconcile must settle it on
+    /// the stored verdict, scaled as checkComplete would have, not as a full APPROVE.
+    function testAuctionPartialVerdictAfterExpiryReconcilesOnStoredVerdict() external {
+        bytes32 auctionTaskId = keccak256("auction-partial-after-expiry");
+        uint256 price = 400_000;
+        _primeAuction(auctionTaskId, price);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: ALICE, amount: price / 4, rank: 1 });
+        market.setVerdict(auctionTaskId, _verdict(ITMPCore.VerdictType.PARTIAL, awards));
+
+        assertEq(uint8(hook.reconcile(auctionTaskId)), uint8(SponsoredTaskHook.HookStatus.SettlementPrepared));
+        SponsoredTaskTypes.Allocation memory settled = _vaultAllocation(vault, auctionTaskId);
+        assertEq(settled.distributedGross, GROSS / 4, "a quarter award unlocks a quarter of the sponsorship");
+        assertEq(settled.releasedAmount, GROSS - GROSS / 4);
+    }
+
+    /// Acceptance reports an auction's accepted price; reconcile's rebuilt award must match it, or
+    /// an auction accepted below its cap could never settle.
+    function testAuctionAcceptedBelowCapReconcilesCommittedCompletion() external {
+        bytes32 auctionTaskId = keccak256("auction-below-cap");
+        uint256 price = NATIVE_REWARD / 2;
+        _primeAuction(auctionTaskId, price);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: ALICE, amount: price, rank: 1 });
+        market.callCheckComplete(hook, auctionTaskId, _verdict(ITMPCore.VerdictType.APPROVE, awards));
+        assertFalse(market.getTaskVerdict(auctionTaskId).issued);
+
+        assertEq(uint8(hook.reconcile(auctionTaskId)), uint8(SponsoredTaskHook.HookStatus.SettlementPrepared));
+        assertEq(_vaultAllocation(vault, auctionTaskId).distributedGross, GROSS);
+    }
+
+    /// A partial settlement whose vault call fails leaves the commitment in place; a later
+    /// reconcile installs it and releases the unawarded part.
+    function testAuctionPartialReleaseRecoversAfterVaultFailure() external {
+        bytes32 auctionTaskId = keccak256("auction-partial-retry");
+        uint256 price = 400_000;
+        _primeAuction(auctionTaskId, price);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: ALICE, amount: price / 2, rank: 1 });
+        market.setVerdict(auctionTaskId, _verdict(ITMPCore.VerdictType.PARTIAL, awards));
+
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(vault.installSettlement.selector), "vault down");
+        vm.expectRevert(bytes("vault down"));
+        hook.reconcile(auctionTaskId);
+        assertEq(uint8(_allocationStatus(hook, auctionTaskId)), uint8(SponsoredTaskHook.HookStatus.Reserved));
+        vm.clearMockedCalls();
+
+        assertEq(uint8(hook.reconcile(auctionTaskId)), uint8(SponsoredTaskHook.HookStatus.SettlementPrepared));
+        SponsoredTaskTypes.Allocation memory settled = _vaultAllocation(vault, auctionTaskId);
+        assertEq(settled.distributedGross, GROSS / 2);
+        assertEq(settled.releasedAmount, GROSS / 2);
+    }
+
     function testEvaluatorApproveWithNoAwardsReleasesReservation() external {
         bytes32 claimTaskId = keccak256("claim-evaluated");
         market.primeTask(claimTaskId, MANAGER, address(usdc), NATIVE_REWARD, TMP_CLAIM, address(hook));

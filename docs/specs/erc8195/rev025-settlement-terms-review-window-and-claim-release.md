@@ -623,6 +623,18 @@ A Base-only `SponsoredTaskHook` implementation upgrade through `UpgradeSponsored
   accepted auction with no completion commitment (a verdict finalized after the task's expiry skips
   the check hooks) now takes the evaluator fee from the task's evaluator config instead of assuming
   none.
+- That fallback commits what `checkComplete` would have: when the task has a stored evaluator
+  verdict it uses that verdict's type and awards against the same pool, so a PARTIAL verdict
+  finalized after expiry scales the sponsorship by its awards instead of settling as a full APPROVE
+  of the accepted price. An oversized stored verdict releases the reservation as `checkComplete`
+  does. Only an accepted auction with no stored verdict is rebuilt as an APPROVE of `stakeAmount` to
+  the sole worker.
+- When `reconcile` finishes a completion that `checkComplete` committed without a stored verdict
+  (requester acceptance), the rebuilt single award is the accepted price (`stakeAmount`) for an
+  auction and `reward` otherwise, matching the award acceptance reports. Rebuilt from `reward`, an
+  auction accepted below its cap failed the commitment digest and could never settle.
+- A settlement whose vault call fails reverts as a whole, leaving the reservation and commitment as
+  they were, so a later `reconcile` installs it and releases the unawarded part.
 - A settlement already installed keeps its recorded pool; the change applies to completions
   committed after the upgrade.
 
@@ -773,4 +785,6 @@ One pass per chain, in this order:
   restored `RewardVault.available()`.
 - Sponsored task hook: an auction accepted below its cap with a PARTIAL verdict awarding the
   accepted price net of the evaluator fee distributes the whole sponsorship; `reconcile` on an
-  accepted auction records a pool of the accepted price net of the fee.
+  accepted auction records a pool of the accepted price net of the fee. `reconcile` settles a PARTIAL verdict finalized after expiry on
+  the stored verdict, settles an auction accepted below its cap without a stored verdict, and
+  recovers a partial settlement after a failed vault call.
