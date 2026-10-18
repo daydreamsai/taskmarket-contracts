@@ -8,6 +8,14 @@ import {
     ISponsoredTaskFeeBankLinkedHook
 } from "../src/hooks/sponsored-task/SponsoredTaskFeeBankGuard.sol";
 
+interface IOwnedSponsoredTaskPiece {
+    function owner() external view returns (address);
+}
+
+interface IOwnable2StepSponsoredTaskPiece is IOwnedSponsoredTaskPiece {
+    function pendingOwner() external view returns (address);
+}
+
 /// @notice Mandatory Mainnet FeeBank hardening gate for a newly deployed Sponsored Task stack.
 /// @dev The bootstrap owner remains responsible for proving from deployment transactions that no
 ///      charger other than the exact Hook was ever authorized. FeeBank's charger mapping cannot be
@@ -104,6 +112,17 @@ contract VerifySponsoredTaskFeeBankGuard is Script {
         require(bank.owner() == address(guard), "Sponsored Task guard: FeeBank owner mismatch");
         require(bank.pendingOwner() == address(0), "Sponsored Task guard: pending bank owner");
         require(bank.authorizedChargers(hook), "Sponsored Task guard: Hook revoked");
+        // The hook is the FeeBank's charger and UUPS-upgradeable by its owner; the registry and
+        // fee policy steer every vault. None of them may stay with a single deployer key.
+        require(IOwnedSponsoredTaskPiece(hook).owner() == guardAdmin, "Sponsored Task guard: Hook owner mismatch");
+        IOwnable2StepSponsoredTaskPiece registry =
+            IOwnable2StepSponsoredTaskPiece(vm.envAddress("SPONSORED_TASK_BASE_REGISTRY"));
+        IOwnable2StepSponsoredTaskPiece feePolicy =
+            IOwnable2StepSponsoredTaskPiece(vm.envAddress("SPONSORED_TASK_BASE_FEE_POLICY"));
+        require(registry.owner() == guardAdmin, "Sponsored Task guard: Registry owner mismatch");
+        require(registry.pendingOwner() == address(0), "Sponsored Task guard: pending Registry owner");
+        require(feePolicy.owner() == guardAdmin, "Sponsored Task guard: FeePolicy owner mismatch");
+        require(feePolicy.pendingOwner() == address(0), "Sponsored Task guard: pending FeePolicy owner");
         uint256 currentFee = bank.feeAmount();
         address currentRecipient = bank.feeRecipient();
         require(currentFee <= feeCeiling, "Sponsored Task guard: fee exceeds ceiling");

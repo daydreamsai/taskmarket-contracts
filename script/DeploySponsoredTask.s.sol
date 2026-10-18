@@ -24,7 +24,9 @@ import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 ///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT   — where the project-token fee is paid
 ///   FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN  — a deployed contract (Safe/timelock) that
 ///                                                  becomes the FeeBank's sole administrator after
-///                                                  this script runs; required, not optional
+///                                                  this script runs, and the owner of the hook
+///                                                  proxy, the fee policy and (once it accepts) the
+///                                                  registry; required, not optional
 ///   FORGE_SPONSORED_TASK_FEE_CEILING_USDC      — the guard's immutable ceiling on any future
 ///                                                  creation-fee change
 ///
@@ -32,6 +34,13 @@ import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 /// has no access control): any project can spin up its own vault against the deployed
 /// registry. This script deploys only the shared, protocol-owned pieces -- the hook, the fee bank,
 /// the default fee policy, and the registry/factory pair that vaults register through.
+///
+/// No protocol-owned piece stays owned by the deployer key. The hook proxy is the FeeBank's only
+/// charger and is UUPS-upgradeable by its owner, so a deployer-owned hook could be upgraded into
+/// code that charges any manager's credit and the guard would protect nothing. The hook and the
+/// fee policy are created owned by the guard admin. The registry must stay deployer-owned long
+/// enough to register the factory, so it is handed over with a two-step transfer the guard admin
+/// completes by calling `acceptOwnership()`; until then the deployer remains its owner.
 ///
 /// This hook is opt-in, never a Diamond default: unlike DeployRewardHook, this script does not
 /// call setDefaultHooks. A vault manager attaches it per task at createTask, the same way any
@@ -43,6 +52,10 @@ contract DeploySponsoredTask is Script {
         IERC20 usdc = IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS"));
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
 
+        address guardAdmin = vm.envAddress("FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN");
+        require(guardAdmin.code.length != 0, "Sponsored Task: guard admin must be a contract");
+        require(guardAdmin != deployer, "Sponsored Task: guard admin must not be the deployer");
+
         vm.startBroadcast(deployerKey);
 
         SponsoredTaskFeeBank feeBank = new SponsoredTaskFeeBank(
@@ -52,29 +65,32 @@ contract DeploySponsoredTask is Script {
             vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT")
         );
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(deployer);
-        SponsoredTaskHook hook = DeploySponsoredTaskProxy.deploy(diamond, usdc, feeBank, registry, deployer);
+        SponsoredTaskHook hook = DeploySponsoredTaskProxy.deploy(diamond, usdc, feeBank, registry, guardAdmin);
         feeBank.setCharger(address(hook), true);
 
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(
-            deployer,
+            guardAdmin,
             uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(750))),
             vm.envAddress("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT")
         );
         SponsoredTaskFactory factory = new SponsoredTaskFactory(address(hook), address(feePolicy), registry);
         registry.setFactory(address(factory), true);
+        registry.transferOwnership(guardAdmin);
 
         // Force the FeeBankGuard unconditionally -- the raw FeeBank owner can authorize an
         // arbitrary charger and drain manager credit, so this deployment never leaves the FeeBank
         // owned directly by an EOA/deployer key once this script completes.
-        address guardAdmin = vm.envAddress("FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN");
         SponsoredTaskFeeBankGuard guard = new SponsoredTaskFeeBankGuard(
             guardAdmin, feeBank, address(hook), vm.envUint("FORGE_SPONSORED_TASK_FEE_CEILING_USDC")
         );
         feeBank.transferOwnership(address(guard));
         guard.acceptFeeBankOwnership();
-        require(feeBank.owner() == address(guard), "Sponsored Task: FeeBankGuard did not take ownership");
-
         vm.stopBroadcast();
+
+        require(feeBank.owner() == address(guard), "Sponsored Task: FeeBankGuard did not take ownership");
+        require(hook.owner() == guardAdmin, "Sponsored Task: hook owner is not the guard admin");
+        require(feePolicy.owner() == guardAdmin, "Sponsored Task: fee policy owner is not the guard admin");
+        require(registry.pendingOwner() == guardAdmin, "Sponsored Task: registry not pending to the guard admin");
 
         console.log("=== Sponsored Task deployment ===");
         console.log("SponsoredTaskFeeBank:      ", address(feeBank));
@@ -85,5 +101,7 @@ contract DeploySponsoredTask is Script {
         console.log("SponsoredTaskHook (proxy): ", address(hook));
         console.log("Hook is opt-in only -- not registered as a Diamond default hook");
         console.log("FeeBank owner is now the guard at:", address(guard));
+        console.log("Hook and fee policy owner (guard admin):", guardAdmin);
+        console.log("Registry pending owner -- the guard admin must call acceptOwnership():", guardAdmin);
     }
 }

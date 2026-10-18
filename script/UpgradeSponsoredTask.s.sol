@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Script, console } from "forge-std/Script.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
+import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { ISponsoredTaskFeeBank } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskFeeBank.sol";
 import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskRegistry.sol";
 
@@ -21,6 +22,11 @@ import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/I
 /// @dev Required env vars:
 ///   FORGE_DEV_PRIVATE_KEY           — owner key (must match the hook proxy's own owner())
 ///   FORGE_SPONSORED_TASK_HOOK_ADDRESS — the EXISTING SponsoredTaskHook proxy to upgrade in place
+///
+/// Once the hook is owned by the guard-admin Safe or timelock (every deployment from
+/// DeploySponsoredTask.s.sol is), the deployer key cannot upgrade it. In that case this script
+/// deploys the new implementation only and prints the `upgradeToAndCall` target and calldata for
+/// the hook owner to propose and execute; it never calls the proxy itself.
 /// Usage:
 ///   make upgrade-sponsored-task testnet
 ///   make upgrade-sponsored-task mainnet
@@ -34,15 +40,30 @@ contract UpgradeSponsoredTask is Script {
         ISponsoredTaskFeeBank feeBank = hook.feeBank();
         ISponsoredTaskRegistry registry = hook.registry();
 
+        bool senderOwnsHook = hook.owner() == vm.addr(ownerKey);
+
         vm.startBroadcast(ownerKey);
 
         address newImplementation = address(new SponsoredTaskHook(diamond, usdc, feeBank, registry));
-        hook.upgradeToAndCall(newImplementation, "");
+        if (senderOwnsHook) hook.upgradeToAndCall(newImplementation, "");
 
         vm.stopBroadcast();
 
-        console.log("=== SponsoredTaskHook in-place upgrade complete ===");
-        console.log("Proxy (unchanged):", address(hook));
-        console.log("New implementation:", newImplementation);
+        if (senderOwnsHook) {
+            console.log("=== SponsoredTaskHook in-place upgrade complete ===");
+            console.log("Proxy (unchanged):", address(hook));
+            console.log("New implementation:", newImplementation);
+            return;
+        }
+        console.log("=== SponsoredTaskHook implementation deployed; upgrade NOT applied ===");
+        console.log("The hook is owned by", hook.owner(), "(not this key). Propose from that owner:");
+        console.log("  to:   ", address(hook));
+        console.log("  value: 0");
+        console.log("  data:");
+        console.logBytes(upgradeCalldata(newImplementation));
+    }
+
+    function upgradeCalldata(address newImplementation) public pure returns (bytes memory) {
+        return abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (newImplementation, ""));
     }
 }

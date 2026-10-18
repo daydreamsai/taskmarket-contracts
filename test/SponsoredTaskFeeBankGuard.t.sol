@@ -7,6 +7,8 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { SponsoredTaskFeeBankGuard } from "../src/hooks/sponsored-task/SponsoredTaskFeeBankGuard.sol";
 import { ISponsoredTaskFeeBank } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskFeeBank.sol";
+import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
+import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import {
     DeployAndActivateSponsoredTaskFeeBankGuard,
     VerifySponsoredTaskFeeBankGuard
@@ -14,6 +16,11 @@ import {
 
 contract FeeBankGuardCharger {
     ISponsoredTaskFeeBank public immutable feeBank;
+    address public owner;
+
+    function setOwner(address owner_) external {
+        owner = owner_;
+    }
 
     constructor(ISponsoredTaskFeeBank bank_) {
         feeBank = bank_;
@@ -471,8 +478,46 @@ contract SponsoredTaskFeeBankGuardDeploymentScriptTest is Test {
         assertEq(bank.pendingOwner(), address(0));
         assertTrue(guard.feeBankOwnershipAccepted());
 
-        vm.setEnv("SPONSORED_TASK_FEE_BANK_GUARD", vm.toString(address(guard)));
+        _setUpVerifiedOwners(guard);
         new VerifySponsoredTaskFeeBankGuard().run();
+    }
+
+    function testVerifyScriptRejectsPiecesNotOwnedByGuardAdmin() public {
+        SponsoredTaskFeeBankGuard guard = new DeployAndActivateSponsoredTaskFeeBankGuard().run();
+        (SponsoredTaskRegistry registry, SponsoredTaskFeePolicy feePolicy) = _setUpVerifiedOwners(guard);
+        VerifySponsoredTaskFeeBankGuard verifyScript = new VerifySponsoredTaskFeeBankGuard();
+
+        // An upgradeable charger hook left with the deployer key defeats the guard.
+        hook.setOwner(BOOTSTRAP_OWNER);
+        vm.expectRevert("Sponsored Task guard: Hook owner mismatch");
+        verifyScript.run();
+        hook.setOwner(address(admin));
+
+        SponsoredTaskRegistry deployerRegistry = new SponsoredTaskRegistry(BOOTSTRAP_OWNER);
+        vm.setEnv("SPONSORED_TASK_BASE_REGISTRY", vm.toString(address(deployerRegistry)));
+        vm.expectRevert("Sponsored Task guard: Registry owner mismatch");
+        verifyScript.run();
+        vm.setEnv("SPONSORED_TASK_BASE_REGISTRY", vm.toString(address(registry)));
+
+        SponsoredTaskFeePolicy deployerPolicy = new SponsoredTaskFeePolicy(BOOTSTRAP_OWNER, 750, RECIPIENT);
+        vm.setEnv("SPONSORED_TASK_BASE_FEE_POLICY", vm.toString(address(deployerPolicy)));
+        vm.expectRevert("Sponsored Task guard: FeePolicy owner mismatch");
+        verifyScript.run();
+        vm.setEnv("SPONSORED_TASK_BASE_FEE_POLICY", vm.toString(address(feePolicy)));
+
+        verifyScript.run();
+    }
+
+    function _setUpVerifiedOwners(SponsoredTaskFeeBankGuard guard)
+        private
+        returns (SponsoredTaskRegistry registry, SponsoredTaskFeePolicy feePolicy)
+    {
+        hook.setOwner(address(admin));
+        registry = new SponsoredTaskRegistry(address(admin));
+        feePolicy = new SponsoredTaskFeePolicy(address(admin), 750, RECIPIENT);
+        vm.setEnv("SPONSORED_TASK_FEE_BANK_GUARD", vm.toString(address(guard)));
+        vm.setEnv("SPONSORED_TASK_BASE_REGISTRY", vm.toString(address(registry)));
+        vm.setEnv("SPONSORED_TASK_BASE_FEE_POLICY", vm.toString(address(feePolicy)));
     }
 
     function testDeploymentScriptRefusesNonMainnet() public {
