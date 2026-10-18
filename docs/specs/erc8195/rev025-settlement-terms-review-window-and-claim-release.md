@@ -201,6 +201,8 @@ because normalization starts its window at that moment.
 On a single-payee task with an undecided delivery, the requester may accept until
 `reviewDeadline`, whether that falls before or after `expiryTime`; `TaskIsExpired` no longer blocks
 it inside the window. It clears `deliveredAt`, and sets `taskAwarded` for the paid worker.
+The synthetic verdict it hands to `checkComplete` and `onComplete` awards the amount the worker is
+paid: the accepted price (`stakeAmount`) for an auction, not the escrowed cap.
 
 #### `rejectDelivery(bytes32 taskId)` (new)
 
@@ -539,6 +541,26 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   same; `RewardVault.release` reverts on over-release, so a retry cannot double-release;
   `EpochBudget.release` is a no-op once the epoch has rolled, which the hook records as done because
   the budget has already reset.
+
+### TaskTokenRewardHook bonus basis
+
+Also in the hook implementation upgrade:
+
+- **Auction basis.** `checkSelectWorker` sizes an auction's reservation on the accepted price
+  (`getTask(taskId).stakeAmount`, which the diamond writes before it selects the worker), not on
+  `reward`, which for an auction is the price cap. The bonus follows what the worker is paid, the
+  same basis the evaluator fee uses. Otherwise a requester and a second wallet could accept an
+  auction at one base unit, pay the platform fee on that, and draw the bonus on the whole cap.
+- **Award-scaled payout.** `checkComplete` on a reserved task pays
+  `reservedTokenAmount * award / awardable`, where `award` is the sum of the verdict's awards to the
+  reserved worker, capped at `awardable`. `awardable` is the locked USD basis, less the evaluator
+  fee when the task has an evaluator, since an evaluator verdict can award at most that much; a
+  full award therefore still pays the full reservation. The unpaid part of the reservation and its
+  epoch budget are released through the progress record. A verdict that awards the reserved worker
+  nothing, such as an APPROVE with no awards, releases the whole reservation instead of paying it.
+- A reservation made on an auction before the upgrade stays sized on the cap, but its payout is
+  scaled by the award, so once the cut's `acceptSubmission` reports the accepted price it pays only
+  the accepted price's share.
 
 ## Settlement by mode
 

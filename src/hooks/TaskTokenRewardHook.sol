@@ -12,7 +12,7 @@ import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 
-import { TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
 import { IRewardVault } from "../interfaces/IRewardVault.sol";
 import { EpochBudget } from "./EpochBudget.sol";
 
@@ -411,7 +411,11 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         returns (bool)
     {
         _touchFirstSeen(worker);
-        return _reserveForWorker(taskId, ctx.requester, worker, ctx.reward);
+        // An auction escrows its price cap in `reward` but pays the accepted price, which the
+        // diamond has already written to `stakeAmount` when it selects the worker. The bonus
+        // follows what the worker is paid, so it is sized on the accepted price.
+        uint256 basis = ctx.mode == TMP_AUCTION ? ITMPCore(_s().diamond).getTask(taskId).stakeAmount : ctx.reward;
+        return _reserveForWorker(taskId, ctx.requester, worker, basis);
     }
 
     /// @notice For reserved tasks, verify the submitting worker matches the locked worker.
@@ -458,9 +462,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///         and the wallet-age ramp. Ramp-discounted tokens remain in hook balance
     ///         and are recoverable via sweepUnclaimed.
     ///
-    ///         Path A (reserved): the rate and bonus % were locked at reserve time, so the
-    ///                            _s().token amount is deterministic — pay exactly
-    ///                            state.reservedTokenAmount.
+    ///         Path A (reserved): the rate and bonus % were locked at reserve time. Pay the
+    ///                            reservation scaled by the reserved worker's award and
+    ///                            release the rest; a zero award releases all of it.
     ///         Path B (Bounty):   pay each winner proportionally using verdict.awards, at the
     ///                            current _s().dreamsPerUsdc rate and _s().bonusBps. Skips the _s().token
     ///                            bonus gracefully if no rate/bonus is configured or
@@ -481,31 +485,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
 
         if (state.reserved) {
             // Path A — Claim / Pitch / Auction
-            // Rate and USD budget were already locked/consumed at reserve time
-            // (_reserveForWorker), so the payout is exactly the reserved amount.
-            uint256 tokenReward = state.reservedTokenAmount;
-            if (tokenReward == 0) return true; // no rate at reserve time or reservation failed
-
-            // Transfer tokens from _s().vault to this hook; on failure release the reserve and
-            // let the USDC payout proceed rather than blocking settlement.
-            bool paid = false;
-            try _s().vault.pay(taskId, address(this), tokenReward) {
-                paid = true;
-            } catch { }
-
-            if (!paid) {
-                // Nothing was paid out, so release the reservation through the progress record:
-                // a release that fails here stays pending and recoverReserve can finish it.
-                // If an earlier release is still pending the reservation stays in RewardState
-                // and unpaid, so recoverReserve still sees it as stale.
-                state.paid = false;
-                _releaseReserve(taskId);
-                if (!state.reserved) state.paid = true;
-                return true;
-            }
-
-            _creditWithSplit(state.requester, state.worker, tokenReward);
-            emit RewardPaid(taskId, state.worker, state.rewardUsd, state.usdBonusValue, state.startPrice, tokenReward);
+            // Rate and USD budget were locked and consumed at reserve time (_reserveForWorker).
+            // The payout is the reservation scaled by what the verdict awards the reserved worker.
+            _payReserved(taskId, ctx, verdict);
         } else {
             // Path B — Bounty (no pre-reservation): pay each winner proportionally.
             // If no rate or bonus is configured, skip the _s().token bonus; USDC payout is not blocked.
@@ -1083,6 +1065,72 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             }
         }
         if (p.vaultReleased && p.budgetReleased) emit RewardReserveReleased(taskId, p.tokenAmount);
+    }
+
+    /// @dev Path A payout. Pays `reservedTokenAmount * award / awardable`, where `award` is what
+    ///      the verdict awards the reserved worker (capped at `awardable`) and `awardable` is the
+    ///      locked USD basis (the accepted price for an auction) less the evaluator fee when the
+    ///      task has an evaluator, since an evaluator verdict can award at most that much. The
+    ///      unpaid part of the reservation and its epoch budget are released; a zero award, or a
+    ///      vault that cannot pay, releases all of it. Expects `state.paid` to be set already.
+    function _payReserved(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict)
+        internal
+    {
+        RewardState storage state = _s().rewardStates[taskId];
+        uint256 reserved = state.reservedTokenAmount;
+        if (reserved == 0) return; // no rate at reserve time or reservation failed
+
+        uint256 awardable = state.rewardUsd;
+        if (ctx.evaluator != address(0)) awardable -= awardable * ctx.evaluatorFeeBps / 10000;
+        uint256 award = _awardTo(verdict, state.worker);
+        if (award > awardable) award = awardable;
+        uint256 tokenReward = awardable == 0 ? 0 : reserved * award / awardable;
+
+        // Transfer tokens from the vault to this hook; on failure release the reserve and let
+        // the USDC payout proceed rather than blocking settlement.
+        bool paid = false;
+        if (tokenReward > 0) {
+            try _s().vault.pay(taskId, address(this), tokenReward) {
+                paid = true;
+            } catch { }
+        }
+
+        if (!paid) {
+            // Nothing was paid out, so release the reservation through the progress record:
+            // a release that fails here stays pending and recoverReserve can finish it.
+            // If an earlier release is still pending the reservation stays in RewardState
+            // and unpaid, so recoverReserve still sees it as stale.
+            state.paid = false;
+            _releaseReserve(taskId);
+            if (!state.reserved) state.paid = true;
+            return;
+        }
+
+        uint256 usdPaid = state.usdBonusValue * award / awardable;
+        if (tokenReward < reserved) {
+            // Release the unpaid remainder. No earlier release can be pending here: a
+            // reservation is only nonzero when none was pending at reserve time, and only
+            // _releaseReserve opens one, which would have cleared this reservation.
+            state.reservedTokenAmount = reserved - tokenReward;
+            state.usdBonusValue -= usdPaid;
+            state.paid = false;
+            _releaseReserve(taskId);
+            state.paid = true;
+            state.reserved = true;
+            state.reservedTokenAmount = tokenReward;
+            state.usdBonusValue = usdPaid;
+        }
+
+        _creditWithSplit(state.requester, state.worker, tokenReward);
+        emit RewardPaid(taskId, state.worker, state.rewardUsd, usdPaid, state.startPrice, tokenReward);
+    }
+
+    /// @dev Sum of the verdict's awards to `worker`.
+    function _awardTo(ITMPCore.Verdict calldata verdict, address worker) internal pure returns (uint256 total) {
+        uint256 n = verdict.awards.length;
+        for (uint256 i; i < n; ++i) {
+            if (verdict.awards[i].worker == worker) total += verdict.awards[i].amount;
+        }
     }
 
     function _min3(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {

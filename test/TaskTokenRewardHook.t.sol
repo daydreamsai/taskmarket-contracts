@@ -18,6 +18,49 @@ import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/Mes
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { DeployRewardHookProxy } from "../script/lib/DeployRewardHookProxy.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+/// @dev Records the award amount checkComplete sees, to check what acceptSubmission reports.
+contract AwardRecorderHook is ITMPHook {
+    uint256 public lastAwardAmount;
+
+    function checkFund(bytes32, ITMPCore.TaskContext calldata, bytes calldata) external pure returns (bool) {
+        return true;
+    }
+
+    function checkClaim(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
+        return true;
+    }
+
+    function checkSelectWorker(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
+        return true;
+    }
+
+    function checkSubmit(bytes32, ITMPCore.TaskContext calldata, address, bytes32) external pure returns (bool) {
+        return true;
+    }
+
+    function checkEvaluate(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
+        return true;
+    }
+
+    function checkComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata verdict)
+        external
+        returns (bool)
+    {
+        lastAwardAmount = verdict.awards[0].amount;
+        return true;
+    }
+
+    function onComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external { }
+    function onForfeit(bytes32, ITMPCore.TaskContext calldata, address) external { }
+    function onCancel(bytes32, ITMPCore.TaskContext calldata) external { }
+    function onExpire(bytes32, ITMPCore.TaskContext calldata) external { }
+
+    function supportsInterface(bytes4 id) external pure returns (bool) {
+        return id == type(ITMPHook).interfaceId || id == 0x01ffc9a7;
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Test suite
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2496,5 +2539,137 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(uint256(vm.load(address(hook), rewardStatesSlot)), REWARD_100_USDC, "rewardStates @13");
         bytes32 progressSlot = keccak256(abi.encode(taskId, uint256(base) + 16));
         assertEq(uint256(vm.load(address(hook), progressSlot)), EXPECTED_REWARD_1000_DREAMS, "releaseProgress @16");
+    }
+
+    // ─── Award-scaled reserved bonus ──────────────────────────────────────────
+
+    address internal awardEvaluator = makeAddr("award-evaluator");
+
+    function _assignAwardEvaluator(bytes32 taskId, uint16 feeBps) internal {
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, awardEvaluator, 0, feeBps, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+    }
+
+    function _evaluateAndFinalize(bytes32 taskId, ITMPCore.Award[] memory awards) internal {
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), awards))
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+    }
+
+    function _singleAward(address w, uint256 amount) internal pure returns (ITMPCore.Award[] memory a) {
+        a = new ITMPCore.Award[](1);
+        a[0] = ITMPCore.Award({ worker: w, amount: amount, rank: 1 });
+    }
+
+    function test_auctionBonus_sizedOnAcceptedPriceNotCap() public {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), market.AUCTION_DUTCH());
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, 1)));
+        (uint256 rewardUsd, uint256 usdBonusValue,, uint256 reservedTokens,,,,,) = hook.rewardStates(taskId);
+        assertEq(rewardUsd, 1, "basis is the accepted price");
+        assertEq(usdBonusValue, 1, "bonus sized on 1 base unit");
+        assertEq(reservedTokens, DREAMS_PER_USDC / 1e6, "reservation sized on 1 base unit");
+
+        bytes32 d = keccak256("work");
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, d)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, d, 0)));
+        assertEq(hook.claimable(worker), DREAMS_PER_USDC / 1e6, "credit follows the accepted price");
+        assertEq(vault.totalReserved(), 0);
+    }
+
+    function test_auctionBonus_reducedPriceLifecycle() public {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), market.AUCTION_DUTCH());
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function test_acceptSubmission_auctionAwardIsAcceptedPrice() public {
+        AwardRecorderHook recorder = new AwardRecorderHook();
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 3 days, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH()),
+                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(recorder)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig()
+                )
+            )
+        );
+        bytes32 taskId = abi.decode(result, (bytes32));
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        bytes32 d = keccak256("work");
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, d)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, d, 0)));
+        assertEq(recorder.lastAwardAmount(), REDUCED_REWARD_40_USDC, "award is the accepted price");
+    }
+
+    function test_reservedBonus_emptyApproveReleasesReservation() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        uint256 availBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 requesterBefore = usdc.balanceOf(requester);
+
+        _evaluateAndFinalize(taskId, new ITMPCore.Award[](0));
+
+        assertEq(usdc.balanceOf(requester) - requesterBefore, REWARD_100_USDC, "requester refunded");
+        assertEq(hook.claimable(worker), 0, "no bonus for a zero award");
+        assertEq(hook.claimable(requester), 0, "no requester split for a zero award");
+        assertEq(vault.taskReserve(taskId), 0, "reservation released");
+        assertEq(vault.available(), availBefore, "vault made whole");
+        assertEq(budget.workerUsed(worker), 0, "epoch budget released");
+    }
+
+    function test_reservedBonus_awardToOtherWorkerReleasesReservation() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _evaluateAndFinalize(taskId, _singleAward(makeAddr("someone-else"), 0));
+        assertEq(hook.claimable(worker), 0);
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    function test_reservedBonus_partialAwardScalesBonus() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        uint256 availBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC / 4));
+
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 4, "quarter award, quarter bonus");
+        assertEq(vault.taskReserve(taskId), 0, "remainder released");
+        assertEq(vault.available(), availBefore - EXPECTED_REWARD_1000_DREAMS / 4);
+        assertEq(budget.workerUsed(worker), REWARD_100_USDC / 4, "budget keeps only the paid part");
+        (, uint256 usdBonusValue,, uint256 reservedTokens,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+        assertEq(usdBonusValue, REWARD_100_USDC / 4);
+        assertEq(reservedTokens, EXPECTED_REWARD_1000_DREAMS / 4);
+    }
+
+    function test_reservedBonus_fullAwardNetOfEvaluatorFeePaysFullBonus() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 1000);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC * 9 / 10));
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "everything awardable was awarded");
     }
 }

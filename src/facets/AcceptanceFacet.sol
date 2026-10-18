@@ -42,7 +42,9 @@ contract AcceptanceFacet {
         _signalDecisionLapsed(taskId, task, s);
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({ worker: worker, amount: task.reward, rank: 1 });
+        // The award is what the worker is paid: the accepted price for an auction, not its cap.
+        uint256 awardAmount = mode == AUCTION ? task.stakeAmount : task.reward;
+        awards[0] = ITMPCore.Award({ worker: worker, amount: awardAmount, rank: 1 });
         ITMPCore.Verdict memory verdict = ITMPCore.Verdict({
             issued: true,
             verdictType: ITMPCore.VerdictType.APPROVE,

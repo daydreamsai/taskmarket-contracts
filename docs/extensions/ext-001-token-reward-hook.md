@@ -63,10 +63,19 @@ For Claim / Pitch / Auction tasks, `dreamsPerUsdc` is snapshotted into
 `RewardState.startPrice` and the derived `usdBonusValue` is snapshotted into
 `RewardState.usdBonusValue` when the worker is locked in (`checkClaim` /
 `checkSelectWorker`). The `rewardUsd` input is the task's current reward at that same
-moment, not necessarily its creation-time reward. Those values are then used at
-settlement — the payout is deterministic once the worker is locked in, with no drift
-band or re-read needed, regardless of later changes to either `bonusBps` or
-`dreamsPerUsdc`.
+moment, not necessarily its creation-time reward. For an Auction it is the accepted price
+(`stakeAmount`), not the escrowed price cap, so the bonus follows what the worker is paid. Those values are then used at
+settlement, regardless of later changes to either `bonusBps` or `dreamsPerUsdc`. The
+payout is the reservation scaled by the reserved worker's award:
+
+```
+awardable   = rewardUsd - (task has an evaluator ? rewardUsd * evaluatorFeeBps / 10000 : 0)
+award       = min(sum of verdict awards to the reserved worker, awardable)
+tokenReward = reservedTokenAmount * award / awardable
+```
+
+A full award pays the whole reservation. The unpaid part, and its share of the epoch
+budget, is released; a zero award releases all of it.
 
 For Bounty tasks (no pre-reservation), the *current* `bonusBps` and `dreamsPerUsdc` at
 `checkComplete` time are used.
@@ -94,10 +103,10 @@ per-task `hookData` payload is needed.
 | Event | Hook call | Action |
 |---|---|---|
 | `createTask` | `checkFund` | Stores the initial `rewardUsd` from the task's USDC reward. Does not reserve tokens or read a rate yet. |
-| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context, then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, the claim/select-worker call reverts. |
+| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context (the accepted price for an Auction), then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, the claim/select-worker call reverts. |
 | `submitWork` | `checkSubmit` | Validates worker matches the reserved worker (reserved tasks only). |
 | `evaluate` | `checkEvaluate` | No-op. |
-| `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays exactly the reserved amount (deterministic, no drift). Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
+| `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays the reservation scaled by the reserved worker's award (see Reward Formula) and releases the rest; a zero award releases all of it. Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
 | `cancelTask` | `onCancel` | Releases the full reservation (vault tokens + USD budget) to the pools. |
 | `refundExpired` | `onExpire` | Same as cancel. |
 | `forfeitAndReopen` | `onForfeit` | Same as cancel. |
