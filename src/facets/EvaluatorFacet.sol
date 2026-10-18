@@ -106,6 +106,11 @@ contract EvaluatorFacet {
                     || ((task.mode == BOUNTY || task.mode == BENCHMARK)
                         && (task.status == ITMPCore.TaskStatus.Open
                             || task.status == ITMPCore.TaskStatus.PendingApproval)))) revert ITMPCore.WrongStatusForEvaluation();
+        // The mirror of evaluatorTimeout's boundary: a verdict is allowed up to and including the
+        // deadline, the timeout strictly after it, so only one of them can succeed at any moment.
+        if (task.status == ITMPCore.TaskStatus.Review && block.timestamp > s.phaseDeadline[taskId]) {
+            revert ITMPCore.EvaluationWindowClosed();
+        }
 
         _validateAwardRecipients(task, taskId, awards, s);
 

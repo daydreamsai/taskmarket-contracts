@@ -80,6 +80,8 @@ interface ITMPCore is IERC165 {
     error AppealWindowStillOpen();
     error NoVerdictIssued();
     error EvaluationWindowNotExpired();
+    /// @notice Rev025: evaluate on a Review task after its evaluation deadline (phaseDeadline).
+    error EvaluationWindowClosed();
     error DisputeResolutionMustAwardWorkers();
     error AwardsRequired();
     error EvaluatorCannotBeRequester();

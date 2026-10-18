@@ -2953,6 +2953,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "EvaluationWindowClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EvaluationWindowNotExpired",
     "inputs": []
   },

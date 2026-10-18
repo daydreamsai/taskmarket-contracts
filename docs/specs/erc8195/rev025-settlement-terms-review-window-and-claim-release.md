@@ -323,6 +323,17 @@ little as the minimum appeal window, after which the requester could lapse the d
 REJECT. The resolution window is its own term, separate from the evaluation window: an evaluator
 that answers in an hour and a human resolver who needs days are set independently.
 
+#### `evaluate` after the evaluation deadline (changed)
+
+On a task in `Review`, `evaluate` reverts `EvaluationWindowClosed` once `block.timestamp` is past
+`phaseDeadline` (the evaluation deadline `submitWork` sets). A verdict is allowed up to and
+including the deadline and `evaluatorTimeout` only strictly after it, so exactly one of the two can
+succeed at any moment. Before rev025 an evaluator that missed its window could still issue a
+verdict until someone called `evaluatorTimeout`, recovering the stake the timeout would forfeit
+(or, with a late REJECT, forfeiting the worker's stake), and the timeout then reverted
+`NotInReviewState`. Bounty and Benchmark verdicts on `Open` or `PendingApproval` tasks have no
+evaluation deadline and are unchanged. New error: `EvaluationWindowClosed()`.
+
 #### `evaluatorTimeout` (changed)
 
 When the evaluator times out on a single-payee task (Claim, Pitch or Auction) that holds a
@@ -516,7 +527,7 @@ binding the ID to the requester on chain is not part of this revision.
   `ReviewWindowClosed`, `DecisionWindowLapsed`, `ReleaseNotAllowed`, `StakePaymentMismatch`,
   `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`,
   `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`, `TooManyTags`,
-  `InvalidTaskLimits`.
+  `InvalidTaskLimits`, `EvaluationWindowClosed`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
   `RevisionRequested`, `TaskLimitsUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or

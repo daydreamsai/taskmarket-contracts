@@ -3897,6 +3897,48 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed));
     }
 
+    function _claimTaskInReview() internal returns (bytes32 taskId, uint256 deadline) {
+        taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+        _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        deadline = block.timestamp + 2 days;
+    }
+
+    function test_Evaluate_AtEvaluationDeadline_Succeeds() public {
+        (bytes32 taskId, uint256 deadline) = _claimTaskInReview();
+        vm.warp(deadline);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
+        // The timeout is not yet available at the deadline itself.
+        vm.expectRevert(ITMPCore.NotInReviewState.selector);
+        _relay(requester, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+    }
+
+    function test_Evaluate_AfterEvaluationDeadline_Reverts_TimeoutSucceeds() public {
+        (bytes32 taskId, uint256 deadline) = _claimTaskInReview();
+        vm.warp(deadline + 1);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](0);
+        vm.expectRevert(ITMPCore.EvaluationWindowClosed.selector);
+        _relay(
+            evaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.REJECT, uint16(0), uint16(10000), bytes32(0), awards)
+            )
+        );
+        _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Claimed));
+    }
+
     function test_EvaluatorTimeout_ClearsEvaluator_AllowsAcceptSubmission() public {
         // Bug fix: evaluatorTimeout must zero task.evaluator so acceptSubmission can proceed.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
@@ -5108,7 +5150,9 @@ contract TaskMarketTest is DiamondTestHelper {
         _relay(worker1, 0, abi.encodeCall(market.evaluatorTimeout, (taskId)));
     }
 
-    function test_Evaluate_AfterWindowBeforeAnyTimeout_Succeeds() public {
+    function test_RevertWhen_Evaluate_AfterWindowBeforeAnyTimeout() public {
+        // A verdict after the evaluation deadline is refused even when nobody has timed out the
+        // evaluator yet, so a late evaluator cannot recover the stake the timeout would forfeit.
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
         _claimTask(taskId, worker1, 0);
@@ -5116,8 +5160,9 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + 2 days + 1 hours);
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD, rank: 1 });
+        vm.expectRevert(ITMPCore.EvaluationWindowClosed.selector);
         _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 900, awards);
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Appealing));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Review));
     }
 
     // -------------------------------------------------------------------------
