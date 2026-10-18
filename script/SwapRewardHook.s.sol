@@ -32,6 +32,17 @@ interface IAuthorizedRelayer {
 ///         vault has zero outstanding reservations: the script asserts
 ///         `RewardVault.totalReserved() == 0` and reverts otherwise, rather than silently
 ///         deauthorizing the old hook out from under a live reservation.
+/// @notice Ship reward-hook LOGIC fixes with UpgradeRewardHook.s.sol (`make upgrade-reward-hook`),
+///         not this script. The hook is a UUPS proxy, so an in-place upgrade keeps the same
+///         address that every task already lists. This script only replaces the Diamond's
+///         default hooks: tasks created before the swap keep the OLD hook in their stored hook
+///         list, and once the budget and vault are re-pointed here, the old hook's budget and
+///         vault calls revert inside its own try/catch. Their USDC still settles, but the worker
+///         and requester silently get no DREAMS bonus. That covers every non-terminal task listing
+///         the old hook (open Bounty tasks, and Claim, Pitch and Auction tasks not yet reserved),
+///         which `totalReserved()` cannot see and the chain cannot enumerate cheaply. So the
+///         script refuses to run unless ACCEPT_OPEN_TASK_BONUS_LOSS=true says the operator has
+///         confirmed off chain that no such task remains, or accepts that they lose their bonus.
 /// @dev Required env vars (mirrors DeployRewardHook.s.sol, plus the existing vault address):
 ///
 ///   FORGE_DEV_PRIVATE_KEY            — owner key (must match RewardVault's and the Diamond's
@@ -62,6 +73,12 @@ interface IAuthorizedRelayer {
 ///                                       the EpochBudget deliberately; doing so orphans the
 ///                                       consumed budget of every task carried across.
 ///
+///   ACCEPT_OPEN_TASK_BONUS_LOSS      — default false, and the script reverts while it is false.
+///                                       Set true only after confirming (e.g. from the backend's
+///                                       task list) that no non-terminal task still lists the
+///                                       old hook, or after accepting that those tasks lose their
+///                                       DREAMS bonus. Prefer `make upgrade-reward-hook`.
+///
 ///   SKIP_RESERVATION_CHECK           — DANGEROUS, default false. Bypasses the
 ///                                       totalReserved()==0 guard below. Setting this true
 ///                                       means any reservation still outstanding on the old
@@ -74,21 +91,24 @@ interface IAuthorizedRelayer {
 ///                                       otherwise unrecoverable, never as a default habit.
 ///
 /// Usage:
-///   make swap-reward-hook testnet
-///   make swap-reward-hook mainnet
+///   ACCEPT_OPEN_TASK_BONUS_LOSS=true make swap-reward-hook testnet
+///   ACCEPT_OPEN_TASK_BONUS_LOSS=true make swap-reward-hook mainnet
 ///   make swap-reward-hook testnet force   # skips the reservation guard -- see above
 ///   make swap-reward-hook mainnet force   # skips the reservation guard -- see above
 contract SwapRewardHook is Script {
     error VaultHasOutstandingReservations(uint256 totalReserved);
+    error OpenTaskBonusLossNotAccepted();
 
     function run() external {
-        _run(vm.envOr("SKIP_RESERVATION_CHECK", false));
+        _run(vm.envOr("SKIP_RESERVATION_CHECK", false), vm.envOr("ACCEPT_OPEN_TASK_BONUS_LOSS", false));
     }
 
     /// @dev Split out from run() so tests can exercise both the guarded and skip-guard paths
     ///      by passing the flag directly, instead of racing vm.setEnv against Foundry's
     ///      parallel test execution (env vars are process-global, not per-test-isolated).
-    function _run(bool skipCheck) public {
+    function _run(bool skipCheck, bool acceptOpenTaskBonusLoss) public {
+        if (!acceptOpenTaskBonusLoss) revert OpenTaskBonusLossNotAccepted();
+
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(ownerKey);
         RewardVault vault = RewardVault(vm.envAddress("FORGE_REWARD_VAULT_ADDRESS"));

@@ -85,6 +85,18 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
         vm.setEnv("FORGE_MAX_USD_PER_TASK", vm.toString(MAX_PER_TASK_USD));
         vm.setEnv("FORGE_EPOCH_BUDGET_ADDRESS", vm.toString(address(oldBudget)));
         vm.setEnv("REUSE_EPOCH_BUDGET", "true");
+        vm.setEnv("ACCEPT_OPEN_TASK_BONUS_LOSS", "true");
+    }
+
+    function test_RevertWhen_SwapRewardHook_OpenTaskBonusLossNotAccepted() public {
+        // Tasks created before a swap keep the old hook in their stored hook list and silently
+        // lose their DREAMS bonus once the budget and vault move, and totalReserved() cannot see
+        // them. Without the explicit acknowledgement the script refuses before touching anything.
+        SwapRewardHook runner = new SwapRewardHook();
+        vm.expectRevert(SwapRewardHook.OpenTaskBonusLossNotAccepted.selector);
+        runner._run(false, false);
+        assertEq(diamond.getDefaultHooks()[0], address(oldHook), "default hooks must be untouched");
+        assertEq(vault.hook(), address(oldHook), "vault must still point at the old hook");
     }
 
     function test_SwapRewardHook_ReusesVaultAndAuthorizesNewHook() public {
@@ -128,7 +140,7 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
 
         SwapRewardHook runner = new SwapRewardHook();
         vm.expectRevert(abi.encodeWithSelector(SwapRewardHook.VaultHasOutstandingReservations.selector, 100e18));
-        runner._run(false);
+        runner._run(false, true);
     }
 
     function test_SwapRewardHook_SkipReservationCheck_ProceedsDespiteOutstandingReservations() public {
@@ -137,7 +149,7 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
         vault.reserve(bytes32(uint256(1)), 100e18);
         assertEq(vault.totalReserved(), 100e18);
 
-        new SwapRewardHook()._run(true);
+        new SwapRewardHook()._run(true, true);
 
         address newHook = diamond.getDefaultHooks()[0];
         assertTrue(newHook != address(oldHook), "a new hook must still be deployed");

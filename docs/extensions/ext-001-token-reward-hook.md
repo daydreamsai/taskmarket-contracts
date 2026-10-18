@@ -297,8 +297,19 @@ fund the vault with DREAMS tokens before directing live task traffic to the hook
 
 ### Replacing an existing hook
 
-`make swap-reward-hook <testnet|mainnet>` deploys a new hook + `EpochBudget` pair and reuses
-the existing `RewardVault`. It requires zero outstanding reservations in the vault.
+Ship a logic fix with `make upgrade-reward-hook <testnet|mainnet>` instead: the hook is a UUPS
+proxy, so an in-place upgrade keeps the address every task already lists.
+
+`make swap-reward-hook <testnet|mainnet>` deploys a new hook (and optionally a new `EpochBudget`)
+and reuses the existing `RewardVault`. It requires zero outstanding reservations in the vault, and
+it refuses to run unless `ACCEPT_OPEN_TASK_BONUS_LOSS=true` is set. The swap only replaces the
+Diamond's default hooks: every task created before it keeps the old hook in its stored hook list,
+and once the budget and vault move to the new hook, the old hook's calls to them revert inside its
+own try/catch. Those tasks settle their USDC but credit no DREAMS bonus, with no revert and no
+event. `totalReserved()` sees only reserved Claim, Pitch and Auction tasks, not open Bounty tasks
+or unreserved ones, and the chain cannot enumerate them cheaply, so set the flag only after
+confirming off chain (from the backend's task list) that no non-terminal task still lists the old
+hook, or after accepting that those tasks lose their bonus.
 
 A replacement hook starts with **empty storage**, and two mappings matter:
 
