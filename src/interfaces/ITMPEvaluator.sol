@@ -46,8 +46,8 @@ interface ITMPEvaluator is IERC165 {
     ///         the contract for at least stakeAmount before calling.
     ///         The stake is returned to the evaluator upon calling evaluate(), or
     ///         forfeited to the fee recipient if evaluatorTimeout() is called.
-    ///         Rev025: reverts EvaluationWindowTooShort when evaluationWindowSecs is below the
-    ///         termsBounds minWindowSecs (createTask applies the same check to its evaluator).
+    ///         Rev025: reverts EvaluationWindowTooShort when evaluationWindowSecs is below
+    ///         minEvaluationWindowSecs (createTask applies the same check to its evaluator).
     function assignEvaluator(
         bytes32 taskId,
         address evaluator,

@@ -87,7 +87,8 @@ interface ITMPCore is IERC165 {
     error EvaluatorCannotBeRequester();
     error DisputeResolverCannotBeRequester();
     error AppealWindowTooShort();
-    /// @notice Rev025: an evaluator's evaluationWindow is below the terms bound's minWindowSecs.
+    /// @notice Rev025: an evaluator's evaluationWindow is below the per-chain
+    ///         minEvaluationWindowSecs.
     error EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow);
     error InvalidMinAppealWindow();
     error InvalidMinFeedbackGas();
@@ -172,6 +173,7 @@ interface ITMPCore is IERC165 {
     error InvalidTermsBounds();
     error TooManyTags();
     error InvalidTaskLimits();
+    error InvalidMinEvaluationWindow();
     error DeliveryPending();
     error ReviewWindowOpen();
     error ReviewWindowClosed();
@@ -252,7 +254,7 @@ interface ITMPCore is IERC165 {
         address evaluator;
         uint256 evaluatorStake;
         uint16 evaluatorFeeBps;
-        /// @dev Rev025: at least the termsBounds minWindowSecs whenever an evaluator is set.
+        /// @dev Rev025: at least minEvaluationWindowSecs whenever an evaluator is set.
         uint32 evaluationWindow;
         uint32 appealWindow;
         address disputeResolver;
@@ -484,6 +486,9 @@ interface ITMPCore is IERC165 {
     ///         effective bounds, not the stored encodings.
     event TaskLimitsUpdated(uint16 maxTags, uint8 maxHooks);
     event TermsBoundsUpdated(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions);
+
+    /// @notice Rev025: the owner changed the per-chain minimum evaluation window.
+    event MinEvaluationWindowUpdated(uint32 minEvaluationWindowSecs);
 
     /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy
     ///         hook cannot block fund recovery; this event makes failures observable on-chain.

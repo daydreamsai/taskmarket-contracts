@@ -55,7 +55,7 @@ library FacetSelectors {
 
     function adminFacetSelectors() internal pure returns (bytes4[] memory s) {
         bytes4[] memory base = adminFacetSelectorsThroughRev024();
-        s = new bytes4[](base.length + 3);
+        s = new bytes4[](base.length + 5);
         for (uint256 i; i < base.length; ++i) {
             s[i] = base[i];
         }
@@ -64,6 +64,9 @@ library FacetSelectors {
         // rev025: the owner-only per-chain limits on tags and hooks per task.
         s[base.length + 1] = AdminFacet.setTaskLimits.selector;
         s[base.length + 2] = AdminFacet.taskLimits.selector;
+        // rev025: the owner-only per-chain minimum evaluation window.
+        s[base.length + 3] = AdminFacet.minEvaluationWindowSecs.selector;
+        s[base.length + 4] = AdminFacet.setMinEvaluationWindowSecs.selector;
     }
 
     /// @dev The AdminFacet selector set as it stood at rev024, cut by the rev024 and rev025 steps.

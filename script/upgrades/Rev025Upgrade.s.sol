@@ -14,10 +14,10 @@ import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
 /// @title Rev025Upgrade -- settlement terms
-/// @dev Appends taskTerms, taskClocks, taskAwarded, termsBounds and taskLimits to AppStorage. Replaces
+/// @dev Appends taskTerms, taskClocks, taskAwarded, termsBounds, taskLimits and minEvaluationWindowSecs to AppStorage. Replaces
 ///      CoreFacet (its rev024 selectors less the settlement calls) and AdminFacet with their rev024
 ///      selector lists, Adds the createTask overload taking TaskTerms to CoreFacet and
-///      setTermsBounds, setTaskLimits and taskLimits to AdminFacet, Adds SettlementFacet (normalizeTerms, getTaskTerms,
+///      setTermsBounds, setTaskLimits, taskLimits, minEvaluationWindowSecs and setMinEvaluationWindowSecs to AdminFacet, Adds SettlementFacet (normalizeTerms, getTaskTerms,
 ///      termsBounds, reviewDeadline, rejectDelivery, requestRevision, settleLapsedReview,
 ///      MAX_SUBMISSION_WINNERS, releaseClaim, isSettling, getTaskClock), Replaces EvaluatorFacet (deferred evaluator fee,
 ///      winner cap, award records), AcceptanceFacet (winner cap, award records) and RatingFacet
@@ -56,10 +56,12 @@ contract Rev025Upgrade is Script {
 
         bytes4[] memory newCore = new bytes4[](1);
         newCore[0] = ITMPTerms.createTask.selector;
-        bytes4[] memory newAdmin = new bytes4[](3);
+        bytes4[] memory newAdmin = new bytes4[](5);
         newAdmin[0] = AdminFacet.setTermsBounds.selector;
         newAdmin[1] = AdminFacet.setTaskLimits.selector;
         newAdmin[2] = AdminFacet.taskLimits.selector;
+        newAdmin[3] = AdminFacet.minEvaluationWindowSecs.selector;
+        newAdmin[4] = AdminFacet.setMinEvaluationWindowSecs.selector;
 
         bytes4[] memory core = FacetSelectors.coreFacetSelectors();
         bytes4[] memory keptCore = new bytes4[](core.length - 1);

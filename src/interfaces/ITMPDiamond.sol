@@ -79,7 +79,7 @@ interface ITMPDiamond {
     // -------------------------------------------------------------------------
     // EvaluatorFacet
     // -------------------------------------------------------------------------
-    /// @dev Rev025: reverts EvaluationWindowTooShort below the termsBounds minWindowSecs.
+    /// @dev Rev025: reverts EvaluationWindowTooShort below minEvaluationWindowSecs.
     function assignEvaluator(
         bytes32 taskId,
         address evaluator,
@@ -175,6 +175,9 @@ interface ITMPDiamond {
     // Rev025: owner-only per-chain limits on tags and hooks per task.
     function setTaskLimits(uint16 maxTags, uint8 maxHooks) external;
     function taskLimits() external view returns (uint256 maxTags, uint256 maxHooks);
+    // Rev025: owner-only per-chain floor on an evaluator's evaluationWindow.
+    function minEvaluationWindowSecs() external view returns (uint32);
+    function setMinEvaluationWindowSecs(uint32 newMinimum) external;
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
 
     // -------------------------------------------------------------------------

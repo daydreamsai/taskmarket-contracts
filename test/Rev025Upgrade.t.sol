@@ -41,13 +41,15 @@ contract Rev025UpgradeTest is Test, DiamondTestHelper {
     ///      already routes them; removing them reconstructs a rev024 diamond so the Add path runs.
     function _rev025Selectors() internal pure returns (bytes4[] memory s) {
         bytes4[] memory settlement = FacetSelectors.settlementFacetSelectorsAdded();
-        s = new bytes4[](settlement.length + 4);
+        s = new bytes4[](settlement.length + 6);
         s[0] = ITMPTerms.createTask.selector;
         s[1] = AdminFacet.setTermsBounds.selector;
         s[2] = AdminFacet.setTaskLimits.selector;
         s[3] = AdminFacet.taskLimits.selector;
+        s[4] = AdminFacet.minEvaluationWindowSecs.selector;
+        s[5] = AdminFacet.setMinEvaluationWindowSecs.selector;
         for (uint256 i; i < settlement.length; ++i) {
-            s[i + 4] = settlement[i];
+            s[i + 6] = settlement[i];
         }
     }
 

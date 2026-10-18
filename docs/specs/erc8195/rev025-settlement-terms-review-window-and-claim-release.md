@@ -122,7 +122,8 @@ their creation values; after a task is normalized, no settlement code reads them
 A task's tags are copied into the hook context of every hook dispatch, and every hook is owed a
 forced gas stipend at settlement. Neither had a creation-time bound that the owner could tune per
 chain: tags were unbounded and the hook count was a compiled `8`. rev025 appends
-`TaskLimits taskLimits` (`uint16 maxTags`, `uint8 maxHooks`) to `AppStorage` after `termsBounds`.
+`TaskLimits taskLimits` (`uint16 maxTags`, `uint8 maxHooks`) to `AppStorage` after `termsBounds`
+(`uint32 minEvaluationWindowSecs`, described under the evaluation window minimum, follows it).
 
 | Limit | Default (stored zero) | Owner may set |
 | --- | --- | --- |
@@ -361,7 +362,7 @@ whoever calls.
 
 Both entry points that configure an evaluator go through `LibTaskMarket._applyEvaluatorConfig`,
 which now reverts `EvaluationWindowTooShort(evaluationWindow, minWindow)` when the evaluation
-window is below `termsBounds().minWindowSecs` (24 hours by default).
+window is below the per-chain `minEvaluationWindowSecs` (24 hours by default).
 
 The reason is the access change above. With `evaluatorTimeout` open to anyone once the window has
 passed, a window of zero or a few seconds lets the worker submit and time the evaluator out in the
@@ -371,12 +372,24 @@ requester could time the evaluator out, so a short window only hurt the party th
 it hurts the evaluator and defeats the point of appointing one, so the window needs a floor on
 chain rather than a client-side default that a direct caller can skip.
 
-The floor reuses the terms bound instead of adding a new one. `minWindowSecs` already sets the
-shortest review, decision, reopen and resolution windows, the evaluation window is the same kind
-of human decision period, and one bound means one owner setting (`setTermsBounds`, no upgrade) and
-one value for clients to read. A chain that needs short windows, such as a test network running
-smoke tests, can lower the bound there without a contract change. Because the check lives in the
-shared helper, `createTask` cannot validate less than `assignEvaluator`.
+The floor is its own owner setting rather than `termsBounds().minWindowSecs`. That bound already
+sets the shortest review, decision, reopen and resolution windows, and tying the evaluator floor to
+it would mean an owner lowering the evaluation floor (for example on a test network running smoke
+tests) also lowers the floor on every requester-chosen window, and the reverse. Keeping them apart
+lets each be tuned per chain without moving the other. Because the check lives in the shared
+helper, `createTask` cannot validate less than `assignEvaluator`.
+
+- `uint32 minEvaluationWindowSecs` is appended to `AppStorage` after `taskLimits`. A stored zero
+  means never set and reads as 24 hours (`LibTaskMarket.DEFAULT_MIN_EVALUATION_WINDOW_SECS`), so a
+  diamond upgraded into rev025 enforces 24 hours until the owner changes it.
+- `setMinEvaluationWindowSecs(uint32 newMinimum)` is owner-only, reverts
+  `InvalidMinEvaluationWindow` for zero or a value above the effective `termsBounds()`
+  `maxWindowSecs`, and emits `MinEvaluationWindowUpdated(minEvaluationWindowSecs)`.
+- `minEvaluationWindowSecs() view returns (uint32)` returns the effective value, default
+  included. Both live on `AdminFacet` and are Added by the Rev025 cut.
+- Clients read the value through the backend's cached terms bounds read, which the indexer clears
+  on `MinEvaluationWindowUpdated`, and check it before anything is paid. Below rev025 there is no
+  minimum.
 
 The check applies at configuration time only. An evaluator configured before the upgrade keeps the
 window it was given; the bound is not re-checked on `evaluate` or `evaluatorTimeout`.
@@ -542,13 +555,13 @@ binding the ID to the requester on chain is not part of this revision.
   `ReviewWindowClosed`, `DecisionWindowLapsed`, `ReleaseNotAllowed`, `StakePaymentMismatch`,
   `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`,
   `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`, `TooManyTags`,
-  `InvalidTaskLimits`, `EvaluationWindowClosed`.
+  `InvalidTaskLimits`, `EvaluationWindowClosed`, `InvalidMinEvaluationWindow`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
-  `RevisionRequested`, `TaskLimitsUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
+  `RevisionRequested`, `TaskLimitsUpdated`, `MinEvaluationWindowUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
   `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
   extension, so an indexer can track `expiryTime` from events alone.
-- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
+- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `minEvaluationWindowSecs`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
   is true while the diamond holds its reentrancy lock, which lets a hook tell a settlement still
   dispatching hooks from one that finished.
 

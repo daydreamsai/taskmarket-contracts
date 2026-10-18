@@ -362,6 +362,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "minEvaluationWindowSecs",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "minFeedbackGas",
     "inputs": [],
     "outputs": [
@@ -487,6 +500,19 @@ export const TaskMarketABI = [
   {
     "type": "function",
     "name": "setMinAppealWindowSecs",
+    "inputs": [
+      {
+        "name": "newMinimum",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMinEvaluationWindowSecs",
     "inputs": [
       {
         "name": "newMinimum",
@@ -693,6 +719,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "MinEvaluationWindowUpdated",
+    "inputs": [
+      {
+        "name": "minEvaluationWindowSecs",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MinFeedbackGasUpdated",
     "inputs": [
       {
@@ -869,6 +908,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidMinAppealWindow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidMinEvaluationWindow",
     "inputs": []
   },
   {

@@ -279,6 +279,28 @@ contract AdminFacet is Initializable {
     }
 
     // -------------------------------------------------------------------------
+    // Minimum evaluation window (Rev025)
+    // -------------------------------------------------------------------------
+
+    /// @notice Return the per-chain floor on an evaluator's evaluationWindow, checked by
+    ///         createTask and assignEvaluator. Reads 24 hours until the owner sets it.
+    function minEvaluationWindowSecs() external view returns (uint32) {
+        return LibTaskMarket._minEvaluationWindowSecs(LibAppStorage.appStorage());
+    }
+
+    /// @notice Set the per-chain minimum evaluation window (owner only). Applies to evaluators
+    ///         assigned afterwards. Zero is rejected (it is the "never set" sentinel), as is a
+    ///         value above the effective termsBounds maxWindowSecs.
+    function setMinEvaluationWindowSecs(uint32 newMinimum) external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        uint32 maxWindow = s.termsBounds.maxWindowSecs;
+        if (maxWindow == 0) maxWindow = LibTerms.DEFAULT_MAX_WINDOW_SECS;
+        if (newMinimum == 0 || newMinimum > maxWindow) revert ITMPCore.InvalidMinEvaluationWindow();
+        s.minEvaluationWindowSecs = newMinimum;
+        emit ITMPCore.MinEvaluationWindowUpdated(newMinimum);
+    }
+
+    // -------------------------------------------------------------------------
     // Diamond version (Rev011)
     // -------------------------------------------------------------------------
 

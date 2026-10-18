@@ -5,7 +5,6 @@ import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { LibGuards } from "./LibGuards.sol";
-import { LibTerms } from "./LibTerms.sol";
 import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTaskMarket — evaluator configuration, appeal window and feedback gas helpers
@@ -36,6 +35,10 @@ library LibTaskMarket {
     // requester's choice, same as evaluationWindowSecs -- and it is admin-settable precisely
     // so it can be corrected in either direction without a facet upgrade.
     uint32 internal constant DEFAULT_MIN_APPEAL_WINDOW_SECS = 5 minutes;
+
+    // Rev025: default floor for an evaluator's evaluationWindow, used whenever
+    // s.minEvaluationWindowSecs has never been set.
+    uint32 internal constant DEFAULT_MIN_EVALUATION_WINDOW_SECS = 24 hours;
 
     // -------------------------------------------------------------------------
     // Evaluator configuration — shared by the two entry points that may write it
@@ -73,10 +76,11 @@ library LibTaskMarket {
         if (evalCfg.evaluator != address(0)) revert ITMPCore.EvaluatorAlreadyAssigned();
         if (cfg.evaluatorFeeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
         if (cfg.appealWindow < _minAppealWindowSecs(s)) revert ITMPCore.AppealWindowTooShort();
-        // Rev025: evaluatorTimeout is permissionless, so a window shorter than the terms bound's
-        // minWindow would let the worker submit and time out the evaluator a block later,
-        // forfeiting the evaluator stake and skipping evaluation. See the rev025 spec.
-        (uint32 minWindow,,,) = LibTerms.bounds(s);
+        // Rev025: evaluatorTimeout is permissionless, so a very short window would let the worker
+        // submit and time out the evaluator a block later, forfeiting the evaluator stake and
+        // skipping evaluation. The floor is per chain and separate from termsBounds, which bounds
+        // the review and decision windows. See the rev025 spec.
+        uint32 minWindow = _minEvaluationWindowSecs(s);
         if (cfg.evaluationWindow < minWindow) {
             revert ITMPCore.EvaluationWindowTooShort(cfg.evaluationWindow, minWindow);
         }
@@ -124,6 +128,13 @@ library LibTaskMarket {
     function _minAppealWindowSecs(AppStorage storage s) internal view returns (uint32) {
         uint32 configured = s.minAppealWindowSecs;
         return configured == 0 ? DEFAULT_MIN_APPEAL_WINDOW_SECS : configured;
+    }
+
+    /// @notice The effective minimum evaluation window: the owner-set value, or 24 hours when it
+    ///         has never been set. AdminFacet's setter rejects zero, so zero always means unset.
+    function _minEvaluationWindowSecs(AppStorage storage s) internal view returns (uint32) {
+        uint32 configured = s.minEvaluationWindowSecs;
+        return configured == 0 ? DEFAULT_MIN_EVALUATION_WINDOW_SECS : configured;
     }
 
     /// @dev Reverts when too little gas is left for a reputation-registry call that failures
