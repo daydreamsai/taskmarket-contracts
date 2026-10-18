@@ -158,8 +158,14 @@ Ownership is stored in `LibDiamond.DiamondStorage` (separate from `AppStorage`) 
 ```bash
 make deploy testnet   # deploys Diamond + all 9 facets via DiamondDeploy.s.sol
 make deploy mainnet   # same, targeting Base mainnet
-make upgrade testnet  # upgrades one or more facets via DiamondUpgrade.s.sol
+make upgrade testnet  # applies every pending RevNNN step via script/upgrade.sh
 ```
+
+`make upgrade <network>` runs `script/upgrade.sh`, which reads the diamond's `diamondVersion()`
+and applies each `script/upgrades/RevNNNUpgrade.s.sol` whose target revision is higher, in
+ascending order. `make upgrade <network> revNNN` applies a single step; each step script reverts
+unless the diamond is at its expected prior revision. Rev024 is never applied on its own: it
+always runs together with Rev025.
 
 After deploy, submit the Diamond proxy address on Basescan via "Is this a proxy?" —
 Basescan supports EIP-2535 detection via `IDiamondLoupe`.
