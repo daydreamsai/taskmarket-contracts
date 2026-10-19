@@ -6607,7 +6607,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(market.identityRegistry(), address(0));
     }
 
-    function test_RefundExpired_IdentityRegistry_OwnAgentId_SendsFeedback() public {
+    function test_RefundExpired_ForwarderBoundAgentId_SendsFeedback() public {
         (MockReputationRegistry rep,) = _withRegistries();
         bytes32 taskId = _bountyAfterRejection();
         vm.warp(block.timestamp + DURATION + 1);
@@ -6629,7 +6629,7 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(rep.calls(), 1, "unset: the forwarder-authenticated requester is trusted as before");
     }
 
-    function test_CancelTask_IdentityRegistry_OwnAgentId_SendsFeedback() public {
+    function test_CancelTask_ForwarderBoundAgentId_SendsFeedback() public {
         (MockReputationRegistry rep,) = _withRegistries();
         bytes32 taskId = _bountyAfterRejection();
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
@@ -6672,6 +6672,12 @@ contract TaskMarketTest is DiamondTestHelper {
         (int128 v, bool isSet) = market.feedbackValue(key);
         assertEq(v, expected, "default value");
         assertFalse(isSet, "unset by default");
+    }
+
+    function _assertSet(bytes32 key, int128 expected) internal view {
+        (int128 v, bool isSet) = market.feedbackValue(key);
+        assertEq(v, expected, "set value");
+        assertTrue(isSet, "set");
     }
 
     function test_FeedbackValue_Defaults() public view {
@@ -6717,6 +6723,17 @@ contract TaskMarketTest is DiamondTestHelper {
         market.setFeedbackValue(K_COMPLETED, -101);
         market.setFeedbackValue(K_COMPLETED, 100);
         market.setFeedbackValue(K_CANCELLED_AFTER, -100);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_SetFeedbackValue_WorkerRatingNegative() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ITMPFeedback.FeedbackValueOutOfRange.selector, int128(-1)));
+        market.setFeedbackValue(K_WORKER_RATING, -1);
+        market.setFeedbackValue(K_WORKER_RATING, 0);
+        _assertSet(K_WORKER_RATING, 0);
+        market.setFeedbackValue(K_WORKER_RATING, 100);
+        _assertSet(K_WORKER_RATING, 100);
         vm.stopPrank();
     }
 
@@ -6848,8 +6865,6 @@ contract TaskMarketTest is DiamondTestHelper {
         _rateTask(third, requester, worker1, 80, 77, 0, "", bytes32(0));
         assertEq(rep.calls(), 2, "zero turns worker feedback off");
     }
-
-    // --- Rev025: requester agent binding ---
 
     // --- Rev025: requester agent binding, supplied by the trusted forwarder ---
 

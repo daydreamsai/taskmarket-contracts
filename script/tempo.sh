@@ -13,6 +13,10 @@
 # FORGE_ERC8004_REPUTATION_REGISTRY_TEMPO_* clears the unsuffixed one too). A missing suffixed
 # variable fails before anything is sent, and the resolved inputs are printed first.
 #
+# deploy-forwarder deploys TaskMarketForwarderV2 (it checks each relayed createTask/updateTask
+# against the payment it reports), checks its usdc(), taskMarket() and authorizedRelayer() against
+# the inputs, then trusts it with addForwarder and confirms isTrustedForwarder.
+#
 # DRY_RUN=1 simulates without broadcasting (forge script without --broadcast, and no
 # addForwarder transaction).
 set -euo pipefail
@@ -137,18 +141,35 @@ case "$ACTION" in
       exit 1
     fi
     LOG="$(mktemp)"
-    forge script script/DeployForwarder.s.sol:DeployForwarder \
+    forge script script/DeployForwarderV2.s.sol:DeployForwarderV2 \
       --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" ${BROADCAST[@]+"${BROADCAST[@]}"} 2>&1 | tee "$LOG"
-    FORWARDER="$(grep 'Forwarder (FORWARDER_ADDRESS):' "$LOG" | tail -1 | awk '{print $NF}')"
+    FORWARDER="$(grep 'Forwarder v2 (FORWARDER_ADDRESS once trusted):' "$LOG" | tail -1 | awk '{print $NF}')"
+    LOGGED_USDC="$(grep '  USDC:' "$LOG" | tail -1 | awk '{print $NF}')"
+    LOGGED_MARKET="$(grep '  TaskMarket:' "$LOG" | tail -1 | awk '{print $NF}')"
+    LOGGED_RELAYER="$(grep '  Authorized relayer:' "$LOG" | tail -1 | awk '{print $NF}')"
     rm -f "$LOG"
-    if [ "$DRY_RUN" = "1" ]; then
-      echo "DRY RUN: skipping addForwarder (the simulated forwarder address is not on chain)."
-      exit 0
-    fi
     if [ -z "$FORWARDER" ]; then
       echo "Forwarder deploy did not report an address; not calling addForwarder." >&2
       exit 1
     fi
+    lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+    # expect LABEL GOT WANT: fail when the forwarder was built with anything but the inputs.
+    expect() {
+      echo "  $1 = $2"
+      [ "$(lc "$2")" = "$(lc "$3")" ] || { echo "Forwarder $1 is $2, expected $3." >&2; exit 1; }
+    }
+    echo "Forwarder v2 constructor arguments (from the deploy log):"
+    expect "usdc()" "$LOGGED_USDC" "$USDC"
+    expect "taskMarket()" "$LOGGED_MARKET" "$DIAMOND"
+    expect "authorizedRelayer()" "$LOGGED_RELAYER" "$RELAYER"
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "DRY RUN: skipping addForwarder (the simulated forwarder address is not on chain)."
+      exit 0
+    fi
+    echo "Forwarder v2 at $FORWARDER (read on chain):"
+    expect "usdc()" "$(cast call "$FORWARDER" "usdc()(address)" --rpc-url "$RPC_ALIAS")" "$USDC"
+    expect "taskMarket()" "$(cast call "$FORWARDER" "taskMarket()(address)" --rpc-url "$RPC_ALIAS")" "$DIAMOND"
+    expect "authorizedRelayer()" "$(cast call "$FORWARDER" "authorizedRelayer()(address)" --rpc-url "$RPC_ALIAS")" "$RELAYER"
     export FORWARDER_ADDRESS="$FORWARDER"
     forge script script/AddForwarder.s.sol:AddForwarder \
       --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" --broadcast --slow

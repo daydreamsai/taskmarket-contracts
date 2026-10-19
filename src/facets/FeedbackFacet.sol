@@ -11,11 +11,13 @@ import { ITMPFeedback } from "../interfaces/ITMPFeedback.sol";
 ///         the keys and their defaults). The requester binding is written by LibFeedback on
 ///         forwarder-relayed accept, cancel and refund calls; this facet only reads it.
 contract FeedbackFacet {
-    /// @notice Set the feedback value for an event key (owner only), within
-    ///         [-100, 100]. 0 sends no feedback for it.
+    /// @notice Set the feedback value for an event key (owner only), within [-100, 100], or
+    ///         [0, 100] for the worker_rating key: that value scales a 0-100 rating, so a
+    ///         negative one would invert ratings. 0 sends no feedback for it.
     function setFeedbackValue(bytes32 eventKey, int128 value) external {
         LibDiamond.enforceIsContractOwner();
-        if (value < -100 || value > 100) revert ITMPFeedback.FeedbackValueOutOfRange(value);
+        int128 min = eventKey == LibFeedback.WORKER_RATING ? int128(0) : int128(-100);
+        if (value < min || value > 100) revert ITMPFeedback.FeedbackValueOutOfRange(value);
         LibAppStorage.appStorage().feedbackValues[eventKey] = ITMPFeedback.FeedbackValue({ value: value, isSet: true });
         emit ITMPFeedback.FeedbackValueUpdated(eventKey, value);
     }

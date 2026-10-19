@@ -603,7 +603,9 @@ feedback value.
   distinguishes an explicit 0 from "use the default".
 - **`setFeedbackValue(bytes32 eventKey, int128 value)`** (FeedbackFacet, owner only, no timelock,
   like the other admin setters) stores the value and emits `FeedbackValueUpdated(eventKey, value)`.
-  It reverts `FeedbackValueOutOfRange(value)` outside [-100, 100].
+  It reverts `FeedbackValueOutOfRange(value)` outside [-100, 100], and outside [0, 100] for
+  `worker_rating`: that value scales the 0-100 rating, so a negative value would invert it (a
+  rating of 100 would send -100).
 - **`feedbackValue(bytes32 eventKey) view returns (int128 value, bool isSet)`** returns the
   effective value (the default while unset) and whether the owner has set it.
 - A value of 0 sends no feedback. `RequesterReputation` is emitted whatever the value.
@@ -690,6 +692,12 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   verdict. The unawarded part is released. When the vault cannot pay, the whole reservation is
   released through the progress record, as before. The worker did the work and was paid USDC, so a
   failed after-hook is not a reason to forfeit the bonus.
+- The same holds for an unreserved Bounty or Benchmark. When its `onComplete` reverts, the diamond
+  swallows the revert and `paid` rolls back, leaving nothing reserved to recover. On an Accepted
+  Bounty or Benchmark that is unreserved, unpaid and funded (`rewardUsd` nonzero), with an issued
+  stored verdict, `recoverReserve` sets `paid` and pays each winner from that verdict through the
+  same per-winner path as `checkComplete` (epoch budget, per-task cap, vault, `MAX_BONUS_AWARDS`).
+  `paid` is set before paying, so a second call finds nothing due and reverts `ReleaseNotDue`.
 - `onComplete` pays a reservation that `checkComplete` left unpaid, the same way `checkComplete`
   pays it (scaled by the reserved worker's award, see "TaskTokenRewardHook bonus basis"). That
   covers the completions that skip the check hooks, `settleLapsedReview` and a `finalizeVerdict`
@@ -788,7 +796,7 @@ work and never reverts:
   consumes its epoch budget once, exactly as in `checkComplete`. The after-hook gets the same
   1,000,000 gas stipend as the check hook, so the same bounds apply.
 - `BONUS_AWARD_GAS_FLOOR` stays at 200,000. Measured through `finalizeVerdict` inside the
-  1,000,000 stipend, a verdict of twelve first-time winners pays seven bonuses before the floor
+  1,000,000 stipend, a verdict of twelve first-time winners pays exactly seven bonuses (a test pins it) before the floor
   stops the loop, one short of `MAX_BONUS_AWARDS`; the remaining winners get their USDC award and
   no bonus. Each further first-time winner (a new `firstSeen` slot, new epoch-budget worker usage,
   a vault transfer and a credit) costs roughly 110,000 gas once the dependencies are warm, and the
@@ -943,7 +951,8 @@ One pass per chain, in this order:
 - `refundExpired` from a stranger, from a forwarder relaying a non-requester, and from a direct
   requester call makes no registry call and still emits `RequesterReputation`.
 - Every requester event emits `RequesterReputation` and sends its default value; owner overrides
-  and an explicit 0 apply; `setFeedbackValue` reverts for a non-owner and outside [-100, 100].
+  and an explicit 0 apply; `setFeedbackValue` reverts for a non-owner and outside [-100, 100]
+  (outside [0, 100] for `worker_rating`).
 - Binding: a forwarder call binds; a direct call's ID is ignored; a forwarder call with a different
   ID rebinds; a third party's `refundExpired` uses the stored binding; an unbound requester gets no
   feedback; a forwarder call with 0 does not unbind; an under-funded refund of a bound requester's

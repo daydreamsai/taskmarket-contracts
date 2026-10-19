@@ -41,6 +41,13 @@ contract MockPlainDelegate {
     }
 }
 
+/// @dev A wallet whose isValidSignature always reverts.
+contract MockRevertingERC1271Wallet {
+    function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
+        revert("validator down");
+    }
+}
+
 /// @dev A delegate whose isValidSignature returns a value that is not exactly the magic value.
 contract MockNearMagicDelegate {
     function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
@@ -2890,7 +2897,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
     // ─── ERC-1271 withdrawals ─────────────────────────────────────────────────
 
-    function _creditContractWallet(MockERC1271Wallet wallet) internal {
+    function _creditContractWallet(address wallet) internal {
         bytes32 taskId = _createClaimTask();
         _relay(address(wallet), 0, abi.encodeCall(market.claimTask, (taskId, 0)));
         bytes32 d = keccak256("contract-wallet-work");
@@ -2900,7 +2907,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
     function test_withdrawFor_erc1271WalletWithdraws() public {
         MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(workerKey));
-        _creditContractWallet(wallet);
+        _creditContractWallet(address(wallet));
         uint256 amount = hook.claimable(address(wallet));
         assertGt(amount, 0, "contract wallet credited");
 
@@ -2918,7 +2925,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
     function test_withdrawFor_erc1271WalletRejectsOtherSigner() public {
         MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(workerKey));
-        _creditContractWallet(wallet);
+        _creditContractWallet(address(wallet));
         uint256 amount = hook.claimable(address(wallet));
 
         address destination = makeAddr("scw-destination");
@@ -2931,6 +2938,23 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
             validBefore,
             block.chainid,
             address(hook)
+        );
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(address(wallet), destination, "scw-1", validBefore, signature);
+        assertEq(hook.claimable(address(wallet)), amount);
+    }
+
+    function test_withdrawFor_revertingValidatorRevertsInvalidSignature() public {
+        MockRevertingERC1271Wallet wallet = new MockRevertingERC1271Wallet();
+        _creditContractWallet(address(wallet));
+        uint256 amount = hook.claimable(address(wallet));
+        assertGt(amount, 0, "contract wallet credited");
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdrawFor(
+            workerKey, address(wallet), destination, "scw-1", validBefore, block.chainid, address(hook)
         );
         vm.prank(authorizedRelayer);
         vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
@@ -2967,6 +2991,25 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
         hook.withdrawFor(worker, destination, "7702-1", validBefore, signature);
         assertEq(hook.claimable(worker), amount);
+    }
+
+    function test_withdrawFor_eip7702DelegateErc1271SessionKeyWithdraws() public {
+        _earnClaimable();
+        uint256 amount = hook.claimable(worker);
+        assertGt(amount, 0);
+        // The delegate accepts a session key's signature, which ECDSA against the worker rejects,
+        // so only the delegate's ERC-1271 answer can authorise this withdraw.
+        uint256 sessionKey = uint256(keccak256("7702-session-key"));
+        vm.signAndAttachDelegation(address(new MockERC1271Wallet(vm.addr(sessionKey))), workerKey);
+
+        address destination = makeAddr("7702-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature =
+            _signWithdrawFor(sessionKey, worker, destination, "7702-1271", validBefore, block.chainid, address(hook));
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "7702-1271", validBefore, signature);
+        assertEq(dreamsToken.balanceOf(destination), amount);
+        assertEq(hook.claimable(worker), 0);
     }
 
     // ─── Bounty bonus after expiry ────────────────────────────────────────────
@@ -3020,6 +3063,29 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(dreamsToken.balanceOf(address(hook)), hookBalance, "no second payment");
     }
 
+    function test_recoverReserve_bountyAfterFailedOnComplete_paysOnce() public {
+        bytes32 taskId = _bountyEvaluatedWithAward(REWARD_100_USDC / 2);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+        market.finalizeVerdict(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.claimable(worker), 0, "onComplete paid nothing");
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertFalse(paid, "paid rolled back");
+
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "bonus on the stored award");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "budget consumed once");
+        (,,,,,,, paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "not paid twice");
+    }
+
     function test_onComplete_bountyPastExpiryCapsBonuses() public {
         bytes32 taskId = _evaluatedBounty();
         _manyAwardVerdict(taskId, 12, 0);
@@ -3040,10 +3106,9 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.recordLogs();
         market.finalizeVerdict{ gas: 25_000_000 }(taskId);
         uint256 winnersPaid = _count(vm.getRecordedLogs(), REWARD_PAID_SIG);
-        // Seven at the time of writing (the spec records it); the first winner also pays the
-        // cold access to the vault, budget and token, so later winners cost less.
-        assertGe(winnersPaid, 6, "first-time winners inside the stipend");
-        assertLe(winnersPaid, hook.MAX_BONUS_AWARDS());
+        // The first winner also pays the cold access to the vault, budget and token, so later
+        // winners cost less. Pinned so a gas change that moves the count is noticed.
+        assertEq(winnersPaid, 7, "first-time winners inside the stipend");
     }
 
     // ─── Partial payout whose release fails, then recovered ───────────────────
@@ -3152,7 +3217,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     function test_withdrawFor_ownerSignatureForOneContractWalletRejectedForAnother() public {
         MockERC1271Wallet walletA = new MockERC1271Wallet(vm.addr(workerKey));
         MockERC1271Wallet walletB = new MockERC1271Wallet(vm.addr(workerKey));
-        _creditContractWallet(walletB);
+        _creditContractWallet(address(walletB));
         uint256 amount = hook.claimable(address(walletB));
         assertGt(amount, 0);
 

@@ -48,7 +48,7 @@ What changes is the deploy and upgrade tooling, which only knew Base and Base Se
   there.
 - `DeployForwarder.s.sol` reads `FORGE_USDC_TOKEN_ADDRESS`, falling back to `USDC_TOKEN_ADDRESS`,
   so it takes the same per-network input as `DiamondDeploy.s.sol`.
-- `make deploy-forwarder tempo-testnet|tempo-mainnet` deploys `TaskMarketForwarder` against an
+- `make deploy-forwarder tempo-testnet|tempo-mainnet` deploys `TaskMarketForwarderV2` against an
   existing Tempo diamond and registers it with `addForwarder`. See "Forwarder" below.
 - The Tempo `deploy`, `deploy-forwarder` and `upgrade` targets run through `script/tempo.sh`, which
   reads only the `_TEMPO_TESTNET` / `_TEMPO_MAINNET` inputs. See "Inputs" below.
@@ -112,13 +112,16 @@ second step. `make deploy-forwarder tempo-testnet|tempo-mainnet`:
 
 1. Reads `owner()` from `FORGE_DIAMOND_ADDRESS_TEMPO_*` and stops if the deployer is not the owner:
    `AdminFacet.addForwarder(address)` is `onlyOwner`.
-2. Runs `DeployForwarder.s.sol` with `FOUNDRY_PROFILE=tempo`, `--tempo.fee-token`, `--slow` and
+2. Runs `DeployForwarderV2.s.sol` (`TaskMarketForwarderV2`, which reports the payment so relayed
+   `createTask` and `updateTask` are checked against what was paid) with `FOUNDRY_PROFILE=tempo`, `--tempo.fee-token`, `--slow` and
    Sourcify verification. The constructor takes the settlement token
    (`FORGE_USDC_TOKEN_ADDRESS_TEMPO_*`), the diamond, and the authorized relayer
-   (`FORGE_SERVER_ADDRESS_TEMPO_*`, the backend's server wallet).
+   (`FORGE_SERVER_ADDRESS_TEMPO_*`, the backend's server wallet). The script prints `usdc()`,
+   `taskMarket()` and `authorizedRelayer()` and stops unless each equals its input; after a
+   broadcast it reads them again from the deployed forwarder.
 3. Runs `AddForwarder.s.sol`, which calls `addForwarder(forwarder)` on the diamond from the owner.
 4. Checks `isTrustedForwarder(forwarder)` returns true and prints the address to set as the
    backend's `FORWARDER_ADDRESS_<chainId>`.
 
-With `DRY_RUN=1` it simulates step 2 only; the simulated forwarder does not exist on chain, so
+With `DRY_RUN=1` it simulates step 2 and checks the logged constructor arguments only; the simulated forwarder does not exist on chain, so
 `addForwarder` is skipped.

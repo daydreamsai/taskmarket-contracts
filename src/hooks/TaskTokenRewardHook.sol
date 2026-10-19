@@ -498,7 +498,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             _payReserved(taskId, ctx, verdict);
         } else {
             // Path B — Bounty (no pre-reservation): pay each winner proportionally.
-            _payBounty(taskId, ctx, verdict);
+            _payBounty(taskId, ctx.requester, verdict.awards);
         }
 
         return true;
@@ -534,7 +534,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
                 && state.rewardUsd != 0
         ) {
             state.paid = true;
-            _payBounty(taskId, ctx, verdict);
+            _payBounty(taskId, ctx.requester, verdict.awards);
             return;
         }
         _releaseReserve(taskId);
@@ -597,6 +597,20 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             || unpaidAccept;
         if (!due) revert ReleaseNotDue(taskId);
 
+        if (
+            status == ITMPCore.TaskStatus.Accepted && (task.mode == TMP_BOUNTY || task.mode == TMP_BENCHMARK)
+                && !state.reserved && !state.paid && state.rewardUsd != 0
+        ) {
+            // An unreserved Bounty or Benchmark whose onComplete failed: the diamond swallowed the
+            // revert, so `paid` rolled back. Pay the winners from the stored verdict through the
+            // same budget path onComplete uses. `paid` is set first, so this pays at most once.
+            ITMPCore.Verdict memory bv = ITMPDiamond(_s().diamond).getTaskVerdict(taskId);
+            if (bv.issued) {
+                state.paid = true;
+                _payBounty(taskId, task.requester, bv.awards);
+                return;
+            }
+        }
         bool stale = state.reserved && !state.paid && state.reservedTokenAmount > 0;
         if (!_releasePending(taskId) && !stale) revert NothingToRecover(taskId);
         if (stale && status == ITMPCore.TaskStatus.Accepted && !_releasePending(taskId)) {
@@ -1124,7 +1138,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     /// @dev Path B payout (Bounty and Benchmark, no reservation): pays each nonzero award its
     ///      bonus at the current rate and bonus %, capped by the epoch budget, the per-task cap
     ///      and the vault. Never reverts. Expects `state.paid` to be set already.
-    function _payBounty(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict) internal {
+    function _payBounty(bytes32 taskId, address requester, ITMPCore.Award[] memory awards) internal {
         // If no rate or bonus is configured, skip the token bonus; USDC payout is not blocked.
         uint256 rate = _s().dreamsPerUsdc;
         uint256 bonus = _s().bonusBps;
@@ -1135,19 +1149,19 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         // skipped before any state write, at most MAX_BONUS_AWARDS nonzero awards are paid,
         // and the loop stops once gas falls below BONUS_AWARD_GAS_FLOOR, so the remaining
         // winners go without a bonus rather than blocking the USDC payout.
-        uint256 len = verdict.awards.length;
+        uint256 len = awards.length;
         uint256 processed = 0;
         for (uint256 i; i < len; i++) {
             // Use per-winner pre-fee USDC amount as the task-value basis, then apply
             // the USD bonus % to get the actual USD value converted to tokens.
-            uint256 workerUsd = verdict.awards[i].amount;
+            uint256 workerUsd = awards[i].amount;
             if (workerUsd == 0) continue;
             if (processed == MAX_BONUS_AWARDS || gasleft() < BONUS_AWARD_GAS_FLOOR) break;
             processed++;
-            address worker = verdict.awards[i].worker;
+            address worker = awards[i].worker;
             _touchFirstSeen(worker);
             uint256 workerBonusUsd = workerUsd * bonus / 10000;
-            uint256 budgetRemaining = _s().epochBudget.remaining(ctx.requester, worker);
+            uint256 budgetRemaining = _s().epochBudget.remaining(requester, worker);
             uint256 taskCapUsd = _s().epochBudget.maxUsdPerTask();
             uint256 cappedUsd = _min3(workerBonusUsd, budgetRemaining, taskCapUsd);
             if (cappedUsd == 0) continue; // budget exhausted; skip for this worker
@@ -1187,7 +1201,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             // `_s().token` is ever changed to a callback-capable _s().token, this ordering
             // must be revisited.
             uint64 consumeEpoch = 0;
-            try _s().epochBudget.checkAndConsume(ctx.requester, worker, cappedUsd) returns (uint64 epoch) {
+            try _s().epochBudget.checkAndConsume(requester, worker, cappedUsd) returns (uint64 epoch) {
                 consumeEpoch = epoch;
             } catch {
                 continue;
@@ -1200,10 +1214,10 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
                 tokenPaid = true;
             } catch { }
             if (tokenPaid) {
-                _creditWithSplit(ctx.requester, worker, tokenReward);
+                _creditWithSplit(requester, worker, tokenReward);
                 emit RewardPaid(taskId, worker, workerUsd, cappedUsd, rate, tokenReward);
             } else {
-                try _s().epochBudget.release(ctx.requester, worker, cappedUsd, consumeEpoch) { } catch { }
+                try _s().epochBudget.release(requester, worker, cappedUsd, consumeEpoch) { } catch { }
             }
         }
     }
