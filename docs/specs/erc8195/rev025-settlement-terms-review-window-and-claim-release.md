@@ -622,6 +622,14 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   worker, after `onForfeit`, `rejectDelivery` or `releaseClaim`), a Cancelled or Expired task, or
   an Accepted task whose reservation `checkComplete` never paid (`settleLapsedReview`). It never
   releases a task that is still claimed or selected, or that paid out.
+- On an Accepted task whose reservation is still held and has no release pending (an `onComplete`
+  that failed outright), `recoverReserve` pays the bonus rather than releasing it, as `onComplete`
+  would have. The award comes from what the diamond recorded: the stored evaluator verdict's award
+  to the reserved worker (`getTaskVerdict`), scaled against the awardable basis less the evaluator
+  fee (`getTaskEvaluatorConfig`), or the whole basis for a requester acceptance, which stores no
+  verdict. The unawarded part is released. When the vault cannot pay, the whole reservation is
+  released through the progress record, as before. The worker did the work and was paid USDC, so a
+  failed after-hook is not a reason to forfeit the bonus.
 - `onComplete` pays a reservation that `checkComplete` left unpaid, the same way `checkComplete`
   pays it (scaled by the reserved worker's award, see "TaskTokenRewardHook bonus basis"). That
   covers the completions that skip the check hooks, `settleLapsedReview` and a `finalizeVerdict`
@@ -713,6 +721,21 @@ work and never reverts:
 - At most `MAX_BONUS_AWARDS` (8) nonzero awards earn a bonus, in verdict order, and the loop stops
   once `gasleft()` falls below `BONUS_AWARD_GAS_FLOOR` (200,000). Winners past either bound get
   their USDC award but no bonus.
+- `onComplete` runs the same loop for a Bounty or Benchmark task that `checkComplete` never paid.
+  A `finalizeVerdict` past the task's expiry skips the check hooks, so without this its winners got
+  no bonus. It runs only when `checkFund` configured the task (`rewardUsd` nonzero) and `paid` is
+  unset; `checkComplete` sets `paid`, so a completion that ran it is never paid twice. Each winner
+  consumes its epoch budget once, exactly as in `checkComplete`. The after-hook gets the same
+  1,000,000 gas stipend as the check hook, so the same bounds apply.
+- `BONUS_AWARD_GAS_FLOOR` stays at 200,000. Measured through `finalizeVerdict` inside the
+  1,000,000 stipend, a verdict of twelve first-time winners pays seven bonuses before the floor
+  stops the loop, one short of `MAX_BONUS_AWARDS`; the remaining winners get their USDC award and
+  no bonus. Each further first-time winner (a new `firstSeen` slot, new epoch-budget worker usage,
+  a vault transfer and a credit) costs roughly 110,000 gas once the dependencies are warm, and the
+  first one, which pays the cold access to the vault, budget and token, costs about 300,000 when
+  called alone. The floor has to cover the worst case of one iteration plus the return to the
+  diamond; lowering it to win the eighth bonus would leave too little margin for a cold first
+  iteration, so it stays.
 
 ### Bid cap
 
@@ -727,12 +750,23 @@ selection, and the `BidSubmitted` event, still name it.
 
 ### TaskTokenRewardHook contract-wallet withdrawals
 
-Also in the hook implementation upgrade: `withdrawFor` checks the wallet's signature with
-`SignatureChecker.isValidSignatureNow` instead of requiring `ECDSA.recover` to equal the wallet.
-An EOA signs exactly as before; an ERC-1271 contract wallet, which the forwarder and diamond accept
-as a requester or worker and which `_creditWithSplit` credits like any other address, can now
-authorise a withdrawal through its own `isValidSignature`. The relayer, expiry, nonce and signed
-message are unchanged.
+Also in the hook implementation upgrade: `withdrawFor` accepts either an ECDSA signature that
+recovers to the wallet (`ECDSA.tryRecover`) or the wallet's ERC-1271 `isValidSignature` returning
+exactly the magic value `0x1626ba7e`. ECDSA is tried first and whether or not the wallet has code:
+an EOA upgraded with EIP-7702 has code (its delegation designator) but still holds its key, and
+`SignatureChecker.isValidSignatureNow` skips ECDSA for any address with code, so it could not
+withdraw unless its delegate implemented ERC-1271. An ERC-1271 contract wallet, which the forwarder
+and diamond accept as a requester or worker and which `_creditWithSplit` credits like any other
+address, authorises a withdrawal through its own `isValidSignature`.
+
+The signed message also gains the wallet, chain id and hook address:
+`taskmarket:withdraw-dreams:<wallet>:<destination>:<nonce>:<validBefore>:<chainId>:<hook>`, with
+addresses as lowercase hex and `<hook>` the proxy address (`address(this)`). Before, one ERC-1271
+owner signature validated for every contract wallet that owner controlled, and any signature could
+be replayed on another chain or hook deployment; the relayer submitting and the funds going to the
+signer's chosen destination limited the impact. There is no dual-format window: authorizations
+signed for the earlier message stop verifying at the upgrade, and the backend, CLI and web app sign
+the new message, reading the hook address and chain id from `GET /api/wallet/dreams-balance`.
 
 ## Settlement by mode
 

@@ -107,7 +107,7 @@ per-task `hookData` payload is needed.
 | `submitWork` | `checkSubmit` | Validates worker matches the reserved worker (reserved tasks only). |
 | `evaluate` | `checkEvaluate` | No-op. |
 | `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays the reservation scaled by the reserved worker's award (see Reward Formula) and releases the rest; a zero award releases all of it. Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
-| `settleLapsedReview` / `finalizeVerdict` past expiry | `onComplete` | These skip `checkComplete`. A reservation still unpaid is paid here exactly as `checkComplete` would pay it, scaled by the award; a zero award releases it. After a normal `checkComplete` this is a no-op. |
+| `settleLapsedReview` / `finalizeVerdict` past expiry | `onComplete` | These skip `checkComplete`. A reservation still unpaid is paid here exactly as `checkComplete` would pay it, scaled by the award; a zero award releases it. An unpaid Bounty or Benchmark task pays its winners through the same bounded loop `checkComplete` uses. After a normal `checkComplete` this is a no-op. |
 | `cancelTask` | `onCancel` | Releases the full reservation (vault tokens + USD budget) to the pools. |
 | `refundExpired` | `onExpire` | Same as cancel. |
 | `forfeitAndReopen` | `onForfeit` | Same as cancel. |
@@ -123,7 +123,15 @@ The loop is bounded so it always returns inside the diamond's check-hook stipend
 empty verdict returns without paying, zero-amount awards are skipped before any state
 write, at most `MAX_BONUS_AWARDS` (8) nonzero awards earn a bonus, and the loop stops
 once `gasleft()` falls below `BONUS_AWARD_GAS_FLOOR` (200,000). Winners past either
-bound still receive their USDC award.
+bound still receive their USDC award. Measured inside the 1,000,000 stipend, a verdict of
+first-time winners pays seven bonuses before the floor stops the loop (each further first-time
+winner costs roughly 110,000 gas once the vault, budget and token are warm). `onComplete` runs the same loop
+when `checkComplete` was skipped (a `finalizeVerdict` past expiry), under the same stipend.
+
+**Recovering a failed `onComplete`.** If `onComplete` fails outright on an Accepted reserved
+task, `recoverReserve` (permissionless) pays the bonus from what the diamond recorded: the
+stored evaluator verdict's award to the reserved worker, or the full basis for a requester
+acceptance. When the vault cannot pay, it releases the reservation instead.
 
 ---
 
@@ -220,10 +228,12 @@ callback cannot double-pay.
 by the authorized relayer, which relays and pays gas — so `msg.sender` is never the wallet and
 cannot authorize anything on its behalf. The hook therefore checks the wallet's own
 EIP-191 signature over
-`taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>` with
-`SignatureChecker.isValidSignatureNow`, and reverts unless it is valid for the wallet whose
-balance is being moved: an ECDSA signature by an EOA wallet, or a signature an ERC-1271
-contract wallet accepts through `isValidSignature`. `validBefore` is enforced on-chain,
+`taskmarket:withdraw-dreams:<wallet>:<destination>:<nonce>:<validBefore>:<chainId>:<hook>`
+(addresses lowercase hex, `<hook>` the proxy address), and reverts unless it is
+valid for the wallet whose balance is being moved: an ECDSA signature that recovers to the
+wallet, or the wallet's ERC-1271 `isValidSignature` returning exactly `0x1626ba7e`. ECDSA is
+tried even when the wallet has code, so an EOA upgraded with EIP-7702 withdraws with its own
+key. `validBefore` is enforced on-chain,
 and `usedWithdrawNonce` (keyed on `keccak256(wallet, nonce)`) rejects replays, so a
 captured authorization cannot be re-presented by whoever holds the relaying key.
 
@@ -232,9 +242,13 @@ are complementary rather than alternatives. What changed is that the rule is now
 enforceable against *any* caller, including a future code path that forgets to apply it,
 rather than resting on one hot key remaining correct forever.
 
-The signed message is the one clients already produce. EIP-712 would be cheaper on-chain
-but would change what every client signs, so it is deliberately not used here; it could
-be added later as a second accepted format rather than a replacement.
+The message names the wallet, chain id and hook. Without the wallet, one ERC-1271 owner
+signature validated for every contract wallet that owner controls (each has its own nonce
+key); without the chain id and hook address, a signature could be replayed on another chain
+or another deployment. It stays an EIP-191 text message so every existing signer (CLI
+keystore, browser wallet) can produce it without EIP-712 support. The format took effect with
+the rev025 hook upgrade, with no window in which the earlier message is also accepted:
+authorizations signed before the upgrade stop verifying, and clients sign the new message.
 
 **Ownership.** `RewardVault`, `EpochBudget`, and `TaskTokenRewardHook` are owned by the
 deployer key at deploy time. Transfer ownership to a multisig before directing

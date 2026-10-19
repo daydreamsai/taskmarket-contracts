@@ -7,12 +7,14 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
+import { ITMPDiamond } from "../interfaces/ITMPDiamond.sol";
 
-import { TMP_AUCTION, TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_BENCHMARK, TMP_BOUNTY, TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
 import { IRewardVault } from "../interfaces/IRewardVault.sol";
 import { EpochBudget } from "./EpochBudget.sol";
 
@@ -496,87 +498,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             _payReserved(taskId, ctx, verdict);
         } else {
             // Path B — Bounty (no pre-reservation): pay each winner proportionally.
-            // If no rate or bonus is configured, skip the _s().token bonus; USDC payout is not blocked.
-            uint256 rate = _s().dreamsPerUsdc;
-            uint256 bonus = _s().bonusBps;
-            if (rate == 0 || bonus == 0) return true;
-
-            // Bounded work: the diamond calls this with a fixed gas stipend and reverts the whole
-            // settlement if it runs out. An empty verdict has no bonus to pay. Zero awards are
-            // skipped before any state write, at most MAX_BONUS_AWARDS nonzero awards are paid,
-            // and the loop stops once gas falls below BONUS_AWARD_GAS_FLOOR, so the remaining
-            // winners go without a bonus rather than blocking the USDC payout.
-            uint256 len = verdict.awards.length;
-            uint256 processed = 0;
-            for (uint256 i; i < len; i++) {
-                // Use per-winner pre-fee USDC amount as the task-value basis, then apply
-                // the USD bonus % to get the actual USD value converted to tokens.
-                uint256 workerUsd = verdict.awards[i].amount;
-                if (workerUsd == 0) continue;
-                if (processed == MAX_BONUS_AWARDS || gasleft() < BONUS_AWARD_GAS_FLOOR) break;
-                processed++;
-                address worker = verdict.awards[i].worker;
-                _touchFirstSeen(worker);
-                uint256 workerBonusUsd = workerUsd * bonus / 10000;
-                uint256 budgetRemaining = _s().epochBudget.remaining(ctx.requester, worker);
-                uint256 taskCapUsd = _s().epochBudget.maxUsdPerTask();
-                uint256 cappedUsd = _min3(workerBonusUsd, budgetRemaining, taskCapUsd);
-                if (cappedUsd == 0) continue; // budget exhausted; skip for this worker
-
-                uint256 tokenReward = cappedUsd * rate / 1e6;
-                uint256 vaultAvail = _s().vault.available();
-                if (tokenReward > vaultAvail) {
-                    // Vault can't cover the full USD-capped amount; scale down and
-                    // recompute the USD amount actually being consumed so budget
-                    // accounting stays consistent with what is actually paid out.
-                    // Intentional round-trip (divide then multiply then divide): the
-                    // _s().token amount is the true constraint here, and the tiny rounding
-                    // loss only ever under-consumes budget, never over-consumes it.
-                    tokenReward = vaultAvail;
-                    // slither-disable-next-line divide-before-multiply
-                    cappedUsd = tokenReward * 1e6 / rate;
-                    if (cappedUsd == 0 || tokenReward == 0) continue;
-                }
-
-                // TOCTOU guard: remaining() was read above but the budget may have been
-                // exhausted by a concurrent call before checkAndConsume runs. Wrap in
-                // try-catch so an unexpected revert silently skips the _s().token reward
-                // instead of reverting checkComplete and blocking the USDC payout.
-                //
-                // Ordering note: EpochBudget state is committed here BEFORE the _s().token
-                // transfer in _s().vault.payDirect below. This is intentionally NOT
-                // checks-effects-interactions-safe against the paid _s().token itself — if
-                // `_s().token` were ever an ERC777-style callback _s().token, a malicious worker
-                // contract's receive-hook could reenter between this consume and the
-                // credit below with budget already spent but tokens not yet accounted
-                // for locally. This is safe today only because: (1) `_s().token` is
-                // immutable and assumed to be a plain, non-callback ERC20 for the
-                // lifetime of this contract, (2) `_s().vault`/`_s().epochBudget` are onlyHook-
-                // gated so a reentrant call can't touch them directly, and (3) this
-                // whole call executes inside the Diamond's own reentrancy guard, so a
-                // reentrant call back into any Diamond-facing function reverts. If
-                // `_s().token` is ever changed to a callback-capable _s().token, this ordering
-                // must be revisited.
-                uint64 consumeEpoch = 0;
-                try _s().epochBudget.checkAndConsume(ctx.requester, worker, cappedUsd) returns (uint64 epoch) {
-                    consumeEpoch = epoch;
-                } catch {
-                    continue;
-                }
-
-                bool tokenPaid = false;
-                // _s().vault is a trusted internal contract; hook is called inside Diamond reentrancy guard
-                // slither-disable-next-line reentrancy-no-eth
-                try _s().vault.payDirect(address(this), tokenReward) {
-                    tokenPaid = true;
-                } catch { }
-                if (tokenPaid) {
-                    _creditWithSplit(ctx.requester, worker, tokenReward);
-                    emit RewardPaid(taskId, worker, workerUsd, cappedUsd, rate, tokenReward);
-                } else {
-                    try _s().epochBudget.release(ctx.requester, worker, cappedUsd, consumeEpoch) { } catch { }
-                }
-            }
+            _payBounty(taskId, ctx, verdict);
         }
 
         return true;
@@ -600,6 +522,19 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         if (state.reserved && !state.paid && state.reservedTokenAmount > 0 && !_releasePending(taskId)) {
             state.paid = true;
             _payReserved(taskId, ctx, verdict);
+            return;
+        }
+        // The same for a Bounty or Benchmark: checkComplete is what pays its winners, so a
+        // finalizeVerdict past expiry would otherwise leave them without a bonus. `rewardUsd` is
+        // nonzero once checkFund has run, and `paid` is set by checkComplete, so a completion that
+        // ran checkComplete is never paid twice. The gas stipend matches checkComplete's, so the
+        // same MAX_BONUS_AWARDS and BONUS_AWARD_GAS_FLOOR bounds apply.
+        if (
+            (ctx.mode == TMP_BOUNTY || ctx.mode == TMP_BENCHMARK) && !state.reserved && !state.paid
+                && state.rewardUsd != 0
+        ) {
+            state.paid = true;
+            _payBounty(taskId, ctx, verdict);
             return;
         }
         _releaseReserve(taskId);
@@ -645,8 +580,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///         state on the Diamond shows is due, and each dependency at most once.
     /// @dev Due means the task is Cancelled or Expired, is a Claim or Pitch task back in Open
     ///      with no worker, or is Accepted with the reservation unpaid (an onComplete that failed
-    ///      or could not pay). A task that is claimed, selected, under review or paid out is
-    ///      never released.
+    ///      or could not pay). An Accepted task whose reservation is still held is paid rather
+    ///      than released when the vault can pay. A task that is claimed, selected, under review
+    ///      or paid out is never released.
     function recoverReserve(bytes32 taskId) external {
         // A settlement still dispatching hooks holds the diamond's lock and has set Accepted before
         // checkComplete runs, so its reservation is not yet due; a finished one has released it.
@@ -663,6 +599,27 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
 
         bool stale = state.reserved && !state.paid && state.reservedTokenAmount > 0;
         if (!_releasePending(taskId) && !stale) revert NothingToRecover(taskId);
+        if (stale && status == ITMPCore.TaskStatus.Accepted && !_releasePending(taskId)) {
+            // The task completed but no after-hook paid the reservation (an onComplete that
+            // failed). Pay it as onComplete would have, from what the diamond recorded: the stored
+            // evaluator verdict's award to the reserved worker, or the whole awardable basis for a
+            // requester acceptance, which has no stored verdict. A vault that cannot pay now
+            // releases the reservation through the progress record instead.
+            ITMPCore.TaskEvaluatorConfig memory ec = ITMPDiamond(_s().diamond).getTaskEvaluatorConfig(taskId);
+            uint256 awardable = state.rewardUsd;
+            if (ec.evaluator != address(0)) awardable -= awardable * ec.evaluatorFeeBps / 10000;
+            ITMPCore.Verdict memory v = ITMPDiamond(_s().diamond).getTaskVerdict(taskId);
+            uint256 award = awardable;
+            if (v.issued) {
+                award = 0;
+                for (uint256 i; i < v.awards.length; ++i) {
+                    if (v.awards[i].worker == state.worker) award += v.awards[i].amount;
+                }
+            }
+            state.paid = true;
+            _payReservedAward(taskId, awardable, award);
+            return;
+        }
         _releaseReserve(taskId);
     }
 
@@ -700,11 +657,13 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///      whole _s().claimable ledger rested on one hot key being correct forever -- including
     ///      in every future code path that might call this without replicating the check.
     ///
-    ///      The signed message is byte-identical to the one clients already produce
-    ///      (`taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>`, EIP-191), so
-    ///      no wallet, CLI or web client has to change how it signs. Reconstructing the
-    ///      string on-chain costs gas that a withdrawal can afford, and buys compatibility
-    ///      that an EIP-712 migration would have spent.
+    ///      The signed message is EIP-191 personal_sign text,
+    ///      `taskmarket:withdraw-dreams:<wallet>:<destination>:<nonce>:<validBefore>:<chainId>:<hook>`,
+    ///      with addresses lowercase hex. Naming the wallet stops one ERC-1271 owner signature
+    ///      authorising every contract wallet that owner controls; naming the chain id and this
+    ///      hook (the proxy address) stops a signature replaying on another chain or deployment.
+    ///      Keeping it a text message lets every existing signer (CLI keystore, browser wallet)
+    ///      produce it without EIP-712 support.
     ///
     ///      `_s().usedWithdrawNonce` makes replay protection on-chain rather than solely in the
     ///      _s().authorizedRelayer's database, which is the same argument one layer down: a captured
@@ -724,16 +683,27 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
 
         string memory message = string.concat(
             "taskmarket:withdraw-dreams:",
+            Strings.toHexString(wallet),
+            ":",
             Strings.toHexString(destination),
             ":",
             nonce,
             ":",
-            Strings.toString(validBefore)
+            Strings.toString(validBefore),
+            ":",
+            Strings.toString(block.chainid),
+            ":",
+            Strings.toHexString(address(this))
         );
         bytes32 digest = MessageHashUtils.toEthSignedMessageHash(bytes(message));
-        // SignatureChecker accepts an EOA's ECDSA signature and an ERC-1271 contract wallet's own
-        // validation, so a contract wallet credited as a requester or worker can withdraw too.
-        if (!SignatureChecker.isValidSignatureNow(wallet, digest, signature)) revert InvalidWithdrawSignature();
+        // An ECDSA signature by the wallet's own key, or the wallet's ERC-1271 validation. ECDSA
+        // is tried first and regardless of code, because an EOA upgraded with EIP-7702 has code
+        // (its delegation designator) but still holds its key; SignatureChecker would skip ECDSA
+        // for it. ERC-1271 must return exactly the magic value.
+        (address recovered, ECDSA.RecoverError err, bytes32 errArg) = ECDSA.tryRecover(digest, signature);
+        bool valid = err == ECDSA.RecoverError.NoError && errArg == bytes32(0) && recovered == wallet;
+        if (!valid) valid = SignatureChecker.isValidERC1271SignatureNow(wallet, digest, signature);
+        if (!valid) revert InvalidWithdrawSignature();
 
         _s().usedWithdrawNonce[nonceKey] = true;
 
@@ -1098,12 +1068,17 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         internal
     {
         RewardState storage state = _s().rewardStates[taskId];
+        uint256 awardable = state.rewardUsd;
+        if (ctx.evaluator != address(0)) awardable -= awardable * ctx.evaluatorFeeBps / 10000;
+        _payReservedAward(taskId, awardable, _awardTo(verdict, state.worker));
+    }
+
+    /// @dev The payout half of `_payReserved`, shared with `recoverReserve`.
+    function _payReservedAward(bytes32 taskId, uint256 awardable, uint256 award) internal {
+        RewardState storage state = _s().rewardStates[taskId];
         uint256 reserved = state.reservedTokenAmount;
         if (reserved == 0) return; // no rate at reserve time or reservation failed
 
-        uint256 awardable = state.rewardUsd;
-        if (ctx.evaluator != address(0)) awardable -= awardable * ctx.evaluatorFeeBps / 10000;
-        uint256 award = _awardTo(verdict, state.worker);
         if (award > awardable) award = awardable;
         uint256 tokenReward = awardable == 0 ? 0 : reserved * award / awardable;
 
@@ -1144,6 +1119,93 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
 
         _creditWithSplit(state.requester, state.worker, tokenReward);
         emit RewardPaid(taskId, state.worker, state.rewardUsd, usdPaid, state.startPrice, tokenReward);
+    }
+
+    /// @dev Path B payout (Bounty and Benchmark, no reservation): pays each nonzero award its
+    ///      bonus at the current rate and bonus %, capped by the epoch budget, the per-task cap
+    ///      and the vault. Never reverts. Expects `state.paid` to be set already.
+    function _payBounty(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata verdict) internal {
+        // If no rate or bonus is configured, skip the token bonus; USDC payout is not blocked.
+        uint256 rate = _s().dreamsPerUsdc;
+        uint256 bonus = _s().bonusBps;
+        if (rate == 0 || bonus == 0) return;
+
+        // Bounded work: the diamond calls this with a fixed gas stipend and reverts the whole
+        // settlement if it runs out. An empty verdict has no bonus to pay. Zero awards are
+        // skipped before any state write, at most MAX_BONUS_AWARDS nonzero awards are paid,
+        // and the loop stops once gas falls below BONUS_AWARD_GAS_FLOOR, so the remaining
+        // winners go without a bonus rather than blocking the USDC payout.
+        uint256 len = verdict.awards.length;
+        uint256 processed = 0;
+        for (uint256 i; i < len; i++) {
+            // Use per-winner pre-fee USDC amount as the task-value basis, then apply
+            // the USD bonus % to get the actual USD value converted to tokens.
+            uint256 workerUsd = verdict.awards[i].amount;
+            if (workerUsd == 0) continue;
+            if (processed == MAX_BONUS_AWARDS || gasleft() < BONUS_AWARD_GAS_FLOOR) break;
+            processed++;
+            address worker = verdict.awards[i].worker;
+            _touchFirstSeen(worker);
+            uint256 workerBonusUsd = workerUsd * bonus / 10000;
+            uint256 budgetRemaining = _s().epochBudget.remaining(ctx.requester, worker);
+            uint256 taskCapUsd = _s().epochBudget.maxUsdPerTask();
+            uint256 cappedUsd = _min3(workerBonusUsd, budgetRemaining, taskCapUsd);
+            if (cappedUsd == 0) continue; // budget exhausted; skip for this worker
+
+            uint256 tokenReward = cappedUsd * rate / 1e6;
+            uint256 vaultAvail = _s().vault.available();
+            if (tokenReward > vaultAvail) {
+                // Vault can't cover the full USD-capped amount; scale down and
+                // recompute the USD amount actually being consumed so budget
+                // accounting stays consistent with what is actually paid out.
+                // Intentional round-trip (divide then multiply then divide): the
+                // _s().token amount is the true constraint here, and the tiny rounding
+                // loss only ever under-consumes budget, never over-consumes it.
+                tokenReward = vaultAvail;
+                // slither-disable-next-line divide-before-multiply
+                cappedUsd = tokenReward * 1e6 / rate;
+                if (cappedUsd == 0 || tokenReward == 0) continue;
+            }
+
+            // TOCTOU guard: remaining() was read above but the budget may have been
+            // exhausted by a concurrent call before checkAndConsume runs. Wrap in
+            // try-catch so an unexpected revert silently skips the _s().token reward
+            // instead of reverting checkComplete and blocking the USDC payout.
+            //
+            // Ordering note: EpochBudget state is committed here BEFORE the _s().token
+            // transfer in _s().vault.payDirect below. This is intentionally NOT
+            // checks-effects-interactions-safe against the paid _s().token itself — if
+            // `_s().token` were ever an ERC777-style callback _s().token, a malicious worker
+            // contract's receive-hook could reenter between this consume and the
+            // credit below with budget already spent but tokens not yet accounted
+            // for locally. This is safe today only because: (1) `_s().token` is
+            // immutable and assumed to be a plain, non-callback ERC20 for the
+            // lifetime of this contract, (2) `_s().vault`/`_s().epochBudget` are onlyHook-
+            // gated so a reentrant call can't touch them directly, and (3) this
+            // whole call executes inside the Diamond's own reentrancy guard, so a
+            // reentrant call back into any Diamond-facing function reverts. If
+            // `_s().token` is ever changed to a callback-capable _s().token, this ordering
+            // must be revisited.
+            uint64 consumeEpoch = 0;
+            try _s().epochBudget.checkAndConsume(ctx.requester, worker, cappedUsd) returns (uint64 epoch) {
+                consumeEpoch = epoch;
+            } catch {
+                continue;
+            }
+
+            bool tokenPaid = false;
+            // _s().vault is a trusted internal contract; hook is called inside Diamond reentrancy guard
+            // slither-disable-next-line reentrancy-no-eth
+            try _s().vault.payDirect(address(this), tokenReward) {
+                tokenPaid = true;
+            } catch { }
+            if (tokenPaid) {
+                _creditWithSplit(ctx.requester, worker, tokenReward);
+                emit RewardPaid(taskId, worker, workerUsd, cappedUsd, rate, tokenReward);
+            } else {
+                try _s().epochBudget.release(ctx.requester, worker, cappedUsd, consumeEpoch) { } catch { }
+            }
+        }
     }
 
     /// @dev Sum of the verdict's awards to `worker`.

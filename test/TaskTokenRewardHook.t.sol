@@ -34,6 +34,20 @@ contract MockERC1271Wallet {
     }
 }
 
+/// @dev A delegate with no ERC-1271 support, standing in for an EIP-7702 account implementation.
+contract MockPlainDelegate {
+    function ping() external pure returns (bool) {
+        return true;
+    }
+}
+
+/// @dev A delegate whose isValidSignature returns a value that is not exactly the magic value.
+contract MockNearMagicDelegate {
+    function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
+        return bytes4(0x1626ba7f);
+    }
+}
+
 /// @dev Records the award amount checkComplete sees, to check what acceptSubmission reports.
 contract AwardRecorderHook is ITMPHook {
     uint256 public lastAwardAmount;
@@ -783,16 +797,34 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     /// `taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>`.
     function _signWithdraw(uint256 key, address destination, string memory nonce, uint256 validBefore)
         internal
-        pure
+        view
         returns (bytes memory)
     {
+        return _signWithdrawFor(key, vm.addr(key), destination, nonce, validBefore, block.chainid, address(hook));
+    }
+
+    function _signWithdrawFor(
+        uint256 key,
+        address wallet,
+        address destination,
+        string memory nonce,
+        uint256 validBefore,
+        uint256 chainId,
+        address hookAddr
+    ) internal pure returns (bytes memory) {
         string memory message = string.concat(
             "taskmarket:withdraw-dreams:",
+            Strings.toHexString(wallet),
+            ":",
             Strings.toHexString(destination),
             ":",
             nonce,
             ":",
-            Strings.toString(validBefore)
+            Strings.toString(validBefore),
+            ":",
+            Strings.toString(chainId),
+            ":",
+            Strings.toHexString(hookAddr)
         );
         (uint8 v, bytes32 r, bytes32 sig) = vm.sign(key, MessageHashUtils.toEthSignedMessageHash(bytes(message)));
         return abi.encodePacked(r, sig, v);
@@ -2049,6 +2081,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     bytes32 constant BUDGET_RELEASED_SIG = keccak256("RewardBudgetReleased(bytes32,uint256)");
     bytes32 constant RESERVE_RELEASED_SIG = keccak256("RewardReserveReleased(bytes32,uint256)");
     bytes32 constant RELEASE_FAILED_SIG = keccak256("RewardReleaseFailed(bytes32,uint8)");
+    bytes32 constant REWARD_PAID_SIG = keccak256("RewardPaid(bytes32,address,uint256,uint256,uint256,uint256)");
 
     function _claimedPastExpiry() internal returns (bytes32 taskId) {
         taskId = _createClaimTask();
@@ -2873,7 +2906,9 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
         address destination = makeAddr("scw-destination");
         uint256 validBefore = block.timestamp + 1 hours;
-        bytes memory signature = _signWithdraw(workerKey, destination, "scw-1", validBefore);
+        bytes memory signature = _signWithdrawFor(
+            workerKey, address(wallet), destination, "scw-1", validBefore, block.chainid, address(hook)
+        );
         vm.prank(authorizedRelayer);
         hook.withdrawFor(address(wallet), destination, "scw-1", validBefore, signature);
 
@@ -2888,10 +2923,269 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
         address destination = makeAddr("scw-destination");
         uint256 validBefore = block.timestamp + 1 hours;
-        bytes memory signature = _signWithdraw(uint256(keccak256("not-the-owner")), destination, "scw-1", validBefore);
+        bytes memory signature = _signWithdrawFor(
+            uint256(keccak256("not-the-owner")),
+            address(wallet),
+            destination,
+            "scw-1",
+            validBefore,
+            block.chainid,
+            address(hook)
+        );
         vm.prank(authorizedRelayer);
         vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
         hook.withdrawFor(address(wallet), destination, "scw-1", validBefore, signature);
         assertEq(hook.claimable(address(wallet)), amount);
+    }
+    // ─── EIP-7702 withdrawals ─────────────────────────────────────────────────
+
+    function test_withdrawFor_eip7702DelegatedEoaWithdraws() public {
+        _earnClaimable();
+        uint256 amount = hook.claimable(worker);
+        assertGt(amount, 0);
+        vm.signAndAttachDelegation(address(new MockPlainDelegate()), workerKey);
+        assertGt(worker.code.length, 0, "worker now has code");
+
+        address destination = makeAddr("7702-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "7702-1", validBefore);
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "7702-1", validBefore, signature);
+        assertEq(dreamsToken.balanceOf(destination), amount);
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_withdrawFor_eip7702RejectsOtherSignerAndNearMagic() public {
+        _earnClaimable();
+        uint256 amount = hook.claimable(worker);
+        vm.signAndAttachDelegation(address(new MockNearMagicDelegate()), workerKey);
+
+        address destination = makeAddr("7702-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(uint256(keccak256("not-the-owner")), destination, "7702-1", validBefore);
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "7702-1", validBefore, signature);
+        assertEq(hook.claimable(worker), amount);
+    }
+
+    // ─── Bounty bonus after expiry ────────────────────────────────────────────
+
+    function _bountyEvaluatedWithAward(uint256 award) internal returns (bytes32 taskId) {
+        taskId = _evaluatedBounty();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate,
+                (taskId, ITMPCore.VerdictType.PARTIAL, 0, 1000, bytes32(0), _singleAward(worker, award))
+            )
+        );
+    }
+
+    function test_onComplete_bountyPastExpiryFinalizePaysBonus() public {
+        bytes32 taskId = _bountyEvaluatedWithAward(REWARD_100_USDC / 2);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "bonus on the award");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "budget consumed once");
+        assertEq(budget.workerUsed(worker), REWARD_100_USDC / 2);
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+    }
+
+    function test_onComplete_bountyBeforeExpiryPaysOnce() public {
+        bytes32 taskId = _bountyEvaluatedWithAward(REWARD_100_USDC / 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertLt(block.timestamp, market.getTask(taskId).expiryTime, "check hooks run");
+        market.finalizeVerdict(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "paid by checkComplete only");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "not consumed twice");
+    }
+
+    function test_onComplete_bountyDirectCallAfterCheckCompleteDoesNotPayTwice() public {
+        bytes32 taskId = _bountyEvaluatedWithAward(REWARD_100_USDC / 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+        uint256 hookBalance = dreamsToken.balanceOf(address(hook));
+        ITMPCore.TaskContext memory ctx;
+        ctx.requester = requester;
+        ctx.mode = market.BOUNTY();
+        ITMPCore.Verdict memory verdict;
+        verdict.awards = _singleAward(worker, REWARD_100_USDC / 2);
+        vm.prank(address(market));
+        hook.onComplete(taskId, ctx, verdict);
+        assertEq(dreamsToken.balanceOf(address(hook)), hookBalance, "no second payment");
+    }
+
+    function test_onComplete_bountyPastExpiryCapsBonuses() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 12, 0);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.recordLogs();
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        uint256 winnersPaid = _count(vm.getRecordedLogs(), REWARD_PAID_SIG);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(winnersPaid, 0, "the first winners got a bonus");
+        assertLe(winnersPaid, hook.MAX_BONUS_AWARDS(), "at most the cap paid");
+        assertEq(dreamsToken.balanceOf(address(hook)), winnersPaid * 10e18);
+        assertEq(budget.globalUsed(), winnersPaid * 1e6, "budget matches what was paid");
+    }
+
+    function test_checkComplete_bountyFirstTimeWinnersWithinStipend() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 12, 0);
+        vm.recordLogs();
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        uint256 winnersPaid = _count(vm.getRecordedLogs(), REWARD_PAID_SIG);
+        // Seven at the time of writing (the spec records it); the first winner also pays the
+        // cold access to the vault, budget and token, so later winners cost less.
+        assertGe(winnersPaid, 6, "first-time winners inside the stipend");
+        assertLe(winnersPaid, hook.MAX_BONUS_AWARDS());
+    }
+
+    // ─── Partial payout whose release fails, then recovered ───────────────────
+
+    function test_partialPayout_releaseFails_thenRecovered() public {
+        bytes32 taskId = _createLongClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+
+        _failVault();
+        _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC / 2));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "half the bonus paid");
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertEq(p.tokenAmount, EXPECTED_REWARD_1000_DREAMS / 2, "unpaid half pending");
+        assertFalse(p.vaultReleased, "vault release failed");
+        assertTrue(p.budgetReleased, "budget released");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS / 2, "unpaid half still reserved");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "only the paid half consumed");
+
+        vm.clearMockedCalls();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        p = hook.releaseProgress(taskId);
+        assertTrue(p.vaultReleased && p.budgetReleased);
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.totalReserved(), 0);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS / 2, "unpaid half back in the vault");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "budget not released twice");
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "payout untouched");
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    // ─── recoverReserve pays after a failed onComplete ────────────────────────
+
+    function _failOnComplete() internal {
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+    }
+
+    function _lapsedWithFailedOnComplete() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(market.reviewDeadline(taskId) + 1);
+        _failOnComplete();
+        market.settleLapsedReview(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "reservation still held");
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_recoverReserve_afterFailedOnComplete_paysAcceptance() public {
+        bytes32 taskId = _lapsedWithFailedOnComplete();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "bonus paid, not released");
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(budget.globalUsed(), REWARD_100_USDC, "budget stays consumed for the payout");
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_recoverReserve_afterFailedOnComplete_vaultCannotPay_releases() public {
+        bytes32 taskId = _lapsedWithFailedOnComplete();
+        uint256 availBefore = vault.available();
+        _failVaultPay();
+        hook.recoverReserve(taskId);
+        vm.clearMockedCalls();
+        assertEq(hook.claimable(worker), 0);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_recoverReserve_afterFailedOnComplete_paysStoredVerdictAward() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate,
+                (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), _singleAward(worker, REWARD_100_USDC / 2))
+            )
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _failOnComplete();
+        market.finalizeVerdict(taskId);
+        vm.clearMockedCalls();
+        assertEq(hook.claimable(worker), 0);
+
+        hook.recoverReserve(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "scaled by the stored award");
+        assertEq(vault.taskReserve(taskId), 0, "unawarded half released");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2);
+    }
+
+    // ─── Withdraw message domain ──────────────────────────────────────────────
+
+    function test_withdrawFor_ownerSignatureForOneContractWalletRejectedForAnother() public {
+        MockERC1271Wallet walletA = new MockERC1271Wallet(vm.addr(workerKey));
+        MockERC1271Wallet walletB = new MockERC1271Wallet(vm.addr(workerKey));
+        _creditContractWallet(walletB);
+        uint256 amount = hook.claimable(address(walletB));
+        assertGt(amount, 0);
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory forA = _signWithdrawFor(
+            workerKey, address(walletA), destination, "d-1", validBefore, block.chainid, address(hook)
+        );
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(address(walletB), destination, "d-1", validBefore, forA);
+        assertEq(hook.claimable(address(walletB)), amount);
+    }
+
+    function test_withdrawFor_rejectsSignatureForAnotherChain() public {
+        _earnClaimable();
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory sig =
+            _signWithdrawFor(workerKey, worker, destination, "c-1", validBefore, block.chainid + 1, address(hook));
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "c-1", validBefore, sig);
+    }
+
+    function test_withdrawFor_rejectsSignatureForAnotherHook() public {
+        _earnClaimable();
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory sig =
+            _signWithdrawFor(workerKey, worker, destination, "h-1", validBefore, block.chainid, makeAddr("other-hook"));
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "h-1", validBefore, sig);
     }
 }
