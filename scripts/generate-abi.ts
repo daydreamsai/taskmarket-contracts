@@ -40,6 +40,7 @@ const DIAMOND_FACETS = [
   'RatingFacet.sol/RatingFacet.json',
   'RegistryFacet.sol/RegistryFacet.json',
   'SettlementFacet.sol/SettlementFacet.json',
+  'FeedbackFacet.sol/FeedbackFacet.json',
 ];
 
 // Standalone contracts deployed at their own addresses. The indexer polls each of

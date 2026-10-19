@@ -17,6 +17,7 @@ import "./mocks/MockReputationRegistry.sol";
 import "./mocks/MockIdentityRegistry.sol";
 import "./mocks/MockRevertingReputationRegistry.sol";
 import "../src/interfaces/ITMPReputation.sol";
+import { ITMPFeedback } from "../src/interfaces/ITMPFeedback.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
@@ -5280,6 +5281,29 @@ contract TaskMarketTest is DiamondTestHelper {
         );
     }
 
+    /// Lowering termsBounds.maxWindowSecs below the evaluation-window minimum is accepted:
+    /// termsBounds bound the review and decision windows only, so the evaluator floor still
+    /// governs create, and an evaluation window above the new maxWindowSecs stays valid.
+    function test_SetTermsBounds_MaxBelowMinEvaluationWindow_EvaluatorFloorStillApplies() public {
+        vm.prank(owner);
+        market.setMinEvaluationWindowSecs(uint32(3 days));
+        (,, uint16 maxRejectFee, uint8 maxRevisions) = market.termsBounds();
+        vm.prank(owner);
+        market.setTermsBounds(uint32(1 hours), uint32(2 days), maxRejectFee, maxRevisions);
+        (, uint32 maxWindow,,) = market.termsBounds();
+        assertEq(maxWindow, uint32(2 days));
+        assertEq(market.minEvaluationWindowSecs(), uint32(3 days), "the evaluator floor is unchanged");
+
+        bytes32 created = abi.decode(
+            _createTaskWithEvaluator(requester, evaluator, 0, 0, uint32(3 days), uint32(1 days), address(0)), (bytes32)
+        );
+        assertEq(market.getTaskEvaluatorConfig(created).evaluationWindow, uint32(3 days));
+        vm.expectRevert(
+            abi.encodeWithSelector(ITMPCore.EvaluationWindowTooShort.selector, uint32(2 days), uint32(3 days))
+        );
+        _createTaskWithEvaluator(requester, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0));
+    }
+
     // -------------------------------------------------------------------------
     // resolveDispute: REJECT verdict must revert
     // -------------------------------------------------------------------------
@@ -6281,15 +6305,12 @@ contract TaskMarketTest is DiamondTestHelper {
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
     }
 
-    function test_RequesterReputation_CleanCancel_NotEmitted() public {
+    /// Rev025: a clean cancel emits "cancelled_clean" so the owner can configure its value.
+    function test_RequesterReputation_CleanCancel_EmitsCancelledClean() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("cancelled_clean"), REWARD, 0, false);
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 repTopic = keccak256("RequesterReputation(bytes32,address,bytes32,uint256,uint32,bool)");
-        for (uint256 i = 0; i < logs.length; i++) {
-            assertNotEq(logs[i].topics[0], repTopic, "RequesterReputation should not be emitted on clean cancel");
-        }
     }
 
     function test_RequesterReputation_ExpiredNoAction_Emitted() public {
@@ -6503,8 +6524,11 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.prank(owner);
         market.setReputationRegistry(address(reg));
 
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 untaken = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 taskId = _bountyAfterRejection();
         vm.warp(block.timestamp + DURATION + 1);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (untaken, 42)));
+        assertEq(reg.calls(), 0, "an untaken bounty sends no feedback by default");
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
         assertEq(reg.calls(), 1);
     }
@@ -6514,7 +6538,7 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.prank(owner);
         market.setReputationRegistry(address(reg));
 
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 taskId = _bountyAfterRejection();
         vm.warp(block.timestamp + DURATION + 1);
 
         vm.expectEmit(true, true, false, true);
@@ -6585,71 +6609,22 @@ contract TaskMarketTest is DiamondTestHelper {
 
     function test_RefundExpired_IdentityRegistry_OwnAgentId_SendsFeedback() public {
         (MockReputationRegistry rep,) = _withRegistries();
-        bytes32 taskId = _expiredBounty();
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
         assertEq(rep.calls(), 1);
-    }
-
-    /// The identity registry is the authority while set: anyone may refund and the requester's
-    /// own agent still gets the signal.
-    function test_RefundExpired_IdentityRegistry_OwnAgentId_PermissionlessCaller() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        bytes32 taskId = _expiredBounty();
-        vm.prank(makeAddr("stranger"));
-        market.refundExpired(taskId, 42);
-        assertEq(rep.calls(), 1);
-    }
-
-    function test_RefundExpired_IdentityRegistry_ForeignAgentId_SkipsFeedbackKeepsEvent() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        bytes32 taskId = _expiredBounty();
-        vm.expectEmit(true, true, false, false);
-        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_no_action"), REWARD, 0, false);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 77)));
-        assertEq(rep.calls(), 0, "the requester cannot aim feedback at another owner's agent");
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
-    }
-
-    function test_RefundExpired_IdentityRegistry_NonexistentAgentId_SkipsFeedback() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        bytes32 taskId = _expiredBounty();
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 9999)));
-        assertEq(rep.calls(), 0);
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
-    }
-
-    function test_RefundExpired_RevertingIdentityRegistry_SkipsFeedback() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        MockRevertingIdentityRegistry down = new MockRevertingIdentityRegistry();
-        vm.prank(owner);
-        market.setIdentityRegistry(address(down));
-        bytes32 taskId = _expiredBounty();
-        vm.expectEmit(true, true, false, false);
-        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("expired_no_action"), REWARD, 0, false);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
-        assertEq(rep.calls(), 0);
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
-    }
-
-    function test_RefundExpired_IdentityRegistryWithoutCode_SkipsFeedback() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        vm.prank(owner);
-        market.setIdentityRegistry(makeAddr("no-code"));
-        bytes32 taskId = _expiredBounty();
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
-        assertEq(rep.calls(), 0);
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Expired));
     }
 
     function test_RefundExpired_IdentityRegistryUnset_KeepsForwarderCheck() public {
         (MockReputationRegistry rep,) = _withRegistries();
         vm.prank(owner);
         market.setIdentityRegistry(address(0));
-        bytes32 taskId = _expiredBounty();
+        bytes32 taskId = _bountyAfterRejection();
+        bytes32 second = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
         vm.prank(makeAddr("stranger"));
         market.refundExpired(taskId, 77);
         assertEq(rep.calls(), 0, "unset: a caller other than the requester sends nothing");
-        bytes32 second = _expiredBounty();
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (second, 77)));
         assertEq(rep.calls(), 1, "unset: the forwarder-authenticated requester is trusted as before");
     }
@@ -6659,35 +6634,6 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _bountyAfterRejection();
         forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
         assertEq(rep.calls(), 1);
-    }
-
-    function test_CancelTask_IdentityRegistry_ForeignAgentId_SkipsFeedbackKeepsEvent() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        bytes32 taskId = _bountyAfterRejection();
-        vm.expectEmit(true, true, false, false);
-        emit ITMPCore.RequesterReputation(taskId, requester, keccak256("cancelled_after_submissions"), REWARD, 0, false);
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 77)));
-        assertEq(rep.calls(), 0);
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
-    }
-
-    function test_CancelTask_IdentityRegistry_NonexistentAgentId_SkipsFeedback() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        bytes32 taskId = _bountyAfterRejection();
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 9999)));
-        assertEq(rep.calls(), 0);
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
-    }
-
-    function test_CancelTask_RevertingIdentityRegistry_SkipsFeedback() public {
-        (MockReputationRegistry rep,) = _withRegistries();
-        MockRevertingIdentityRegistry down = new MockRevertingIdentityRegistry();
-        vm.prank(owner);
-        market.setIdentityRegistry(address(down));
-        bytes32 taskId = _bountyAfterRejection();
-        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
-        assertEq(rep.calls(), 0);
-        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Cancelled));
     }
 
     function test_RefundExpired_StrangerThroughForwarder_NoRegistryCall() public {
@@ -6711,6 +6657,291 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.prank(requester);
         market.refundExpired(taskId, 42);
         assertEq(reg.calls(), 0, "feedback needs the requester authenticated through the forwarder");
+    }
+
+    // --- Rev025: owner-configurable feedback values (FeedbackFacet, LibFeedback) ---
+
+    bytes32 internal constant K_COMPLETED = keccak256("completed");
+    bytes32 internal constant K_CANCELLED_CLEAN = keccak256("cancelled_clean");
+    bytes32 internal constant K_CANCELLED_AFTER = keccak256("cancelled_after_submissions");
+    bytes32 internal constant K_EXPIRED_NO_ACTION = keccak256("expired_no_action");
+    bytes32 internal constant K_EXPIRED_AFTER = keccak256("expired_after_rejections");
+    bytes32 internal constant K_WORKER_RATING = keccak256("worker_rating");
+
+    function _assertDefault(bytes32 key, int128 expected) internal view {
+        (int128 v, bool isSet) = market.feedbackValue(key);
+        assertEq(v, expected, "default value");
+        assertFalse(isSet, "unset by default");
+    }
+
+    function test_FeedbackValue_Defaults() public view {
+        _assertDefault(K_COMPLETED, 100);
+        _assertDefault(K_CANCELLED_CLEAN, 0);
+        _assertDefault(K_EXPIRED_NO_ACTION, 0);
+        _assertDefault(K_CANCELLED_AFTER, -25);
+        _assertDefault(K_EXPIRED_AFTER, -25);
+        _assertDefault(K_WORKER_RATING, 100);
+        _assertDefault(keccak256("unknown"), 0);
+    }
+
+    function test_SetFeedbackValue_OwnerSetsAndEmits() public {
+        vm.expectEmit(true, false, false, true, address(market));
+        emit ITMPFeedback.FeedbackValueUpdated(K_COMPLETED, 50);
+        vm.prank(owner);
+        market.setFeedbackValue(K_COMPLETED, 50);
+        (int128 v, bool isSet) = market.feedbackValue(K_COMPLETED);
+        assertEq(v, 50);
+        assertTrue(isSet);
+    }
+
+    function test_SetFeedbackValue_ExplicitZeroIsSet() public {
+        vm.prank(owner);
+        market.setFeedbackValue(K_COMPLETED, 0);
+        (int128 v, bool isSet) = market.feedbackValue(K_COMPLETED);
+        assertEq(v, 0);
+        assertTrue(isSet, "an explicit 0 is distinct from unset");
+    }
+
+    function test_RevertWhen_SetFeedbackValue_NotOwner() public {
+        vm.prank(requester);
+        vm.expectRevert();
+        market.setFeedbackValue(K_COMPLETED, 50);
+        _assertDefault(K_COMPLETED, 100);
+    }
+
+    function test_RevertWhen_SetFeedbackValue_OutOfRange() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ITMPFeedback.FeedbackValueOutOfRange.selector, int128(101)));
+        market.setFeedbackValue(K_COMPLETED, 101);
+        vm.expectRevert(abi.encodeWithSelector(ITMPFeedback.FeedbackValueOutOfRange.selector, int128(-101)));
+        market.setFeedbackValue(K_COMPLETED, -101);
+        market.setFeedbackValue(K_COMPLETED, 100);
+        market.setFeedbackValue(K_CANCELLED_AFTER, -100);
+        vm.stopPrank();
+    }
+
+    function _acceptWithAgent(bytes32 taskId, uint256 agentId) internal {
+        _submitWork(taskId, worker1, keccak256("work"));
+        _acceptSubmitted(taskId, agentId);
+    }
+
+    function _acceptSubmitted(bytes32 taskId, uint256 agentId) internal {
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, keccak256("work"), agentId)));
+    }
+
+    function test_Accept_DefaultSendsPlus100AndAutoBinds() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.expectEmit(true, true, false, false, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, K_COMPLETED, REWARD, 1, false);
+        vm.expectEmit(true, true, false, false, address(market));
+        emit ITMPFeedback.RequesterAgentBound(requester, 42);
+        _acceptSubmitted(taskId, 42);
+        assertEq(rep.calls(), 1);
+        assertEq(rep.lastValue(), 100);
+        assertEq(rep.lastAgentId(), 42);
+        assertEq(market.requesterAgentOf(requester), 42);
+    }
+
+    function test_Accept_OwnerOverrideAndZeroDisable() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        vm.prank(owner);
+        market.setFeedbackValue(K_COMPLETED, 40);
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        assertEq(rep.lastValue(), 40, "owner override applies");
+
+        vm.prank(owner);
+        market.setFeedbackValue(K_COMPLETED, 0);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.expectEmit(true, true, false, false, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, K_COMPLETED, REWARD, 1, false);
+        _acceptSubmitted(taskId, 42);
+        assertEq(rep.calls(), 1, "a zero value sends nothing but the event still fires");
+    }
+
+    function test_CancelClean_EmitsEventDefaultSendsNothing() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, K_CANCELLED_CLEAN, REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(rep.calls(), 0, "clean cancel is neutral by default");
+        assertEq(market.requesterAgentOf(requester), 42, "a cancel still auto-binds");
+    }
+
+    function test_CancelClean_OwnerSetValueIsSent() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        vm.prank(owner);
+        market.setFeedbackValue(K_CANCELLED_CLEAN, -5);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(rep.calls(), 1);
+        assertEq(rep.lastValue(), -5);
+    }
+
+    function test_CancelAfterRejections_DefaultSendsMinus25() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _bountyAfterRejection();
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, K_CANCELLED_AFTER, REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.cancelTask, (taskId, 42)));
+        assertEq(rep.calls(), 1);
+        assertEq(rep.lastValue(), -25);
+    }
+
+    function test_ExpiredNoAction_EmitsEventDefaultSendsNothing() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _expiredBounty();
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, K_EXPIRED_NO_ACTION, REWARD, 0, false);
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.refundExpired, (taskId, 42)));
+        assertEq(rep.calls(), 0, "an untaken bounty is neutral by default");
+    }
+
+    function test_ExpiredAfterRejections_DefaultSendsMinus25() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPCore.RequesterReputation(taskId, requester, K_EXPIRED_AFTER, REWARD, 0, false);
+        vm.prank(makeAddr("stranger"));
+        market.refundExpired(taskId, 42);
+        assertEq(rep.calls(), 2, "expiry is objective: anyone may trigger it for the bound agent");
+        assertEq(rep.lastValue(), -25);
+        assertEq(rep.lastAgentId(), 42);
+    }
+
+    function test_ExpiredAfterRejections_OwnerOverride() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        vm.prank(owner);
+        market.setFeedbackValue(K_EXPIRED_AFTER, -60);
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
+        market.refundExpired(taskId, 42);
+        assertEq(rep.lastValue(), -60);
+    }
+
+    function test_WorkerFeedback_DefaultSendsRatingScaleAndDisable() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(taskId, requester, worker1);
+        _rateTask(taskId, requester, worker1, 80, 77, 0, "", bytes32(0));
+        assertEq(rep.calls(), 1);
+        assertEq(rep.lastValue(), 80, "default sends the rating unchanged");
+        assertEq(rep.lastAgentId(), 77);
+
+        vm.prank(owner);
+        market.setFeedbackValue(K_WORKER_RATING, 50);
+        bytes32 second = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(second, requester, worker1);
+        _rateTask(second, requester, worker1, 80, 77, 0, "", bytes32(0));
+        assertEq(rep.lastValue(), 40, "the configured value scales the rating in percent");
+
+        vm.prank(owner);
+        market.setFeedbackValue(K_WORKER_RATING, 0);
+        bytes32 third = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _acceptSubmission(third, requester, worker1);
+        _rateTask(third, requester, worker1, 80, 77, 0, "", bytes32(0));
+        assertEq(rep.calls(), 2, "zero turns worker feedback off");
+    }
+
+    // --- Rev025: requester agent binding ---
+
+    // --- Rev025: requester agent binding, supplied by the trusted forwarder ---
+
+    function test_Binding_ForwarderCallBindsAndEmits() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.expectEmit(true, true, false, false, address(market));
+        emit ITMPFeedback.RequesterAgentBound(requester, 42);
+        _acceptSubmitted(taskId, 42);
+        assertEq(market.requesterAgentOf(requester), 42);
+        assertEq(rep.lastAgentId(), 42);
+    }
+
+    function test_Binding_DirectCallAgentIdIgnored() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.prank(requester);
+        market.refundExpired(taskId, 42);
+        assertEq(market.requesterAgentOf(requester), 0, "a direct call never binds");
+        assertEq(rep.calls(), 0, "and an unbound requester gets no feedback");
+    }
+
+    function test_Binding_ThirdPartyThroughForwarderIgnored() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
+        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.refundExpired, (taskId, 77)));
+        assertEq(market.requesterAgentOf(requester), 0, "only the requester's own relayed call binds");
+        assertEq(rep.calls(), 0);
+    }
+
+    function test_Binding_ForwarderCallWithDifferentIdRebinds() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
+        vm.expectEmit(true, true, false, false, address(market));
+        emit ITMPFeedback.RequesterAgentBound(requester, 43);
+        _acceptSubmitted(taskId, 43);
+        assertEq(market.requesterAgentOf(requester), 43);
+        assertEq(rep.lastAgentId(), 43);
+    }
+
+    function test_Binding_ForwarderCallWithZeroDoesNotUnbind() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 0);
+        assertEq(market.requesterAgentOf(requester), 42);
+        assertEq(rep.calls(), 2, "a passed 0 still uses the stored binding");
+        assertEq(rep.lastAgentId(), 42);
+    }
+
+    function test_Binding_ThirdPartyRefundUsesStoredBinding() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.prank(makeAddr("stranger"));
+        market.refundExpired(taskId, 9999);
+        assertEq(rep.calls(), 2);
+        assertEq(rep.lastAgentId(), 42, "the stranger's ID is ignored; the stored binding is used");
+        assertEq(rep.lastValue(), -25);
+        assertEq(market.requesterAgentOf(requester), 42);
+    }
+
+    function test_Binding_UnboundRequesterGetsNoFeedback() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 0);
+        assertEq(rep.calls(), 0);
+        assertEq(market.requesterAgentOf(requester), 0);
+    }
+
+    function test_Binding_IgnoresIdentityRegistry() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        // 77 is owned by worker1 on the identity registry; the forwarder's word is what binds.
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 77);
+        assertEq(market.requesterAgentOf(requester), 77);
+        assertEq(rep.lastAgentId(), 77);
+    }
+
+    /// An under-funded permissionless refund of a bound requester's task must revert, not skip
+    /// the -25.
+    function test_RevertWhen_RefundExpired_Bound_GasBelowFeedbackFloor() public {
+        (MockReputationRegistry rep,) = _withRegistries();
+        _acceptWithAgent(_createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0), 42);
+        bytes32 taskId = _bountyAfterRejection();
+        vm.warp(block.timestamp + DURATION + 1);
+        bytes memory data = abi.encodeCall(market.refundExpired, (taskId, 0));
+        assertTrue(_guardFiresForSomeGasLimit(address(market), data));
+        assertEq(rep.calls(), 1);
     }
 
     // --- rev023: gas floor on every swallowed reputation call ---
@@ -6776,7 +7007,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
     function test_RevertWhen_RefundExpired_GasBelowFeedbackFloor() public {
         _setRegistry();
-        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 taskId = _bountyAfterRejection();
         vm.warp(block.timestamp + DURATION + 1);
 
         bytes memory inner = abi.encodeCall(market.refundExpired, (taskId, 42));

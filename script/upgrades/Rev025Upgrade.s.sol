@@ -10,6 +10,7 @@ import { CoreFacet } from "../../src/facets/CoreFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
+import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
@@ -22,7 +23,10 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      MAX_SUBMISSION_WINNERS, releaseClaim, isSettling, getTaskClock), Replaces EvaluatorFacet (deferred evaluator fee,
 ///      winner cap, award records), AcceptanceFacet (winner cap, award records) and RatingFacet
 ///      (rateTask only award recipients), and Replaces rejectSubmission, forfeitAndReopen,
-///      cancelTask and refundExpired from CoreFacet onto SettlementFacet. The legacy createTask
+///      cancelTask and refundExpired from CoreFacet onto SettlementFacet. Adds FeedbackFacet
+///      (setFeedbackValue, feedbackValue, requesterAgentOf) and appends
+///      requesterAgentIds and feedbackValues to AppStorage; feedback uses LibFeedback's defaults
+///      until the owner sets values. The legacy createTask
 ///      records the default terms. Run normalizeTerms over every live task id after this step,
 ///      before any other post-upgrade pass over task ids.
 /// @dev Required env vars:
@@ -71,7 +75,7 @@ contract Rev025Upgrade is Script {
             keptCore[i] = core[i];
         }
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, keptCore);
         cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCore);
         cuts[2] = IDiamondCut.FacetCut(
@@ -95,6 +99,7 @@ contract Rev025Upgrade is Script {
         cuts[8] = IDiamondCut.FacetCut(
             ratingFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.ratingFacetSelectors()
         );
+        cuts[9] = _feedbackCut();
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         AdminFacet(diamond).setDiamondVersion(TARGET_VERSION);
@@ -108,6 +113,14 @@ contract Rev025Upgrade is Script {
         console.log("EvaluatorFacet: ", evaluatorFacet);
         console.log("AcceptanceFacet:", acceptanceFacet);
         console.log("RatingFacet:    ", ratingFacet);
+        console.log("FeedbackFacet:  ", cuts[9].facetAddress);
         console.log("diamondVersion: ", TARGET_VERSION);
+    }
+
+    /// @dev Its own frame keeps run() under the stack limit.
+    function _feedbackCut() internal returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(
+            address(new FeedbackFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.feedbackFacetSelectors()
+        );
     }
 }

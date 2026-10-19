@@ -3,10 +3,8 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
-import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
-import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
-import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title RatingFacet — task ratings, ERC-8004 reputation, and confidence scoring
@@ -71,23 +69,7 @@ contract RatingFacet {
 
         emit ITMPCore.TaskRated(taskId, worker, rating, raterAgentId);
 
-        if (workerAgentId != 0 && s.reputationRegistry != address(0)) {
-            LibTaskMarket._requireFeedbackGas();
-            try IReputationRegistry(s.reputationRegistry)
-                .giveFeedback(
-                    workerAgentId,
-                    int128(int256(uint256(rating))),
-                    0,
-                    "tmp.task.rating",
-                    _modeName(task.mode),
-                    "",
-                    feedbackURI,
-                    feedbackHash
-                ) { }
-            catch {
-                emit ITMPReputation.ReputationFeedbackFailed(taskId, workerAgentId);
-            }
-        }
+        LibFeedback.worker(s, taskId, workerAgentId, rating, task.mode, feedbackURI, feedbackHash);
     }
 
     /// @notice Bühlmann credibility of a worker's reputation (0-1000).
@@ -104,15 +86,5 @@ contract RatingFacet {
         ITMPCore.WorkerStats storage ws = LibAppStorage.appStorage().workerStats[worker];
         if (ws.ratedTasks == 0) return 0;
         return (ws.totalStars * 10) / ws.ratedTasks;
-    }
-
-    /// @dev Returns the canonical ERC-8004 tag2 string for a mode selector.
-    function _modeName(bytes4 mode) private pure returns (string memory) {
-        if (mode == BOUNTY) return "tmp.mode.bounty";
-        if (mode == CLAIM) return "tmp.mode.claim";
-        if (mode == PITCH) return "tmp.mode.pitch";
-        if (mode == BENCHMARK) return "tmp.mode.benchmark";
-        if (mode == AUCTION) return "tmp.mode.auction";
-        return "";
     }
 }

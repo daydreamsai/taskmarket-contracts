@@ -11,6 +11,7 @@ import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
+import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 
@@ -263,5 +264,13 @@ library FacetSelectors {
         s[1] = SettlementFacet.forfeitAndReopen.selector;
         s[2] = SettlementFacet.cancelTask.selector;
         s[3] = SettlementFacet.refundExpired.selector;
+    }
+
+    /// @dev rev025: owner-configurable feedback values and the requester agent binding.
+    function feedbackFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = FeedbackFacet.setFeedbackValue.selector;
+        s[1] = FeedbackFacet.feedbackValue.selector;
+        s[2] = FeedbackFacet.requesterAgentOf.selector;
     }
 }

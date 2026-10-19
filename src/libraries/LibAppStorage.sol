@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
+import { ITMPFeedback } from "../interfaces/ITMPFeedback.sol";
 
 /// @notice Unified application storage for all TaskMarket Diamond facets.
 ///         Stored at a fixed keccak256 slot; new fields must only be appended.
@@ -76,10 +77,16 @@ struct AppStorage {
     // Rev025: owner-set per-chain floor on an evaluator's evaluationWindow. Zero means "never
     // set": LibTaskMarket._minEvaluationWindowSecs substitutes DEFAULT_MIN_EVALUATION_WINDOW_SECS.
     uint32 minEvaluationWindowSecs;
-    // Rev025: owner-set ERC-8004 identity registry. When set, requester feedback on cancelTask and
-    // refundExpired is sent only for an agent ID the requester owns there; zero keeps the
-    // forwarder-authenticated requester check.
+    // Rev025: owner-set ERC-8004 identity registry. Stored and readable, but no longer read by
+    // requester feedback, which uses the forwarder-supplied requesterAgentIds binding below. Kept
+    // because storage is append-only.
     address identityRegistry;
+    // Rev025: the ERC-8004 agent ID each requester's feedback goes to (0 = unbound), set or
+    // replaced by the nonzero ID a trusted forwarder passes when relaying the requester's own
+    // accept, cancel or refund (LibFeedback.resolveRequester).
+    mapping(address => uint256) requesterAgentIds;
+    // Rev025: owner-set feedback value per event key. An unset key reads as LibFeedback's default.
+    mapping(bytes32 => ITMPFeedback.FeedbackValue) feedbackValues;
 }
 
 library LibAppStorage {

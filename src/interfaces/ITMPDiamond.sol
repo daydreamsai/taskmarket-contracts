@@ -184,6 +184,13 @@ interface ITMPDiamond {
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory);
 
     // -------------------------------------------------------------------------
+    // FeedbackFacet (Rev025)
+    // -------------------------------------------------------------------------
+    function setFeedbackValue(bytes32 eventKey, int128 value) external;
+    function feedbackValue(bytes32 eventKey) external view returns (int128 value, bool isSet);
+    function requesterAgentOf(address requester) external view returns (uint256);
+
+    // -------------------------------------------------------------------------
     // SettlementFacet (Rev025)
     // -------------------------------------------------------------------------
     function normalizeTerms(bytes32[] calldata taskIds) external;

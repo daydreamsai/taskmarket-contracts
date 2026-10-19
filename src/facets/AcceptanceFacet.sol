@@ -7,10 +7,9 @@ import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
-import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
-import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title AcceptanceFacet — single and multi-winner submission acceptance with payouts
@@ -126,16 +125,7 @@ contract AcceptanceFacet {
                 uint32(s.taskActiveSubmissionCount[taskId]),
                 worker == requester
             );
-            if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
-                LibTaskMarket._requireFeedbackGas();
-                try IReputationRegistry(s.reputationRegistry)
-                    .giveFeedback(
-                        requesterAgentId, 100, 0, "tmp.task.requester", _modeName(mode), "", "", bytes32(0)
-                    ) { }
-                catch {
-                    emit ITMPReputation.ReputationFeedbackFailed(taskId, requesterAgentId);
-                }
-            }
+            LibFeedback.requester(s, taskId, requester, requesterAgentId, LibFeedback.COMPLETED, mode);
         }
 
         LibHooks._dispatchAfterHooksFullGas(
@@ -365,16 +355,7 @@ contract AcceptanceFacet {
             uint32(s.taskActiveSubmissionCount[taskId]),
             anySelfAward
         );
-        if (requesterAgentId != 0 && s.reputationRegistry != address(0)) {
-            LibTaskMarket._requireFeedbackGas();
-            try IReputationRegistry(s.reputationRegistry)
-                .giveFeedback(
-                    requesterAgentId, 100, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
-                ) { }
-            catch {
-                emit ITMPReputation.ReputationFeedbackFailed(taskId, requesterAgentId);
-            }
-        }
+        LibFeedback.requester(s, taskId, requester, requesterAgentId, LibFeedback.COMPLETED, task.mode);
 
         LibHooks._dispatchAfterHooksFullGas(
             hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibHooks._buildContext(taskId, s), verdict))
@@ -426,14 +407,5 @@ contract AcceptanceFacet {
             sumShares += shares[i];
         }
         if (sumShares != 10000) revert ITMPCore.SharesMustSumTo10000();
-    }
-
-    function _modeName(bytes4 mode) private pure returns (string memory) {
-        if (mode == BOUNTY) return "tmp.mode.bounty";
-        if (mode == CLAIM) return "tmp.mode.claim";
-        if (mode == PITCH) return "tmp.mode.pitch";
-        if (mode == BENCHMARK) return "tmp.mode.benchmark";
-        if (mode == AUCTION) return "tmp.mode.auction";
-        return "";
     }
 }

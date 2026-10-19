@@ -2431,6 +2431,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "RequesterAgentBound",
+    "inputs": [
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RequesterReputation",
     "inputs": [
       {
@@ -4681,5 +4700,96 @@ export const TaskMarketABI = [
     "type": "error",
     "name": "TaskNotYetExpired",
     "inputs": []
+  },
+  {
+    "type": "function",
+    "name": "feedbackValue",
+    "inputs": [
+      {
+        "name": "eventKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "int128",
+        "internalType": "int128"
+      },
+      {
+        "name": "isSet",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requesterAgentOf",
+    "inputs": [
+      {
+        "name": "requester",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setFeedbackValue",
+    "inputs": [
+      {
+        "name": "eventKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "value",
+        "type": "int128",
+        "internalType": "int128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "FeedbackValueUpdated",
+    "inputs": [
+      {
+        "name": "eventKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "value",
+        "type": "int128",
+        "indexed": false,
+        "internalType": "int128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "FeedbackValueOutOfRange",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "int128",
+        "internalType": "int128"
+      }
+    ]
   }
 ] as const;

@@ -52,7 +52,10 @@ mapping(bytes32 => ITMPCore.TaskClock) taskClocks;
 mapping(bytes32 => mapping(address => bool)) taskAwarded;
 ```
 
-Any later rev025 mapping comes after these three.
+Any later rev025 mapping comes after these three. The last rev025 appends are
+`address identityRegistry`, then `mapping(address => uint256) requesterAgentIds` and
+`mapping(bytes32 => ITMPFeedback.FeedbackValue) feedbackValues` (see "Requester agent binding" and
+"Configurable feedback values").
 
 `TaskTerms` occupies one storage slot:
 
@@ -539,8 +542,9 @@ and the forfeit events count against the worker; `ClaimReleased` is neutral when
 Benchmark after its decision deadline emits `RequesterReputation` with
 `event_ = "decision_deadline_lapsed"`, which counts against the requester.
 
-`refundExpired` and `cancelTask` send their -50 requester feedback to the reputation registry
-only when the call's effective sender is `task.requester`, authenticated through a trusted
+Before the binding and configurable values below, `refundExpired` and `cancelTask` sent a
+hardcoded -50 requester feedback. rev025 first limited that feedback to the reputation registry
+to calls whose effective sender is `task.requester`, authenticated through a trusted
 forwarder. `refundExpired` is permissionless, and the agent ID is supplied by the caller, so
 before this anyone could let their own minimum bounty expire and aim the penalty at any agent,
 repeatedly, for the cost of gas. Any other caller, and a direct call by the requester, skips the
@@ -548,28 +552,82 @@ registry call; the `RequesterReputation` event is still emitted, so the signal s
 to indexers. `cancelTask` already requires the requester through a forwarder, so it is unchanged
 in effect and shares the same check.
 
-That check alone still let the requester name an agent ID that is not theirs: expire or cancel
-their own small bounty and aim the -50 at any agent. So rev025 also binds the ID to the requester
-through the ERC-8004 identity registry. The diamond stores the registry address
-(`address identityRegistry`, appended to `AppStorage` after `minEvaluationWindowSecs`) rather than asking the
-reputation registry for it, so the check does not depend on a third-party contract's getter or
-state and costs no extra call to find the registry.
+That check alone still let the requester name any agent ID, or pass 0 to skip a negative
+signal. rev025 therefore binds each requester address to one agent ID on the diamond, supplied
+by the trusted forwarder.
 
-- `setIdentityRegistry(address registry)` is owner-only and emits
-  `IdentityRegistryUpdated(registry)`; zero turns the check off. `identityRegistry()` returns the
-  stored address. Both live on `AdminFacet` and are Added by the Rev025 cut. The owner sets the
-  registry on each chain after the cut.
-- While it is set, `refundExpired` and `cancelTask` send the feedback only when
-  `ownerOf(requesterAgentId)` on that registry returns `task.requester`. The read is a
-  `staticcall` capped at 100,000 gas, made after the `minFeedbackGas` check so an under-funded
-  caller cannot run it out of gas to skip the feedback. A revert (an ID that does not exist, or a
-  broken registry), a return shorter than one word, an address with no code, or a different owner
-  skips the registry call. The `RequesterReputation` event is emitted in every case.
-- Because ownership is proven on chain, the forwarder check is not applied while the registry is
-  set: a permissionless `refundExpired` caller can only send the signal to the requester's own
-  agent.
-- While it is unset (zero, the state right after the cut), the forwarder-authenticated requester
-  check above applies unchanged.
+The diamond also stores an ERC-8004 identity registry address (`address identityRegistry`,
+appended to `AppStorage` after `minEvaluationWindowSecs`), with the owner-only
+`setIdentityRegistry(address registry)`, which emits `IdentityRegistryUpdated(registry)`, and the
+`identityRegistry()` view, both on `AdminFacet` and Added by the Rev025 cut. Requester feedback
+does not read it: identities the platform registers are owned by its own relayer wallet, so a
+registry ownership check would match no platform requester. The field and its setter stay
+because storage is append-only, and so a later revision can verify the binding against the
+registry without a new storage slot.
+
+#### Requester agent binding
+
+`createTask` is unchanged: the binding is per requester, not per task, so no task-creation
+argument or client change is needed.
+
+- **Storage:** `mapping(address => uint256) requesterAgentIds`, appended to `AppStorage` after
+  `identityRegistry`. Zero means unbound.
+- **Binding:** when `acceptSubmission`, `acceptSubmissions`, `cancelTask` or `refundExpired` is
+  called by a trusted forwarder whose authenticated sender is the task's requester, a nonzero
+  `requesterAgentId` is stored as that requester's binding. It always takes the latest such
+  value, so a different ID rebinds. `RequesterAgentBound(requester, agentId)` is emitted when the
+  stored ID changes. The forwarder is the platform relayer, which supplies the agent ID from the
+  platform's identity records.
+- **Ignored IDs:** a passed ID on a direct call, or on a forwarder call relaying anyone other than
+  the requester, is ignored. A passed 0 never unbinds.
+- **Feedback** always goes to the stored binding. `refundExpired` is permissionless, and a third
+  party's call uses only the stored binding. An unbound requester gets no requester feedback.
+- **`requesterAgentOf(address requester)`** (FeedbackFacet) returns the bound ID, or 0. There is no
+  user-callable bind function.
+- **Expiry is objective.** Anyone can call `refundExpired` and trigger the requester's expiry
+  feedback (default -25 after rejections). It only ever lands on the requester's bound agent, so a
+  caller cannot aim it elsewhere.
+- **Trust:** the link between a requester address and its agent ID is not independently
+  verifiable on chain. It relies on the forwarder, which the protocol already trusts to
+  authenticate senders. Requesters who never act through the trusted forwarder never bind.
+
+#### Configurable feedback values
+
+Every ERC-8004 `giveFeedback` call, requester and worker, goes through one internal library,
+`LibFeedback`. It resolves the agent ID (the binding above for requesters), applies the
+`minFeedbackGas` check, and sends the value configured for the event's key. No facet hardcodes a
+feedback value.
+
+- **Storage:** `mapping(bytes32 => FeedbackValue) feedbackValues`, appended after
+  `requesterAgentIds`, where `FeedbackValue` is `{ int128 value; bool isSet; }`. `isSet`
+  distinguishes an explicit 0 from "use the default".
+- **`setFeedbackValue(bytes32 eventKey, int128 value)`** (FeedbackFacet, owner only, no timelock,
+  like the other admin setters) stores the value and emits `FeedbackValueUpdated(eventKey, value)`.
+  It reverts `FeedbackValueOutOfRange(value)` outside [-100, 100].
+- **`feedbackValue(bytes32 eventKey) view returns (int128 value, bool isSet)`** returns the
+  effective value (the default while unset) and whether the owner has set it.
+- A value of 0 sends no feedback. `RequesterReputation` is emitted whatever the value.
+- Keys are `keccak256` of the strings below. The requester keys are the `RequesterReputation`
+  `event_` values.
+
+| Key | Event | Default |
+|---|---|---|
+| `completed` | Requester accepts a winner (`acceptSubmission`, `acceptSubmissions`) | +100 |
+| `cancelled_clean` | Bounty or Benchmark cancelled with no submissions ever | 0 |
+| `expired_no_action` | Bounty or Benchmark expired with no submissions ever | 0 |
+| `cancelled_after_submissions` | Cancelled after every submission was rejected | -25 |
+| `expired_after_rejections` | Expired after every submission was rejected | -25 |
+| `worker_rating` | `rateTask`: the 0-100 rating is scaled by this value in percent | 100 (rating unchanged) |
+
+A clean cancel and an untaken bounty are neutral: the requester did nothing wrong. Rejecting every
+submission and then recovering the escrow is the one abuse-shaped requester pattern, so it carries
+a small negative value. Accepting a winner is +100. An unknown key reads 0. `cancelTask` now emits
+`RequesterReputation` with `event_ = "cancelled_clean"` for a Bounty or Benchmark cancelled with no
+submissions, so every requester event has a key the owner can configure. Cancel and refund stay
+blocked while submissions are pending (`SubmissionsExist`), so a requester cannot recover escrow
+over workers' live submissions.
+
+The values apply from the cut. Until the owner sets a key, its default above applies.
 
 ### Errors, events, views
 
@@ -577,13 +635,15 @@ state and costs no extra call to find the registry.
   `ReviewWindowClosed`, `DecisionWindowLapsed`, `ReleaseNotAllowed`, `StakePaymentMismatch`,
   `NotAwarded`, `TooManyWinners`, `RevisionsExhausted`, `ForwardedPaymentMismatch`,
   `EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow)`, `TooManyTags`,
-  `InvalidTaskLimits`, `EvaluationWindowClosed`, `InvalidMinEvaluationWindow`.
+  `InvalidTaskLimits`, `EvaluationWindowClosed`, `InvalidMinEvaluationWindow`,
+  `FeedbackValueOutOfRange(int128 value)`.
 - **Events:** `TaskTermsSet`, `ReviewLapsed`, `DeliveryRejected`, `ClaimReleased`,
-  `RevisionRequested`, `TaskLimitsUpdated`, `MinEvaluationWindowUpdated`, `IdentityRegistryUpdated`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
+  `RevisionRequested`, `TaskLimitsUpdated`, `MinEvaluationWindowUpdated`, `IdentityRegistryUpdated`, `FeedbackValueUpdated`,
+  `RequesterAgentBound`, `TaskExpiryExtended(taskId, newExpiry)`. `TaskExpiryExtended` is emitted
   whenever a reopen (`forfeitAndReopen`, `rejectDelivery` with `Reopen`, `releaseClaim`) or
   `requestRevision` moves `expiryTime` later, and not when the existing expiry already covers the
   extension, so an indexer can track `expiryTime` from events alone.
-- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `minEvaluationWindowSecs`, `identityRegistry`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
+- **Views:** `getTaskTerms`, `getTaskClock`, `taskLimits`, `minEvaluationWindowSecs`, `identityRegistry`, `feedbackValue`, `requesterAgentOf`, `reviewDeadline`, `MAX_SUBMISSION_WINNERS`, `isSettling`. `isSettling`
   is true while the diamond holds its reentrancy lock, which lets a hook tell a settlement still
   dispatching hooks from one that finished.
 
@@ -822,7 +882,8 @@ One pass per chain, in this order:
    reverts once stakes are enforced.
 4. **Forwarder v2.** Deploy the new forwarder, authorise the relayer on it, `addForwarder` on the
    diamond, switch the backend to it.
-5. **Diamond cut.**
+5. **Diamond cut.** It also Adds `FeedbackFacet` (`setFeedbackValue`, `feedbackValue`,
+   `requesterAgentOf`); feedback uses the defaults until the owner sets values.
 6. **`normalizeTerms`** over the live task ids (about 565 on mainnet, a few batches). This seeds
    `deliveredAt` for tasks already delivered and `decisionStartAt` for live bounties and benchmarks,
    so no task locks at the upgrade. Any other post-upgrade pass over live task ids runs
@@ -855,6 +916,10 @@ One pass per chain, in this order:
 - A rejected auction ends; new work needs a new auction.
 - Revisions can extend a task by up to `maxRevisions` review windows past its expiry.
 - A review window or decision deadline can lapse during a pause; settlement may be due at unpause.
+- A requester who never acts through the trusted forwarder with a nonzero agent ID never binds
+  and gets no requester feedback: neither the +100 nor the -25.
+- The requester-to-agent link is supplied by the forwarder, not verified against the identity
+  registry, so it is only as trustworthy as the relayer.
 
 ## Verification
 
@@ -877,6 +942,12 @@ One pass per chain, in this order:
 - An overturned approve and an overturned reject each send the evaluator fee to the requester.
 - `refundExpired` from a stranger, from a forwarder relaying a non-requester, and from a direct
   requester call makes no registry call and still emits `RequesterReputation`.
+- Every requester event emits `RequesterReputation` and sends its default value; owner overrides
+  and an explicit 0 apply; `setFeedbackValue` reverts for a non-owner and outside [-100, 100].
+- Binding: a forwarder call binds; a direct call's ID is ignored; a forwarder call with a different
+  ID rebinds; a third party's `refundExpired` uses the stored binding; an unbound requester gets no
+  feedback; a forwarder call with 0 does not unbind; an under-funded refund of a bound requester's
+  task reverts `InsufficientGasForFeedback`.
 - `TooManyWinners` at 51 winners in `acceptSubmissions`, `evaluate` and `resolveDispute`; 50 winners
   settle. In the Foundry suite a 50-winner Bounty `acceptSubmissions` used 3,602,207 gas end to end.
 - Reward hook: vault-only failure, budget-only failure, both, a diamond after-callback failure and

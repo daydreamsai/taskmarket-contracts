@@ -7,11 +7,9 @@ import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
+import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
-import { IReputationRegistry } from "../interfaces/IReputationRegistry.sol";
-import { IIdentityRegistry } from "../interfaces/IIdentityRegistry.sol";
-import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title SettlementFacet -- rev025 settlement terms and the settlement calls that read them
@@ -26,9 +24,6 @@ contract SettlementFacet {
     bytes4 private constant PITCH = TMP_PITCH;
     bytes4 private constant BENCHMARK = TMP_BENCHMARK;
     bytes4 private constant AUCTION = TMP_AUCTION;
-    // Gas forwarded to the identity registry's ownerOf. A standard ERC-721 lookup needs a few
-    // thousand; the cap bounds what a misbehaving registry can burn on a refund.
-    uint256 private constant OWNER_OF_GAS = 100_000;
 
     // -------------------------------------------------------------------------
     // Terms
@@ -227,30 +222,16 @@ contract SettlementFacet {
         if (!s.usdcToken.transfer(requesterAddr, refundAmount)) revert ITMPCore.RefundFailed();
         _refundEvaluatorStake(taskId, requesterAddr, s);
 
-        // Emit requester reputation signal when cancelling after all submissions were rejected.
-        // Clean cancellations (no submissions ever) are reputation-neutral and do not emit.
-        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && s.taskHasSubmissions[taskId]) {
+        // Requester reputation signal for a Bounty/Benchmark cancel: "cancelled_after_submissions"
+        // after every submission was rejected, "cancelled_clean" when none ever arrived. The
+        // feedback value for each is LibFeedback's (owner-set or default; the clean default is 0).
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            bytes32 event_ =
+                s.taskHasSubmissions[taskId] ? LibFeedback.CANCELLED_AFTER_SUBMISSIONS : LibFeedback.CANCELLED_CLEAN;
             emit ITMPCore.RequesterReputation(
-                taskId,
-                requesterAddr,
-                keccak256("cancelled_after_submissions"),
-                refundAmount,
-                uint32(s.taskActiveSubmissionCount[taskId]),
-                false
+                taskId, requesterAddr, event_, refundAmount, uint32(s.taskActiveSubmissionCount[taskId]), false
             );
-            if (
-                requesterAgentId != 0 && s.reputationRegistry != address(0)
-                    && _feedbackAllowed(s, requesterAgentId, requesterAddr)
-            ) {
-                LibTaskMarket._requireFeedbackGas();
-                try IReputationRegistry(s.reputationRegistry)
-                    .giveFeedback(
-                        requesterAgentId, -50, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
-                    ) { }
-                catch {
-                    emit ITMPReputation.ReputationFeedbackFailed(taskId, requesterAgentId);
-                }
-            }
+            LibFeedback.requester(s, taskId, requesterAddr, requesterAgentId, event_, task.mode);
         }
 
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refundAmount);
@@ -663,55 +644,12 @@ contract SettlementFacet {
         // Emit requester reputation signal for bounty/benchmark expired tasks.
         if (task.mode == BOUNTY || task.mode == BENCHMARK) {
             bytes32 event_ =
-                s.taskHasSubmissions[taskId] ? keccak256("expired_after_rejections") : keccak256("expired_no_action");
+                s.taskHasSubmissions[taskId] ? LibFeedback.EXPIRED_AFTER_REJECTIONS : LibFeedback.EXPIRED_NO_ACTION;
             emit ITMPCore.RequesterReputation(taskId, task.requester, event_, refundAmount, 0, false);
-            if (
-                requesterAgentId != 0 && s.reputationRegistry != address(0)
-                    && _feedbackAllowed(s, requesterAgentId, task.requester)
-            ) {
-                LibTaskMarket._requireFeedbackGas();
-                try IReputationRegistry(s.reputationRegistry)
-                    .giveFeedback(
-                        requesterAgentId, -50, 0, "tmp.task.requester", _modeName(task.mode), "", "", bytes32(0)
-                    ) { }
-                catch {
-                    emit ITMPReputation.ReputationFeedbackFailed(taskId, requesterAgentId);
-                }
-            }
+            LibFeedback.requester(s, taskId, task.requester, requesterAgentId, event_, task.mode);
         }
 
         // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch (dispatchAfterHooks).
         LibHooks._onExpireHooks(taskId, s);
-    }
-
-    /// @dev Requester feedback names a caller-supplied agent ID. With an identity registry set,
-    ///      it is sent only when that registry reports the requester as the ID's owner, so a
-    ///      requester cannot expire or cancel their own task to aim the -50 at someone else's
-    ///      agent. The read is a gas-capped staticcall: a revert (an ID that does not exist), a
-    ///      short return or a different owner all skip the feedback. Without a registry, the
-    ///      requester must have authenticated the call through a trusted forwarder, since
-    ///      refundExpired is permissionless. The RequesterReputation event is emitted either way.
-    function _feedbackAllowed(AppStorage storage s, uint256 agentId, address requester) private view returns (bool) {
-        address registry = s.identityRegistry;
-        if (registry == address(0)) return _sentByRequester(s, requester);
-        // Checked first so an under-funded caller cannot run ownerOf out of gas to skip feedback.
-        LibTaskMarket._requireFeedbackGas();
-        (bool ok, bytes memory ret) =
-            registry.staticcall{ gas: OWNER_OF_GAS }(abi.encodeCall(IIdentityRegistry.ownerOf, (agentId)));
-        if (!ok || ret.length < 32) return false;
-        return abi.decode(ret, (uint256)) == uint256(uint160(requester));
-    }
-
-    function _sentByRequester(AppStorage storage s, address requester) private view returns (bool) {
-        return s.trustedForwarders[msg.sender] && LibGuards._effectiveSender(s) == requester;
-    }
-
-    function _modeName(bytes4 mode) private pure returns (string memory) {
-        if (mode == BOUNTY) return "tmp.mode.bounty";
-        if (mode == CLAIM) return "tmp.mode.claim";
-        if (mode == PITCH) return "tmp.mode.pitch";
-        if (mode == BENCHMARK) return "tmp.mode.benchmark";
-        if (mode == AUCTION) return "tmp.mode.auction";
-        return "";
     }
 }

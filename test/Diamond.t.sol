@@ -252,7 +252,7 @@ contract DiamondTest is DiamondTestHelper {
     function test_Loupe_FacetAddresses_NonEmpty() public view {
         address[] memory addrs = IDiamondLoupe(address(diamond)).facetAddresses();
         assertGt(addrs.length, 0, "Must have at least one facet registered");
-        assertEq(addrs.length, 10, "Exactly 10 facets expected");
+        assertEq(addrs.length, 11, "Exactly 11 facets expected");
     }
 
     function test_Loupe_FacetAddress_CreateTask() public view {
@@ -267,7 +267,7 @@ contract DiamondTest is DiamondTestHelper {
 
     function test_Loupe_Facets_ReturnsAllFacetsWithSelectors() public view {
         IDiamondLoupe.Facet[] memory allFacets = IDiamondLoupe(address(diamond)).facets();
-        assertEq(allFacets.length, 10, "Exactly 10 facets expected");
+        assertEq(allFacets.length, 11, "Exactly 11 facets expected");
         for (uint256 i = 0; i < allFacets.length; i++) {
             assertNotEq(allFacets[i].facetAddress, address(0), "Facet address must be non-zero");
             assertGt(allFacets[i].functionSelectors.length, 0, "Each facet must expose at least one selector");
