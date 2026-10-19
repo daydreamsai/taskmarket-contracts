@@ -700,10 +700,14 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   `MAX_BONUS_AWARDS` winners, and the loop stops once gas falls below the 200,000
   `BONUS_AWARD_GAS_FLOOR`). `paid` is set before paying, so a second call finds nothing due and
   reverts `ReleaseNotDue`. Because the call is permissionless and has no diamond hook stipend
-  behind it, it reverts `InsufficientRecoveryGas` unless it enters this path with at least
+  behind it, it reverts `InsufficientRecoveryGas` unless it reaches this path with at least
   `RECOVER_BOUNTY_MIN_GAS` (1,500,000) gas left; otherwise a caller could set `paid` with too
-  little gas for the loop to pay anyone and forfeit every winner's bonus. A full recovery paying
-  `MAX_BONUS_AWARDS` first-time winners measured about 1.07M gas. Each winner's payout is capped
+  little gas for the loop to pay anyone and forfeit every winner's bonus. The check runs after
+  `isSettling()`, `getTask()` and the reward-state reads, not on entry, so a transaction gas
+  limit of exactly the constant reverts; `eth_estimateGas` finds a limit that clears it. A full recovery paying
+  `MAX_BONUS_AWARDS` first-time winners measured about 1.07M gas. A 50-award verdict (8 first-time
+  winners after 21 zero awards, 21 more past the cap) called with exactly the constant plus the
+  measured pre-check overhead (about 75k) pays all 8, with about 286k left when the eighth starts. Each winner's payout is capped
   by the epoch budget as it stands at the time of the call, not when the task was accepted, so a
   late recovery can pay less than `onComplete` would have, or nothing.
 - `onComplete` pays a reservation that `checkComplete` left unpaid, the same way `checkComplete`

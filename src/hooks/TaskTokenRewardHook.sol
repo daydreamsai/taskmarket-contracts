@@ -144,7 +144,10 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Gas below which the Bounty loop stops paying bonuses, so checkComplete always
     ///         returns inside the diamond's check-hook stipend.
     uint256 public constant BONUS_AWARD_GAS_FLOOR = 200_000;
-    /// @notice Least gas recoverReserve needs on entry to pay an unreserved Bounty or Benchmark.
+    /// @notice Least gas recoverReserve must have left when it reaches the unreserved Bounty or
+    ///         Benchmark payout path. The check runs after isSettling(), getTask() and the
+    ///         reward-state reads, so a transaction gas limit of exactly this constant reverts
+    ///         InsufficientRecoveryGas; eth_estimateGas finds a limit that clears it.
     /// @dev The recovery runs outside the diamond's hook stipend and sets `paid` before paying,
     ///      so a caller who supplied too little gas would make the loop stop at
     ///      BONUS_AWARD_GAS_FLOOR and forfeit every unpaid winner's bonus for good. Measured cost

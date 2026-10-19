@@ -3131,6 +3131,82 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(budget.globalUsed(), winners * 1e6, "not paid twice");
     }
 
+    /// @dev A full Bounty verdict (MAX_SUBMISSION_WINNERS awards): `zerosBefore` zero awards,
+    ///      then MAX_BONUS_AWARDS first-time winners at 1 USDC, then nonzero awards past the
+    ///      MAX_BONUS_AWARDS cap. Every winner submits, so the diamond accepts the verdict.
+    function _fullBountyFailedOnComplete(uint256 zerosBefore) internal returns (bytes32 taskId) {
+        uint256 total = 50; // LibTaskMarket.MAX_SUBMISSION_WINNERS
+        uint256 paidCount = hook.MAX_BONUS_AWARDS();
+        taskId = _evaluatedBounty();
+        ITMPCore.Award[] memory a = new ITMPCore.Award[](total);
+        for (uint256 i; i < total; ++i) {
+            address w = _bountyWinner(i);
+            bool zero = i < zerosBefore;
+            if (!zero) _relay(w, 0, abi.encodeCall(market.submitWork, (taskId, keccak256(abi.encode(i)))));
+            a[i] = ITMPCore.Award({ worker: w, amount: zero ? 0 : 1e6, rank: uint16(i + 1) });
+        }
+        assertLe((total - zerosBefore) * 1e6, REWARD_100_USDC, "awards fit the reward");
+        assertGt(total - zerosBefore, paidCount, "some awards are past the cap");
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.PARTIAL, 0, 1000, bytes32(0), a))
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+    }
+
+    /// @dev Smallest gas limit at which recoverReserve gets past the RECOVER_BOUNTY_MIN_GAS check,
+    ///      found by bisection with state rolled back after each probe.
+    function _recoverThreshold(bytes32 taskId) internal returns (uint256 lo) {
+        uint256 minGas = hook.RECOVER_BOUNTY_MIN_GAS();
+        lo = minGas;
+        uint256 hi = minGas + 200_000;
+        while (lo < hi) {
+            uint256 mid = (lo + hi) / 2;
+            uint256 snap = vm.snapshotState();
+            (bool ok, bytes memory ret) =
+                address(hook).call{ gas: mid }(abi.encodeCall(TaskTokenRewardHook.recoverReserve, (taskId)));
+            vm.revertToState(snap);
+            bool short = !ok && ret.length >= 4 && bytes4(ret) == TaskTokenRewardHook.InsufficientRecoveryGas.selector;
+            if (short) lo = mid + 1;
+            else hi = mid;
+        }
+    }
+
+    /// @dev Worst case the floor must cover: a MAX_SUBMISSION_WINNERS verdict with zero awards
+    ///      ahead of the winners. Measured: pre-check overhead about 75k, about 1.39M for the
+    ///      whole call, and about 286k left when the eighth winner starts, so the loop clears
+    ///      BONUS_AWARD_GAS_FLOOR with about 86k to spare.
+    function test_recoverReserve_fullVerdictAtGasFloor_paysEveryCappedWinner() public {
+        uint256 winners = hook.MAX_BONUS_AWARDS();
+        uint256 zeros = 50 - winners - 21; // 21 zero awards ahead of the winners, 21 past the cap
+        bytes32 taskId = _fullBountyFailedOnComplete(zeros);
+
+        // The floor is checked after isSettling(), getTask() and the reward-state reads, so the
+        // least gas limit that passes it is the constant plus that overhead.
+        uint256 limit = _recoverThreshold(taskId);
+        uint256 overhead = limit - hook.RECOVER_BOUNTY_MIN_GAS();
+        assertLt(overhead, 100_000, "pre-check overhead");
+        emit log_named_uint("pre-check overhead", overhead);
+
+        vm.recordLogs();
+        uint256 before = gasleft();
+        hook.recoverReserve{ gas: limit }(taskId);
+        emit log_named_uint("recoverReserve gas, 50-award verdict", before - gasleft());
+        assertEq(_count(vm.getRecordedLogs(), REWARD_PAID_SIG), winners, "every capped winner paid");
+        for (uint256 i; i < 50; ++i) {
+            uint256 expected = i >= zeros && i < zeros + winners ? 10e18 : 0;
+            assertEq(hook.claimable(_bountyWinner(i)), expected, "bonus only for the first capped winners");
+        }
+        assertEq(budget.globalUsed(), winners * 1e6, "budget consumed once per paid winner");
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+    }
+
     function test_recoverReserve_bountyWithoutIssuedVerdict_nothingToRecover() public {
         bytes32 taskId = _bountyFailedOnComplete(1);
         ITMPCore.Verdict memory none;
