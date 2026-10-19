@@ -38,7 +38,7 @@ library LibFeedback {
     }
 
     /// @notice Send the requester feedback for an event key, resolving the requester's agent ID
-    ///         and auto-binding a registry-verified `passedAgentId` while the requester is unbound.
+    ///         and binding a forwarder-supplied `passedAgentId` (see resolveRequester).
     function requester(
         AppStorage storage s,
         bytes32 taskId,
