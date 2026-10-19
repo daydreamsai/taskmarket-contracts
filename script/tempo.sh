@@ -17,14 +17,21 @@
 # against the payment it reports), checks its usdc(), taskMarket() and authorizedRelayer() against
 # the inputs, then trusts it with addForwarder and confirms isTrustedForwarder.
 #
-# DRY_RUN=1 simulates without broadcasting (forge script without --broadcast, and no
-# addForwarder transaction).
+# DRY_RUN simulates without broadcasting (forge script without --broadcast, and no
+# addForwarder transaction). Any non-empty value other than 0 or false is a dry run (1, true,
+# yes, ...); only unset, empty, 0 and false broadcast. The Make targets pass a DRY_RUN given on
+# the command line (or in the calling environment) after .env is loaded, so a DRY_RUN line in
+# .env never overrides it.
 set -euo pipefail
 
 ACTION="${1:-}"
 NETWORK="${2:-}"
 REV="${3:-}"
-DRY_RUN="${DRY_RUN:-0}"
+case "$(printf '%s' "${DRY_RUN:-}" | tr '[:upper:]' '[:lower:]')" in
+  ""|0|false) DRY_RUN=0 ;;
+  *) DRY_RUN=1 ;;
+esac
+export DRY_RUN
 
 usage() {
   echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <tempo-testnet|tempo-mainnet> [revNNN]" >&2
@@ -140,28 +147,53 @@ case "$ACTION" in
       echo "Deployer is not the diamond owner; addForwarder is onlyOwner and would revert." >&2
       exit 1
     fi
+    command -v jq >/dev/null || { echo "deploy-forwarder needs jq to read forge's run record." >&2; exit 1; }
+    RUN_DIR="broadcast/DeployForwarderV2.s.sol/$CHAIN_ID"
+    if [ "$DRY_RUN" = "1" ]; then RUN_JSON="$RUN_DIR/dry-run/run-latest.json"; else RUN_JSON="$RUN_DIR/run-latest.json"; fi
+    # A record left by an earlier run must not stand in for this one.
+    rm -f "$RUN_JSON"
     LOG="$(mktemp)"
     forge script script/DeployForwarderV2.s.sol:DeployForwarderV2 \
       --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" ${BROADCAST[@]+"${BROADCAST[@]}"} 2>&1 | tee "$LOG"
     FORWARDER="$(grep 'Forwarder v2 (FORWARDER_ADDRESS once trusted):' "$LOG" | tail -1 | awk '{print $NF}')"
-    LOGGED_USDC="$(grep '  USDC:' "$LOG" | tail -1 | awk '{print $NF}')"
-    LOGGED_MARKET="$(grep '  TaskMarket:' "$LOG" | tail -1 | awk '{print $NF}')"
-    LOGGED_RELAYER="$(grep '  Authorized relayer:' "$LOG" | tail -1 | awk '{print $NF}')"
     rm -f "$LOG"
     if [ -z "$FORWARDER" ]; then
       echo "Forwarder deploy did not report an address; not calling addForwarder." >&2
       exit 1
     fi
+    # The constructor arguments are decoded from the creation transaction forge recorded (its
+    # initcode ends with the three ABI-encoded addresses), not from the script's own console.log,
+    # which only echoes the environment this script exported.
+    if [ ! -f "$RUN_JSON" ]; then
+      echo "No forge run record at $RUN_JSON; cannot check the forwarder's constructor arguments." >&2
+      exit 1
+    fi
+    CREATE_TX="$(jq -c '[.transactions[] | select(.transactionType == "CREATE" and .contractName == "TaskMarketForwarderV2")] | last // empty' "$RUN_JSON")"
+    if [ -z "$CREATE_TX" ]; then
+      echo "$RUN_JSON has no TaskMarketForwarderV2 creation transaction." >&2
+      exit 1
+    fi
+    CREATE_INPUT="$(printf '%s' "$CREATE_TX" | jq -r '.transaction.input // .transaction.data // ""')"
+    word_addr() { printf '0x%s' "${CREATE_INPUT: $(( ${#CREATE_INPUT} - 64 * $1 + 24 )):40}"; }
+    if [ "${#CREATE_INPUT}" -lt 194 ]; then
+      echo "TaskMarketForwarderV2 creation input in $RUN_JSON is too short to hold its constructor arguments." >&2
+      exit 1
+    fi
+    SIM_USDC="$(word_addr 3)"
+    SIM_MARKET="$(word_addr 2)"
+    SIM_RELAYER="$(word_addr 1)"
+    SIM_ADDRESS="$(printf '%s' "$CREATE_TX" | jq -r '.contractAddress // ""')"
     lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
     # expect LABEL GOT WANT: fail when the forwarder was built with anything but the inputs.
     expect() {
       echo "  $1 = $2"
       [ "$(lc "$2")" = "$(lc "$3")" ] || { echo "Forwarder $1 is $2, expected $3." >&2; exit 1; }
     }
-    echo "Forwarder v2 constructor arguments (from the deploy log):"
-    expect "usdc()" "$LOGGED_USDC" "$USDC"
-    expect "taskMarket()" "$LOGGED_MARKET" "$DIAMOND"
-    expect "authorizedRelayer()" "$LOGGED_RELAYER" "$RELAYER"
+    echo "Forwarder v2 constructor arguments (decoded from the creation transaction in $RUN_JSON):"
+    expect "address" "$SIM_ADDRESS" "$FORWARDER"
+    expect "usdc()" "$SIM_USDC" "$USDC"
+    expect "taskMarket()" "$SIM_MARKET" "$DIAMOND"
+    expect "authorizedRelayer()" "$SIM_RELAYER" "$RELAYER"
     if [ "$DRY_RUN" = "1" ]; then
       echo "DRY RUN: skipping addForwarder (the simulated forwarder address is not on chain)."
       exit 0

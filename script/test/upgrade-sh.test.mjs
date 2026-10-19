@@ -149,6 +149,22 @@ test("a dry run from rev023 only simulates Rev024 and broadcasts nothing", () =>
   assert.deepEqual(r.ran, ["Rev024Upgrade"]);
 });
 
+for (const value of ["true", "yes", "TRUE"]) {
+  test(`DRY_RUN=${value} is a dry run too`, () => {
+    const r = run({ steps: ALL, version: 23, env: { DRY_RUN: value } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, ["Rev024Upgrade"]);
+  });
+}
+
+for (const value of ["0", "false", ""]) {
+  test(`DRY_RUN=${JSON.stringify(value)} broadcasts every pending step`, () => {
+    const r = run({ steps: ALL, version: 23, env: { DRY_RUN: value } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, ["Rev024Upgrade", "Rev025Upgrade"]);
+  });
+}
+
 const RECOVERY = /make upgrade testnet' \(no revision argument\)/;
 
 test("a failed first diamondVersion read is retried", () => {

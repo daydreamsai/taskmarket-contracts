@@ -26,7 +26,7 @@
 # script/upgrades/RevNNNUpgrade.s.sol file (contract name RevNNNUpgrade) and it is picked up
 # automatically on the next `make upgrade` run.
 #
-# Set DRY_RUN=1 to simulate against live chain state without broadcasting (forge script's
+# Set DRY_RUN=1 (or any non-empty value other than 0 or false, such as true or yes) to simulate against live chain state without broadcasting (forge script's
 # normal dry-run behavior when --broadcast is omitted). Only the first pending step is
 # simulated: a dry run never actually advances diamondVersion on-chain, so any step after the
 # first would simulate against the same pre-upgrade state and fail its own precondition check
@@ -35,7 +35,10 @@ set -euo pipefail
 
 NETWORK="$1"
 REV="${2:-}"
-DRY_RUN="${DRY_RUN:-0}"
+case "$(printf '%s' "${DRY_RUN:-}" | tr '[:upper:]' '[:lower:]')" in
+  ""|0|false) DRY_RUN=0 ;;
+  *) DRY_RUN=1 ;;
+esac
 
 if [ "$NETWORK" = "testnet" ]; then
   RPC_URL="base_sepolia"
