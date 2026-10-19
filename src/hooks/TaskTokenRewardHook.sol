@@ -144,6 +144,16 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Gas below which the Bounty loop stops paying bonuses, so checkComplete always
     ///         returns inside the diamond's check-hook stipend.
     uint256 public constant BONUS_AWARD_GAS_FLOOR = 200_000;
+    /// @notice Least gas recoverReserve needs on entry to pay an unreserved Bounty or Benchmark.
+    /// @dev The recovery runs outside the diamond's hook stipend and sets `paid` before paying,
+    ///      so a caller who supplied too little gas would make the loop stop at
+    ///      BONUS_AWARD_GAS_FLOOR and forfeit every unpaid winner's bonus for good. Measured cost
+    ///      of a full recovery paying MAX_BONUS_AWARDS first-time winners (cold wallets, cold
+    ///      vault, budget and token) is about 1.07M gas. The loop needs BONUS_AWARD_GAS_FLOOR
+    ///      left before the last winner, so the exact need is about 1.16M; 1.5M leaves headroom
+    ///      for a costlier production token. It is above the diamond's 1M hook stipend, which
+    ///      pays only seven first-time winners before reaching the floor.
+    uint256 public constant RECOVER_BOUNTY_MIN_GAS = 1_500_000;
 
     bytes32 private constant HOOK_STORAGE_SLOT = keccak256("taskmarket.tokenrewardhook.storage.v1");
 
@@ -316,6 +326,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     error InsufficientSweepable();
     error ReleaseNotDue(bytes32 taskId);
     error NothingToRecover(bytes32 taskId);
+    error InsufficientRecoveryGas(bytes32 taskId);
 
     modifier onlyDiamond() {
         if (msg.sender != _s().diamond) revert CallerNotDiamond();
@@ -604,6 +615,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             // An unreserved Bounty or Benchmark whose onComplete failed: the diamond swallowed the
             // revert, so `paid` rolled back. Pay the winners from the stored verdict through the
             // same budget path onComplete uses. `paid` is set first, so this pays at most once.
+            // This call has no diamond stipend behind it, so refuse to start without enough gas to
+            // pay every winner: a short-gassed call would set `paid` and pay no one.
+            if (gasleft() < RECOVER_BOUNTY_MIN_GAS) revert InsufficientRecoveryGas(taskId);
             ITMPCore.Verdict memory bv = ITMPDiamond(_s().diamond).getTaskVerdict(taskId);
             if (bv.issued) {
                 state.paid = true;
@@ -794,6 +808,10 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///      A `paid` state is rejected rather than skipped. Seeding one would be inert at best --
     ///      every settlement path checks `paid` first -- and at worst it is a sign the operator is
     ///      replaying the wrong set, which is worth stopping on rather than silently ignoring.
+    ///
+    ///      WARNING: seed only tasks the previous implementation has not settled. An unpaid
+    ///      Bounty or Benchmark state seeded for an Accepted task that the old hook already paid
+    ///      looks to `recoverReserve` like a failed onComplete, and it would pay the winners again.
     function seedRewardStates(bytes32[] calldata taskIds, RewardState[] calldata states) external onlyOwner {
         if (_s().rewardStateSealed) revert RewardStateAlreadySealed();
         if (taskIds.length != states.length) revert SeedLengthMismatch();
@@ -1192,14 +1210,14 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             // `_s().token` were ever an ERC777-style callback _s().token, a malicious worker
             // contract's receive-hook could reenter between this consume and the
             // credit below with budget already spent but tokens not yet accounted
-            // for locally. This is safe today only because: (1) `_s().token` is
-            // immutable and assumed to be a plain, non-callback ERC20 for the
-            // lifetime of this contract, (2) `_s().vault`/`_s().epochBudget` are onlyHook-
-            // gated so a reentrant call can't touch them directly, and (3) this
-            // whole call executes inside the Diamond's own reentrancy guard, so a
-            // reentrant call back into any Diamond-facing function reverts. If
-            // `_s().token` is ever changed to a callback-capable _s().token, this ordering
-            // must be revisited.
+            // for locally. This is safe today because: (1) `_s().token` is
+            // assumed to be a plain, non-callback ERC20 for the lifetime of this
+            // contract, so the transfer gives no worker a callback to reenter from, and
+            // (2) `_s().vault`/`_s().epochBudget` are callable only by this hook, so no
+            // other caller can touch them in between. Do not rely on the Diamond's
+            // reentrancy guard: recoverReserve reaches this loop by a direct external
+            // call, outside any Diamond settlement. If `_s().token` is ever changed to a
+            // callback-capable token, this ordering must be revisited.
             uint64 consumeEpoch = 0;
             try _s().epochBudget.checkAndConsume(requester, worker, cappedUsd) returns (uint64 epoch) {
                 consumeEpoch = epoch;
@@ -1208,7 +1226,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             }
 
             bool tokenPaid = false;
-            // _s().vault is a trusted internal contract; hook is called inside Diamond reentrancy guard
+            // _s().vault is a trusted internal contract that only this hook can call
             // slither-disable-next-line reentrancy-no-eth
             try _s().vault.payDirect(address(this), tokenReward) {
                 tokenPaid = true;

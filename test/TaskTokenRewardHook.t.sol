@@ -3086,6 +3086,106 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "not paid twice");
     }
 
+    // ─── Bounty recovery gas floor ────────────────────────────────────────────
+
+    /// @dev A Bounty with `winners` first-time winners, finalized past expiry with onComplete
+    ///      failing, so the bonus is left for recoverReserve.
+    function _bountyFailedOnComplete(uint256 winners) internal returns (bytes32 taskId) {
+        taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, winners, 0);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertFalse(paid, "paid rolled back");
+    }
+
+    function test_recoverReserve_bountyLowGas_revertsThenPaysEveryWinnerOnce() public {
+        uint256 winners = hook.MAX_BONUS_AWARDS();
+        bytes32 taskId = _bountyFailedOnComplete(winners);
+
+        // A griefer supplies enough gas to set `paid` but not to pay anyone.
+        vm.prank(makeAddr("griefer"));
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.InsufficientRecoveryGas.selector, taskId));
+        hook.recoverReserve{ gas: 300_000 }(taskId);
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertFalse(paid, "low-gas call left paid unset");
+        assertEq(budget.globalUsed(), 0, "nothing consumed");
+
+        // The documented minimum, plus the reads before the check, pays every winner.
+        uint256 minGas = hook.RECOVER_BOUNTY_MIN_GAS();
+        vm.recordLogs();
+        hook.recoverReserve{ gas: minGas + 100_000 }(taskId);
+        assertEq(_count(vm.getRecordedLogs(), REWARD_PAID_SIG), winners, "every winner paid");
+        for (uint256 i; i < winners; ++i) {
+            assertEq(hook.claimable(_bountyWinner(i)), 10e18, "winner bonus");
+        }
+        assertEq(budget.globalUsed(), winners * 1e6, "budget consumed once per winner");
+        (,,,,,,, paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+        assertEq(budget.globalUsed(), winners * 1e6, "not paid twice");
+    }
+
+    function test_recoverReserve_bountyWithoutIssuedVerdict_nothingToRecover() public {
+        bytes32 taskId = _bountyFailedOnComplete(1);
+        ITMPCore.Verdict memory none;
+        vm.mockCall(
+            address(market), abi.encodeWithSelector(ITMPDiamond.getTaskVerdict.selector, taskId), abi.encode(none)
+        );
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+        vm.clearMockedCalls();
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertFalse(paid);
+        assertEq(budget.globalUsed(), 0);
+    }
+
+    /// @dev Slot of `rewardStates[taskId]` in the hook's namespaced storage (field 13).
+    function _rewardStateSlot(bytes32 taskId) internal pure returns (uint256) {
+        uint256 base = uint256(keccak256("taskmarket.tokenrewardhook.storage.v1"));
+        return uint256(keccak256(abi.encode(taskId, base + 13)));
+    }
+
+    function test_recoverReserve_bountyZeroRewardUsd_nothingToRecover() public {
+        bytes32 taskId = _bountyFailedOnComplete(1);
+        vm.store(address(hook), bytes32(_rewardStateSlot(taskId)), bytes32(0));
+        (uint256 rewardUsd,,,,,,,,) = hook.rewardStates(taskId);
+        assertEq(rewardUsd, 0);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+        assertEq(budget.globalUsed(), 0);
+    }
+
+    function test_recoverReserve_bountyNotAccepted_notPaid() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 1, 0);
+        assertTrue(market.getTaskState(taskId) != ITMPCore.TaskStatus.Accepted, "not settled");
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve{ gas: 300_000 }(taskId);
+        assertEq(hook.claimable(_bountyWinner(0)), 0);
+        assertEq(budget.globalUsed(), 0);
+    }
+
+    function test_recoverReserve_reservedBounty_takesReservedPath() public {
+        bytes32 taskId = _bountyFailedOnComplete(1);
+        // Mark the state reserved (word 5: worker | reserved << 160), with nothing reserved.
+        uint256 word5 = _rewardStateSlot(taskId) + 5;
+        uint256 w = uint256(vm.load(address(hook), bytes32(word5)));
+        vm.store(address(hook), bytes32(word5), bytes32(w | (uint256(1) << 160)));
+        (,,,,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertTrue(reserved);
+        // Low gas does not hit the Bounty gas check: the reserved path runs and finds nothing.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve{ gas: 300_000 }(taskId);
+        assertEq(hook.claimable(_bountyWinner(0)), 0, "no Bounty bonus");
+        assertEq(budget.globalUsed(), 0);
+    }
+
     function test_onComplete_bountyPastExpiryCapsBonuses() public {
         bytes32 taskId = _evaluatedBounty();
         _manyAwardVerdict(taskId, 12, 0);

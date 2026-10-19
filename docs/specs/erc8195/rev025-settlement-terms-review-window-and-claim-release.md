@@ -696,8 +696,16 @@ A hook implementation upgrade through `UpgradeRewardHook.s.sol`, with no diamond
   swallows the revert and `paid` rolls back, leaving nothing reserved to recover. On an Accepted
   Bounty or Benchmark that is unreserved, unpaid and funded (`rewardUsd` nonzero), with an issued
   stored verdict, `recoverReserve` sets `paid` and pays each winner from that verdict through the
-  same per-winner path as `checkComplete` (epoch budget, per-task cap, vault, `MAX_BONUS_AWARDS`).
-  `paid` is set before paying, so a second call finds nothing due and reverts `ReleaseNotDue`.
+  same per-winner path as `checkComplete` (epoch budget, per-task cap, vault, at most
+  `MAX_BONUS_AWARDS` winners, and the loop stops once gas falls below the 200,000
+  `BONUS_AWARD_GAS_FLOOR`). `paid` is set before paying, so a second call finds nothing due and
+  reverts `ReleaseNotDue`. Because the call is permissionless and has no diamond hook stipend
+  behind it, it reverts `InsufficientRecoveryGas` unless it enters this path with at least
+  `RECOVER_BOUNTY_MIN_GAS` (1,500,000) gas left; otherwise a caller could set `paid` with too
+  little gas for the loop to pay anyone and forfeit every winner's bonus. A full recovery paying
+  `MAX_BONUS_AWARDS` first-time winners measured about 1.07M gas. Each winner's payout is capped
+  by the epoch budget as it stands at the time of the call, not when the task was accepted, so a
+  late recovery can pay less than `onComplete` would have, or nothing.
 - `onComplete` pays a reservation that `checkComplete` left unpaid, the same way `checkComplete`
   pays it (scaled by the reserved worker's award, see "TaskTokenRewardHook bonus basis"). That
   covers the completions that skip the check hooks, `settleLapsedReview` and a `finalizeVerdict`

@@ -30,7 +30,7 @@ import { IPGTRForwarder } from "./interfaces/IPGTRForwarder.sol";
  *           IPGTRForwarder(msg.sender).pgtrSender()
  *         This returns the pgtrSender set in step 3.
  *
- *         Receipt replay protection uses keccak256(pgtrSender, paymentAmount,
+ *         Receipt replay protection uses keccak256(block.chainid, pgtrSender, paymentAmount,
  *         receiptNonce, validBefore, taskMarket, selector) to prevent duplicate relays.
  */
 contract TaskMarketForwarder is IPGTRForwarder, ReentrancyGuard {
