@@ -42,15 +42,19 @@ esac
 
 if [ "$NETWORK" = "testnet" ]; then
   RPC_URL="base_sepolia"
+  CHAIN_ID=84532
   DIAMOND="${FORGE_DIAMOND_ADDRESS_TESTNET:?FORGE_DIAMOND_ADDRESS_TESTNET not set}"
 elif [ "$NETWORK" = "mainnet" ]; then
   RPC_URL="base"
+  CHAIN_ID=8453
   DIAMOND="${FORGE_DIAMOND_ADDRESS_MAINNET:?FORGE_DIAMOND_ADDRESS_MAINNET not set}"
 elif [ "$NETWORK" = "tempo-testnet" ]; then
   RPC_URL="tempo_moderato"
+  CHAIN_ID=42431
   DIAMOND="${FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET:?FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET not set}"
 elif [ "$NETWORK" = "tempo-mainnet" ]; then
   RPC_URL="tempo"
+  CHAIN_ID=4217
   DIAMOND="${FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET:?FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET not set}"
 else
   echo "Usage: script/upgrade.sh <testnet|mainnet|tempo-testnet|tempo-mainnet> [revNNN]" >&2
@@ -67,6 +71,14 @@ case "$NETWORK" in
     VERIFY_FLAGS=(--verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
     ;;
 esac
+
+# Refuse to run any step when the RPC answers for a different chain than the network named.
+ACTUAL_CHAIN_ID="$(cast chain-id --rpc-url "$RPC_URL" 2>/dev/null | tr -d '[:space:]' || true)"
+if [ "$ACTUAL_CHAIN_ID" != "$CHAIN_ID" ]; then
+  echo "Refusing to run: $RPC_URL reports chain ID '${ACTUAL_CHAIN_ID:-unreadable}', expected $CHAIN_ID for $NETWORK." >&2
+  echo "Check the RPC URL behind the $RPC_URL alias in foundry.toml before retrying." >&2
+  exit 1
+fi
 
 run_script() {
   if [ "$DRY_RUN" = "1" ]; then

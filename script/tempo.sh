@@ -27,6 +27,7 @@ set -euo pipefail
 ACTION="${1:-}"
 NETWORK="${2:-}"
 REV="${3:-}"
+RESUME="${FORWARDER_ADDRESS_RESUME:-}"
 case "$(printf '%s' "${DRY_RUN:-}" | tr '[:upper:]' '[:lower:]')" in
   ""|0|false) DRY_RUN=0 ;;
   *) DRY_RUN=1 ;;
@@ -125,6 +126,29 @@ export FORGE_FEE_TOKEN="$FEE_TOKEN"
 if [ -n "${FEEDBACK_GAS:-}" ]; then export FORGE_MIN_FEEDBACK_GAS="$FEEDBACK_GAS"; else unset FORGE_MIN_FEEDBACK_GAS; fi
 unset USDC_TOKEN_ADDRESS CONTRACT_ADDRESS FORWARDER_ADDRESS
 
+# Set once a broadcast forwarder is on chain and cleared once it is trusted: any failure in
+# between prints its address and the resume command instead of leaving a rerun to deploy another.
+DEPLOYED_FORWARDER=""
+resume_hint() {
+  local rc=$?
+  if [ "$rc" != "0" ] && [ -n "$DEPLOYED_FORWARDER" ]; then
+    echo "" >&2
+    echo "TaskMarketForwarderV2 is deployed at $DEPLOYED_FORWARDER, but a later step failed." >&2
+    echo "Do not rerun the deploy: it would create a second forwarder. Resume with:" >&2
+    echo "  FORWARDER_ADDRESS_RESUME=$DEPLOYED_FORWARDER make deploy-forwarder $NETWORK" >&2
+  fi
+}
+trap resume_hint EXIT
+
+# Refuse to send anything when the RPC answers for a different chain than the network named:
+# a wrong FORGE_TEMPO_*_RPC_URL must not put a mainnet deploy on testnet, or the reverse.
+ACTUAL_CHAIN_ID="$(cast chain-id --rpc-url "$RPC_ALIAS" 2>/dev/null | tr -d '[:space:]' || true)"
+if [ "$ACTUAL_CHAIN_ID" != "$CHAIN_ID" ]; then
+  echo "Refusing to run: $RPC_ALIAS reports chain ID '${ACTUAL_CHAIN_ID:-unreadable}', expected $CHAIN_ID for $NETWORK." >&2
+  echo "Check the RPC URL behind the $RPC_ALIAS alias in foundry.toml before retrying." >&2
+  exit 1
+fi
+
 BROADCAST=(--broadcast --slow --verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
 [ "$DRY_RUN" = "1" ] && BROADCAST=()
 
@@ -147,67 +171,127 @@ case "$ACTION" in
       echo "Deployer is not the diamond owner; addForwarder is onlyOwner and would revert." >&2
       exit 1
     fi
-    command -v jq >/dev/null || { echo "deploy-forwarder needs jq to read forge's run record." >&2; exit 1; }
-    RUN_DIR="broadcast/DeployForwarderV2.s.sol/$CHAIN_ID"
-    if [ "$DRY_RUN" = "1" ]; then RUN_JSON="$RUN_DIR/dry-run/run-latest.json"; else RUN_JSON="$RUN_DIR/run-latest.json"; fi
-    # A record left by an earlier run must not stand in for this one.
-    rm -f "$RUN_JSON"
-    LOG="$(mktemp)"
-    forge script script/DeployForwarderV2.s.sol:DeployForwarderV2 \
-      --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" ${BROADCAST[@]+"${BROADCAST[@]}"} 2>&1 | tee "$LOG"
-    FORWARDER="$(grep 'Forwarder v2 (FORWARDER_ADDRESS once trusted):' "$LOG" | tail -1 | awk '{print $NF}')"
-    rm -f "$LOG"
-    if [ -z "$FORWARDER" ]; then
-      echo "Forwarder deploy did not report an address; not calling addForwarder." >&2
-      exit 1
-    fi
-    # The constructor arguments are decoded from the creation transaction forge recorded (its
-    # initcode ends with the three ABI-encoded addresses), not from the script's own console.log,
-    # which only echoes the environment this script exported.
-    if [ ! -f "$RUN_JSON" ]; then
-      echo "No forge run record at $RUN_JSON; cannot check the forwarder's constructor arguments." >&2
-      exit 1
-    fi
-    CREATE_TX="$(jq -c '[.transactions[] | select(.transactionType == "CREATE" and .contractName == "TaskMarketForwarderV2")] | last // empty' "$RUN_JSON")"
-    if [ -z "$CREATE_TX" ]; then
-      echo "$RUN_JSON has no TaskMarketForwarderV2 creation transaction." >&2
-      exit 1
-    fi
-    CREATE_INPUT="$(printf '%s' "$CREATE_TX" | jq -r '.transaction.input // .transaction.data // ""')"
-    word_addr() { printf '0x%s' "${CREATE_INPUT: $(( ${#CREATE_INPUT} - 64 * $1 + 24 )):40}"; }
-    if [ "${#CREATE_INPUT}" -lt 194 ]; then
-      echo "TaskMarketForwarderV2 creation input in $RUN_JSON is too short to hold its constructor arguments." >&2
-      exit 1
-    fi
-    SIM_USDC="$(word_addr 3)"
-    SIM_MARKET="$(word_addr 2)"
-    SIM_RELAYER="$(word_addr 1)"
-    SIM_ADDRESS="$(printf '%s' "$CREATE_TX" | jq -r '.contractAddress // ""')"
     lc() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
     # expect LABEL GOT WANT: fail when the forwarder was built with anything but the inputs.
     expect() {
       echo "  $1 = $2"
       [ "$(lc "$2")" = "$(lc "$3")" ] || { echo "Forwarder $1 is $2, expected $3." >&2; exit 1; }
     }
-    echo "Forwarder v2 constructor arguments (decoded from the creation transaction in $RUN_JSON):"
-    expect "address" "$SIM_ADDRESS" "$FORWARDER"
-    expect "usdc()" "$SIM_USDC" "$USDC"
-    expect "taskMarket()" "$SIM_MARKET" "$DIAMOND"
-    expect "authorizedRelayer()" "$SIM_RELAYER" "$RELAYER"
-    if [ "$DRY_RUN" = "1" ]; then
-      echo "DRY RUN: skipping addForwarder (the simulated forwarder address is not on chain)."
-      exit 0
+    has_code() {
+      local code
+      code="$(cast code "$1" --rpc-url "$RPC_ALIAS" 2>/dev/null | tr -d '[:space:]' || true)"
+      [ -n "$code" ] && [ "$code" != "0x" ]
+    }
+    RUN_DIR="broadcast/DeployForwarderV2.s.sol/$CHAIN_ID"
+    if [ -n "$RESUME" ]; then
+      # A forwarder an earlier run broadcast: skip the deploy and finish its checks and trust.
+      if ! printf '%s' "$RESUME" | grep -Eq '^0x[0-9a-fA-F]{40}$'; then
+        echo "FORWARDER_ADDRESS_RESUME=$RESUME is not an address." >&2
+        exit 1
+      fi
+      echo "Resuming with the forwarder at $RESUME (FORWARDER_ADDRESS_RESUME): not deploying another."
+      if ! has_code "$RESUME"; then
+        echo "No contract code at $RESUME on $RPC_ALIAS; nothing to resume." >&2
+        exit 1
+      fi
+      FORWARDER="$RESUME"
+    else
+      command -v jq >/dev/null || { echo "deploy-forwarder needs jq to read forge's run record." >&2; exit 1; }
+      if [ "$DRY_RUN" = "1" ]; then
+        RUN_JSON="$RUN_DIR/dry-run/run-latest.json"
+      else
+        RUN_JSON="$RUN_DIR/run-latest.json"
+        # A forwarder an earlier broadcast left on chain but never trusted is finished with
+        # FORWARDER_ADDRESS_RESUME, never replaced by a second deploy.
+        if [ -f "$RUN_JSON" ]; then
+          PREV="$(jq -r '[.transactions[] | select(.transactionType == "CREATE" and .contractName == "TaskMarketForwarderV2")] | last | .contractAddress // empty' "$RUN_JSON" 2>/dev/null || true)"
+          if [ -n "$PREV" ] && has_code "$PREV" \
+            && [ "$(cast call "$DIAMOND" "isTrustedForwarder(address)(bool)" "$PREV" --rpc-url "$RPC_ALIAS" 2>/dev/null || true)" != "true" ]; then
+            echo "An earlier run deployed TaskMarketForwarderV2 at $PREV ($RUN_JSON), and the diamond does not trust it yet." >&2
+            echo "Refusing to deploy a second forwarder. Finish that one with:" >&2
+            echo "  FORWARDER_ADDRESS_RESUME=$PREV make deploy-forwarder $NETWORK" >&2
+            echo "or delete $RUN_JSON to deploy a new forwarder deliberately." >&2
+            exit 1
+          fi
+        fi
+      fi
+      # A record left by an earlier run must not stand in for this one.
+      rm -f "$RUN_JSON"
+      LOG="$(mktemp)"
+      set +e
+      forge script script/DeployForwarderV2.s.sol:DeployForwarderV2 \
+        --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" ${BROADCAST[@]+"${BROADCAST[@]}"} 2>&1 | tee "$LOG"
+      FORGE_RC="${PIPESTATUS[0]}"
+      set -e
+      FORWARDER="$(grep 'Forwarder v2 (FORWARDER_ADDRESS once trusted):' "$LOG" | tail -1 | awk '{print $NF}')"
+      rm -f "$LOG"
+      if [ "$DRY_RUN" != "1" ]; then
+        # From here on, any failure must say where the broadcast forwarder is and how to resume.
+        RECORDED="$(jq -r '[.transactions[] | select(.transactionType == "CREATE" and .contractName == "TaskMarketForwarderV2")] | last | .contractAddress // empty' "$RUN_JSON" 2>/dev/null || true)"
+        for candidate in "$RECORDED" "$FORWARDER"; do
+          if [ -n "$candidate" ] && has_code "$candidate"; then DEPLOYED_FORWARDER="$candidate"; break; fi
+        done
+        if [ "$FORGE_RC" != "0" ] && [ -z "$DEPLOYED_FORWARDER" ] && [ -n "$RECORDED$FORWARDER" ]; then
+          echo "forge failed and no forwarder code was found at ${RECORDED:-$FORWARDER} yet; check that address on chain" >&2
+          echo "before retrying, and resume with FORWARDER_ADDRESS_RESUME=<address> if it was deployed." >&2
+        fi
+      fi
+      [ "$FORGE_RC" = "0" ] || exit "$FORGE_RC"
+      if [ -z "$FORWARDER" ]; then
+        echo "Forwarder deploy did not report an address; not calling addForwarder." >&2
+        exit 1
+      fi
+      # The constructor arguments are decoded from the creation transaction forge recorded (its
+      # initcode ends with the three ABI-encoded addresses), not from the script's own console.log,
+      # which only echoes the environment this script exported.
+      if [ ! -f "$RUN_JSON" ]; then
+        echo "No forge run record at $RUN_JSON; cannot check the forwarder's constructor arguments." >&2
+        exit 1
+      fi
+      CREATE_TX="$(jq -c '[.transactions[] | select(.transactionType == "CREATE" and .contractName == "TaskMarketForwarderV2")] | last // empty' "$RUN_JSON")"
+      if [ -z "$CREATE_TX" ]; then
+        echo "$RUN_JSON has no TaskMarketForwarderV2 creation transaction." >&2
+        exit 1
+      fi
+      CREATE_INPUT="$(printf '%s' "$CREATE_TX" | jq -r '.transaction.input // .transaction.data // ""')"
+      word_addr() { printf '0x%s' "${CREATE_INPUT: $(( ${#CREATE_INPUT} - 64 * $1 + 24 )):40}"; }
+      if [ "${#CREATE_INPUT}" -lt 194 ]; then
+        echo "TaskMarketForwarderV2 creation input in $RUN_JSON is too short to hold its constructor arguments." >&2
+        exit 1
+      fi
+      SIM_USDC="$(word_addr 3)"
+      SIM_MARKET="$(word_addr 2)"
+      SIM_RELAYER="$(word_addr 1)"
+      SIM_ADDRESS="$(printf '%s' "$CREATE_TX" | jq -r '.contractAddress // ""')"
+      echo "Forwarder v2 constructor arguments (decoded from the creation transaction in $RUN_JSON):"
+      expect "address" "$SIM_ADDRESS" "$FORWARDER"
+      expect "usdc()" "$SIM_USDC" "$USDC"
+      expect "taskMarket()" "$SIM_MARKET" "$DIAMOND"
+      expect "authorizedRelayer()" "$SIM_RELAYER" "$RELAYER"
+      if [ "$DRY_RUN" = "1" ]; then
+        echo "DRY RUN: skipping addForwarder (the simulated forwarder address is not on chain)."
+        exit 0
+      fi
     fi
     echo "Forwarder v2 at $FORWARDER (read on chain):"
     expect "usdc()" "$(cast call "$FORWARDER" "usdc()(address)" --rpc-url "$RPC_ALIAS")" "$USDC"
     expect "taskMarket()" "$(cast call "$FORWARDER" "taskMarket()(address)" --rpc-url "$RPC_ALIAS")" "$DIAMOND"
     expect "authorizedRelayer()" "$(cast call "$FORWARDER" "authorizedRelayer()(address)" --rpc-url "$RPC_ALIAS")" "$RELAYER"
-    export FORWARDER_ADDRESS="$FORWARDER"
-    forge script script/AddForwarder.s.sol:AddForwarder \
-      --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" --broadcast --slow
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "DRY RUN: skipping addForwarder for $FORWARDER."
+      exit 0
+    fi
+    if [ "$(cast call "$DIAMOND" "isTrustedForwarder(address)(bool)" "$FORWARDER" --rpc-url "$RPC_ALIAS" 2>/dev/null || true)" = "true" ]; then
+      echo "The diamond already trusts $FORWARDER; skipping addForwarder."
+    else
+      export FORWARDER_ADDRESS="$FORWARDER"
+      forge script script/AddForwarder.s.sol:AddForwarder \
+        --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" --broadcast --slow
+    fi
     TRUSTED="$(cast call "$DIAMOND" "isTrustedForwarder(address)(bool)" "$FORWARDER" --rpc-url "$RPC_ALIAS")"
     echo "isTrustedForwarder($FORWARDER) = $TRUSTED"
     [ "$TRUSTED" = "true" ] || { echo "Forwarder is not trusted after addForwarder." >&2; exit 1; }
+    DEPLOYED_FORWARDER=""
     echo "Set FORWARDER_ADDRESS_${CHAIN_ID}=$FORWARDER on the backend."
     ;;
   upgrade)

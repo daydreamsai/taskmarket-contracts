@@ -38,7 +38,11 @@ const OTHER = "0x4444444444444444444444444444444444444444";
 // must read. NO_RECORD skips writing it.
 const FORGE = `#!/usr/bin/env bash
 echo "$*" >> "$CALLS"
-case "$2" in *DeployForwarderV2*) ;; *) exit 0 ;; esac
+case "$2" in
+  *DeployForwarderV2*) ;;
+  *AddForwarder*) [ -n "\${FAIL_ADD:-}" ] && exit 1; touch "$TRUSTED_FILE"; exit 0 ;;
+  *) exit 0 ;;
+esac
 dir="broadcast/DeployForwarderV2.s.sol/42431"
 case " $* " in *" --broadcast "*) ;; *) dir="$dir/dry-run" ;; esac
 pad() { printf '000000000000000000000000%s' "$(printf '%s' "$1" | sed 's/^0x//')"; }
@@ -51,20 +55,36 @@ echo "Forwarder v2 (FORWARDER_ADDRESS once trusted): $SIM_FORWARDER"
 echo "  USDC: $FORGE_USDC_TOKEN_ADDRESS"
 echo "  TaskMarket: $CONTRACT_ADDRESS"
 echo "  Authorized relayer: $FORGE_SERVER_ADDRESS"
+[ -n "\${FAIL_DEPLOY:-}" ] && exit 1
+exit 0
 `;
+// cast answers chain-id from CHAIN_ID_REPLY, code from CODE_REPLY, and isTrustedForwarder from
+// whether AddForwarder has run (or TRUSTED_FILE was seeded). ONCHAIN_USDC overrides the deployed
+// forwarder's usdc().
 const CAST = `#!/usr/bin/env bash
 case "$*" in
+  chain-id*) echo "$CHAIN_ID_REPLY" ;;
+  code\\ *) echo "\${CODE_REPLY-0x6080}" ;;
   wallet\\ address*) echo "${DEPLOYER}" ;;
   *owner\\(\\)*) echo "${DEPLOYER}" ;;
-  *usdc\\(\\)*) echo "$FORGE_USDC_TOKEN_ADDRESS" ;;
+  *usdc\\(\\)*) echo "\${ONCHAIN_USDC:-$FORGE_USDC_TOKEN_ADDRESS}" ;;
   *taskMarket\\(\\)*) echo "$CONTRACT_ADDRESS" ;;
   *authorizedRelayer\\(\\)*) echo "$FORGE_SERVER_ADDRESS" ;;
-  *isTrustedForwarder*) echo true ;;
+  *isTrustedForwarder*) if [ -f "$TRUSTED_FILE" ]; then echo true; else echo false; fi ;;
   *) exit 1 ;;
 esac
 `;
 
-function run({ action = "deploy", env = {}, stale = false }) {
+function run({
+  action = "deploy",
+  env = {},
+  stale = false,
+  network = "tempo-testnet",
+  trusted = false,
+}) {
+  const suffix =
+    network === "tempo-mainnet" ? "TEMPO_MAINNET" : "TEMPO_TESTNET";
+  const chainId = network === "tempo-mainnet" ? "4217" : "42431";
   const dir = mkdtempSync(join(tmpdir(), "tempo-sh-"));
   mkdirSync(join(dir, "script"));
   mkdirSync(join(dir, "bin"));
@@ -95,24 +115,28 @@ function run({ action = "deploy", env = {}, stale = false }) {
     }
   }
   const calls = join(dir, "calls");
+  const trustedFile = join(dir, "trusted");
+  if (trusted) writeFileSync(trustedFile, "");
   const base = { ...process.env };
   delete base.DRY_RUN;
-  const r = spawnSync("bash", ["script/tempo.sh", action, "tempo-testnet"], {
+  const r = spawnSync("bash", ["script/tempo.sh", action, network], {
     cwd: dir,
     encoding: "utf8",
     env: {
       ...base,
       PATH: `${join(dir, "bin")}:${process.env.PATH}`,
       CALLS: calls,
+      TRUSTED_FILE: trustedFile,
+      CHAIN_ID_REPLY: chainId,
       SIM_FORWARDER: FORWARDER,
-      FORGE_DEV_PRIVATE_KEY_TEMPO_TESTNET: KEY,
-      FORGE_FEE_TOKEN_TEMPO_TESTNET: USDC,
-      FORGE_USDC_TOKEN_ADDRESS_TEMPO_TESTNET: USDC,
-      FORGE_FEE_RECIPIENT_ADDRESS_TEMPO_TESTNET: OTHER,
-      FORGE_DEFAULT_PLATFORM_FEE_BPS_TEMPO_TESTNET: "500",
-      FORGE_MIN_FEEDBACK_GAS_TEMPO_TESTNET: "100000",
-      FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET: DIAMOND,
-      FORGE_SERVER_ADDRESS_TEMPO_TESTNET: RELAYER,
+      [`FORGE_DEV_PRIVATE_KEY_${suffix}`]: KEY,
+      [`FORGE_FEE_TOKEN_${suffix}`]: USDC,
+      [`FORGE_USDC_TOKEN_ADDRESS_${suffix}`]: USDC,
+      [`FORGE_FEE_RECIPIENT_ADDRESS_${suffix}`]: OTHER,
+      [`FORGE_DEFAULT_PLATFORM_FEE_BPS_${suffix}`]: "500",
+      [`FORGE_MIN_FEEDBACK_GAS_${suffix}`]: "100000",
+      [`FORGE_DIAMOND_ADDRESS_${suffix}`]: DIAMOND,
+      [`FORGE_SERVER_ADDRESS_${suffix}`]: RELAYER,
       ...env,
     },
   });
@@ -188,4 +212,157 @@ test("deploy-forwarder broadcast checks the record, then the chain, then trusts 
   assert.equal(r.status, 0, r.out);
   assert.match(r.stdout, /isTrustedForwarder\(.*\) = true/);
   assert.ok(r.forgeCalls.some((c) => c.includes("AddForwarder")));
+});
+
+for (const [network, chainId] of [
+  ["tempo-testnet", "42431"],
+  ["tempo-mainnet", "4217"],
+]) {
+  for (const action of ["deploy", "deploy-forwarder"]) {
+    test(`${action} ${network} refuses when the RPC is not chain ${chainId}`, () => {
+      for (const wrong of [chainId === "4217" ? "42431" : "4217", ""]) {
+        const r = run({
+          action,
+          network,
+          env: { DRY_RUN: "0", CHAIN_ID_REPLY: wrong },
+        });
+        assert.notEqual(r.status, 0, r.out);
+        assert.match(
+          r.stderr,
+          new RegExp(`expected ${chainId} for ${network}`),
+        );
+        assert.deepEqual(r.forgeCalls, []);
+      }
+    });
+  }
+
+  test(`deploy ${network} runs when the RPC is chain ${chainId}`, () => {
+    const r = run({ network, env: { DRY_RUN: "0" } });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(broadcasts(r), true);
+  });
+}
+
+const RESUME_HINT = new RegExp(
+  `FORWARDER_ADDRESS_RESUME=${FORWARDER} make deploy-forwarder tempo-testnet`,
+);
+const ran = (r, name) => r.forgeCalls.some((c) => c.includes(name));
+
+for (const [name, env] of [
+  ["forge fails after the broadcast (verification)", { FAIL_DEPLOY: "1" }],
+  ["the on-chain getter check fails", { ONCHAIN_USDC: OTHER }],
+  ["addForwarder fails", { FAIL_ADD: "1" }],
+]) {
+  test(`deploy-forwarder prints the deployed address and resume command when ${name}`, () => {
+    const r = run({
+      action: "deploy-forwarder",
+      env: { DRY_RUN: "0", ...env },
+    });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.stderr, new RegExp(`deployed at ${FORWARDER}`));
+    assert.match(r.stderr, RESUME_HINT);
+  });
+}
+
+test("deploy-forwarder prints no resume command when nothing reached the chain", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    env: { DRY_RUN: "0", FAIL_DEPLOY: "1", CODE_REPLY: "0x" },
+  });
+  assert.notEqual(r.status, 0, r.out);
+  assert.doesNotMatch(r.stderr, /is deployed at/);
+  assert.match(r.stderr, /no forwarder code was found/);
+});
+
+test("FORWARDER_ADDRESS_RESUME skips the deploy, checks the getters, then trusts the forwarder", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    env: { DRY_RUN: "0", FORWARDER_ADDRESS_RESUME: FORWARDER },
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(ran(r, "DeployForwarderV2"), false, r.forgeCalls.join("\n"));
+  assert.ok(ran(r, "AddForwarder"));
+  assert.match(r.stdout, /usdc\(\) = /);
+  assert.match(r.stdout, /isTrustedForwarder\(.*\) = true/);
+});
+
+test("FORWARDER_ADDRESS_RESUME skips addForwarder when the diamond already trusts it", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    trusted: true,
+    env: { DRY_RUN: "0", FORWARDER_ADDRESS_RESUME: FORWARDER },
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.forgeCalls, []);
+  assert.match(r.stdout, /already trusts/);
+});
+
+test("FORWARDER_ADDRESS_RESUME fails the getter check without calling addForwarder", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    env: {
+      DRY_RUN: "0",
+      FORWARDER_ADDRESS_RESUME: FORWARDER,
+      ONCHAIN_USDC: OTHER,
+    },
+  });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.stderr, new RegExp(`usdc\\(\\) is ${OTHER}`, "i"));
+  assert.deepEqual(r.forgeCalls, []);
+});
+
+for (const [name, env, pattern] of [
+  [
+    "is not an address",
+    { FORWARDER_ADDRESS_RESUME: "0x1234" },
+    /is not an address/,
+  ],
+  [
+    "has no code",
+    { FORWARDER_ADDRESS_RESUME: FORWARDER, CODE_REPLY: "0x" },
+    /No contract code/,
+  ],
+]) {
+  test(`FORWARDER_ADDRESS_RESUME is refused when it ${name}`, () => {
+    const r = run({
+      action: "deploy-forwarder",
+      env: { DRY_RUN: "0", ...env },
+    });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.stderr, pattern);
+    assert.deepEqual(r.forgeCalls, []);
+  });
+}
+
+test("FORWARDER_ADDRESS_RESUME with DRY_RUN checks the getters and sends nothing", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    env: { DRY_RUN: "1", FORWARDER_ADDRESS_RESUME: FORWARDER },
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.forgeCalls, []);
+  assert.match(r.stdout, /DRY RUN: skipping addForwarder/);
+});
+
+test("deploy-forwarder refuses a second deploy while an earlier forwarder is untrusted", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    stale: true,
+    env: { DRY_RUN: "0" },
+  });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.stderr, /Refusing to deploy a second forwarder/);
+  assert.match(r.stderr, RESUME_HINT);
+  assert.deepEqual(r.forgeCalls, []);
+});
+
+test("deploy-forwarder deploys again when the earlier forwarder is already trusted", () => {
+  const r = run({
+    action: "deploy-forwarder",
+    stale: true,
+    trusted: true,
+    env: { DRY_RUN: "0" },
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(ran(r, "DeployForwarderV2"));
 });

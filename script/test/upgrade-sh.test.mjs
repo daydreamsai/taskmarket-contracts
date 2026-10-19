@@ -28,6 +28,7 @@ const UPGRADE_SH = join(
 // that step is listed in FAIL_BEFORE, advances $STATE to the step's target revision. A step in
 // FAIL_AFTER advances the version and then exits non-zero, like a verification failure.
 const CAST = `#!/usr/bin/env bash
+if [ "$1" = chain-id ]; then echo "$CHAIN_ID_REPLY"; exit 0; fi
 n=$(( $(cat "$CAST_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$CAST_COUNT"
 step="$(printf '%s' "$CAST_PLAN" | awk -v n="$n" '{ print $n }')"
@@ -47,7 +48,15 @@ case " $FAIL_AFTER " in *" $name "*) exit 1;; esac
 exit 0
 `;
 
-function run({ steps, version, args = [], env = {} }) {
+const NETWORKS = {
+  testnet: ["TESTNET", "84532"],
+  mainnet: ["MAINNET", "8453"],
+  "tempo-testnet": ["TEMPO_TESTNET", "42431"],
+  "tempo-mainnet": ["TEMPO_MAINNET", "4217"],
+};
+
+function run({ steps, version, args = [], env = {}, network = "testnet" }) {
+  const [suffix, chainId] = NETWORKS[network];
   const dir = mkdtempSync(join(tmpdir(), "upgrade-sh-"));
   mkdirSync(join(dir, "script", "upgrades"), { recursive: true });
   mkdirSync(join(dir, "bin"));
@@ -61,13 +70,15 @@ function run({ steps, version, args = [], env = {} }) {
   const state = join(dir, "state");
   const calls = join(dir, "calls");
   writeFileSync(state, `${version}\n`);
-  const res = spawnSync("bash", ["script/upgrade.sh", "testnet", ...args], {
+  const res = spawnSync("bash", ["script/upgrade.sh", network, ...args], {
     cwd: dir,
     encoding: "utf8",
     env: {
       PATH: `${join(dir, "bin")}:${process.env.PATH}`,
-      FORGE_DIAMOND_ADDRESS_TESTNET:
+      [`FORGE_DIAMOND_ADDRESS_${suffix}`]:
         "0x0000000000000000000000000000000000000001",
+      FORGE_FEE_TOKEN: "0x20c0000000000000000000000000000000000000",
+      CHAIN_ID_REPLY: chainId,
       STATE: state,
       CALLS: calls,
       CAST_COUNT: join(dir, "cast-count"),
@@ -243,3 +254,31 @@ test("a stale read after a step that succeeded waits for the new version", () =>
   assert.match(r.stdout, /current rev 24\)/);
   assert.match(r.stdout, /now at rev 25/);
 });
+
+for (const [network, [, chainId]] of Object.entries(NETWORKS)) {
+  test(`${network}: runs when the RPC reports chain ${chainId}`, () => {
+    const r = run({ network, steps: ALL, version: 24 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, ["Rev025Upgrade"]);
+  });
+
+  for (const wrong of ["1", ""]) {
+    test(`${network}: refuses before any step when the RPC reports chain ${JSON.stringify(wrong)}`, () => {
+      for (const args of [[], ["rev025"]]) {
+        const r = run({
+          network,
+          steps: ALL,
+          version: 24,
+          args,
+          env: { CHAIN_ID_REPLY: wrong },
+        });
+        assert.equal(r.status, 1);
+        assert.match(
+          r.stderr,
+          new RegExp(`expected ${chainId} for ${network}`),
+        );
+        assert.deepEqual(r.ran, []);
+      }
+    });
+  }
+}
