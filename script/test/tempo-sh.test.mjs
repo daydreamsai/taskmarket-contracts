@@ -21,6 +21,7 @@ import {
   FORGE_GAS,
   installGasStubs,
   gasEnv,
+  isolatedPath,
 } from "./tempo-gas-stubs.mjs";
 
 const TEMPO_SH = join(
@@ -87,6 +88,7 @@ function run({
   action = "deploy",
   env = {},
   stale = false,
+  without,
   network = "tempo-testnet",
   trusted = false,
 }) {
@@ -133,7 +135,9 @@ function run({
     encoding: "utf8",
     env: {
       ...base,
-      PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+      PATH: without
+        ? isolatedPath(dir, without)
+        : `${join(dir, "bin")}:${process.env.PATH}`,
       CALLS: calls,
       TRUSTED_FILE: trustedFile,
       CHAIN_ID_REPLY: chainId,
@@ -414,5 +418,30 @@ test("deploy under the cap broadcasts with a multiplier that keeps every limit u
 test("deploy lowers the multiplier below 130 for an estimate above 23M", () => {
   const r = run({ env: { TEMPO_ESTIMATES: "28387813" } });
   assert.equal(r.status, 0, r.out);
-  assert.match(r.forgeCalls.join("\n"), /--gas-estimate-multiplier 105 /);
+  assert.match(r.forgeCalls.join("\n"), /--gas-estimate-multiplier 103 /);
 });
+
+test("deploy refuses an estimate whose multiplier would fall below 101", () => {
+  // Under the 29.9M cap, but 29,400,000 * 100 / 29,200,000 is 100: forge would set a limit at or
+  // below the estimate and the transaction could run out of gas on chain.
+  const r = run({ env: { TEMPO_ESTIMATES: "5000000 29200000" } });
+  assert.equal(r.status, 1, r.out);
+  assert.equal(r.forgeCalls.filter((c) => / --broadcast/.test(c)).length, 0);
+  assert.match(r.out, /multiplier 100, which is below the minimum 101/);
+});
+
+test("deploy accepts the largest estimate that still gets multiplier 101", () => {
+  const r = run({ env: { TEMPO_ESTIMATES: "29108910" } });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.forgeCalls.join("\n"), /--gas-estimate-multiplier 101 /);
+});
+
+for (const tool of ["anvil", "jq"]) {
+  test(`deploy refuses a missing ${tool} before anything runs`, () => {
+    const r = run({ without: [tool] });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, new RegExp(`needs ${tool} on PATH`));
+    assert.deepEqual(r.forgeCalls, []);
+    assert.deepEqual(r.gasCalls, []);
+  });
+}

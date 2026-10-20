@@ -1,8 +1,17 @@
 // Shell fragments shared by the tempo.sh and upgrade.sh tests to stand in for the Tempo gas check
 // (script/lib/tempo-gas.sh): a stub anvil, the cast answers the check reads from the local fork,
 // and the forge simulation on that fork. TEMPO_ESTIMATES lists one node estimate (decimal) per
-// transaction in the simulated run record; every fork simulation is logged to $GAS_CALLS.
-import { cpSync, writeFileSync, chmodSync } from "node:fs";
+// transaction in the simulated run records, in order (TEMPO_TXS_PER_SIM transactions per simulation,
+// all of them by default); every fork simulation is logged to $GAS_CALLS.
+import {
+  cpSync,
+  writeFileSync,
+  chmodSync,
+  mkdirSync,
+  symlinkSync,
+  rmSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,7 +47,9 @@ case "$*" in
     d="broadcast/$f/$CHAIN_ID_REPLY/dry-run"
     mkdir -p "$d"
     txs=""
-    for _ in \${TEMPO_ESTIMATES:-1000000}; do
+    all="\${TEMPO_ESTIMATES:-1000000}"
+    k="\${TEMPO_TXS_PER_SIM:-$(printf '%s' "$all" | wc -w)}"
+    for _ in $(seq 1 "$k"); do
       txs="$txs\${txs:+,}{\\"transactionType\\":\\"CALL\\",\\"contractName\\":\\"Diamond\\",\\"function\\":\\"diamondCut\\",\\"transaction\\":{\\"from\\":\\"0x01\\",\\"to\\":\\"0x02\\",\\"input\\":\\"0x1f931c1c\\"}}"
     done
     printf '{"transactions":[%s]}' "$txs" > "$d/run-latest.json"
@@ -51,6 +62,46 @@ export function installGasStubs(dir) {
   cpSync(LIB, join(dir, "script", "lib"), { recursive: true });
   writeFileSync(join(dir, "bin", "anvil"), ANVIL);
   chmodSync(join(dir, "bin", "anvil"), 0o755);
+}
+
+// Required tools linked into <dir>/sys, so a test can run a script on a PATH without anvil or jq.
+const SYS_TOOLS = [
+  "bash",
+  "cat",
+  "tr",
+  "sed",
+  "grep",
+  "head",
+  "tail",
+  "sort",
+  "seq",
+  "basename",
+  "dirname",
+  "awk",
+  "mktemp",
+  "sleep",
+  "rm",
+  "mkdir",
+  "wc",
+  "env",
+  "jq",
+  "printf",
+  "date",
+];
+export function isolatedPath(dir, without) {
+  const sys = join(dir, "sys");
+  mkdirSync(sys, { recursive: true });
+  for (const t of SYS_TOOLS) {
+    if (without.includes(t)) continue;
+    const r = spawnSync("bash", ["-c", `command -v ${t}`], {
+      encoding: "utf8",
+    });
+    const p = r.stdout.trim();
+    if (p.startsWith("/")) symlinkSync(p, join(sys, t));
+  }
+  if (without.includes("anvil"))
+    rmSync(join(dir, "bin", "anvil"), { force: true });
+  return `${join(dir, "bin")}:${sys}`;
 }
 
 export function gasEnv(dir) {

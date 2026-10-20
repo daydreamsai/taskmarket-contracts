@@ -21,6 +21,7 @@ import {
   FORGE_GAS,
   installGasStubs,
   gasEnv,
+  isolatedPath,
 } from "./tempo-gas-stubs.mjs";
 
 const UPGRADE_SH = join(
@@ -64,7 +65,14 @@ const NETWORKS = {
   "tempo-mainnet": ["TEMPO_MAINNET", "4217"],
 };
 
-function run({ steps, version, args = [], env = {}, network = "testnet" }) {
+function run({
+  steps,
+  version,
+  args = [],
+  env = {},
+  network = "testnet",
+  without,
+}) {
   const [suffix, chainId] = NETWORKS[network];
   const dir = mkdtempSync(join(tmpdir(), "upgrade-sh-"));
   mkdirSync(join(dir, "script", "upgrades"), { recursive: true });
@@ -84,7 +92,9 @@ function run({ steps, version, args = [], env = {}, network = "testnet" }) {
     cwd: dir,
     encoding: "utf8",
     env: {
-      PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+      PATH: without
+        ? isolatedPath(dir, without)
+        : `${join(dir, "bin")}:${process.env.PATH}`,
       [`FORGE_DIAMOND_ADDRESS_${suffix}`]:
         "0x0000000000000000000000000000000000000001",
       FORGE_FEE_TOKEN: "0x20c0000000000000000000000000000000000000",
@@ -332,7 +342,106 @@ test("tempo: a step under the cap broadcasts with every gas limit kept under it"
   assert.ok(m, r.args[0]);
   assert.ok(/ --broadcast/.test(r.args[0]));
   assert.ok((28387813 * Number(m[1])) / 100 <= 29900000, m[1]);
-  assert.equal(m[1], "105");
+  assert.equal(m[1], "103");
+});
+
+// Forge multiplies the live node's estimate, which on Moderato ran 0.80-0.87% above the fork's
+// (CoreFacet 18,336,344 live vs 18,190,805 on the fork).
+test("tempo: a 23.0M fork estimate with a live estimate 0.9% higher stays under 30M", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 24,
+    env: { TEMPO_ESTIMATES: "23000000" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const m = Number(r.args[0].match(/--gas-estimate-multiplier (\d+)/)[1]);
+  const live = Math.ceil(23000000 * 1.009);
+  assert.ok(Math.floor((live * m) / 100) < 30000000, String(m));
+});
+
+test("tempo: a later step over the cap is refused before the first step broadcasts", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 23,
+    env: { TEMPO_TXS_PER_SIM: "1", TEMPO_ESTIMATES: "5000000 29950000" },
+  });
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.ran, []);
+  assert.equal(r.gasCalls.length, 2);
+  assert.match(r.stderr, /Rev025Upgrade/);
+  assert.equal(r.version, "23");
+});
+
+test("tempo: every pending step is checked on one fork, in order, before any broadcast", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 23,
+    env: { TEMPO_TXS_PER_SIM: "1", TEMPO_ESTIMATES: "5000000 28387813" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ran, ["Rev024Upgrade", "Rev025Upgrade"]);
+  assert.equal(r.gasCalls.length, 2);
+  assert.match(r.gasCalls[0], /Rev024Upgrade/);
+  assert.match(r.gasCalls[1], /Rev025Upgrade/);
+  // One fork for the whole run: both simulations hit the same port.
+  const port = (c) => c.match(/127\.0\.0\.1:(\d+)/)[1];
+  assert.equal(port(r.gasCalls[0]), port(r.gasCalls[1]));
+  assert.match(r.args[0], /--gas-estimate-multiplier 130 /);
+  assert.match(r.args[1], /--gas-estimate-multiplier 103 /);
+});
+
+test("tempo: a dry run from rev023 reports every pending step", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 23,
+    env: {
+      DRY_RUN: "1",
+      TEMPO_TXS_PER_SIM: "1",
+      TEMPO_ESTIMATES: "5000000 28387813",
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.gasCalls.length, 2);
+  assert.match(
+    r.stdout,
+    /Rev024Upgrade: largest node estimate 5000000, multiplier 130/,
+  );
+  assert.match(
+    r.stdout,
+    /Rev025Upgrade: largest node estimate 28387813, multiplier 103/,
+  );
+  assert.ok(r.args.every((a) => !/ --broadcast/.test(a)));
+});
+
+for (const tool of ["anvil", "jq"]) {
+  test(`tempo: a missing ${tool} is refused before anything runs`, () => {
+    const r = run({
+      network: "tempo-testnet",
+      steps: ALL,
+      version: 24,
+      without: [tool],
+    });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, new RegExp(`needs ${tool} on PATH`));
+    assert.deepEqual(r.ran, []);
+    assert.deepEqual(r.gasCalls, []);
+  });
+}
+
+test("tempo: without TEMPO_GAS_FORK_PORT the fork uses a free port, not 8599", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 24,
+    env: { TEMPO_GAS_FORK_PORT: "" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.gasCalls[0], /127\.0\.0\.1:\d+/);
+  assert.doesNotMatch(r.gasCalls[0], /:8599/);
 });
 
 test("tempo: a dry run reads node estimates and refuses one over the cap", () => {

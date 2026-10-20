@@ -9,15 +9,22 @@
 # gas can be far below the node's estimate (a rev025 cut simulated at about 13.6M and estimated
 # at about 28.4M). So the node's estimate is what has to fit.
 #
-# Prints one line per transaction, then "TEMPO_GAS_MULTIPLIER=<percent>": the largest forge
-# --gas-estimate-multiplier (at most 130) under which every estimate stays at or below
-# TEMPO_GAS_LIMIT_MAX. Exits 1, naming the transaction, if any estimate is >= TEMPO_GAS_LIMIT_MAX.
+# Prints one line per transaction, then "TEMPO_GAS_MULTIPLIER=<percent>":
+# min(130, floor(TEMPO_GAS_BUDGET * 100 / largest estimate)). Forge multiplies the live node's
+# estimate, not this fork's, and on Moderato the live estimates for facet deploys ran 0.80-0.87%
+# above the fork's (CoreFacet 18,336,344 live vs 18,190,805 on the fork), so the budget
+# (29,400,000) leaves about 2% under the cap for that gap. Exits 1, naming the transaction, if any
+# estimate is >= TEMPO_GAS_LIMIT_MAX (29,900,000), or if the multiplier would fall below 101
+# (a largest estimate above about 29.1M): below that forge would set a limit at or under the
+# estimate, and the transaction could run out of gas on chain instead of being refused here.
 set -euo pipefail
 
 RECORD="${1:?usage: tempo-gas-check.sh <run-record.json> <rpc-url>}"
 RPC="${2:?usage: tempo-gas-check.sh <run-record.json> <rpc-url>}"
 LIMIT="${TEMPO_GAS_LIMIT_MAX:-29900000}"
+BUDGET="${TEMPO_GAS_BUDGET:-29400000}"
 DEFAULT_MULTIPLIER=130
+MIN_MULTIPLIER=101
 
 command -v jq >/dev/null || { echo "tempo-gas-check needs jq." >&2; exit 1; }
 [ -f "$RECORD" ] || { echo "No forge run record at $RECORD." >&2; exit 1; }
@@ -57,7 +64,12 @@ if [ -n "$OVER" ]; then
   exit 1
 fi
 
-MULTIPLIER=$((LIMIT * 100 / MAX))
+MULTIPLIER=$((BUDGET * 100 / MAX))
 [ "$MULTIPLIER" -gt "$DEFAULT_MULTIPLIER" ] && MULTIPLIER=$DEFAULT_MULTIPLIER
+if [ "$MULTIPLIER" -lt "$MIN_MULTIPLIER" ]; then
+  echo "Refusing to broadcast: largest node estimate $MAX gives multiplier $MULTIPLIER, which is below the minimum $MIN_MULTIPLIER (budget $BUDGET)." >&2
+  echo "A gas limit at or under the estimate could run out of gas on chain; the transaction has to be split." >&2
+  exit 1
+fi
 echo "Largest node estimate: $MAX"
 echo "TEMPO_GAS_MULTIPLIER=$MULTIPLIER"

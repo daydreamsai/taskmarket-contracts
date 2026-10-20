@@ -46,6 +46,11 @@ case "$NETWORK" in
 esac
 case "$ACTION" in deploy|deploy-forwarder|upgrade) ;; *) usage ;; esac
 
+# shellcheck source=lib/tempo-gas.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
+# deploy and upgrade run the gas check, which needs anvil and jq; refuse before anything else.
+case "$ACTION" in deploy|upgrade) tempo_gas_require_tools || exit 1 ;; esac
+
 MISSING=()
 # need NAME -> value of NAME_<SUFFIX> (empty when unset; presence is checked below).
 need() {
@@ -120,8 +125,6 @@ esac
 echo ""
 
 export FOUNDRY_PROFILE=tempo
-# shellcheck source=lib/tempo-gas.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
 # Overwrite every unsuffixed name the scripts read so a Base value in .env cannot leak through.
 export FORGE_DEV_PRIVATE_KEY="$KEY"
 export FORGE_FEE_TOKEN="$FEE_TOKEN"

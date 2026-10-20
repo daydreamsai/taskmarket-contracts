@@ -28,9 +28,14 @@
 #
 # Set DRY_RUN=1 (or any non-empty value other than 0 or false, such as true or yes) to simulate against live chain state without broadcasting (forge script's
 # normal dry-run behavior when --broadcast is omitted). Only the first pending step is
-# simulated: a dry run never actually advances diamondVersion on-chain, so any step after the
-# first would simulate against the same pre-upgrade state and fail its own precondition check
-# -- each step can only be meaningfully previewed once the one before it has actually broadcast.
+# simulated against the live chain: a dry run never advances diamondVersion on-chain, so a later
+# step would fail its own precondition check there. On Tempo the gas check below still replays
+# and reports every pending step on a local fork, where each step sees the ones before it.
+#
+# On Tempo, before anything is broadcast, every step the run would apply is simulated in order on
+# one local fork and each transaction's node estimate is checked against Tempo's 30M cap
+# (script/lib/tempo-gas.sh). A step over the cap anywhere in the run refuses the whole run, so a
+# refusal of Rev025 cannot land after Rev024 has broadcast.
 set -euo pipefail
 
 NETWORK="$1"
@@ -69,6 +74,8 @@ case "$NETWORK" in
     export FOUNDRY_PROFILE=tempo
     # shellcheck source=lib/tempo-gas.sh
     source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
+    tempo_gas_require_tools || exit 1
+    trap tempo_gas_fork_stop EXIT
     NETWORK_FLAGS=(--tempo.fee-token "${FORGE_FEE_TOKEN:?FORGE_FEE_TOKEN (or FORGE_FEE_TOKEN_TEMPO_*) not set}")
     VERIFY_FLAGS=(--verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
     ;;
@@ -82,22 +89,41 @@ if [ "$ACTUAL_CHAIN_ID" != "$CHAIN_ID" ]; then
   exit 1
 fi
 
-# On Tempo every step first passes the gas check in script/lib/tempo-gas.sh: it is simulated on
-# a local fork of the live chain (so it sees every earlier step that landed), each transaction's
-# node estimate must stay under Tempo's 30M per-transaction cap, and the broadcast then uses a
-# gas multiplier that keeps every limit under it.
-GAS_FLAGS=()
+# Tempo: tempo_check_steps replays every given step in order on one local fork before anything
+# broadcasts and records each step's gas multiplier in STEP_MULTIPLIER (same order as its
+# arguments). It exits the run if any step fails the check.
+STEP_NAMES=()
+STEP_MULTIPLIER=()
+tempo_check_steps() {
+  local name summary=""
+  tempo_gas_fork_start "$(tempo_rpc_url "$RPC_URL")" || exit 1
+  for name in "$@"; do
+    if ! tempo_gas_check "script/upgrades/${name}.s.sol:${name}" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"}; then
+      tempo_gas_fork_stop
+      echo "Refusing to run: $name failed the Tempo gas check; no step of this run was broadcast." >&2
+      exit 1
+    fi
+    STEP_NAMES+=("$name")
+    STEP_MULTIPLIER+=("${TEMPO_GAS_FLAGS[1]}")
+    summary="${summary}  ${name}: largest node estimate ${TEMPO_GAS_LARGEST}, multiplier ${TEMPO_GAS_FLAGS[1]}"$'\n'
+  done
+  tempo_gas_fork_stop
+  echo "Tempo gas check passed for every step of this run, in order on one fork:"
+  printf '%s' "$summary"
+}
+
 run_script() {
+  local name="${1##*:}" i gas=()
+  for i in ${STEP_NAMES[@]+"${!STEP_NAMES[@]}"}; do
+    [ "${STEP_NAMES[$i]}" = "$name" ] && gas=(--gas-estimate-multiplier "${STEP_MULTIPLIER[$i]}")
+  done
   case "$NETWORK" in
-    tempo-*)
-      tempo_gas_preflight "$1" "$(tempo_rpc_url "$RPC_URL")" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} || return 1
-      GAS_FLAGS=("${TEMPO_GAS_FLAGS[@]}")
-      ;;
+    tempo-*) [ "${#gas[@]}" -gt 0 ] || { echo "$name has no Tempo gas check result." >&2; return 1; } ;;
   esac
   if [ "$DRY_RUN" = "1" ]; then
-    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${GAS_FLAGS[@]+"${GAS_FLAGS[@]}"}
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${gas[@]+"${gas[@]}"}
   else
-    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${GAS_FLAGS[@]+"${GAS_FLAGS[@]}"} --broadcast "${VERIFY_FLAGS[@]}"
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${gas[@]+"${gas[@]}"} --broadcast "${VERIFY_FLAGS[@]}"
   fi
 }
 
@@ -158,6 +184,7 @@ if [ -n "$REV" ]; then
     exit 1
   fi
   NAME="$(printf '%s' "${REV:0:1}" | tr '[:lower:]' '[:upper:]')${REV:1}Upgrade"
+  case "$NETWORK" in tempo-*) tempo_check_steps "$NAME" ;; esac
   echo "Applying $NAME directly..."
   run_script "script/upgrades/${NAME}.s.sol:${NAME}"
   exit 0
@@ -193,6 +220,10 @@ if [ "${#PENDING[@]}" -gt 0 ] && [ "${PENDING[${#PENDING[@]}-1]}" = "Rev024Upgra
   exit 1
 fi
 
+case "$NETWORK" in
+  tempo-*) [ "${#PENDING[@]}" -gt 0 ] && tempo_check_steps "${PENDING[@]}" ;;
+esac
+
 for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
   TARGET="$(printf '%s' "$NAME" | grep -oE '[0-9]+' | head -1 | sed 's/^0*//')"
   if [ "$TARGET" -gt "$VERSION" ]; then
@@ -218,7 +249,10 @@ for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
       run_script "script/upgrades/${NAME}.s.sol:${NAME}"
     fi
     if [ "$DRY_RUN" = "1" ]; then
-      echo "Dry run: stopping after the first pending step ($NAME) -- later steps can't be simulated until this one actually broadcasts."
+      case "$NETWORK" in
+        tempo-*) echo "Dry run: every pending step passed the gas check on a local fork (above); only the first ($NAME) was simulated against the live chain." ;;
+        *) echo "Dry run: stopping after the first pending step ($NAME) -- later steps can't be simulated until this one actually broadcasts." ;;
+      esac
       exit 0
     fi
     if ! VERSION="$(version_reaching "$TARGET")"; then
