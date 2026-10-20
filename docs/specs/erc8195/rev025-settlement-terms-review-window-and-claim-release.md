@@ -2,7 +2,8 @@
 
 ## Status
 
-Implemented. Not yet deployed.
+Implemented. Deployed to Base Sepolia and Tempo Moderato on 20 October 2026 (`diamondVersion()` 25).
+The mainnet deployments follow.
 
 ## Problem
 
@@ -909,6 +910,79 @@ One pass per chain, in this order:
    so no task locks at the upgrade. Any other post-upgrade pass over live task ids runs
    after this one.
 7. **`removeForwarder`** for the old forwarder.
+
+## Fixes from review
+
+The design above was reviewed before deployment by an external contracts review and by several
+internal review rounds. Each finding below was fixed in this revision; the sections above already
+describe the corrected behaviour. They are listed here so a reader can see what changed after the
+first implementation, and why.
+
+### Settlement and escrow
+
+- **A worker could keep a claim stake without delivering.** Asking for the expiry refund the moment
+  a Claim task expired returned the stake. `refundExpired` now forfeits a non-delivering worker's
+  full stake to the task's `penaltyTo`.
+- **A requester could still refund over delivered work.** By waiting out a silent evaluator, a
+  requester could let a delivered Claim, Pitch or Auction task expire and refund it. `refundExpired`
+  now reverts `DeliveryPending` while a delivery is in Review, and `evaluatorTimeout` is callable by
+  anyone once the evaluation window has passed, so the worker can return the delivery to the
+  requester's review window.
+- **An evaluator timeout skipped the review window.** `evaluatorTimeout` now returns a delivered
+  single-payee task to the requester's review window instead of opening a refund.
+- **A dispute could lapse minutes after it opened** on a late delivery. An appeal now extends
+  `expiryTime` to at least now plus the task's resolution window (`extendOnAppeal`).
+- **An evaluator could be timed out in the next block.** `createTask` and `assignEvaluator` revert
+  `EvaluationWindowTooShort` when the evaluation window is below the minimum, and the minimum is its
+  own owner-settable value (`minEvaluationWindowSecs`, 24 hours by default) rather than the review
+  window floor.
+- **A late verdict and a timeout could both succeed.** `evaluate` reverts `EvaluationWindowClosed`
+  once the evaluation deadline has passed, the same boundary `evaluatorTimeout` uses, so only one
+  of the two can succeed at any moment.
+- **An evaluator could award more than the task holds.** `evaluate` bounds the award total by the
+  task's reward (and, on an Auction, by the accepted price) when the verdict is recorded.
+- **A reverting hook could lock an expired dispute.** Past expiry, `finalizeVerdict` skips check
+  hooks, so `refundExpired` on an expired Appealing or Disputed task can never be blocked by a hook.
+- **A full bid list refused a better bid.** An Auction with the maximum number of bids still accepts
+  a strictly lower bid.
+- **Unbounded tags and hooks.** The owner can cap tags and hooks per task (`setTaskLimits`).
+
+### Tasks created before this revision
+
+- **Delivered and decided clocks.** Normalization seeds `deliveredAt` only when the task has no
+  review clock yet, so a delivery recorded after the cut keeps its own window, and seeds
+  `decisionStartAt` for live Bounties and Benchmarks.
+- **`reviewDeadline` read zero** for a delivery not yet normalized. It now reports the window the
+  delivery gets on normalization.
+
+### Reward and sponsorship hooks
+
+- **A failed bonus release was lost.** When the reward hook cannot pay a reserved bonus from the
+  vault, the reservation stays pending for `recoverReserve` instead of being discarded. USDC
+  settlement is never blocked by a bonus.
+- **Bonuses were sized on the price cap.** Auction bonuses are reserved on the accepted price and
+  paid scaled by each award, in the reward hook and in the Sponsored Task hook's payout pool and
+  reconcile path, which settles on the stored verdict.
+- **A reserved bonus went unpaid** after `settleLapsedReview` or a `finalizeVerdict` past expiry.
+  `onComplete` now pays it, scaled by the award.
+- **The Bounty award loop was unbounded.** It skips zero-amount awards, pays at most
+  `MAX_BONUS_AWARDS` nonzero awards, and stops below a per-award gas floor, so a large verdict can
+  never block settlement.
+- **A Bounty bonus could be lost when `onComplete` failed.** `recoverReserve` pays an accepted,
+  unreserved, funded Bounty or Benchmark once from the stored verdict, and only with at least
+  `RECOVER_BOUNTY_MIN_GAS` (1,500,000) gas left, so a short-gas call cannot mark it paid while
+  paying no winners.
+- **Contract wallets could not withdraw.** `withdrawFor` accepts an EIP-7702 wallet signing with its
+  own key and an ERC-1271 contract wallet returning the exact magic value, and the withdraw message
+  binds the wallet, destination, nonce, deadline, chain and hook.
+
+### Reputation feedback
+
+- **Anyone could send feedback as a requester.** Requester feedback is sent only for a requester
+  who authenticated through a trusted forwarder, and it is bound to that requester's agent ID as
+  the forwarder supplied it (`requesterAgentOf`).
+- **Feedback values were fixed.** The owner can set the value sent for each outcome
+  (`setFeedbackValue`); `worker_rating` is bounded to [0, 100] so a rating can never be inverted.
 
 ## Known limits
 
