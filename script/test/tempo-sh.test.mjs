@@ -16,6 +16,12 @@ import {
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  CAST_GAS,
+  FORGE_GAS,
+  installGasStubs,
+  gasEnv,
+} from "./tempo-gas-stubs.mjs";
 
 const TEMPO_SH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -37,6 +43,7 @@ const OTHER = "0x4444444444444444444444444444444444444444";
 // SIM_MARKET and SIM_RELAYER (defaulting to the exported inputs) -- the record is what tempo.sh
 // must read. NO_RECORD skips writing it.
 const FORGE = `#!/usr/bin/env bash
+${FORGE_GAS}
 echo "$*" >> "$CALLS"
 case "$2" in
   *DeployForwarderV2*) ;;
@@ -62,6 +69,7 @@ exit 0
 // whether AddForwarder has run (or TRUSTED_FILE was seeded). ONCHAIN_USDC overrides the deployed
 // forwarder's usdc().
 const CAST = `#!/usr/bin/env bash
+${CAST_GAS}
 case "$*" in
   chain-id*) echo "$CHAIN_ID_REPLY" ;;
   code\\ *) echo "\${CODE_REPLY-0x6080}" ;;
@@ -93,6 +101,7 @@ function run({
   writeFileSync(join(dir, "bin", "cast"), CAST);
   chmodSync(join(dir, "bin", "forge"), 0o755);
   chmodSync(join(dir, "bin", "cast"), 0o755);
+  installGasStubs(dir);
   if (stale) {
     for (const sub of ["", "/dry-run"]) {
       const d = join(dir, `broadcast/DeployForwarderV2.s.sol/42431${sub}`);
@@ -129,6 +138,7 @@ function run({
       TRUSTED_FILE: trustedFile,
       CHAIN_ID_REPLY: chainId,
       SIM_FORWARDER: FORWARDER,
+      ...gasEnv(dir),
       [`FORGE_DEV_PRIVATE_KEY_${suffix}`]: KEY,
       [`FORGE_FEE_TOKEN_${suffix}`]: USDC,
       [`FORGE_USDC_TOKEN_ADDRESS_${suffix}`]: USDC,
@@ -144,7 +154,11 @@ function run({
   try {
     forgeCalls = readFileSync(calls, "utf8").trim().split("\n");
   } catch {}
-  return { ...r, forgeCalls, out: r.stdout + r.stderr };
+  let gasCalls = [];
+  try {
+    gasCalls = readFileSync(join(dir, "gas-calls"), "utf8").trim().split("\n");
+  } catch {}
+  return { ...r, forgeCalls, gasCalls, out: r.stdout + r.stderr };
 }
 
 const broadcasts = (r) => r.forgeCalls.some((c) => / --broadcast( |$)/.test(c));
@@ -365,4 +379,40 @@ test("deploy-forwarder deploys again when the earlier forwarder is already trust
   });
   assert.equal(r.status, 0, r.out);
   assert.ok(ran(r, "DeployForwarderV2"));
+});
+
+test("deploy refuses before broadcasting when a node estimate reaches the 30M cap", () => {
+  const r = run({ env: { TEMPO_ESTIMATES: "20446746 29900000 1000000" } });
+  assert.equal(r.status, 1, r.out);
+  assert.deepEqual(
+    r.forgeCalls.filter((c) => c),
+    [],
+  );
+  assert.equal(r.gasCalls.length, 1);
+  assert.match(
+    r.out,
+    /tx 1 \(CALL Diamond diamondCut\): node estimate 29900000 >= 29900000/,
+  );
+});
+
+test("deploy dry run refuses an estimate over the cap too", () => {
+  const r = run({ env: { DRY_RUN: "1", TEMPO_ESTIMATES: "31000000" } });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /Refusing to broadcast/);
+});
+
+test("deploy under the cap broadcasts with a multiplier that keeps every limit under it", () => {
+  const r = run({ env: { TEMPO_ESTIMATES: "20446746 10399189" } });
+  assert.equal(r.status, 0, r.out);
+  const deploy = r.forgeCalls.find((c) => / --broadcast/.test(c));
+  const m = deploy.match(/--gas-estimate-multiplier (\d+)/);
+  assert.ok(m, deploy);
+  assert.equal(m[1], "130");
+  assert.ok((20446746 * Number(m[1])) / 100 <= 29900000);
+});
+
+test("deploy lowers the multiplier below 130 for an estimate above 23M", () => {
+  const r = run({ env: { TEMPO_ESTIMATES: "28387813" } });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.forgeCalls.join("\n"), /--gas-estimate-multiplier 105 /);
 });

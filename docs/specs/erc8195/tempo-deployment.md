@@ -74,6 +74,11 @@ storage. Three things follow for `DiamondDeploy.s.sol` and the Tempo Make target
 - The Tempo deploy targets pass `--slow`. Forge estimates each Tempo transaction against the live
   chain when it sends it, so each `diamondCut` must be estimated after the diamond exists; without
   `--slow` it is priced as a call to an empty address and runs out of gas.
+- Forge sets each gas limit at 130% of the node's estimate by default, and its own simulated gas
+  can be well below that estimate, so a dry run alone does not show whether a transaction fits.
+  Before a Tempo deploy or upgrade step, `script/lib/tempo-gas.sh` replays the script on a local
+  anvil fork, reads the node's estimate for every transaction, refuses at or above 29,900,000, and
+  otherwise lowers forge's gas multiplier so no limit exceeds it.
 - Forge before v1.8.5 simulates contract creation with Ethereum's gas schedule and under-estimates
   a Tempo facet deployment about fivefold, so the first transaction runs out of gas. Deploy to Tempo
   with Foundry v1.8.5 or later.

@@ -120,6 +120,8 @@ esac
 echo ""
 
 export FOUNDRY_PROFILE=tempo
+# shellcheck source=lib/tempo-gas.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
 # Overwrite every unsuffixed name the scripts read so a Base value in .env cannot leak through.
 export FORGE_DEV_PRIVATE_KEY="$KEY"
 export FORGE_FEE_TOKEN="$FEE_TOKEN"
@@ -158,8 +160,12 @@ case "$ACTION" in
     export FORGE_FEE_RECIPIENT_ADDRESS="$FEE_RECIPIENT"
     export FORGE_DEFAULT_PLATFORM_FEE_BPS="$FEE_BPS"
     if [ -n "$REGISTRY" ]; then export FORGE_ERC8004_REPUTATION_REGISTRY="$REGISTRY"; else unset FORGE_ERC8004_REPUTATION_REGISTRY; fi
+    # Refuses before anything is sent if a node estimate reaches Tempo's 30M cap; sets
+    # TEMPO_GAS_FLAGS so no gas limit forge sends exceeds it (script/lib/tempo-gas.sh).
+    tempo_gas_preflight script/DiamondDeploy.s.sol:DiamondDeploy "$(tempo_rpc_url "$RPC_ALIAS")" \
+      --tempo.fee-token "$FEE_TOKEN"
     forge script script/DiamondDeploy.s.sol:DiamondDeploy \
-      --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" ${BROADCAST[@]+"${BROADCAST[@]}"}
+      --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" "${TEMPO_GAS_FLAGS[@]}" ${BROADCAST[@]+"${BROADCAST[@]}"}
     ;;
   deploy-forwarder)
     export FORGE_USDC_TOKEN_ADDRESS="$USDC"

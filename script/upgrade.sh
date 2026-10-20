@@ -67,6 +67,8 @@ VERIFY_FLAGS=(--verify)
 case "$NETWORK" in
   tempo-*)
     export FOUNDRY_PROFILE=tempo
+    # shellcheck source=lib/tempo-gas.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
     NETWORK_FLAGS=(--tempo.fee-token "${FORGE_FEE_TOKEN:?FORGE_FEE_TOKEN (or FORGE_FEE_TOKEN_TEMPO_*) not set}")
     VERIFY_FLAGS=(--verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
     ;;
@@ -80,11 +82,22 @@ if [ "$ACTUAL_CHAIN_ID" != "$CHAIN_ID" ]; then
   exit 1
 fi
 
+# On Tempo every step first passes the gas check in script/lib/tempo-gas.sh: it is simulated on
+# a local fork of the live chain (so it sees every earlier step that landed), each transaction's
+# node estimate must stay under Tempo's 30M per-transaction cap, and the broadcast then uses a
+# gas multiplier that keeps every limit under it.
+GAS_FLAGS=()
 run_script() {
+  case "$NETWORK" in
+    tempo-*)
+      tempo_gas_preflight "$1" "$(tempo_rpc_url "$RPC_URL")" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} || return 1
+      GAS_FLAGS=("${TEMPO_GAS_FLAGS[@]}")
+      ;;
+  esac
   if [ "$DRY_RUN" = "1" ]; then
-    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"}
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${GAS_FLAGS[@]+"${GAS_FLAGS[@]}"}
   else
-    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} --broadcast "${VERIFY_FLAGS[@]}"
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${GAS_FLAGS[@]+"${GAS_FLAGS[@]}"} --broadcast "${VERIFY_FLAGS[@]}"
   fi
 }
 

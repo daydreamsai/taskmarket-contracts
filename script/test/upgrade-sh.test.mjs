@@ -16,6 +16,12 @@ import {
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  CAST_GAS,
+  FORGE_GAS,
+  installGasStubs,
+  gasEnv,
+} from "./tempo-gas-stubs.mjs";
 
 const UPGRADE_SH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -29,6 +35,7 @@ const UPGRADE_SH = join(
 // FAIL_AFTER advances the version and then exits non-zero, like a verification failure.
 const CAST = `#!/usr/bin/env bash
 if [ "$1" = chain-id ]; then echo "$CHAIN_ID_REPLY"; exit 0; fi
+${CAST_GAS}
 n=$(( $(cat "$CAST_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$CAST_COUNT"
 step="$(printf '%s' "$CAST_PLAN" | awk -v n="$n" '{ print $n }')"
@@ -39,8 +46,10 @@ case "$step" in
 esac
 `;
 const FORGE = `#!/usr/bin/env bash
+${FORGE_GAS}
 name="$(printf '%s' "$2" | sed 's/.*://')"
 echo "$name" >> "$CALLS"
+echo "$*" >> "$CALLS.args"
 case " $FAIL_BEFORE " in *" $name "*) exit 1;; esac
 target="$(printf '%s' "$name" | grep -oE '[0-9]+' | head -1 | sed 's/^0*//')"
 echo "$target" > "$STATE"
@@ -67,6 +76,7 @@ function run({ steps, version, args = [], env = {}, network = "testnet" }) {
   writeFileSync(join(dir, "bin", "forge"), FORGE);
   chmodSync(join(dir, "bin", "cast"), 0o755);
   chmodSync(join(dir, "bin", "forge"), 0o755);
+  installGasStubs(dir);
   const state = join(dir, "state");
   const calls = join(dir, "calls");
   writeFileSync(state, `${version}\n`);
@@ -86,13 +96,21 @@ function run({ steps, version, args = [], env = {}, network = "testnet" }) {
       UPGRADE_VERSION_READ_DELAY: "0",
       FAIL_BEFORE: "",
       FAIL_AFTER: "",
+      ...gasEnv(dir),
       ...env,
     },
   });
   const ran = existsSync(calls)
     ? readFileSync(calls, "utf8").trim().split("\n")
     : [];
+  const gasFile = join(dir, "gas-calls");
   return {
+    args: existsSync(`${calls}.args`)
+      ? readFileSync(`${calls}.args`, "utf8").trim().split("\n")
+      : [],
+    gasCalls: existsSync(gasFile)
+      ? readFileSync(gasFile, "utf8").trim().split("\n")
+      : [],
     status: res.status,
     stderr: res.stderr,
     stdout: res.stdout,
@@ -282,3 +300,56 @@ for (const [network, [, chainId]] of Object.entries(NETWORKS)) {
     });
   }
 }
+
+test("tempo: a step whose node estimate reaches the 30M cap is refused before broadcasting", () => {
+  // 28,387,813 is the rev025 cut's node estimate on Moderato; 29,950,000 is past the 29.9M limit.
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 24,
+    env: { TEMPO_ESTIMATES: "4000000 29950000" },
+  });
+  assert.equal(r.status, 1, r.stdout);
+  assert.deepEqual(r.ran, []);
+  assert.equal(r.gasCalls.length, 1);
+  assert.match(
+    r.stderr,
+    /tx 1 \(CALL Diamond diamondCut\): node estimate 29950000 >= 29900000/,
+  );
+  assert.equal(r.version, "24");
+});
+
+test("tempo: a step under the cap broadcasts with every gas limit kept under it", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 24,
+    env: { TEMPO_ESTIMATES: "4000000 28387813" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.ran, ["Rev025Upgrade"]);
+  const m = r.args[0].match(/--gas-estimate-multiplier (\d+)/);
+  assert.ok(m, r.args[0]);
+  assert.ok(/ --broadcast/.test(r.args[0]));
+  assert.ok((28387813 * Number(m[1])) / 100 <= 29900000, m[1]);
+  assert.equal(m[1], "105");
+});
+
+test("tempo: a dry run reads node estimates and refuses one over the cap", () => {
+  const r = run({
+    network: "tempo-testnet",
+    steps: ALL,
+    version: 24,
+    env: { DRY_RUN: "1", TEMPO_ESTIMATES: "30000000" },
+  });
+  assert.equal(r.status, 1);
+  assert.deepEqual(r.ran, []);
+  assert.match(r.stderr, /Refusing to broadcast/);
+});
+
+test("base networks skip the Tempo gas check", () => {
+  const r = run({ network: "testnet", steps: ALL, version: 24 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.gasCalls, []);
+  assert.doesNotMatch(r.args[0], /gas-estimate-multiplier/);
+});
