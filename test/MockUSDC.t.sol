@@ -148,4 +148,87 @@ contract MockUSDCTest is Test {
             v := byte(0, mload(add(sig, 96)))
         }
     }
+
+    // -------------------------------------------------------------------------
+    // FiatToken-style blacklist
+    // -------------------------------------------------------------------------
+
+    function test_blacklister_isDeployer_andNothingListed() public view {
+        assertEq(usdc.blacklister(), address(this));
+        assertFalse(usdc.isBlacklisted(payer));
+        assertFalse(usdc.isBlacklisted(payee));
+    }
+
+    function test_blacklist_onlyBlacklister() public {
+        vm.prank(payer);
+        vm.expectRevert("Blacklistable: caller is not the blacklister");
+        usdc.blacklist(payee);
+
+        vm.prank(payer);
+        vm.expectRevert("Blacklistable: caller is not the blacklister");
+        usdc.updateBlacklister(payer);
+    }
+
+    function test_blacklist_blocksTransfersToAndFrom() public {
+        usdc.blacklist(payee);
+        assertTrue(usdc.isBlacklisted(payee));
+
+        vm.prank(payer);
+        vm.expectRevert("Blacklistable: account is blacklisted");
+        usdc.transfer(payee, 1e6);
+
+        vm.expectRevert("Blacklistable: account is blacklisted");
+        usdc.mint(payee, 1e6);
+
+        usdc.unBlacklist(payee);
+        vm.prank(payer);
+        usdc.transfer(payee, 1e6);
+        assertEq(usdc.balanceOf(payee), 1e6);
+
+        usdc.blacklist(payee);
+        vm.prank(payee);
+        vm.expectRevert("Blacklistable: account is blacklisted");
+        usdc.transfer(payer, 1e6);
+    }
+
+    function test_blacklist_blocksTransferFromAndApprove() public {
+        address spender = address(0xCAFE);
+        vm.prank(payer);
+        usdc.approve(spender, 10e6);
+
+        usdc.blacklist(spender);
+        vm.prank(spender);
+        vm.expectRevert("Blacklistable: account is blacklisted");
+        usdc.transferFrom(payer, payee, 1e6);
+
+        vm.prank(payer);
+        vm.expectRevert("Blacklistable: account is blacklisted");
+        usdc.approve(spender, 1e6);
+    }
+
+    function test_blacklist_blocksTransferWithAuthorization() public {
+        usdc.blacklist(payer);
+        bytes32 nonce = bytes32(uint256(7));
+        bytes memory sig = _signAuthorization(
+            usdc.TRANSFER_WITH_AUTHORIZATION_TYPEHASH(),
+            payer,
+            payee,
+            1e6,
+            block.timestamp - 1,
+            block.timestamp + 300,
+            nonce
+        );
+        vm.expectRevert("Blacklistable: account is blacklisted");
+        usdc.transferWithAuthorization(payer, payee, 1e6, block.timestamp - 1, block.timestamp + 300, nonce, sig);
+    }
+
+    function test_updateBlacklister() public {
+        usdc.updateBlacklister(payer);
+        assertEq(usdc.blacklister(), payer);
+        vm.expectRevert("Blacklistable: caller is not the blacklister");
+        usdc.blacklist(payee);
+        vm.prank(payer);
+        usdc.blacklist(payee);
+        assertTrue(usdc.isBlacklisted(payee));
+    }
 }
