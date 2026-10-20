@@ -462,3 +462,29 @@ test("base networks skip the Tempo gas check", () => {
   assert.deepEqual(r.gasCalls, []);
   assert.doesNotMatch(r.args[0], /gas-estimate-multiplier/);
 });
+
+// A diamondCut estimated before its facets are deployed runs out of gas, so a Tempo broadcast
+// sends each transaction only after the one before it is mined.
+for (const network of ["tempo-testnet", "tempo-mainnet"]) {
+  test(`${network}: the broadcast passes --slow`, () => {
+    const r = run({
+      network,
+      steps: ALL,
+      version: 24,
+      env: { TEMPO_ESTIMATES: "4000000 28387813" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.ran, ["Rev025Upgrade"]);
+    assert.match(r.args[0], / --broadcast/);
+    assert.match(r.args[0], / --slow( |$)/);
+  });
+}
+
+test("base networks broadcast without --slow", () => {
+  for (const network of ["testnet", "mainnet"]) {
+    const r = run({ network, steps: ALL, version: 24 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.args[0], / --broadcast/);
+    assert.doesNotMatch(r.args[0], /--slow/);
+  }
+});

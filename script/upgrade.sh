@@ -69,6 +69,7 @@ fi
 # Tempo pays gas in a TIP-20 stablecoin and verifies through Sourcify rather than Etherscan.
 NETWORK_FLAGS=()
 VERIFY_FLAGS=(--verify)
+BROADCAST_FLAGS=()
 case "$NETWORK" in
   tempo-*)
     export FOUNDRY_PROFILE=tempo
@@ -78,6 +79,9 @@ case "$NETWORK" in
     trap tempo_gas_fork_stop EXIT
     NETWORK_FLAGS=(--tempo.fee-token "${FORGE_FEE_TOKEN:?FORGE_FEE_TOKEN (or FORGE_FEE_TOKEN_TEMPO_*) not set}")
     VERIFY_FLAGS=(--verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
+    # --slow sends each transaction only once the one before it is mined: a diamondCut whose
+    # gas is estimated before its facets exist runs out of gas.
+    BROADCAST_FLAGS=(--slow)
     ;;
 esac
 
@@ -123,7 +127,7 @@ run_script() {
   if [ "$DRY_RUN" = "1" ]; then
     forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${gas[@]+"${gas[@]}"}
   else
-    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${gas[@]+"${gas[@]}"} --broadcast "${VERIFY_FLAGS[@]}"
+    forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${gas[@]+"${gas[@]}"} --broadcast ${BROADCAST_FLAGS[@]+"${BROADCAST_FLAGS[@]}"} "${VERIFY_FLAGS[@]}"
   fi
 }
 
