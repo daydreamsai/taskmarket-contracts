@@ -18,10 +18,10 @@ library DeployTarget {
 
     /// @notice The env var holding the diamond address for `chainId`.
     function diamondEnvVar(uint256 chainId) internal pure returns (string memory) {
-        if (chainId == BASE_MAINNET) return "FORGE_DIAMOND_ADDRESS_MAINNET";
-        if (chainId == BASE_SEPOLIA) return "FORGE_DIAMOND_ADDRESS_TESTNET";
-        if (chainId == TEMPO_MAINNET) return "FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET";
-        if (chainId == TEMPO_MODERATO) return "FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET";
+        if (chainId == BASE_MAINNET) return "FORGE_DIAMOND_ADDRESS_8453";
+        if (chainId == BASE_SEPOLIA) return "FORGE_DIAMOND_ADDRESS_84532";
+        if (chainId == TEMPO_MAINNET) return "FORGE_DIAMOND_ADDRESS_4217";
+        if (chainId == TEMPO_MODERATO) return "FORGE_DIAMOND_ADDRESS_42431";
         revert UnknownDeployTarget(chainId);
     }
 

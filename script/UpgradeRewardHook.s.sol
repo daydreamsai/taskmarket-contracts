@@ -20,8 +20,8 @@ import { TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHook.sol";
 ///   FORGE_DEV_PRIVATE_KEY      — owner key (must match the hook proxy's own owner())
 ///   FORGE_REWARD_HOOK_ADDRESS  — the EXISTING TaskTokenRewardHook proxy to upgrade in place
 /// Usage:
-///   make upgrade-reward-hook testnet
-///   make upgrade-reward-hook mainnet
+///   make upgrade-reward-hook 84532
+///   make upgrade-reward-hook 8453
 contract UpgradeRewardHook is Script {
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");

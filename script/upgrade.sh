@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Diamond upgrade orchestrator -- run via
-# `make upgrade <testnet|mainnet|tempo-testnet|tempo-mainnet> [revNNN]`.
+# `make upgrade <84532|8453|42431|4217> [revNNN]`.
 #
 # With no revision argument, applies every script/upgrades/RevNNNUpgrade.s.sol whose target
 # revision is greater than the diamond's current diamondVersion, in ascending order.
@@ -45,24 +45,24 @@ case "$(printf '%s' "${DRY_RUN:-}" | tr '[:upper:]' '[:lower:]')" in
   *) DRY_RUN=1 ;;
 esac
 
-if [ "$NETWORK" = "testnet" ]; then
-  RPC_URL="base_sepolia"
+if [ "$NETWORK" = "84532" ]; then
+  RPC_URL="84532"
   CHAIN_ID=84532
-  DIAMOND="${FORGE_DIAMOND_ADDRESS_TESTNET:?FORGE_DIAMOND_ADDRESS_TESTNET not set}"
-elif [ "$NETWORK" = "mainnet" ]; then
-  RPC_URL="base"
+  DIAMOND="${FORGE_DIAMOND_ADDRESS_84532:?FORGE_DIAMOND_ADDRESS_84532 not set}"
+elif [ "$NETWORK" = "8453" ]; then
+  RPC_URL="8453"
   CHAIN_ID=8453
-  DIAMOND="${FORGE_DIAMOND_ADDRESS_MAINNET:?FORGE_DIAMOND_ADDRESS_MAINNET not set}"
-elif [ "$NETWORK" = "tempo-testnet" ]; then
-  RPC_URL="tempo_moderato"
+  DIAMOND="${FORGE_DIAMOND_ADDRESS_8453:?FORGE_DIAMOND_ADDRESS_8453 not set}"
+elif [ "$NETWORK" = "42431" ]; then
+  RPC_URL="42431"
   CHAIN_ID=42431
-  DIAMOND="${FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET:?FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET not set}"
-elif [ "$NETWORK" = "tempo-mainnet" ]; then
-  RPC_URL="tempo"
+  DIAMOND="${FORGE_DIAMOND_ADDRESS_42431:?FORGE_DIAMOND_ADDRESS_42431 not set}"
+elif [ "$NETWORK" = "4217" ]; then
+  RPC_URL="4217"
   CHAIN_ID=4217
-  DIAMOND="${FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET:?FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET not set}"
+  DIAMOND="${FORGE_DIAMOND_ADDRESS_4217:?FORGE_DIAMOND_ADDRESS_4217 not set}"
 else
-  echo "Usage: script/upgrade.sh <testnet|mainnet|tempo-testnet|tempo-mainnet> [revNNN]" >&2
+  echo "Usage: script/upgrade.sh <84532|8453|42431|4217> [revNNN]" >&2
   exit 1
 fi
 
@@ -71,7 +71,7 @@ NETWORK_FLAGS=()
 VERIFY_FLAGS=(--verify)
 BROADCAST_FLAGS=()
 case "$NETWORK" in
-  tempo-*)
+  42431|4217)
     export FOUNDRY_PROFILE=tempo
     # shellcheck source=lib/tempo-gas.sh
     source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
@@ -122,7 +122,7 @@ run_script() {
     [ "${STEP_NAMES[$i]}" = "$name" ] && gas=(--gas-estimate-multiplier "${STEP_MULTIPLIER[$i]}")
   done
   case "$NETWORK" in
-    tempo-*) [ "${#gas[@]}" -gt 0 ] || { echo "$name has no Tempo gas check result." >&2; return 1; } ;;
+    42431|4217) [ "${#gas[@]}" -gt 0 ] || { echo "$name has no Tempo gas check result." >&2; return 1; } ;;
   esac
   if [ "$DRY_RUN" = "1" ]; then
     forge script "$1" --rpc-url "$RPC_URL" ${NETWORK_FLAGS[@]+"${NETWORK_FLAGS[@]}"} ${gas[@]+"${gas[@]}"}
@@ -188,7 +188,7 @@ if [ -n "$REV" ]; then
     exit 1
   fi
   NAME="$(printf '%s' "${REV:0:1}" | tr '[:lower:]' '[:upper:]')${REV:1}Upgrade"
-  case "$NETWORK" in tempo-*) tempo_check_steps "$NAME" ;; esac
+  case "$NETWORK" in 42431|4217) tempo_check_steps "$NAME" ;; esac
   echo "Applying $NAME directly..."
   run_script "script/upgrades/${NAME}.s.sol:${NAME}"
   exit 0
@@ -225,7 +225,7 @@ if [ "${#PENDING[@]}" -gt 0 ] && [ "${PENDING[${#PENDING[@]}-1]}" = "Rev024Upgra
 fi
 
 case "$NETWORK" in
-  tempo-*) [ "${#PENDING[@]}" -gt 0 ] && tempo_check_steps "${PENDING[@]}" ;;
+  42431|4217) [ "${#PENDING[@]}" -gt 0 ] && tempo_check_steps "${PENDING[@]}" ;;
 esac
 
 for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
@@ -254,7 +254,7 @@ for NAME in ${PENDING[@]+"${PENDING[@]}"}; do
     fi
     if [ "$DRY_RUN" = "1" ]; then
       case "$NETWORK" in
-        tempo-*) echo "Dry run: every pending step passed the gas check on a local fork (above); only the first ($NAME) was simulated against the live chain." ;;
+        42431|4217) echo "Dry run: every pending step passed the gas check on a local fork (above); only the first ($NAME) was simulated against the live chain." ;;
         *) echo "Dry run: stopping after the first pending step ($NAME) -- later steps can't be simulated until this one actually broadcasts." ;;
       esac
       exit 0

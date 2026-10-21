@@ -39,8 +39,8 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
         // earlier upgrade steps below read too.
         vm.chainId(BASE_SEPOLIA_CHAIN_ID);
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
         new Rev012Upgrade().run();
         new Rev013Upgrade().run();
         // Rev014Upgrade cannot run here for the reason Rev015UpgradeTest documents: it Removes
@@ -120,8 +120,8 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
 
         vm.chainId(BASE_SEPOLIA_CHAIN_ID);
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         // Diamond is still at rev011 -- rev016 requires rev015.
         Rev016Upgrade runner = new Rev016Upgrade();
@@ -133,8 +133,8 @@ contract Rev016UpgradeTest is Test, DiamondTestHelper {
         address diamond = address(deployDiamond(owner, usdc, feeRecipient, feeBps));
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         // An unnamed chain id must stop the script, not quietly resolve to the testnet diamond.
         vm.chainId(1);

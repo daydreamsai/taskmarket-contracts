@@ -43,12 +43,12 @@ verbosity = 3
 network = "tempo"
 
 [rpc_endpoints]
-base = "${FORGE_BASE_RPC_URL}"
-base_sepolia = "${FORGE_BASE_SEPOLIA_RPC_URL}"
-tempo = "${FORGE_TEMPO_RPC_URL}"
-tempo_moderato = "${FORGE_TEMPO_MODERATO_RPC_URL}"
+"8453" = "${FORGE_RPC_URL_8453}"
+"84532" = "${FORGE_RPC_URL_84532}"
+"4217" = "${FORGE_RPC_URL_4217}"
+"42431" = "${FORGE_RPC_URL_42431}"
 localhost = "http://127.0.0.1:8545"
 
 [etherscan]
-base = { key = "${FORGE_ETHERSCAN_API_KEY}", chain = 8453, url = "https://api.etherscan.io/v2/api?chainid=8453" }
-base_sepolia = { key = "${FORGE_ETHERSCAN_API_KEY}", chain = 84532, url = "https://api.etherscan.io/v2/api?chainid=84532" }
+"8453" = { key = "${FORGE_ETHERSCAN_API_KEY}", chain = 8453, url = "https://api.etherscan.io/v2/api?chainid=8453" }
+"84532" = { key = "${FORGE_ETHERSCAN_API_KEY}", chain = 84532, url = "https://api.etherscan.io/v2/api?chainid=84532" }

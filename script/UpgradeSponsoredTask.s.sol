@@ -28,8 +28,8 @@ import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/I
 /// deploys the new implementation only and prints the `upgradeToAndCall` target and calldata for
 /// the hook owner to propose and execute; it never calls the proxy itself.
 /// Usage:
-///   make upgrade-sponsored-task testnet
-///   make upgrade-sponsored-task mainnet
+///   make upgrade-sponsored-task 84532
+///   make upgrade-sponsored-task 8453
 contract UpgradeSponsoredTask is Script {
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");

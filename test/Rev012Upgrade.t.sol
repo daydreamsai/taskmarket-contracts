@@ -34,8 +34,8 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
         address oldAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         new Rev012Upgrade().run();
 
@@ -63,8 +63,8 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
         address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         Rev012Upgrade runner = new Rev012Upgrade();
         runner.run();

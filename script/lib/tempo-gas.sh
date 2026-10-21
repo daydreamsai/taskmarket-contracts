@@ -132,8 +132,8 @@ tempo_gas_preflight() {
 # The RPC URL behind a foundry.toml Tempo alias (anvil cannot read forge's aliases).
 tempo_rpc_url() {
   case "$1" in
-    tempo_moderato) printf '%s' "${FORGE_TEMPO_MODERATO_RPC_URL:?FORGE_TEMPO_MODERATO_RPC_URL not set}" ;;
-    tempo) printf '%s' "${FORGE_TEMPO_RPC_URL:?FORGE_TEMPO_RPC_URL not set}" ;;
+    42431) printf '%s' "${FORGE_RPC_URL_42431:?FORGE_RPC_URL_42431 not set}" ;;
+    4217) printf '%s' "${FORGE_RPC_URL_4217:?FORGE_RPC_URL_4217 not set}" ;;
     *) echo "Unknown Tempo RPC alias $1" >&2; return 1 ;;
   esac
 }

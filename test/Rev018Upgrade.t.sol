@@ -42,8 +42,8 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
     ///      the legacy createTask selector routed and the new one absent.
     function _atRev017WithOnlyLegacyCreateTask(address diamond) internal {
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         new Rev012Upgrade().run();
         new Rev013Upgrade().run();
@@ -190,8 +190,8 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         // Diamond is still at rev011 -- rev018 requires rev017.
         Rev018Upgrade runner = new Rev018Upgrade();

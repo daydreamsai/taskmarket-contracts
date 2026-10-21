@@ -31,10 +31,10 @@ contract Rev025UpgradeTest is Test, DiamondTestHelper {
     function _setUpgradeEnv(address diamond) internal {
         vm.chainId(84532);
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_42431", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_4217", vm.toString(diamond));
     }
 
     /// @dev Selectors rev025 Adds. A test diamond is built from the current FacetSelectors, which

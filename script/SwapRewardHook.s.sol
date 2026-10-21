@@ -91,10 +91,10 @@ interface IAuthorizedRelayer {
 ///                                       otherwise unrecoverable, never as a default habit.
 ///
 /// Usage:
-///   ACCEPT_OPEN_TASK_BONUS_LOSS=true make swap-reward-hook testnet
-///   ACCEPT_OPEN_TASK_BONUS_LOSS=true make swap-reward-hook mainnet
-///   make swap-reward-hook testnet force   # skips the reservation guard -- see above
-///   make swap-reward-hook mainnet force   # skips the reservation guard -- see above
+///   ACCEPT_OPEN_TASK_BONUS_LOSS=true make swap-reward-hook 84532
+///   ACCEPT_OPEN_TASK_BONUS_LOSS=true make swap-reward-hook 8453
+///   make swap-reward-hook 84532 force   # skips the reservation guard -- see above
+///   make swap-reward-hook 8453 force   # skips the reservation guard -- see above
 contract SwapRewardHook is Script {
     error VaultHasOutstandingReservations(uint256 totalReserved);
     error OpenTaskBonusLossNotAccepted();

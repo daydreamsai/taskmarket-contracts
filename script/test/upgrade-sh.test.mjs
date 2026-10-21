@@ -59,10 +59,10 @@ exit 0
 `;
 
 const NETWORKS = {
-  testnet: ["TESTNET", "84532"],
-  mainnet: ["MAINNET", "8453"],
-  "tempo-testnet": ["TEMPO_TESTNET", "42431"],
-  "tempo-mainnet": ["TEMPO_MAINNET", "4217"],
+  84532: ["84532", "84532"],
+  8453: ["8453", "8453"],
+  42431: ["42431", "42431"],
+  4217: ["4217", "4217"],
 };
 
 function run({
@@ -70,7 +70,7 @@ function run({
   version,
   args = [],
   env = {},
-  network = "testnet",
+  network = "84532",
   without,
 }) {
   const [suffix, chainId] = NETWORKS[network];
@@ -204,7 +204,7 @@ for (const value of ["0", "false", ""]) {
   });
 }
 
-const RECOVERY = /make upgrade testnet' \(no revision argument\)/;
+const RECOVERY = /make upgrade 84532' \(no revision argument\)/;
 
 test("a failed first diamondVersion read is retried", () => {
   const r = run({ steps: ALL, version: 23, env: { CAST_PLAN: "fail fail" } });
@@ -314,7 +314,7 @@ for (const [network, [, chainId]] of Object.entries(NETWORKS)) {
 test("tempo: a step whose node estimate reaches the 30M cap is refused before broadcasting", () => {
   // 28,387,813 is the rev025 cut's node estimate on Moderato; 29,950,000 is past the 29.9M limit.
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 24,
     env: { TEMPO_ESTIMATES: "4000000 29950000" },
@@ -331,7 +331,7 @@ test("tempo: a step whose node estimate reaches the 30M cap is refused before br
 
 test("tempo: a step under the cap broadcasts with every gas limit kept under it", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 24,
     env: { TEMPO_ESTIMATES: "4000000 28387813" },
@@ -349,7 +349,7 @@ test("tempo: a step under the cap broadcasts with every gas limit kept under it"
 // (CoreFacet 18,336,344 live vs 18,190,805 on the fork).
 test("tempo: a 23.0M fork estimate with a live estimate 0.9% higher stays under 30M", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 24,
     env: { TEMPO_ESTIMATES: "23000000" },
@@ -362,7 +362,7 @@ test("tempo: a 23.0M fork estimate with a live estimate 0.9% higher stays under 
 
 test("tempo: a later step over the cap is refused before the first step broadcasts", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 23,
     env: { TEMPO_TXS_PER_SIM: "1", TEMPO_ESTIMATES: "5000000 29950000" },
@@ -376,7 +376,7 @@ test("tempo: a later step over the cap is refused before the first step broadcas
 
 test("tempo: every pending step is checked on one fork, in order, before any broadcast", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 23,
     env: { TEMPO_TXS_PER_SIM: "1", TEMPO_ESTIMATES: "5000000 28387813" },
@@ -395,7 +395,7 @@ test("tempo: every pending step is checked on one fork, in order, before any bro
 
 test("tempo: a dry run from rev023 reports every pending step", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 23,
     env: {
@@ -420,7 +420,7 @@ test("tempo: a dry run from rev023 reports every pending step", () => {
 for (const tool of ["anvil", "jq"]) {
   test(`tempo: a missing ${tool} is refused before anything runs`, () => {
     const r = run({
-      network: "tempo-testnet",
+      network: "42431",
       steps: ALL,
       version: 24,
       without: [tool],
@@ -434,7 +434,7 @@ for (const tool of ["anvil", "jq"]) {
 
 test("tempo: without TEMPO_GAS_FORK_PORT the fork uses a free port, not 8599", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 24,
     env: { TEMPO_GAS_FORK_PORT: "" },
@@ -446,7 +446,7 @@ test("tempo: without TEMPO_GAS_FORK_PORT the fork uses a free port, not 8599", (
 
 test("tempo: a dry run reads node estimates and refuses one over the cap", () => {
   const r = run({
-    network: "tempo-testnet",
+    network: "42431",
     steps: ALL,
     version: 24,
     env: { DRY_RUN: "1", TEMPO_ESTIMATES: "30000000" },
@@ -457,7 +457,7 @@ test("tempo: a dry run reads node estimates and refuses one over the cap", () =>
 });
 
 test("base networks skip the Tempo gas check", () => {
-  const r = run({ network: "testnet", steps: ALL, version: 24 });
+  const r = run({ network: "84532", steps: ALL, version: 24 });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.gasCalls, []);
   assert.doesNotMatch(r.args[0], /gas-estimate-multiplier/);
@@ -465,7 +465,7 @@ test("base networks skip the Tempo gas check", () => {
 
 // A diamondCut estimated before its facets are deployed runs out of gas, so a Tempo broadcast
 // sends each transaction only after the one before it is mined.
-for (const network of ["tempo-testnet", "tempo-mainnet"]) {
+for (const network of ["42431", "4217"]) {
   test(`${network}: the broadcast passes --slow`, () => {
     const r = run({
       network,
@@ -481,7 +481,7 @@ for (const network of ["tempo-testnet", "tempo-mainnet"]) {
 }
 
 test("base networks broadcast without --slow", () => {
-  for (const network of ["testnet", "mainnet"]) {
+  for (const network of ["84532", "8453"]) {
     const r = run({ network, steps: ALL, version: 24 });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.args[0], / --broadcast/);

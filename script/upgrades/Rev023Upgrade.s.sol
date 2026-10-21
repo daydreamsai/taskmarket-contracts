@@ -21,13 +21,13 @@ import { DeployTarget } from "../lib/DeployTarget.sol";
 ///      unchanged.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
-///      FORGE_DIAMOND_ADDRESS_TESTNET  -- Diamond proxy on Base Sepolia (chain 84532)
-///      FORGE_DIAMOND_ADDRESS_MAINNET  -- Diamond proxy on Base Mainnet (chain 8453)
-///      FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET -- Diamond proxy on Tempo Moderato (chain 42431)
-///      FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET -- Diamond proxy on Tempo mainnet (chain 4217)
+///      FORGE_DIAMOND_ADDRESS_84532  -- Diamond proxy on Base Sepolia (chain 84532)
+///      FORGE_DIAMOND_ADDRESS_8453  -- Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_42431 -- Diamond proxy on Tempo Moderato (chain 42431)
+///      FORGE_DIAMOND_ADDRESS_4217 -- Diamond proxy on Tempo mainnet (chain 4217)
 /// @dev Usage:
-///      make upgrade testnet rev023
-///      make upgrade mainnet rev023
+///      make upgrade 84532 rev023
+///      make upgrade 8453 rev023
 contract Rev023Upgrade is Script {
     uint256 internal constant EXPECTED_PRE_VERSION = 22;
     uint256 internal constant TARGET_VERSION = 23;

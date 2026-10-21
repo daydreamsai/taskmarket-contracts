@@ -26,13 +26,13 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
-///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)
-///      FORGE_DIAMOND_ADDRESS_MAINNET  — Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_84532  — Diamond proxy on Base Sepolia (chain 84532)
+///      FORGE_DIAMOND_ADDRESS_8453  — Diamond proxy on Base Mainnet (chain 8453)
 ///
-/// @dev Usage (normally applied automatically by `make upgrade <testnet|mainnet>` as part of the
+/// @dev Usage (normally applied automatically by `make upgrade <84532|8453>` as part of the
 ///      pending-steps sequence; direct single-step invocation):
-///      make upgrade testnet rev020
-///      make upgrade mainnet rev020
+///      make upgrade 84532 rev020
+///      make upgrade 8453 rev020
 contract Rev020Upgrade is Script {
     uint256 internal constant EXPECTED_PRE_VERSION = 19;
     // Revision steps are immutable historical transitions. This must stay literal so a later
@@ -42,8 +42,8 @@ contract Rev020Upgrade is Script {
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address diamond = block.chainid == 8453
-            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET")
-            : vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
+            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_8453")
+            : vm.envAddress("FORGE_DIAMOND_ADDRESS_84532");
 
         uint256 currentVersion = AdminFacet(diamond).diamondVersion();
         require(currentVersion == EXPECTED_PRE_VERSION, "Rev020Upgrade: diamond is not at rev019");

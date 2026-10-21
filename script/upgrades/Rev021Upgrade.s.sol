@@ -14,11 +14,11 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      locked. Selector and storage layouts are unchanged.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
-///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)
-///      FORGE_DIAMOND_ADDRESS_MAINNET  — Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_84532  — Diamond proxy on Base Sepolia (chain 84532)
+///      FORGE_DIAMOND_ADDRESS_8453  — Diamond proxy on Base Mainnet (chain 8453)
 /// @dev Usage:
-///      make upgrade testnet rev021
-///      make upgrade mainnet rev021
+///      make upgrade 84532 rev021
+///      make upgrade 8453 rev021
 contract Rev021Upgrade is Script {
     uint256 internal constant EXPECTED_PRE_VERSION = 20;
     uint256 internal constant TARGET_VERSION = 21;
@@ -26,8 +26,8 @@ contract Rev021Upgrade is Script {
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address diamond = block.chainid == 8453
-            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET")
-            : vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
+            ? vm.envAddress("FORGE_DIAMOND_ADDRESS_8453")
+            : vm.envAddress("FORGE_DIAMOND_ADDRESS_84532");
 
         uint256 currentVersion = AdminFacet(diamond).diamondVersion();
         require(currentVersion == EXPECTED_PRE_VERSION, "Rev021Upgrade: diamond is not at rev020");

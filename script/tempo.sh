@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Tempo deploy helper -- run via the Make targets, not directly:
-#   make deploy tempo-testnet|tempo-mainnet
-#   make deploy-forwarder tempo-testnet|tempo-mainnet
-#   make upgrade tempo-testnet|tempo-mainnet [revNNN]
+#   make deploy 42431|4217
+#   make deploy-forwarder 42431|4217
+#   make upgrade 42431|4217 [revNNN]
 #
-# Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <tempo-testnet|tempo-mainnet> [revNNN]
+# Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <42431|4217> [revNNN]
 #
-# Inputs are read ONLY from the network-suffixed variables (FORGE_*_TEMPO_TESTNET /
-# FORGE_*_TEMPO_MAINNET). An unsuffixed FORGE_DEFAULT_PLATFORM_FEE_BPS or
+# Inputs are read ONLY from the network-suffixed variables (FORGE_*_42431 /
+# FORGE_*_4217). An unsuffixed FORGE_DEFAULT_PLATFORM_FEE_BPS or
 # FORGE_ERC8004_REPUTATION_REGISTRY left in .env for Base never reaches a Tempo deploy: the
 # unsuffixed names are overwritten from the suffixed ones before forge runs (an unset optional
 # FORGE_ERC8004_REPUTATION_REGISTRY_TEMPO_* clears the unsuffixed one too). A missing suffixed
@@ -35,13 +35,13 @@ esac
 export DRY_RUN
 
 usage() {
-  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <tempo-testnet|tempo-mainnet> [revNNN]" >&2
+  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <42431|4217> [revNNN]" >&2
   exit 1
 }
 
 case "$NETWORK" in
-  tempo-testnet) SUFFIX=TEMPO_TESTNET; RPC_ALIAS=tempo_moderato; CHAIN_ID=42431 ;;
-  tempo-mainnet) SUFFIX=TEMPO_MAINNET; RPC_ALIAS=tempo; CHAIN_ID=4217 ;;
+  42431) SUFFIX=42431; RPC_ALIAS=42431; CHAIN_ID=42431 ;;
+  4217) SUFFIX=4217; RPC_ALIAS=4217; CHAIN_ID=4217 ;;
   *) usage ;;
 esac
 case "$ACTION" in deploy|deploy-forwarder|upgrade) ;; *) usage ;; esac

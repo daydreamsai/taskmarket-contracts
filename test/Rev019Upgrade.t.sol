@@ -45,8 +45,8 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
     ///      both createTask selectors routed.
     function _atRev018WithBothCreateTaskSelectors(address diamond) internal {
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         new Rev012Upgrade().run();
         new Rev013Upgrade().run();
@@ -160,8 +160,8 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
         address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(diamond));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(diamond));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(diamond));
 
         // Diamond is still at rev011 -- rev019 requires rev018.
         Rev019Upgrade runner = new Rev019Upgrade();

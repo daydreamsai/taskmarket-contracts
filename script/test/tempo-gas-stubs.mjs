@@ -108,8 +108,8 @@ export function gasEnv(dir) {
   return {
     GAS_CALLS: join(dir, "gas-calls"),
     GAS_COUNT: join(dir, "gas-count"),
-    FORGE_TEMPO_MODERATO_RPC_URL: "http://tempo-moderato.invalid",
-    FORGE_TEMPO_RPC_URL: "http://tempo.invalid",
+    FORGE_RPC_URL_42431: "http://tempo-moderato.invalid",
+    FORGE_RPC_URL_4217: "http://tempo.invalid",
     TEMPO_GAS_FORK_PORT: String(20000 + Math.floor(Math.random() * 20000)),
   };
 }

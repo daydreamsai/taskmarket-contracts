@@ -89,12 +89,11 @@ function run({
   env = {},
   stale = false,
   without,
-  network = "tempo-testnet",
+  network = "42431",
   trusted = false,
 }) {
-  const suffix =
-    network === "tempo-mainnet" ? "TEMPO_MAINNET" : "TEMPO_TESTNET";
-  const chainId = network === "tempo-mainnet" ? "4217" : "42431";
+  const suffix = network === "4217" ? "4217" : "42431";
+  const chainId = suffix;
   const dir = mkdtempSync(join(tmpdir(), "tempo-sh-"));
   mkdirSync(join(dir, "script"));
   mkdirSync(join(dir, "bin"));
@@ -233,8 +232,8 @@ test("deploy-forwarder broadcast checks the record, then the chain, then trusts 
 });
 
 for (const [network, chainId] of [
-  ["tempo-testnet", "42431"],
-  ["tempo-mainnet", "4217"],
+  ["42431", "42431"],
+  ["4217", "4217"],
 ]) {
   for (const action of ["deploy", "deploy-forwarder"]) {
     test(`${action} ${network} refuses when the RPC is not chain ${chainId}`, () => {
@@ -262,7 +261,7 @@ for (const [network, chainId] of [
 }
 
 const RESUME_HINT = new RegExp(
-  `FORWARDER_ADDRESS_RESUME=${FORWARDER} make deploy-forwarder tempo-testnet`,
+  `FORWARDER_ADDRESS_RESUME=${FORWARDER} make deploy-forwarder 42431`,
 );
 const ran = (r, name) => r.forgeCalls.some((c) => c.includes(name));
 

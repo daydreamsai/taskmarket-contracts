@@ -27,13 +27,13 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      never succeed and never stop asking.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
-///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)
-///      FORGE_DIAMOND_ADDRESS_MAINNET  — Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_84532  — Diamond proxy on Base Sepolia (chain 84532)
+///      FORGE_DIAMOND_ADDRESS_8453  — Diamond proxy on Base Mainnet (chain 8453)
 ///
-/// @dev Usage (normally applied automatically by `make upgrade <testnet|mainnet>` as part of the
+/// @dev Usage (normally applied automatically by `make upgrade <84532|8453>` as part of the
 ///      pending-steps sequence; direct single-step invocation):
-///      make upgrade testnet rev016
-///      make upgrade mainnet rev016
+///      make upgrade 84532 rev016
+///      make upgrade 8453 rev016
 contract Rev016Upgrade is Script {
     uint256 private constant MAINNET_CHAIN_ID = 8453;
     uint256 private constant BASE_SEPOLIA_CHAIN_ID = 84532;
@@ -49,9 +49,9 @@ contract Rev016Upgrade is Script {
         // An unknown chain has no correct answer here, so it gets no answer.
         address diamond;
         if (block.chainid == MAINNET_CHAIN_ID) {
-            diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS_MAINNET");
+            diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS_8453");
         } else if (block.chainid == BASE_SEPOLIA_CHAIN_ID) {
-            diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS_TESTNET");
+            diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS_84532");
         } else {
             revert("Rev016Upgrade: unsupported chain id");
         }

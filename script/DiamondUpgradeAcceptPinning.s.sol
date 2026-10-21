@@ -15,13 +15,13 @@ import { DeployTarget } from "./lib/DeployTarget.sol";
 ///
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          — owner key (must match Diamond owner)
-///      FORGE_DIAMOND_ADDRESS_TESTNET  — Diamond proxy on Base Sepolia (chain 84532)
-///      FORGE_DIAMOND_ADDRESS_MAINNET  — Diamond proxy on Base Mainnet (chain 8453)
-///      FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET / _TEMPO_MAINNET — Diamond proxy on Tempo (42431 / 4217)
+///      FORGE_DIAMOND_ADDRESS_84532  — Diamond proxy on Base Sepolia (chain 84532)
+///      FORGE_DIAMOND_ADDRESS_8453  — Diamond proxy on Base Mainnet (chain 8453)
+///      FORGE_DIAMOND_ADDRESS_42431 / _4217 — Diamond proxy on Tempo (42431 / 4217)
 ///
 /// @dev Usage:
-///      make upgrade-accept-pinning testnet
-///      make upgrade-accept-pinning mainnet
+///      make upgrade-accept-pinning 84532
+///      make upgrade-accept-pinning 8453
 contract DiamondUpgradeAcceptPinning is Script {
     // Old 4-param selector — must be hardcoded; source no longer compiles this signature.
     bytes4 private constant OLD_ACCEPT_SUBMISSIONS =

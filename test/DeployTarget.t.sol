@@ -19,10 +19,10 @@ contract DeployTargetTest is Test {
 
     function setUp() public {
         harness = new DeployTargetHarness();
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_MAINNET", vm.toString(address(0xB8453)));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TESTNET", vm.toString(address(0xB84532)));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TEMPO_MAINNET", vm.toString(address(0x74217)));
-        vm.setEnv("FORGE_DIAMOND_ADDRESS_TEMPO_TESTNET", vm.toString(address(0x742431)));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_8453", vm.toString(address(0xB8453)));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(address(0xB84532)));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_4217", vm.toString(address(0x74217)));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_42431", vm.toString(address(0x742431)));
     }
 
     function test_DiamondFor_MapsEveryKnownChain() public {
