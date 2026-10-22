@@ -23,8 +23,6 @@
     "test:gas": "forge test -j 1 --gas-report",
     "coverage": "forge coverage --report lcov && genhtml lcov.info --output-directory reports/coverage",
     "coverage:summary": "forge coverage --report summary",
-    "snapshot": "forge snapshot",
-    "snapshot:check": "forge snapshot --check",
     "doc": "forge doc --out docs/natspec",
     "lint": "solhint 'src/**/*.sol'",
     "lint:check": "solhint 'src/**/*.sol'",

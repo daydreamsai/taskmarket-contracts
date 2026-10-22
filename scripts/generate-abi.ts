@@ -19,9 +19,8 @@
 //
 // These files are the single source of truth the backend indexer reads its event
 // definitions from (apps/backend/src/services/indexer-abi-events.ts). `make contract
-// abi-check` regenerates them and fails if the committed copies differ, mirroring the
-// `forge snapshot --check` gas gate -- a stale committed ABI would silently defeat the
-// indexer's drift guard. Both files come out of this one script and the check covers the
+// abi-check` regenerates them and fails if the committed copies differ -- a stale committed
+// ABI would silently defeat the indexer's drift guard. Both files come out of this one script and the check covers the
 // whole abi/ directory, so the artifact and the types it feeds cannot disagree.
 //
 // Run from packages/contracts (`pnpm generate-abi`, or via `make build contracts`).

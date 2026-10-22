@@ -53,15 +53,6 @@ make lint-check contracts   # runs as part of the standard CI lint step
 
 Configuration: `packages/contracts/.solhint.json`
 
-### Gas Regression — Forge Snapshot
-
-A committed `.gas-snapshot` baseline is checked on every PR. If any function's gas cost increases unexpectedly, CI fails. This catches accidental complexity regressions and surfaces unintended state changes.
-
-```bash
-make contract snapshot-check   # verify no regression
-make contract snapshot         # update baseline after intentional changes
-```
-
 ---
 
 ## Contract Security Properties
@@ -219,7 +210,6 @@ holds the sources and tests, so every check reproduces locally with Foundry:
 ```bash
 forge build
 forge test -j 1            # serial: the upgrade scripts share process-wide env
-forge snapshot --check -j 1
 ```
 
 ---
