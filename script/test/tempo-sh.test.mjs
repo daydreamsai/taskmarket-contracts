@@ -186,6 +186,25 @@ for (const value of [undefined, "", "0", "false", "FALSE"]) {
   });
 }
 
+test("a broadcast to a remote RPC sends the contracts for verification", () => {
+  const r = run({});
+  assert.equal(r.status, 0, r.out);
+  const sent = r.forgeCalls.filter((c) => / --broadcast( |$)/.test(c));
+  assert.ok(sent.length > 0, r.out);
+  for (const line of sent) assert.match(line, / --verify /);
+});
+
+for (const url of ["http://127.0.0.1:8546", "http://localhost:8546"]) {
+  test(`a broadcast to a local node at ${url} skips verification`, () => {
+    const r = run({ env: { FORGE_RPC_URL_42431: url } });
+    assert.equal(r.status, 0, r.out);
+    const sent = r.forgeCalls.filter((c) => / --broadcast( |$)/.test(c));
+    assert.ok(sent.length > 0, r.out);
+    for (const line of sent) assert.doesNotMatch(line, / --verify /);
+    assert.match(r.stdout, /Local node: skipping source verification/);
+  });
+}
+
 test("deploy-forwarder dry run passes when the simulated creation matches the inputs", () => {
   const r = run({ action: "deploy-forwarder", env: { DRY_RUN: "1" } });
   assert.equal(r.status, 0, r.out);

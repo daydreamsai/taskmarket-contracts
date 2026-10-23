@@ -154,7 +154,14 @@ if [ "$ACTUAL_CHAIN_ID" != "$CHAIN_ID" ]; then
   exit 1
 fi
 
-BROADCAST=(--broadcast --slow --verify --verifier sourcify --verifier-url https://contracts.tempo.xyz)
+BROADCAST=(--broadcast --slow)
+# A loopback RPC is a local anvil started with --network tempo (scripts/local-tempo-setup.sh):
+# the Tempo explorer has never seen its contracts, so they are not sent for verification.
+RPC_URL_VAR="FORGE_RPC_URL_${SUFFIX}"
+case "${!RPC_URL_VAR:-}" in
+  http://127.0.0.1:*|http://localhost:*) echo "Local node: skipping source verification." ;;
+  *) BROADCAST+=(--verify --verifier sourcify --verifier-url https://contracts.tempo.xyz) ;;
+esac
 [ "$DRY_RUN" = "1" ] && BROADCAST=()
 
 case "$ACTION" in
