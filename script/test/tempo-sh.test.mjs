@@ -463,3 +463,78 @@ for (const tool of ["anvil", "jq"]) {
     assert.deepEqual(r.gasCalls, []);
   });
 }
+
+const SCRIPT_ACTIONS = [
+  {
+    action: "deploy-sponsored-task",
+    target: "DeploySponsoredTask.s.sol:DeploySponsoredTask",
+    verifies: true,
+    env: {
+      FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT_42431: OTHER,
+      FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT_42431: OTHER,
+      FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN_42431: RELAYER,
+      FORGE_SPONSORED_TASK_FEE_CEILING_USDC_42431: "5000000",
+    },
+    required: "FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN_42431",
+  },
+  {
+    action: "upgrade-sponsored-task",
+    target: "UpgradeSponsoredTask.s.sol:UpgradeSponsoredTask",
+    verifies: true,
+    env: { FORGE_SPONSORED_TASK_HOOK_ADDRESS_42431: FORWARDER },
+    required: "FORGE_SPONSORED_TASK_HOOK_ADDRESS_42431",
+  },
+  {
+    action: "deploy-safe",
+    target: "DeploySafe.s.sol:DeploySafe",
+    verifies: false,
+    env: {
+      FORGE_SAFE_DEPLOYER_KEY_42431: KEY,
+      FORGE_SAFE_OWNERS_42431: DEPLOYER,
+      FORGE_SAFE_THRESHOLD_42431: "1",
+    },
+    required: "FORGE_SAFE_OWNERS_42431",
+  },
+  {
+    action: "deploy-sponsored-task-timelock",
+    target:
+      "DeploySponsoredTaskGuardTimelock.s.sol:DeploySponsoredTaskGuardTimelock",
+    verifies: false,
+    env: {
+      FORGE_TIMELOCK_DEPLOYER_KEY_42431: KEY,
+      FORGE_TIMELOCK_SAFE_42431: OTHER,
+      FORGE_TIMELOCK_MIN_DELAY_42431: "86400",
+    },
+    required: "FORGE_TIMELOCK_DEPLOYER_KEY_42431",
+  },
+];
+
+for (const { action, target, verifies, env, required } of SCRIPT_ACTIONS) {
+  test(`${action} broadcasts ${target} with the fee token${verifies ? " and Sourcify" : ""}`, () => {
+    const r = run({ action, env });
+    assert.equal(r.status, 0, r.out);
+    const sent = r.forgeCalls.filter((c) => / --broadcast( |$)/.test(c));
+    assert.equal(sent.length, 1, r.out);
+    assert.match(
+      sent[0],
+      new RegExp(`script/${target.replace(/\./g, "\\.")} `),
+    );
+    assert.match(sent[0], / --tempo\.fee-token /);
+    assert.match(sent[0], / --gas-estimate-multiplier /);
+    if (verifies) assert.match(sent[0], / --verifier sourcify /);
+    else assert.doesNotMatch(sent[0], / --verify/);
+  });
+
+  test(`${action} dry run sends nothing`, () => {
+    const r = run({ action, env: { ...env, DRY_RUN: "1" } });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(broadcasts(r), false, r.forgeCalls.join("\n"));
+  });
+
+  test(`${action} refuses before forge runs when ${required} is missing`, () => {
+    const r = run({ action, env: { ...env, [required]: "" } });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.stderr, new RegExp(required));
+    assert.equal(r.forgeCalls.length, 0, r.out);
+  });
+}

@@ -3,8 +3,9 @@
 #   make deploy 42431|4217
 #   make deploy-forwarder 42431|4217
 #   make upgrade 42431|4217 [revNNN]
+#   make deploy-sponsored-task|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock 42431|4217
 #
-# Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <42431|4217> [revNNN]
+# Usage: script/tempo.sh <action> <42431|4217> [revNNN]
 #
 # Inputs are read ONLY from the network-suffixed variables (FORGE_*_42431 /
 # FORGE_*_4217). An unsuffixed FORGE_DEFAULT_PLATFORM_FEE_BPS or
@@ -35,7 +36,7 @@ esac
 export DRY_RUN
 
 usage() {
-  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade> <42431|4217> [revNNN]" >&2
+  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
   exit 1
 }
 
@@ -44,12 +45,45 @@ case "$NETWORK" in
   4217) SUFFIX=4217; RPC_ALIAS=4217; CHAIN_ID=4217 ;;
   *) usage ;;
 esac
-case "$ACTION" in deploy|deploy-forwarder|upgrade) ;; *) usage ;; esac
+# The single-script actions: the forge target, whether a broadcast verifies it, the variable holding
+# the signing key, and its required and optional inputs. Each input NAME is read from
+# FORGE_<NAME without FORGE_>_<chain> and exported to forge as NAME.
+SCRIPT=""
+case "$ACTION" in
+  deploy|deploy-forwarder|upgrade) ;;
+  deploy-sponsored-task)
+    SCRIPT=script/DeploySponsoredTask.s.sol:DeploySponsoredTask; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT
+      FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN FORGE_SPONSORED_TASK_FEE_CEILING_USDC)
+    OPTIONAL=(FORGE_SPONSORED_TASK_CREATION_FEE_USDC FORGE_SPONSORED_TASK_TOKEN_FEE_BPS)
+    ;;
+  upgrade-sponsored-task)
+    SCRIPT=script/UpgradeSponsoredTask.s.sol:UpgradeSponsoredTask; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_SPONSORED_TASK_HOOK_ADDRESS)
+    OPTIONAL=()
+    ;;
+  deploy-safe)
+    SCRIPT=script/DeploySafe.s.sol:DeploySafe; SCRIPT_VERIFY=0
+    KEY_NAME=SAFE_DEPLOYER_KEY
+    REQUIRED=(SAFE_OWNERS SAFE_THRESHOLD)
+    OPTIONAL=(SAFE_SALT_NONCE)
+    ;;
+  deploy-sponsored-task-timelock)
+    SCRIPT=script/DeploySponsoredTaskGuardTimelock.s.sol:DeploySponsoredTaskGuardTimelock; SCRIPT_VERIFY=0
+    KEY_NAME=TIMELOCK_DEPLOYER_KEY
+    REQUIRED=(TIMELOCK_SAFE TIMELOCK_MIN_DELAY)
+    OPTIONAL=(TIMELOCK_ADMIN)
+    ;;
+  *) usage ;;
+esac
+src_name() { printf 'FORGE_%s_%s' "${1#FORGE_}" "$SUFFIX"; }
 
 # shellcheck source=lib/tempo-gas.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/tempo-gas.sh"
 # deploy and upgrade run the gas check, which needs anvil and jq; refuse before anything else.
-case "$ACTION" in deploy|upgrade) tempo_gas_require_tools || exit 1 ;; esac
+case "$ACTION" in deploy-forwarder) ;; *) tempo_gas_require_tools || exit 1 ;; esac
 
 MISSING=()
 # need NAME -> value of NAME_<SUFFIX> (empty when unset; presence is checked below).
@@ -58,7 +92,9 @@ need() {
   printf '%s' "${!var:-}"
 }
 
-KEY="$(need FORGE_DEV_PRIVATE_KEY)"
+KEY_NAME="${KEY_NAME:-FORGE_DEV_PRIVATE_KEY}"
+KEY_SRC="$(src_name "$KEY_NAME")"
+KEY="${!KEY_SRC:-}"
 FEE_TOKEN="$(need FORGE_FEE_TOKEN)"
 case "$ACTION" in
   deploy)
@@ -78,17 +114,22 @@ case "$ACTION" in
     FEEDBACK_GAS="$(need FORGE_MIN_FEEDBACK_GAS)"
     ;;
 esac
-for name in FORGE_DEV_PRIVATE_KEY FORGE_FEE_TOKEN; do
-  v="${name}_${SUFFIX}"; [ -n "${!v:-}" ] || MISSING+=("$v")
-done
+[ -n "$KEY" ] || MISSING+=("$KEY_SRC")
+[ -n "$FEE_TOKEN" ] || MISSING+=("FORGE_FEE_TOKEN_${SUFFIX}")
+CHECK=()
 case "$ACTION" in
   deploy) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_FEE_RECIPIENT_ADDRESS FORGE_DEFAULT_PLATFORM_FEE_BPS FORGE_MIN_FEEDBACK_GAS) ;;
   deploy-forwarder) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SERVER_ADDRESS) ;;
   upgrade) CHECK=(FORGE_DIAMOND_ADDRESS FORGE_MIN_FEEDBACK_GAS) ;;
 esac
-for name in "${CHECK[@]}"; do
+for name in ${CHECK[@]+"${CHECK[@]}"}; do
   v="${name}_${SUFFIX}"; [ -n "${!v:-}" ] || MISSING+=("$v")
 done
+if [ -n "$SCRIPT" ]; then
+  for name in ${REQUIRED[@]+"${REQUIRED[@]}"}; do
+    v="$(src_name "$name")"; [ -n "${!v:-}" ] || MISSING+=("$v")
+  done
+fi
 if [ "${#MISSING[@]}" -gt 0 ]; then
   echo "tempo $ACTION $NETWORK: missing required variable(s):" >&2
   printf '  %s\n' $(printf '%s\n' "${MISSING[@]}" | sort -u) >&2
@@ -121,12 +162,25 @@ case "$ACTION" in
     echo "  Feedback gas floor: $FEEDBACK_GAS"
     ;;
 esac
+if [ -n "$SCRIPT" ]; then
+  for name in ${REQUIRED[@]+"${REQUIRED[@]}"} ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
+    v="$(src_name "$name")"
+    echo "  $name: ${!v:-<unset: script default>}"
+  done
+fi
 [ "$DRY_RUN" = "1" ] && echo "  Mode:               DRY RUN (no broadcast)"
 echo ""
 
 export FOUNDRY_PROFILE=tempo
 # Overwrite every unsuffixed name the scripts read so a Base value in .env cannot leak through.
 export FORGE_DEV_PRIVATE_KEY="$KEY"
+if [ -n "$SCRIPT" ]; then
+  export "$KEY_NAME=$KEY"
+  for name in ${REQUIRED[@]+"${REQUIRED[@]}"} ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
+    v="$(src_name "$name")"
+    if [ -n "${!v:-}" ]; then export "$name=${!v}"; else unset "$name"; fi
+  done
+fi
 export FORGE_FEE_TOKEN="$FEE_TOKEN"
 if [ -n "${FEEDBACK_GAS:-}" ]; then export FORGE_MIN_FEEDBACK_GAS="$FEEDBACK_GAS"; else unset FORGE_MIN_FEEDBACK_GAS; fi
 unset USDC_TOKEN_ADDRESS CONTRACT_ADDRESS FORWARDER_ADDRESS
@@ -312,5 +366,11 @@ case "$ACTION" in
     ;;
   upgrade)
     exec ./script/upgrade.sh "$NETWORK" "$REV"
+    ;;
+  *)
+    if [ "$SCRIPT_VERIFY" != "1" ] && [ "${#BROADCAST[@]}" -gt 0 ]; then BROADCAST=(--broadcast --slow); fi
+    tempo_gas_preflight "$SCRIPT" "$(tempo_rpc_url "$RPC_ALIAS")" --tempo.fee-token "$FEE_TOKEN"
+    forge script "$SCRIPT" \
+      --rpc-url "$RPC_ALIAS" --tempo.fee-token "$FEE_TOKEN" "${TEMPO_GAS_FLAGS[@]}" ${BROADCAST[@]+"${BROADCAST[@]}"}
     ;;
 esac
