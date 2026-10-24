@@ -46,6 +46,29 @@ contract SenderTaxToken is ERC20 {
     }
 }
 
+contract RedirectingReceiveToken is ERC20 {
+    mapping(address => address) public redirectOf;
+
+    constructor() ERC20("Redirecting token", "RDR") { }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setRedirect(address recipient, address target) external {
+        redirectOf[recipient] = target;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        address target = redirectOf[to];
+        super._update(from, target == address(0) ? to : target, value);
+    }
+}
+
 // allocationSettlement/allocationTerms return tuples, not the Allocation struct -- the
 // whole-struct external getter tripped forge coverage --ir-minimum's stack-too-deep limit on its
 // own ABI encoding (see SponsoredTasksVault.allocationSettlement's own doc comment). Reconstructs
@@ -220,6 +243,65 @@ contract SponsoredTasksVaultTest is Test {
         assertEq(uint256(taxedVault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));
         assertEq(taxedVault.epoch(), 1);
         assertEq(taxedToken.balanceOf(address(taxedVault)), 200 ether);
+    }
+
+    /// A receive policy that delivers a transfer to a different address than the one named credits
+    /// the named recipient with nothing, so every outgoing claim path reverts and rolls back.
+    function test_RedirectingReceivePolicyRevertsClaimClaimToAndClaimFee() public {
+        RedirectingReceiveToken rToken = new RedirectingReceiveToken();
+        SponsoredTasksVault rVault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        rVault.initialize(keccak256("redirecting"), address(rToken), owner, controller, address(policy));
+        rToken.mint(address(rVault), 200e6);
+        vm.prank(owner);
+        rVault.configureManager(manager, 200e6, true);
+
+        uint256 workerKey = 0xBEEF;
+        address worker = vm.addr(workerKey);
+        address destination = makeAddr("redirectedDestination");
+        address elsewhere = makeAddr("redirectTarget");
+        bytes32 allocationId = keccak256("redirect-allocation");
+        bytes32 taskId = keccak256("redirect-task");
+        vm.prank(controller);
+        rVault.reserveTask(allocationId, taskId, manager, 100e6, 1, FEE_BPS, feeRecipient, TERMS_HASH);
+        uint256 grossAmount = 100e6;
+        uint256 feeTotal = grossAmount * FEE_BPS / 10_000;
+        uint256 sponsoredTaskTotal = 100e6 - feeTotal;
+        bytes32 root = rVault.claimLeaf(allocationId, taskId, 1, 0, worker, sponsoredTaskTotal);
+        vm.prank(controller);
+        rVault.installSettlement(allocationId, taskId, root, 1, sponsoredTaskTotal, feeTotal, 100e6);
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        rToken.setRedirect(worker, elsewhere);
+        vm.prank(worker);
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 0)
+        );
+        rVault.claim(allocationId, 0, sponsoredTaskTotal, emptyProof);
+        rToken.setRedirect(worker, address(0));
+
+        rToken.setRedirect(destination, elsewhere);
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory signature = _signDigest(
+            workerKey, rVault.claimDigest(allocationId, 0, worker, destination, sponsoredTaskTotal, 0, deadline)
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 0)
+        );
+        rVault.claimTo(allocationId, 0, worker, destination, sponsoredTaskTotal, 0, deadline, signature, emptyProof);
+        assertEq(rVault.claimNonces(worker), 0);
+        assertFalse(rVault.isClaimed(allocationId, 0));
+
+        vm.prank(feeRecipient);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, feeTotal, 0));
+        rVault.claimFee(allocationId, destination);
+        assertEq(_vaultAllocation(rVault, allocationId).feeOutstanding, feeTotal);
+        assertEq(_vaultAllocation(rVault, allocationId).sponsoredTaskOutstanding, sponsoredTaskTotal);
+        assertEq(rToken.balanceOf(elsewhere), 0);
+        assertEq(rToken.balanceOf(address(rVault)), 200e6);
+
+        rToken.setRedirect(destination, address(0));
+        rVault.claimTo(allocationId, 0, worker, destination, sponsoredTaskTotal, 0, deadline, signature, emptyProof);
+        assertEq(rToken.balanceOf(destination), sponsoredTaskTotal);
     }
 
     function test_ExactTransfersRejectVaultAsItsOwnRecipientWithoutMutatingAccounting() public {
