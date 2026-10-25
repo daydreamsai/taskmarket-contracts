@@ -12,6 +12,7 @@ import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { Rev026Upgrade } from "../script/upgrades/Rev026Upgrade.s.sol";
+import { Rev026Backfill } from "../script/upgrades/Rev026Backfill.s.sol";
 import { DeployTarget } from "../script/lib/DeployTarget.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
 import { MockEscrowBugFacet } from "./mocks/MockEscrowBugFacet.sol";
@@ -312,6 +313,16 @@ contract Rev026UpgradeTest is Test, DiamondTestHelper {
         (uint256 booked,) = market.escrowRecord(openTask);
         assertEq(booked, 0);
         assertEq(usdc.balanceOf(address(market)), market.totalLiabilities());
+    }
+
+    /// @dev completeLiabilities leaves backfillLiabilities open, so the script must run after it too.
+    function test_BackfillScript_RunsAfterCompleteLiabilities() public {
+        _upgradeAndBackfill();
+        uint256 total = market.totalLiabilities();
+        vm.setEnv("REV026_TASK_IDS_FILE", "script/upgrades/fixtures/rev026-unknown-task-id.json");
+        new Rev026Backfill().run();
+        assertTrue(market.liabilitiesInitialised());
+        assertEq(market.totalLiabilities(), total, "an unknown id books nothing");
     }
 
     function test_AfterBackfill_EvaluatorPathsRelease() public {

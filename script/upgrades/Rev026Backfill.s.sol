@@ -9,18 +9,20 @@ import { DeployTarget } from "../lib/DeployTarget.sol";
 /// @dev Not a RevNNNUpgrade step: it does not change diamondVersion and may be re-run, since
 ///      backfillLiabilities skips unknown, terminal and already-booked IDs. It never calls
 ///      completeLiabilities; the runbook does, after reconciling the printed surplus
-///      against the escrow monitor.
+///      against the escrow monitor. It also runs after completeLiabilities, which leaves
+///      backfillLiabilities open to book a live task the first run missed.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY      -- owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_*    -- as for the upgrade steps (see DeployTarget)
 ///      REV026_TASK_IDS_FILE       -- JSON file {"taskIds": ["0x...", ...]} of live task IDs
 ///                                    exported from the indexer
-///      REV026_BATCH_SIZE          -- optional, default 200
+///      REV026_BATCH_SIZE          -- optional, default 200; Tempo needs smaller batches to stay
+///                                    under its 30M per-transaction gas limit (the Make target
+///                                    defaults it to 50 there)
 contract Rev026Backfill is Script {
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         ITMPDiamond diamond = ITMPDiamond(DeployTarget.diamondFor(vm));
-        require(!diamond.liabilitiesInitialised(), "Rev026Backfill: liabilities already initialised");
 
         bytes32[] memory ids = vm.parseJsonBytes32Array(vm.readFile(vm.envString("REV026_TASK_IDS_FILE")), ".taskIds");
         uint256 batchSize = vm.envOr("REV026_BATCH_SIZE", uint256(200));
@@ -47,6 +49,10 @@ contract Rev026Backfill is Script {
         console.log("totalLiabilities:  ", liabilities);
         console.log("Diamond balance:   ", balance);
         console.log("Surplus:           ", balance - liabilities);
-        console.log("Reconcile the surplus against the escrow monitor, then call completeLiabilities.");
+        if (diamond.liabilitiesInitialised()) {
+            console.log("Liabilities are already completed; the surplus must still match the escrow monitor.");
+        } else {
+            console.log("Reconcile the surplus against the escrow monitor, then call completeLiabilities.");
+        }
     }
 }
