@@ -1,5 +1,11 @@
 # create-taskmarket-hook
 
+## 0.2.1
+
+### Patch Changes
+
+- edd9d15: The generated lifecycle test now creates its task through whichever `createTask` the pinned Taskmarket contracts declare, so it keeps compiling and passing against contracts that take settlement terms in `createTask` and no longer accept the stake-config form.
+
 ## 0.2.0
 
 ### Minor Changes
