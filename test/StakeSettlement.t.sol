@@ -11,7 +11,7 @@ import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 
 /// @title StakeSettlementTest
 /// @dev Every path that ends a task must pay out what the diamond holds for it. Each test runs one
@@ -83,10 +83,10 @@ contract StakeSettlementTest is DiamondTestHelper {
                     market.createTask,
                     (
                         config,
-                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                        evalCfg
+                        evalCfg,
+                        stakeTerms(false, 0)
                     )
                 )
             ),

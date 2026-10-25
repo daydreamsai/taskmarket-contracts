@@ -12,7 +12,7 @@ import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import "./mocks/MockPGTRForwarder.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockSettlingProbeHook } from "./mocks/MockSettlingProbeHook.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -204,10 +204,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD_100_USDC, 1 days, market.CLAIM(), 0, 0, bytes4(0)),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );
@@ -222,10 +222,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD_100_USDC, 1 days, market.BOUNTY(), 0, 0, bytes4(0)),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );
@@ -240,10 +240,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD_100_USDC, 365 days, market.CLAIM(), 0, 0, bytes4(0)),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );
@@ -265,10 +265,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD_100_USDC, 3 days, mode, pitchDuration, bidDuration, auctionSubtype),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );
@@ -2506,10 +2506,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                     market.createTask,
                     (
                         taskConfig(REWARD_100_USDC, 1 days, market.CLAIM(), 0, 0, bytes4(0)),
-                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: "" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                        noEvaluatorConfig()
+                        noEvaluatorConfig(),
+                        stakeTerms(false, 0)
                     )
                 )
             ),
@@ -2658,10 +2658,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD_100_USDC, 3 days, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH()),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(recorder)), data: "" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );
@@ -2807,10 +2807,10 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD_100_USDC, 3 days, market.BOUNTY(), 0, 0, bytes4(0)),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );

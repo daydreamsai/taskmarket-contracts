@@ -92,6 +92,7 @@ interface ITMPCore is IERC165 {
     error EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow);
     error InvalidMinAppealWindow();
     error InvalidMinFeedbackGas();
+    error InvalidHookGasStipend();
     error NoDisputeResolver();
 
     // Auction
@@ -141,14 +142,12 @@ interface ITMPCore is IERC165 {
     error AuctionRefundFailed();
     error RefundFailed();
     error ForfeitTransferFailed();
-    error StakeTransferFailed();
     error StakePaymentMismatch();
     error ForwardedPaymentMismatch();
     error EvaluatorPaymentFailed();
     error RequesterRefundFailed();
     error USDCRefundFailed();
     error ExcessRefundFailed();
-    error RewardIncreaseNotFunded();
     error NoRewardChange();
 
     // Hooks
@@ -384,7 +383,8 @@ interface ITMPCore is IERC165 {
     /// @dev A zero window term means the protocol default. releaseGraceBps, rejectFeeBps and
     ///      maxRevisions store the value plus one so that zero can mean "default" while "no
     ///      grace", "no fee" and "no revisions" stay expressible. version 0 means the task predates
-    ///      rev025 and has not been normalized; createTask ignores the caller's version and stores 1.
+    ///      rev025 and was terminal at the rev025 cut; createTask ignores the caller's version and
+    ///      stores 1.
     struct TaskTerms {
         uint8 version;
         bool stakeRequired;
@@ -402,8 +402,8 @@ interface ITMPCore is IERC165 {
     }
 
     /// @notice Rev025: per-task settlement clocks.
-    /// @dev deliveredAt is zero when there is no undecided delivery. decisionStartAt is set only
-    ///      when a pre-rev025 task is normalized, and is zero otherwise.
+    /// @dev deliveredAt is zero when there is no undecided delivery. decisionStartAt was set only
+    ///      when a pre-rev025 task was normalized at the rev025 cut, and is zero otherwise.
     struct TaskClock {
         uint64 deliveredAt;
         uint64 decisionStartAt;
@@ -462,6 +462,9 @@ interface ITMPCore is IERC165 {
     /// @notice Rev024: the per-chain gas floor checked before a swallowed giveFeedback call
     ///         changed.
     event MinFeedbackGasUpdated(uint256 minFeedbackGas);
+
+    /// @notice Rev026: the per-chain gas stipend forwarded to each hook call changed.
+    event HookGasStipendUpdated(uint256 hookGasStipend);
 
     /// @notice Rev025: a task's settlement terms were recorded, at creation or on normalization
     ///         of a pre-rev025 task.
@@ -601,8 +604,6 @@ interface ITMPCore is IERC165 {
     ///         The USDC reward MUST be transferred to this contract by the forwarder before this call.
     /// @param config          Reward, duration, mode, and the mode-specific pitch/bid deadlines
     ///                        and auction subtype (Rev018).
-    /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
-    ///                        currently enforced by claimTask
     /// @param hookConfig      Hook contracts and per-task hookData (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     /// @param evaluatorConfig Evaluator terms applied in the same transaction (Rev018); the zero
@@ -610,13 +611,14 @@ interface ITMPCore is IERC165 {
     ///                        apply these atomically with creation rather than expecting a
     ///                        following call, because the task is claimable as soon as this
     ///                        transaction mines and a separate assignment can lose that race.
+    /// @param terms           Settlement terms (rev025), the stake requirement included.
     /// @return taskId         Contract-generated canonical task identifier
     function createTask(
         ITMPCore.TaskConfig calldata config,
-        ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content,
-        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
+        ITMPCore.TaskTerms calldata terms
     ) external returns (bytes32 taskId);
 
     /// @notice Accept a worker's submission and release escrowed payment.

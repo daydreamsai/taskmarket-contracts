@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import { ITMPCore } from "./ITMPCore.sol";
 
-/// @notice Rev025 createTask overload taking explicit settlement terms. Declared apart from
-///         ITMPDiamond because Solidity cannot take `.selector` or `abi.encodeCall` of an
-///         overloaded function, and ITMPDiamond's createTask is the legacy overload.
+/// @notice The rev025 createTask taking explicit settlement terms. Declared apart from
+///         ITMPDiamond while ITMPDiamond also carried the legacy overload; since rev026 removed
+///         that overload the two declare the same function.
 interface ITMPTerms {
     function createTask(
         ITMPCore.TaskConfig calldata config,

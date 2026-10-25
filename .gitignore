@@ -10,3 +10,4 @@ reports/
 # IDE
 .vscode/
 .idea/
+script/upgrades/rev026-task-ids.json

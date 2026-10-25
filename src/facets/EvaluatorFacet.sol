@@ -3,6 +3,8 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibEscrow } from "../libraries/LibEscrow.sol";
+import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
@@ -74,6 +76,7 @@ contract EvaluatorFacet {
             s
         );
 
+        LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.EvaluatorStake, false);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -97,6 +100,7 @@ contract EvaluatorFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         address evaluatorAddr = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -151,6 +155,7 @@ contract EvaluatorFacet {
                 revert ITMPCore.EvaluatorPaymentFailed();
             }
         }
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -201,6 +206,7 @@ contract EvaluatorFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.status != ITMPCore.TaskStatus.Appealing) revert ITMPCore.NotInAppealingState();
@@ -216,6 +222,7 @@ contract EvaluatorFacet {
             // a reverting hook would otherwise lock the escrow for good.
             _payAwards(taskId, task, v, s, true, block.timestamp <= task.expiryTime);
         }
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -291,6 +298,7 @@ contract EvaluatorFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.status != ITMPCore.TaskStatus.Disputed) revert ITMPCore.NotInDisputedState();
@@ -309,6 +317,7 @@ contract EvaluatorFacet {
         }
 
         _payAwards(taskId, task, v, s, upheld, true);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -335,6 +344,7 @@ contract EvaluatorFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         // Permissionless: once the evaluation window has passed anyone, including the worker, may
         // time out the evaluator, so a requester cannot leave a delivered task stuck in Review.
@@ -365,6 +375,7 @@ contract EvaluatorFacet {
         }
 
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, forfeited);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 

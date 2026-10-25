@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFeedback } from "../interfaces/ITMPFeedback.sol";
+import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 
 /// @notice Unified application storage for all TaskMarket Diamond facets.
 ///         Stored at a fixed keccak256 slot; new fields must only be appended.
@@ -62,8 +63,8 @@ struct AppStorage {
     // set": LibTaskMarket._minFeedbackGas substitutes MIN_FEEDBACK_GAS, so a diamond that is
     // never configured keeps the rev023 floor of 450,000.
     uint256 minFeedbackGas;
-    // Rev025: settlement terms and clocks, in the order the rev025 spec fixes. Read taskTerms only
-    // through LibTerms.terms, which normalizes a pre-rev025 task on first read. taskAwarded marks
+    // Rev025: settlement terms and clocks, in the order the rev025 spec fixes. A pre-rev025 task
+    // live at the rev025 cut was normalized to version 1 then (rev026 removed normalizeTerms). taskAwarded marks
     // each worker paid a nonzero award; rateTask accepts only those.
     mapping(bytes32 => ITMPCore.TaskTerms) taskTerms;
     mapping(bytes32 => ITMPCore.TaskClock) taskClocks;
@@ -87,6 +88,17 @@ struct AppStorage {
     mapping(address => uint256) requesterAgentIds;
     // Rev025: owner-set feedback value per event key. An unset key reads as LibFeedback's default.
     mapping(bytes32 => ITMPFeedback.FeedbackValue) feedbackValues;
+    // Rev026: escrow liabilities, kept by LibEscrow. totalLiabilities is the sum of every tracked
+    // task's booked amount. liabilitiesInitialised is set by a fresh deploy and by the rev026
+    // initialisation once every live task is booked; until then the surplus sweep is closed,
+    // because the unbooked balance still holds pre-rev026 tasks' escrow.
+    uint256 totalLiabilities;
+    mapping(bytes32 => ITMPEscrow.EscrowRecord) escrowRecords;
+    bool liabilitiesInitialised;
+    // Rev026: owner-set gas stipend forwarded to each hook call on this chain. Zero means "never
+    // set": LibHooks._hookGasStipend substitutes HOOK_GAS_STIPEND, so a diamond upgraded into
+    // rev026 keeps the stipend it had.
+    uint256 hookGasStipend;
 }
 
 library LibAppStorage {

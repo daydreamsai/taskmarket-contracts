@@ -5,8 +5,6 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
-import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
-import { LibAppStorage } from "../src/libraries/LibAppStorage.sol";
 import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { TMP_BOUNTY, TMP_BENCHMARK } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
@@ -14,13 +12,6 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
-
-/// @dev Clears a task's terms record, leaving it as a pre-rev025 diamond would have.
-contract DecisionProbeFacet {
-    function probeWipeDecisionTerms(bytes32 taskId) external {
-        delete LibAppStorage.appStorage().taskTerms[taskId];
-    }
-}
 
 /// @dev rev025 decision deadline on a Bounty or Benchmark without an evaluator.
 contract DecisionDeadlineTest is DiamondTestHelper {
@@ -57,11 +48,6 @@ contract DecisionDeadlineTest is DiamondTestHelper {
         market = deployDiamond(owner, address(usdc), feeRecipient, uint16(FEE_BPS));
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
-        bytes4[] memory sels = new bytes4[](1);
-        sels[0] = DecisionProbeFacet.probeWipeDecisionTerms.selector;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(new DecisionProbeFacet()), IDiamondCut.FacetCutAction.Add, sels);
-        IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
         vm.stopPrank();
         usdc.mint(address(forwarder), 1_000_000e6);
     }
@@ -236,36 +222,6 @@ contract DecisionDeadlineTest is DiamondTestHelper {
         vm.warp(_deadline(taskId) + 1);
         market.refundExpired(taskId, 0);
         assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Expired));
-    }
-
-    // -------------------------------------------------------------------------
-    // Pre-rev025 normalized start
-    // -------------------------------------------------------------------------
-
-    function test_PreRev025_WindowRunsFromNormalization() public {
-        bytes32 taskId = _submitted(TMP_BOUNTY);
-        DecisionProbeFacet(address(market)).probeWipeDecisionTerms(taskId);
-        vm.warp(_deadline(taskId) + 10 days);
-        market.normalizeTerms(_ids(taskId));
-        uint256 start = vm.getBlockTimestamp();
-        vm.warp(start + DECISION);
-        _relay(requester, 0, _rejectData(taskId, worker));
-        vm.warp(start + DECISION + 1);
-        _expectRelayRevert(requester, _rejectData(taskId, worker2), ITMPCore.DecisionWindowLapsed.selector);
-    }
-
-    function test_PreRev025_FirstReadSeedsClockAndDoesNotLapse() public {
-        bytes32 taskId = _submitted(TMP_BOUNTY);
-        DecisionProbeFacet(address(market)).probeWipeDecisionTerms(taskId);
-        vm.warp(_deadline(taskId) + 10 days);
-        _relay(requester, 0, _rejectData(taskId, worker));
-        vm.warp(vm.getBlockTimestamp() + DECISION + 1);
-        _expectRelayRevert(requester, _rejectData(taskId, worker2), ITMPCore.DecisionWindowLapsed.selector);
-    }
-
-    function _ids(bytes32 a) internal pure returns (bytes32[] memory ids) {
-        ids = new bytes32[](1);
-        ids[0] = a;
     }
 
     // -------------------------------------------------------------------------

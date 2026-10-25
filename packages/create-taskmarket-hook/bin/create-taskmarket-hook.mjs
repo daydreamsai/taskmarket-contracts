@@ -283,6 +283,27 @@ contract {{HOOK_NAME}}LifecycleTest is DiamondTestHelper {
 
     bytes32 private constant HOOK_REGISTERED = keccak256("HookRegistered(bytes32,address)");
     uint256 private constant REWARD = 100e6;
+    struct DefaultTerms {
+        uint8 version;
+        bool stakeRequired;
+        uint16 stakeBps;
+        uint8 penaltyTo;
+        uint32 reviewWindowSecs;
+        uint32 decisionWindowSecs;
+        uint32 reopenExtensionSecs;
+        uint8 releaseAllowed;
+        uint16 releaseGraceBps;
+        uint8 rejectOutcome;
+        uint16 rejectFeeBps;
+        uint8 maxRevisions;
+        uint32 resolutionWindowSecs;
+    }
+
+    bytes4 private constant TERMS_CREATE_TASK = bytes4(
+        keccak256(
+            "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address),(uint8,bool,uint16,uint8,uint32,uint32,uint32,uint8,uint16,uint8,uint16,uint8,uint32))"
+        )
+    );
 
     address private constant OWNER = address(1);
     address private constant FEE_RECIPIENT = address(2);
@@ -292,6 +313,28 @@ contract {{HOOK_NAME}}LifecycleTest is DiamondTestHelper {
     ITMPDiamond private market;
     MockERC20 private usdc;
     MockPGTRForwarder private forwarder;
+
+    /// @dev createTask calldata for the pinned dependency's diamond. From rev025 createTask takes
+    ///      settlement terms in place of the stake config, and rev026 removed the older overload, so
+    ///      the call is encoded for whichever one ITMPDiamond declares. The terms are version 1 with
+    ///      every other field at its protocol default (zero). DefaultTerms mirrors TaskTerms field
+    ///      for field (enums as uint8), so it ABI-encodes the same on a dependency that predates
+    ///      TaskTerms.
+    function _createTaskCall(address[] memory hooks) private view returns (bytes memory) {
+        bytes4 selector = ITMPDiamond.createTask.selector;
+        ITMPCore.TaskConfig memory config = taskConfig(REWARD, 1 days, market.BOUNTY());
+        ITMPCore.HookConfig memory hookConfig = ITMPCore.HookConfig({contracts: hooks, data: hex""});
+        ITMPCore.TaskContent memory content =
+            ITMPCore.TaskContent({contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0)});
+        if (selector != TERMS_CREATE_TASK) {
+            return abi.encodeWithSelector(
+                selector, config, ITMPCore.StakeConfig({required: false, bps: 0}), hookConfig, content, noEvaluatorConfig()
+            );
+        }
+        DefaultTerms memory terms;
+        terms.version = 1;
+        return abi.encodeWithSelector(selector, config, hookConfig, content, noEvaluatorConfig(), terms);
+    }
 
     function setUp() public {
         vm.startPrank(OWNER);
@@ -322,16 +365,7 @@ contract {{HOOK_NAME}}LifecycleTest is DiamondTestHelper {
                 address(market),
                 REQUESTER,
                 REWARD,
-                abi.encodeCall(
-                    market.createTask,
-                    (
-                        taskConfig(REWARD, 1 days, market.BOUNTY()),
-                        ITMPCore.StakeConfig({required: false, bps: 0}),
-                        ITMPCore.HookConfig({contracts: hooks, data: hex""}),
-                        ITMPCore.TaskContent({contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0)}),
-                        noEvaluatorConfig()
-                    )
-                )
+                _createTaskCall(hooks)
             ),
             (bytes32)
         );

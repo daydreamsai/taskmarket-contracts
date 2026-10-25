@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import { RewardVault } from "../src/hooks/RewardVault.sol";
 import { EpochBudget } from "../src/hooks/EpochBudget.sol";
 import { TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHook.sol";
-import { TaskMarketForwarder } from "../src/TaskMarketForwarder.sol";
+import { TaskMarketForwarderV2 } from "../src/TaskMarketForwarderV2.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { SwapRewardHook } from "../script/SwapRewardHook.s.sol";
@@ -33,7 +33,7 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
     uint256 constant MAX_PER_TASK_USD = 10_000 * 1e6;
 
     ITMPDiamond diamond;
-    TaskMarketForwarder forwarder;
+    TaskMarketForwarderV2 forwarder;
     MockUSDC dreamsToken;
     RewardVault vault;
     EpochBudget oldBudget;
@@ -45,7 +45,7 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
         vm.startPrank(owner);
 
         diamond = deployDiamond(owner, usdc, feeRecipient, feeBps);
-        forwarder = new TaskMarketForwarder(usdc, address(diamond), relayer);
+        forwarder = new TaskMarketForwarderV2(usdc, address(diamond), relayer);
         dreamsToken = new MockUSDC();
 
         vault = new RewardVault(address(dreamsToken), owner);

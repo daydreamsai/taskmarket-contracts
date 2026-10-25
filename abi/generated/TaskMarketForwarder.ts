@@ -94,6 +94,19 @@ export const TaskMarketForwarderABI = [
   },
   {
     "type": "function",
+    "name": "pgtrPaymentAmount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pgtrSender",
     "inputs": [],
     "outputs": [

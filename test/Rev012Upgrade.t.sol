@@ -30,7 +30,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
     function test_Rev012Upgrade_BumpsVersionAndReplacesFacets() public {
         address diamond = deployDiamondAtVersion(owner, usdc, feeRecipient, feeBps, 11);
 
-        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
+        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.REV018_CREATE_TASK);
         address oldAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(OWNER_KEY));
@@ -41,7 +41,7 @@ contract Rev012UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 12, "diamondVersion must be 12 after rev012 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.REV018_CREATE_TASK);
         address newAcceptFacet = IDiamondLoupe(diamond).facetAddress(AcceptanceFacet.acceptSubmission.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
         assertTrue(newAcceptFacet != oldAcceptFacet, "AcceptanceFacet must be replaced");

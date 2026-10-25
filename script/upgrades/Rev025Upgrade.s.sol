@@ -69,10 +69,19 @@ contract Rev025Upgrade is Script {
         newAdmin[5] = AdminFacet.setIdentityRegistry.selector;
         newAdmin[6] = AdminFacet.identityRegistry.selector;
 
-        bytes4[] memory core = FacetSelectors.coreFacetSelectors();
-        bytes4[] memory keptCore = new bytes4[](core.length - 1);
-        for (uint256 i; i < keptCore.length; ++i) {
-            keptCore[i] = core[i];
+        // The CoreFacet selectors rev025 kept: the rev024 set less the four it moved to
+        // SettlementFacet. Built from the rev024 set rather than coreFacetSelectors(), which no
+        // longer has the rev018 createTask rev025 Replaced.
+        bytes4[] memory core = FacetSelectors.coreFacetSelectorsThroughRev024();
+        bytes4[] memory moved = FacetSelectors.settlementFacetSelectorsFromCore();
+        bytes4[] memory keptCore = new bytes4[](core.length - moved.length);
+        uint256 n;
+        for (uint256 i; i < core.length; ++i) {
+            bool isMoved;
+            for (uint256 j; j < moved.length; ++j) {
+                if (core[i] == moved[j]) isMoved = true;
+            }
+            if (!isMoved) keptCore[n++] = core[i];
         }
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);

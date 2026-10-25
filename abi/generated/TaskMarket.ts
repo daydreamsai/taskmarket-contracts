@@ -281,6 +281,32 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "backfillLiabilities",
+    "inputs": [
+      {
+        "name": "taskIds",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "booked",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "completeLiabilities",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "diamondVersion",
     "inputs": [],
     "outputs": [
@@ -301,6 +327,19 @@ export const TaskMarketABI = [
         "name": "",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hookGasStipend",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -512,6 +551,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "setHookGasStipend",
+    "inputs": [
+      {
+        "name": "newStipend",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setIdentityRegistry",
     "inputs": [
       {
@@ -623,6 +675,13 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "sweepSurplus",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "taskLimits",
     "inputs": [],
     "outputs": [
@@ -674,6 +733,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "EscrowBackfilled",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FeeRecipientUpdated",
     "inputs": [
       {
@@ -719,6 +797,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "HookGasStipendUpdated",
+    "inputs": [
+      {
+        "name": "hookGasStipend",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IdentityRegistryUpdated",
     "inputs": [
       {
@@ -739,6 +830,25 @@ export const TaskMarketABI = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LiabilitiesInitialised",
+    "inputs": [
+      {
+        "name": "totalLiabilities",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "surplus",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -848,6 +958,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "SurplusSwept",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TaskLimitsUpdated",
     "inputs": [
       {
@@ -921,7 +1050,28 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "EscrowInsolvent",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liabilities",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "FeeBpsTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeTransferFailed",
     "inputs": []
   },
   {
@@ -937,6 +1087,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InvalidHookAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidHookGasStipend",
     "inputs": []
   },
   {
@@ -981,6 +1136,16 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "LiabilitiesAlreadyInitialised",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LiabilitiesNotInitialised",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotInitializing",
     "inputs": []
   },
@@ -997,6 +1162,27 @@ export const TaskMarketABI = [
         "name": "pendingOwner",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -1151,150 +1337,6 @@ export const TaskMarketABI = [
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "createTask",
-    "inputs": [
-      {
-        "name": "config",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskConfig",
-        "components": [
-          {
-            "name": "reward",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "duration",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "mode",
-            "type": "bytes4",
-            "internalType": "bytes4"
-          },
-          {
-            "name": "pitchDeadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "bidDeadline",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "auctionSubtype",
-            "type": "bytes4",
-            "internalType": "bytes4"
-          }
-        ]
-      },
-      {
-        "name": "stakeConfig",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.StakeConfig",
-        "components": [
-          {
-            "name": "required",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "bps",
-            "type": "uint16",
-            "internalType": "uint16"
-          }
-        ]
-      },
-      {
-        "name": "hookConfig",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.HookConfig",
-        "components": [
-          {
-            "name": "contracts",
-            "type": "address[]",
-            "internalType": "address[]"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      },
-      {
-        "name": "content",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskContent",
-        "components": [
-          {
-            "name": "contentHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "contentURI",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "tags",
-            "type": "bytes32[]",
-            "internalType": "bytes32[]"
-          }
-        ]
-      },
-      {
-        "name": "evaluatorConfig",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskEvaluatorConfig",
-        "components": [
-          {
-            "name": "evaluator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "evaluatorStake",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "evaluatorFeeBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "evaluationWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "appealWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "disputeResolver",
-            "type": "address",
-            "internalType": "address"
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -1610,6 +1652,56 @@ export const TaskMarketABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "EscrowFunded",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "component",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ITMPEscrow.Component"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EscrowReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1947,6 +2039,50 @@ export const TaskMarketABI = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "UnbookedFunding",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "component",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ITMPEscrow.Component"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "UnbookedRelease",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AppealWindowTooShort",
     "inputs": []
@@ -1995,6 +2131,48 @@ export const TaskMarketABI = [
     "type": "error",
     "name": "EnforcedPause",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EscrowMismatch",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "owed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "booked",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EscrowOverdrawn",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "paidOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "released",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2114,16 +2292,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RewardIncreaseNotFunded",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardMustBeGreaterThanZero",
     "inputs": []
   },
@@ -2135,11 +2303,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "StakePaymentMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "StakeTransferFailed",
     "inputs": []
   },
   {
@@ -2606,11 +2769,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "ExcessRefundFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FeeTransferFailed",
     "inputs": []
   },
   {
@@ -3275,6 +3433,30 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "escrowRecord",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "booked",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tracked",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "evaluatorFor",
     "inputs": [
       {
@@ -3874,6 +4056,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "liabilitiesInitialised",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "reputationRegistry",
     "inputs": [],
     "outputs": [
@@ -4120,6 +4315,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "totalLiabilities",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "usdcToken",
     "inputs": [],
     "outputs": [
@@ -4314,19 +4522,6 @@ export const TaskMarketABI = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "normalizeTerms",
-    "inputs": [
-      {
-        "name": "taskIds",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

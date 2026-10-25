@@ -148,6 +148,7 @@ function run({
       [`FORGE_FEE_RECIPIENT_ADDRESS_${suffix}`]: OTHER,
       [`FORGE_DEFAULT_PLATFORM_FEE_BPS_${suffix}`]: "500",
       [`FORGE_MIN_FEEDBACK_GAS_${suffix}`]: "100000",
+      [`FORGE_HOOK_GAS_STIPEND_${suffix}`]: "7000000",
       [`FORGE_DIAMOND_ADDRESS_${suffix}`]: DIAMOND,
       [`FORGE_SERVER_ADDRESS_${suffix}`]: RELAYER,
       ...env,
@@ -183,6 +184,15 @@ for (const value of [undefined, "", "0", "false", "FALSE"]) {
     assert.equal(r.status, 0, r.out);
     assert.equal(broadcasts(r), true, r.forgeCalls.join("\n"));
     assert.doesNotMatch(r.stdout, /DRY RUN/);
+  });
+}
+
+for (const action of ["deploy", "upgrade"]) {
+  test(`${action} refuses without FORGE_HOOK_GAS_STIPEND_42431`, () => {
+    const r = run({ action, env: { FORGE_HOOK_GAS_STIPEND_42431: "" } });
+    assert.notEqual(r.status, 0);
+    assert.match(r.out, /FORGE_HOOK_GAS_STIPEND_42431/);
+    assert.equal(r.forgeCalls.filter(Boolean).length, 0, "nothing sent");
   });
 }
 

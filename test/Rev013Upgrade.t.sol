@@ -40,14 +40,14 @@ contract Rev013UpgradeTest is Test, DiamondTestHelper {
         _advanceToRev012(diamond);
         assertEq(AdminFacet(diamond).diamondVersion(), 12, "must be at rev012 before rev013");
 
-        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
+        address oldCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.REV018_CREATE_TASK);
         address oldEvalFacet = IDiamondLoupe(diamond).facetAddress(EvaluatorFacet.appeal.selector);
 
         new Rev013Upgrade().run();
 
         assertEq(AdminFacet(diamond).diamondVersion(), 13, "diamondVersion must be 13 after rev013 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.REV018_CREATE_TASK);
         address newEvalFacet = IDiamondLoupe(diamond).facetAddress(EvaluatorFacet.appeal.selector);
         assertTrue(newCoreFacet != oldCoreFacet, "CoreFacet must be replaced");
         assertTrue(newEvalFacet != oldEvalFacet, "EvaluatorFacet must be replaced");

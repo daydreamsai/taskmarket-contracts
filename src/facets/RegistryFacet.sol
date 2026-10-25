@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { LibAppStorage } from "../libraries/LibAppStorage.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
+import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 
 /// @title RegistryFacet — all read-only view functions for tasks, workers, and protocol state
 contract RegistryFacet {
@@ -187,5 +188,26 @@ contract RegistryFacet {
     ///         time with protocol default hooks prepended before any requester-supplied hooks.
     function getTaskHooks(bytes32 taskId) external view returns (address[] memory) {
         return LibHooks._resolveHooks(taskId, LibAppStorage.appStorage());
+    }
+
+    // -------------------------------------------------------------------------
+    // Escrow views (Rev026)
+    // -------------------------------------------------------------------------
+
+    /// @notice What the diamond's pooled escrow owes across every booked task.
+    function totalLiabilities() external view returns (uint256) {
+        return LibAppStorage.appStorage().totalLiabilities;
+    }
+
+    /// @notice A task's booked amount, and whether it is booked at all (false for a pre-rev026
+    ///         task the upgrade has not booked).
+    function escrowRecord(bytes32 taskId) external view returns (uint256 booked, bool tracked) {
+        ITMPEscrow.EscrowRecord storage rec = LibAppStorage.appStorage().escrowRecords[taskId];
+        return (rec.booked, rec.tracked);
+    }
+
+    /// @notice True once every live task is booked; the surplus sweep stays closed until then.
+    function liabilitiesInitialised() external view returns (bool) {
+        return LibAppStorage.appStorage().liabilitiesInitialised;
     }
 }

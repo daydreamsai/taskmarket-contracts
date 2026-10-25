@@ -15,6 +15,7 @@ import { Rev015Upgrade } from "../script/upgrades/Rev015Upgrade.s.sol";
 import { Rev017Upgrade } from "../script/upgrades/Rev017Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
+import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 
 /// @title Rev017UpgradeTest
 /// @dev Deploys a diamond placed at rev011 (the step tests' baseline), advances it through
@@ -106,10 +107,9 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         assertTrue(newAdmin != oldAdmin, "AdminFacet must be replaced");
 
         // Every pre-existing selector of each replaced facet still routes, to the new address.
-        // Rev018 added a second createTask overload and rev019 removed the legacy one again, so
-        // `CoreFacet.createTask` names the single surviving entry point -- which is what the
-        // CoreFacet this path deploys actually serves.
-        _assertRoutes(diamond, ITMPDiamond.createTask.selector, newCore, "createTask");
+        // The createTask this step Replaces is the rev018 one (rev026 later removed it), which
+        // FacetSelectors names because no facet serves it any more.
+        _assertRoutes(diamond, FacetSelectors.REV018_CREATE_TASK, newCore, "createTask");
         _assertRoutes(diamond, CoreFacet.claimTask.selector, newCore, "claimTask");
         _assertRoutes(diamond, CoreFacet.submitWork.selector, newCore, "submitWork");
         _assertRoutes(diamond, ITMPDiamond.cancelTask.selector, newCore, "cancelTask");

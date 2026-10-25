@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "../src/TaskMarketForwarder.sol";
+import { MockUnreportingForwarder } from "./mocks/MockUnreportingForwarder.sol";
 import "../src/TaskMarketForwarderV2.sol";
 import "../src/interfaces/IPGTRForwarder.sol";
 import "../src/interfaces/IPGTRPaymentForwarder.sol";
@@ -12,7 +12,7 @@ import "../src/interfaces/ITMPCore.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 
 /// @dev Relay target that records pgtrPaymentAmount() mid-call and tries to re-enter relay().
@@ -59,7 +59,7 @@ contract SpoofForwarder {
 
 contract TaskMarketForwarderV2Test is DiamondTestHelper {
     ITMPDiamond public market;
-    TaskMarketForwarder public v1;
+    MockUnreportingForwarder public unreporting;
     TaskMarketForwarderV2 public v2;
     MockUSDC public usdc;
 
@@ -78,15 +78,14 @@ contract TaskMarketForwarderV2Test is DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), owner, 500);
-        v1 = new TaskMarketForwarder(address(usdc), address(market), server);
+        unreporting = new MockUnreportingForwarder();
         v2 = new TaskMarketForwarderV2(address(usdc), address(market), server);
-        market.addForwarder(address(v1));
+        market.addForwarder(address(unreporting));
         market.addForwarder(address(v2));
         vm.stopPrank();
 
         usdc.mint(server, 10_000 * 10 ** 6);
         vm.startPrank(server);
-        usdc.approve(address(v1), type(uint256).max);
         usdc.approve(address(v2), type(uint256).max);
         vm.stopPrank();
     }
@@ -94,7 +93,7 @@ contract TaskMarketForwarderV2Test is DiamondTestHelper {
     function _relay(address fwd, address sender, uint256 amount, bytes memory data) internal {
         _n++;
         vm.prank(server);
-        TaskMarketForwarder(fwd).relay(sender, amount, block.timestamp + 5 minutes, bytes32(_n), data);
+        TaskMarketForwarderV2(fwd).relay(sender, amount, block.timestamp + 5 minutes, bytes32(_n), data);
     }
 
     function _createClaimTask(address fwd) internal returns (bytes32 taskId) {
@@ -104,10 +103,10 @@ contract TaskMarketForwarderV2Test is DiamondTestHelper {
             market.createTask,
             (
                 taskConfig(REWARD, DURATION, market.CLAIM(), 0, 0, bytes4(0)),
-                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                noEvaluatorConfig()
+                noEvaluatorConfig(),
+                stakeTerms(false, 0)
             )
         );
         _relay(fwd, requester, REWARD, data);
@@ -125,7 +124,6 @@ contract TaskMarketForwarderV2Test is DiamondTestHelper {
         assertTrue(v2.supportsInterface(type(IPGTRPaymentForwarder).interfaceId));
         assertTrue(v2.supportsInterface(type(IPGTRForwarder).interfaceId));
         assertTrue(v2.supportsInterface(type(IERC165).interfaceId));
-        assertFalse(v1.supportsInterface(type(IPGTRPaymentForwarder).interfaceId));
     }
 
     function test_PaymentAmount_Reverts_OutsideRelay() public {
@@ -203,34 +201,97 @@ contract TaskMarketForwarderV2Test is DiamondTestHelper {
     }
 
     // ---------------------------------------------------------------------
-    // v1 during the swap window
+    // A forwarder that cannot report its payment
     // ---------------------------------------------------------------------
 
-    function test_V1_StillTrusted_UnstakedClaim_Works() public {
-        bytes32 taskId = _createClaimTask(address(v1));
-        _claim(address(v1), taskId, 0, 0);
-        assertEq(market.getTask(taskId).worker, worker);
-    }
-
-    function test_V1_StakedClaim_Reverts_CannotReportAmount() public {
-        bytes32 taskId = _createClaimTask(address(v1));
+    function test_Unreported_UnstakedClaim_Reverts() public {
+        bytes32 taskId = _createClaimTask(address(v2));
+        bytes memory data = abi.encodeCall(market.claimTask, (taskId, 0));
         vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
-        _claim(address(v1), taskId, STAKE, STAKE);
+        unreporting.relay(address(market), worker, data);
     }
 
-    function test_V1_And_V2_BothRelay_ThenV1Removed() public {
-        bytes32 a = _createClaimTask(address(v1));
-        bytes32 b = _createClaimTask(address(v2));
-        _claim(address(v2), a, STAKE, STAKE);
-        _claim(address(v1), b, 0, 0);
+    function test_Unreported_StakedClaim_Reverts() public {
+        bytes32 taskId = _createClaimTask(address(v2));
+        bytes memory data = abi.encodeCall(market.claimTask, (taskId, STAKE));
+        vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
+        unreporting.relay(address(market), worker, data);
+    }
 
-        vm.prank(owner);
-        market.removeForwarder(address(v1));
-        bytes32 c = _createClaimTask(address(v2));
-        vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
-        _claim(address(v1), c, 0, 0);
-        _claim(address(v2), c, STAKE, STAKE);
-        assertEq(market.getTask(c).stakeAmount, STAKE);
+    // ---------------------------------------------------------------------
+    // Receipts: replay and expiry
+    // ---------------------------------------------------------------------
+
+    function _createData() internal view returns (bytes memory) {
+        return abi.encodeCall(
+            market.createTask,
+            (
+                taskConfig(REWARD, DURATION, market.CLAIM(), 0, 0, bytes4(0)),
+                ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                stakeTerms(false, 0)
+            )
+        );
+    }
+
+    function test_Relay_Replay_Reverts() public {
+        bytes memory data = _createData();
+        uint256 validBefore = block.timestamp + 5 minutes;
+        vm.prank(server);
+        v2.relay(requester, REWARD, validBefore, bytes32(uint256(99)), data);
+
+        vm.prank(server);
+        vm.expectRevert(TaskMarketForwarderV2.ReceiptAlreadyConsumed.selector);
+        v2.relay(requester, REWARD, validBefore, bytes32(uint256(99)), data);
+    }
+
+    function test_ConsumedReceipts_Stored() public {
+        uint256 validBefore = block.timestamp + 5 minutes;
+        bytes32 nonce = bytes32(uint256(100));
+        bytes32 receiptHash = keccak256(
+            abi.encode(
+                block.chainid, requester, REWARD, nonce, validBefore, address(market), market.createTask.selector
+            )
+        );
+        assertFalse(v2.consumedReceipts(receiptHash));
+
+        bytes memory data = _createData();
+        vm.prank(server);
+        v2.relay(requester, REWARD, validBefore, nonce, data);
+        assertTrue(v2.consumedReceipts(receiptHash));
+    }
+
+    function test_Relay_Expired_Reverts() public {
+        bytes memory data = _createData();
+        uint256 expiredBefore = block.timestamp - 1;
+        vm.prank(server);
+        vm.expectRevert(TaskMarketForwarderV2.ReceiptExpired.selector);
+        v2.relay(requester, REWARD, expiredBefore, bytes32(uint256(200)), data);
+    }
+
+    function test_Relay_ExactlyAtDeadline_Succeeds() public {
+        // validBefore == block.timestamp is still valid (inclusive check).
+        bytes memory data = _createData();
+        vm.prank(server);
+        v2.relay(requester, REWARD, block.timestamp, bytes32(uint256(201)), data);
+    }
+
+    /// @dev The backend derives the same hash (apps/backend/src/services/relay-receipt.ts) to
+    ///      detect a consumed receipt, so the encoding must not change.
+    function test_ReceiptHash_DerivationIsFrozen() public pure {
+        bytes32 receiptHash = keccak256(
+            abi.encode(
+                uint256(8453),
+                address(0x1111111111111111111111111111111111111111),
+                uint256(1_000_000),
+                bytes32(0x2222222222222222222222222222222222222222222222222222222222222222),
+                uint256(1_786_029_192),
+                address(0x3333333333333333333333333333333333333333),
+                bytes4(0xdeadbeef)
+            )
+        );
+        assertEq(receiptHash, 0x99ba1fdf70fbfe86a31d2b8e6461b405640c9d5e677c31a0cd24c980cb1782d1);
     }
 
     // ---------------------------------------------------------------------

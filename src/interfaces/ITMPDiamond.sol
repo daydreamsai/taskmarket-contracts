@@ -26,10 +26,10 @@ interface ITMPDiamond {
 
     function createTask(
         ITMPCore.TaskConfig calldata config,
-        ITMPCore.StakeConfig calldata stakeConfig,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content,
-        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
+        ITMPCore.TaskTerms calldata terms
     ) external returns (bytes32);
 
     // Rev025: the createTask overload taking ITMPCore.TaskTerms is declared on ITMPTerms, not
@@ -193,7 +193,6 @@ interface ITMPDiamond {
     // -------------------------------------------------------------------------
     // SettlementFacet (Rev025)
     // -------------------------------------------------------------------------
-    function normalizeTerms(bytes32[] calldata taskIds) external;
     function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory);
     function getTaskClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory);
     function termsBounds()
@@ -208,6 +207,19 @@ interface ITMPDiamond {
     function requestRevision(bytes32 taskId) external;
     function settleLapsedReview(bytes32 taskId) external;
     function releaseClaim(bytes32 taskId) external;
+
+    // -------------------------------------------------------------------------
+    // Escrow accounting (Rev026): views on RegistryFacet, the sweep on AdminFacet
+    // -------------------------------------------------------------------------
+    function totalLiabilities() external view returns (uint256);
+    function escrowRecord(bytes32 taskId) external view returns (uint256 booked, bool tracked);
+    function liabilitiesInitialised() external view returns (bool);
+    function sweepSurplus() external;
+    function backfillLiabilities(bytes32[] calldata taskIds) external returns (uint256 booked);
+    function completeLiabilities() external;
+    // Rev026: per-chain gas stipend forwarded to each hook call.
+    function hookGasStipend() external view returns (uint256);
+    function setHookGasStipend(uint256 newStipend) external;
 
     // -------------------------------------------------------------------------
     // DiamondLoupeFacet

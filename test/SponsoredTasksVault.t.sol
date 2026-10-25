@@ -235,14 +235,14 @@ contract SponsoredTasksVaultTest is Test {
         taxedVault.claimFee(allocationId, treasury);
         assertEq(_vaultAllocation(taxedVault, allocationId).feeOutstanding, feeTotal);
 
+        // The exit is the one path that accepts an inexact delivery: the balance leaves net of the
+        // token's fee rather than staying locked.
         vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, 200 ether, 198 ether)
-        );
         taxedVault.emergencyExitVault(treasury);
-        assertEq(uint256(taxedVault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));
-        assertEq(taxedVault.epoch(), 1);
-        assertEq(taxedToken.balanceOf(address(taxedVault)), 200 ether);
+        assertEq(uint256(taxedVault.status()), uint256(SponsoredTaskTypes.VaultStatus.Exited));
+        assertEq(taxedVault.epoch(), 2);
+        assertEq(taxedToken.balanceOf(address(taxedVault)), 0);
+        assertEq(taxedToken.balanceOf(treasury), 198 ether);
     }
 
     /// A receive policy that delivers a transfer to a different address than the one named credits

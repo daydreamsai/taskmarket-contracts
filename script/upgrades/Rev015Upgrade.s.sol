@@ -51,7 +51,7 @@ contract Rev015Upgrade is Script {
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(
-            registryFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.registryFacetSelectors()
+            registryFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.registryFacetSelectorsThroughRev025()
         );
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");

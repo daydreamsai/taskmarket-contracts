@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import { LibTaskLimits } from "../libraries/LibTaskLimits.sol";
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibEscrow } from "../libraries/LibEscrow.sol";
+import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibReview } from "../libraries/LibReview.sol";
@@ -43,8 +45,6 @@ contract CoreFacet {
     ///         The USDC reward MUST be transferred to this contract by the forwarder before calling.
     /// @param config          Reward (6-decimal USDC; for Auction = max price), duration, mode,
     ///                        and the mode-specific pitch/bid deadlines and auction subtype.
-    /// @param stakeConfig     Requester's stake requirement (Rev014); informational only -- not
-    ///                        currently enforced by claimTask
     /// @param hookConfig      Hook contracts + hookData packed into one calldata pointer (Rev008).
     /// @param content         Content hash, URI, and tags (packed to reduce stack depth).
     /// @param evaluatorConfig Evaluator terms, applied in this same transaction. Pass the zero
@@ -53,25 +53,12 @@ contract CoreFacet {
     ///                        to do it without a race: the task is Open, and so claimable, the
     ///                        instant this transaction mines, and `assignEvaluator` reverts
     ///                        `TaskNotOpen` once a worker has claimed.
-    ///      Records the protocol default settlement terms with this call's stake (rev025). Kept
-    ///      for existing callers; removed in the revision after rev025.
-    function createTask(
-        ITMPCore.TaskConfig calldata config,
-        ITMPCore.StakeConfig calldata stakeConfig,
-        ITMPCore.HookConfig calldata hookConfig,
-        ITMPCore.TaskContent calldata content,
-        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig
-    ) external returns (bytes32) {
-        return _createTask(
-            config, hookConfig, content, evaluatorConfig, LibTerms.defaults(stakeConfig.required, stakeConfig.bps)
-        );
-    }
-
-    /// @notice Create a task with explicit settlement terms (rev025). Same parameters as the
-    ///         legacy overload, except that the stake requirement is carried in `terms`.
-    /// @param terms Settlement terms. Zero fields take the protocol defaults; see ITMPCore.TaskTerms
-    ///              for the encodings. Reverts InvalidTerms outside the owner-set bounds, or for
-    ///              a Reopen reject outcome on an auction. `terms.version` is ignored.
+    /// @param terms           Settlement terms (rev025), the stake requirement included. Zero
+    ///                        fields take the protocol defaults; see ITMPCore.TaskTerms for the
+    ///                        encodings. Reverts InvalidTerms outside the owner-set bounds, or for
+    ///                        a Reopen reject outcome on an auction. `terms.version` is ignored.
+    /// @dev The rev018 overload taking a StakeConfig and recording default terms was removed in
+    ///      rev026; its selector no longer routes.
     function createTask(
         ITMPCore.TaskConfig calldata config,
         ITMPCore.HookConfig calldata hookConfig,
@@ -163,6 +150,7 @@ contract CoreFacet {
             terms.stakeBps
         );
         emit ITMPCore.TaskTermsSet(taskId, terms);
+        LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.Task, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -184,7 +172,7 @@ contract CoreFacet {
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
         LibGuards._requireStakePayment(stakeAmount);
-        if (stakeAmount < LibTerms.minStake(LibTerms.pendingTerms(s, taskId), task.reward)) {
+        if (stakeAmount < LibTerms.minStake(s.taskTerms[taskId], task.reward)) {
             revert ITMPCore.StakePaymentMismatch();
         }
 
@@ -196,6 +184,7 @@ contract CoreFacet {
         LibHooks._checkClaimHooks(taskId, worker, s);
 
         emit ITMPCore.TaskClaimed(taskId, worker, stakeAmount);
+        LibEscrow.book(s, taskId, worker, ITMPEscrow.Component.WorkerStake, false);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -388,23 +377,13 @@ contract CoreFacet {
         if (newReward != 0 && newReward == task.reward) revert ITMPCore.NoRewardChange();
 
         uint256 refund = 0;
-        // A paying forwarder must have moved exactly the increase into escrow, and nothing on
-        // an update that raises no reward.
-        bool paymentReported = LibGuards._requireReportedPayment(newReward > task.reward ? newReward - task.reward : 0);
+        // The forwarder must have moved exactly the increase into escrow, and nothing on an update
+        // that raises no reward. LibEscrow.book below checks the increase is covered by the
+        // unbooked balance for a booked task.
+        LibGuards._requireReportedPayment(newReward > task.reward ? newReward - task.reward : 0);
         if (newReward != 0 && newReward != task.reward) {
             if (newReward < task.reward) {
                 refund = task.reward - newReward;
-            } else {
-                // Defense-in-depth: the forwarder is expected to have funded this increase
-                // via paymentAmount before this call executes (mirroring createTask's
-                // funding model). This does not prove this specific increase was funded --
-                // escrow is one pooled balance across every task -- but it catches the
-                // acute failure mode where no funding transfer happened at all (e.g. a
-                // relayed paymentAmount of 0 due to a backend bug), instead of silently
-                // promising a reward the Diamond cannot pay.
-                if (!paymentReported && s.usdcToken.balanceOf(address(this)) < newReward) {
-                    revert ITMPCore.RewardIncreaseNotFunded();
-                }
             }
             task.reward = newReward;
             if (task.mode == AUCTION) s.taskAuctionConfigs[taskId].maxPrice = newReward;
@@ -422,7 +401,11 @@ contract CoreFacet {
             s.taskPitchConfigs[taskId].pitchDeadline = newPitchDeadline;
         }
         if (refund > 0) {
+            uint256 balanceBefore = LibEscrow.balance(s);
             if (!s.usdcToken.transfer(task.requester, refund)) revert ITMPCore.USDCRefundFailed();
+            LibEscrow.release(s, taskId, balanceBefore);
+        } else if (newReward > originalReward) {
+            LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.RewardIncrease, false);
         }
 
         bool changed = (newReward != 0 && newReward != originalReward)
@@ -458,9 +441,7 @@ contract CoreFacet {
         ) {
             revert ITMPCore.InvalidEvaluator();
         }
-        // The reward is the whole payment of an evaluator-less create; a v1 forwarder is trusted
-        // to have funded it. Called for its revert; whether a payment was reported does not matter.
-        // slither-disable-next-line unused-return
+        // The reward is the whole payment of an evaluator-less create.
         LibGuards._requireReportedPayment(s.tasks[taskId].reward);
     }
 

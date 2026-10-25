@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibReview } from "../libraries/LibReview.sol";
@@ -29,20 +30,10 @@ contract SettlementFacet {
     // Terms
     // -------------------------------------------------------------------------
 
-    /// @notice Normalize the settlement terms of pre-rev025 tasks (permissionless). An id that
-    ///         is already normalized, terminal or nonexistent is skipped, so a batch may repeat.
-    function normalizeTerms(bytes32[] calldata taskIds) external {
-        AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireNotPaused(s);
-        for (uint256 i; i < taskIds.length; ++i) {
-            LibTerms.normalize(s, taskIds[i]);
-        }
-    }
-
-    /// @notice Get a task's settlement terms. For a non-terminal task created before rev025 and
-    ///         not yet normalized, returns the record normalization would write.
+    /// @notice Get a task's settlement terms. A task created before rev025 that was terminal at
+    ///         the rev025 cut was never normalized and reads as version 0.
     function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory) {
-        return LibTerms.pendingTerms(LibAppStorage.appStorage(), taskId);
+        return LibAppStorage.appStorage().taskTerms[taskId];
     }
 
     /// @notice Get a task's delivery and review clock: when the current delivery landed
@@ -113,6 +104,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -137,6 +129,7 @@ contract SettlementFacet {
         emit ITMPCore.TaskReopened(taskId);
 
         LibHooks._onForfeitHooks(taskId, forfeiter, s);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -148,6 +141,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -176,6 +170,7 @@ contract SettlementFacet {
         emit ITMPCore.TaskReopened(taskId);
 
         LibHooks._onForfeitHooks(taskId, worker, s);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -199,6 +194,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -236,6 +232,7 @@ contract SettlementFacet {
 
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refundAmount);
         LibHooks._onCancelHooks(taskId, s);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -262,6 +259,7 @@ contract SettlementFacet {
             return;
         }
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
@@ -298,6 +296,7 @@ contract SettlementFacet {
         } else {
             _refundExpiredNormal(taskId, task, s, requesterAgentId);
         }
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -320,15 +319,12 @@ contract SettlementFacet {
 
     /// @notice End of the current review window, or zero when no delivery awaits review. While a
     ///         revision is open, the deadline the superseded delivery gets if none is resubmitted.
-    ///         A pre-rev025 delivery not yet normalized reads as if normalized now, since
-    ///         normalization starts its window at that moment.
     function reviewDeadline(bytes32 taskId) external view returns (uint256) {
         AppStorage storage s = LibAppStorage.appStorage();
         ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
         uint256 start = clock.deliveredAt != 0 ? clock.deliveredAt : clock.revisionDueAt;
-        uint256 window = LibReview.reviewWindow(LibTerms.pendingTerms(s, taskId));
-        if (start != 0) return start + window;
-        return LibTerms.legacyDeliveryAwaitingReview(s, taskId) ? block.timestamp + window : 0;
+        if (start == 0) return 0;
+        return start + LibReview.reviewWindow(s.taskTerms[taskId]);
     }
 
     /// @notice Reject a delivery inside its review window. The worker is paid the reject fee less
@@ -340,6 +336,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = _requireRequesterReview(taskId, s);
         (ITMPCore.TaskTerms storage t, uint256 deadline) = LibReview.requireUnderReview(s, taskId);
@@ -361,6 +358,7 @@ contract SettlementFacet {
         _applyRejectOutcome(taskId, task, t);
 
         LibHooks._onForfeitHooks(taskId, worker, s);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -402,6 +400,7 @@ contract SettlementFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
         _requireDelivered(taskId, task, s);
@@ -433,6 +432,7 @@ contract SettlementFacet {
                 awards: awards
             })
         );
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 

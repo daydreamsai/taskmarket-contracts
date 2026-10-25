@@ -11,7 +11,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { MockTaskHook } from "./mocks/MockTaskHook.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 
 /// @dev A hook may veto voluntary actions but never a forced exit. Each test creates a task with
 ///      a cooperative hook, progresses it normally, then turns the hook hostile (every check*
@@ -66,10 +66,10 @@ contract ForcedExitHooksTest is DiamondTestHelper {
                     market.createTask,
                     (
                         taskConfig(REWARD, DURATION, mode),
-                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                        noEvaluatorConfig()
+                        noEvaluatorConfig(),
+                        stakeTerms(false, 0)
                     )
                 )
             ),

@@ -612,6 +612,10 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
     /// @notice Terminally close the vault and recover every token still in the vault.
     /// @dev This deliberately defaults live sponsors. It cannot selectively revoke one task while
     ///      the vault continues, and Taskmarket's independent USDC settlement is unaffected.
+    /// @dev Unlike every other outgoing path, the exit accepts an inexact delivery (rev026): a token
+    ///      that starts charging a transfer fee after funding makes every exact transfer revert, and
+    ///      the exit is the only path left that can move the balance. It still reverts when the
+    ///      recipient receives nothing, so a redirecting token cannot send the balance elsewhere.
     function emergencyExitVault(address recipient) external onlyOwner onlyActive nonReentrant returns (uint256 amount) {
         if (recipient == address(0)) revert ZeroAddress();
 
@@ -628,7 +632,7 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
         totalClaimable = 0;
         totalWithdrawn += amount;
 
-        _transferExact(recipient, amount);
+        _transferExit(recipient, amount);
         emit VaultEmergencyExited(
             vaultId, msg.sender, recipient, closedEpoch, epoch, amount, affectedReserved, affectedClaimable
         );
@@ -723,6 +727,27 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
 
     /// @dev Rejects tokens that debit this vault or credit the recipient by anything other than
     ///      the exact accounted amount. This also rejects self-transfers and transfer-tax behavior.
+    /// @dev The exit's transfer: the vault must not lose more than it sends, and the recipient must
+    ///      receive something, but a token's fee may take part of it.
+    function _transferExit(address recipient, uint256 amount) private {
+        uint256 vaultBalanceBefore = projectToken.balanceOf(address(this));
+        uint256 recipientBalanceBefore = projectToken.balanceOf(recipient);
+
+        projectToken.safeTransfer(recipient, amount);
+
+        uint256 vaultBalanceAfter = projectToken.balanceOf(address(this));
+        uint256 recipientBalanceAfter = projectToken.balanceOf(recipient);
+        uint256 sent = vaultBalanceBefore >= vaultBalanceAfter ? vaultBalanceBefore - vaultBalanceAfter : 0;
+        uint256 received =
+            recipientBalanceAfter >= recipientBalanceBefore ? recipientBalanceAfter - recipientBalanceBefore : 0;
+        // The zero checks are deliberate: a balance delta of exactly zero means nothing moved, which
+        // the exit refuses, while any positive delta is accepted as a fee-reduced delivery.
+        // slither-disable-next-line incorrect-equality
+        if (sent > amount || (amount != 0 && sent == 0)) revert TokenSenderAmountMismatch(amount, sent);
+        // slither-disable-next-line incorrect-equality
+        if (amount != 0 && received == 0) revert TokenRecipientAmountMismatch(amount, received);
+    }
+
     function _transferExact(address recipient, uint256 amount) private {
         uint256 vaultBalanceBefore = projectToken.balanceOf(address(this));
         uint256 recipientBalanceBefore = projectToken.balanceOf(recipient);

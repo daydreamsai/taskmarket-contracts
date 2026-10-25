@@ -103,6 +103,7 @@ case "$ACTION" in
     FEE_BPS="$(need FORGE_DEFAULT_PLATFORM_FEE_BPS)"
     REGISTRY="$(need FORGE_ERC8004_REPUTATION_REGISTRY)"
     FEEDBACK_GAS="$(need FORGE_MIN_FEEDBACK_GAS)"
+    HOOK_STIPEND="$(need FORGE_HOOK_GAS_STIPEND)"
     ;;
   deploy-forwarder)
     USDC="$(need FORGE_USDC_TOKEN_ADDRESS)"
@@ -112,15 +113,16 @@ case "$ACTION" in
   upgrade)
     DIAMOND="$(need FORGE_DIAMOND_ADDRESS)"
     FEEDBACK_GAS="$(need FORGE_MIN_FEEDBACK_GAS)"
+    HOOK_STIPEND="$(need FORGE_HOOK_GAS_STIPEND)"
     ;;
 esac
 [ -n "$KEY" ] || MISSING+=("$KEY_SRC")
 [ -n "$FEE_TOKEN" ] || MISSING+=("FORGE_FEE_TOKEN_${SUFFIX}")
 CHECK=()
 case "$ACTION" in
-  deploy) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_FEE_RECIPIENT_ADDRESS FORGE_DEFAULT_PLATFORM_FEE_BPS FORGE_MIN_FEEDBACK_GAS) ;;
+  deploy) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_FEE_RECIPIENT_ADDRESS FORGE_DEFAULT_PLATFORM_FEE_BPS FORGE_MIN_FEEDBACK_GAS FORGE_HOOK_GAS_STIPEND) ;;
   deploy-forwarder) CHECK=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SERVER_ADDRESS) ;;
-  upgrade) CHECK=(FORGE_DIAMOND_ADDRESS FORGE_MIN_FEEDBACK_GAS) ;;
+  upgrade) CHECK=(FORGE_DIAMOND_ADDRESS FORGE_MIN_FEEDBACK_GAS FORGE_HOOK_GAS_STIPEND) ;;
 esac
 for name in ${CHECK[@]+"${CHECK[@]}"}; do
   v="${name}_${SUFFIX}"; [ -n "${!v:-}" ] || MISSING+=("$v")
@@ -150,6 +152,7 @@ case "$ACTION" in
     echo "  Platform fee bps:   $FEE_BPS"
     echo "  Reputation registry: ${REGISTRY:-<unset: none registered>}"
     echo "  Feedback gas floor: $FEEDBACK_GAS"
+    echo "  Hook gas stipend:   $HOOK_STIPEND"
     ;;
   deploy-forwarder)
     echo "  Settlement token:   $USDC"
@@ -160,6 +163,7 @@ case "$ACTION" in
     echo "  Diamond:            $DIAMOND"
     echo "  Step:               ${REV:-all pending}"
     echo "  Feedback gas floor: $FEEDBACK_GAS"
+    echo "  Hook gas stipend:   $HOOK_STIPEND"
     ;;
 esac
 if [ -n "$SCRIPT" ]; then
@@ -183,6 +187,7 @@ if [ -n "$SCRIPT" ]; then
 fi
 export FORGE_FEE_TOKEN="$FEE_TOKEN"
 if [ -n "${FEEDBACK_GAS:-}" ]; then export FORGE_MIN_FEEDBACK_GAS="$FEEDBACK_GAS"; else unset FORGE_MIN_FEEDBACK_GAS; fi
+if [ -n "${HOOK_STIPEND:-}" ]; then export FORGE_HOOK_GAS_STIPEND="$HOOK_STIPEND"; else unset FORGE_HOOK_GAS_STIPEND; fi
 unset USDC_TOKEN_ADDRESS CONTRACT_ADDRESS FORWARDER_ADDRESS
 
 # Set once a broadcast forwarder is on chain and cleared once it is trusted: any failure in

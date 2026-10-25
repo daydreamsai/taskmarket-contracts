@@ -19,3 +19,11 @@ function noEvaluatorConfig() pure returns (ITMPCore.TaskEvaluatorConfig memory) 
         disputeResolver: address(0)
     });
 }
+
+/// @notice Protocol default settlement terms with the given stake requirement -- what the rev018
+///         createTask overload recorded before rev026 removed it.
+function stakeTerms(bool stakeRequired, uint16 stakeBps) pure returns (ITMPCore.TaskTerms memory t) {
+    t.version = 1;
+    t.stakeRequired = stakeRequired;
+    t.stakeBps = stakeBps;
+}

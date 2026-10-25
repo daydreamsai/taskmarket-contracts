@@ -17,7 +17,7 @@ import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 
 /// @dev rev025 frozen terms: once a worker is committed (claimed, selected, accepted auction) or a
 ///      Bounty or Benchmark submission is active, updateTask and assignEvaluator revert
@@ -67,10 +67,10 @@ contract FreezeTermsTest is DiamondTestHelper {
             market.createTask,
             (
                 cfg,
-                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                noEvaluatorConfig()
+                noEvaluatorConfig(),
+                stakeTerms(false, 0)
             )
         );
         return abi.decode(_relay(requester, REWARD, data), (bytes32));

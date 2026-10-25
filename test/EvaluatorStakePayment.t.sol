@@ -2,21 +2,21 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../src/TaskMarketForwarder.sol";
 import "../src/TaskMarketForwarderV2.sol";
 import "../src/interfaces/ITMPCore.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
+import { MockUnreportingForwarder } from "./mocks/MockUnreportingForwarder.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 
 /// @dev Funding checks on the relayed payment: a paying forwarder (v2) must move exactly the
 ///      reward plus evaluator stake on createTask, the stake on assignEvaluator and the increase
-///      on updateTask; a v1 forwarder keeps the earlier funding model.
+///      on updateTask; a forwarder that cannot report its payment is refused on every one.
 contract EvaluatorStakePaymentTest is DiamondTestHelper {
     ITMPDiamond public market;
-    TaskMarketForwarder public v1;
+    MockUnreportingForwarder public unreporting;
     TaskMarketForwarderV2 public v2;
     MockUSDC public usdc;
 
@@ -34,15 +34,14 @@ contract EvaluatorStakePaymentTest is DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), owner, 500);
-        v1 = new TaskMarketForwarder(address(usdc), address(market), server);
+        unreporting = new MockUnreportingForwarder();
         v2 = new TaskMarketForwarderV2(address(usdc), address(market), server);
-        market.addForwarder(address(v1));
+        market.addForwarder(address(unreporting));
         market.addForwarder(address(v2));
         vm.stopPrank();
 
         usdc.mint(server, 10_000 * 10 ** 6);
         vm.startPrank(server);
-        usdc.approve(address(v1), type(uint256).max);
         usdc.approve(address(v2), type(uint256).max);
         vm.stopPrank();
     }
@@ -50,7 +49,7 @@ contract EvaluatorStakePaymentTest is DiamondTestHelper {
     function _relay(address fwd, uint256 amount, bytes memory data) internal {
         _n++;
         vm.prank(server);
-        TaskMarketForwarder(fwd).relay(requester, amount, block.timestamp + 5 minutes, bytes32(_n), data);
+        TaskMarketForwarderV2(fwd).relay(requester, amount, block.timestamp + 5 minutes, bytes32(_n), data);
     }
 
     function _evalCfg(uint256 stake) internal view returns (ITMPCore.TaskEvaluatorConfig memory) {
@@ -69,10 +68,10 @@ contract EvaluatorStakePaymentTest is DiamondTestHelper {
             market.createTask,
             (
                 taskConfig(REWARD, DURATION, market.CLAIM(), 0, 0, bytes4(0)),
-                ITMPCore.StakeConfig({ required: false, bps: 0 }),
                 ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                 ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                cfg
+                cfg,
+                stakeTerms(false, 0)
             )
         );
     }
@@ -200,56 +199,32 @@ contract EvaluatorStakePaymentTest is DiamondTestHelper {
     }
 
     // ---------------------------------------------------------------------
-    // v1: the earlier funding model is unchanged
+    // A forwarder that cannot report its payment is refused
     // ---------------------------------------------------------------------
 
-    function test_V1_CreateWithEvaluator_StakePulledFromRequester() public {
-        usdc.mint(requester, STAKE);
-        vm.prank(requester);
-        usdc.approve(address(market), STAKE);
-        bytes32 taskId = _create(address(v1), REWARD, _evalCfg(STAKE));
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, STAKE);
-        assertEq(usdc.balanceOf(requester), 0, "stake pulled via allowance");
-        assertEq(usdc.balanceOf(address(market)), REWARD + STAKE);
+    function test_Unreported_CreateWithoutEvaluator_Reverts() public {
+        bytes memory data = _createData(noEvaluatorConfig());
+        vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
+        unreporting.relay(address(market), requester, data);
     }
 
-    function test_V1_CreateWithEvaluator_NoAllowance_Reverts() public {
+    function test_Unreported_CreateWithEvaluator_Reverts() public {
         bytes memory data = _createData(_evalCfg(STAKE));
-        vm.expectRevert();
-        _relay(address(v1), REWARD, data);
+        vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
+        unreporting.relay(address(market), requester, data);
     }
 
-    function test_V1_CreateWithoutEvaluator_TrustsForwarder() public {
-        bytes32 taskId = _create(address(v1), REWARD, noEvaluatorConfig());
-        assertEq(market.getTask(taskId).reward, REWARD);
+    function test_Unreported_Assign_ZeroStake_Reverts() public {
+        bytes32 taskId = _create(address(v2), REWARD, noEvaluatorConfig());
+        bytes memory data = _assignData(taskId, 0);
+        vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
+        unreporting.relay(address(market), requester, data);
     }
 
-    function test_V1_Assign_ZeroStake_Works() public {
-        bytes32 taskId = _create(address(v1), REWARD, noEvaluatorConfig());
-        _relay(address(v1), 0, _assignData(taskId, 0));
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, evaluator);
-    }
-
-    function test_V1_Assign_NonZeroStake_PulledFromRequester() public {
-        bytes32 taskId = _create(address(v1), REWARD, noEvaluatorConfig());
-        usdc.mint(requester, STAKE);
-        vm.prank(requester);
-        usdc.approve(address(market), STAKE);
-        _relay(address(v1), 0, _assignData(taskId, STAKE));
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, STAKE);
-        assertEq(usdc.balanceOf(requester), 0);
-    }
-
-    function test_V1_Assign_NonZeroStake_NoAllowance_Reverts() public {
-        bytes32 taskId = _create(address(v1), REWARD, noEvaluatorConfig());
-        bytes memory data = _assignData(taskId, STAKE);
-        vm.expectRevert();
-        _relay(address(v1), 0, data);
-    }
-
-    function test_V1_Update_IncreaseUsesBalanceCheck() public {
-        bytes32 taskId = _create(address(v1), REWARD, noEvaluatorConfig());
-        _relay(address(v1), 5e6, abi.encodeCall(market.updateTask, (taskId, REWARD + 5e6, 0, 0, 0)));
-        assertEq(market.getTask(taskId).reward, REWARD + 5e6);
+    function test_Unreported_Update_Increase_Reverts() public {
+        bytes32 taskId = _create(address(v2), REWARD, noEvaluatorConfig());
+        bytes memory data = abi.encodeCall(market.updateTask, (taskId, REWARD + 5e6, 0, 0, 0));
+        vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
+        unreporting.relay(address(market), requester, data);
     }
 }

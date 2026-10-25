@@ -39,6 +39,14 @@ contract MockTaskHook is ITMPHook {
     uint8 public lastSeenStatusOnCheckComplete;
     address public taskMarketAddress;
 
+    // Number of fresh storage slots checkFund writes; 0 keeps it cheap.
+    uint256 public checkFundSlotWrites;
+    mapping(bytes32 => mapping(uint256 => uint256)) internal fundScratch;
+
+    function setCheckFundSlotWrites(uint256 n) external {
+        checkFundSlotWrites = n;
+    }
+
     function setTaskMarket(address tm) external {
         taskMarketAddress = tm;
     }
@@ -95,9 +103,13 @@ contract MockTaskHook is ITMPHook {
         return interfaceId == type(ITMPHook).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function checkFund(bytes32, ITMPCore.TaskContext calldata, bytes calldata) external override returns (bool) {
+    function checkFund(bytes32 taskId, ITMPCore.TaskContext calldata, bytes calldata) external override returns (bool) {
         checkFundCalls++;
         if (revertOnCheckFund) revert("MockTaskHook: checkFund reverted");
+        // Fresh storage slots, about 22k gas each: stands in for a hook that books new state.
+        for (uint256 i; i < checkFundSlotWrites; i++) {
+            fundScratch[taskId][i] = 1;
+        }
         return !rejectOnCheckFund;
     }
 

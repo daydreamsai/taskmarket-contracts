@@ -8,16 +8,15 @@ import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { TMP_CLAIM, TMP_PITCH, TMP_AUCTION, TMP_AUCTION_DUTCH, TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { LibAppStorage, AppStorage } from "../src/libraries/LibAppStorage.sol";
-import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { LibTerms } from "../src/libraries/LibTerms.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 
 /// @dev Cut into the test diamond to reach storage no facet exposes: it reconstructs a pre-rev025
-///      task by clearing its terms, drives the lazy reader, and reads the clocks and raw slots.
+///      task by clearing its terms, drives the terms reader, and reads the clocks and raw slots.
 contract TermsProbeFacet {
     function probeWipeTerms(bytes32 taskId) external {
         delete LibAppStorage.appStorage().taskTerms[taskId];
@@ -148,20 +147,14 @@ contract TaskTermsTest is DiamondTestHelper {
         return taskConfig(REWARD, DURATION, mode);
     }
 
-    function _createLegacy(bytes4 mode, bool stakeRequired, uint16 stakeBps) internal returns (bytes32) {
+    function _createWithStake(bytes4 mode, bool stakeRequired, uint16 stakeBps) internal returns (bytes32) {
         return abi.decode(
             _relay(
                 requester,
                 REWARD,
                 abi.encodeCall(
                     market.createTask,
-                    (
-                        _config(mode),
-                        ITMPCore.StakeConfig({ required: stakeRequired, bps: stakeBps }),
-                        _hooks(),
-                        _content(),
-                        noEvaluatorConfig()
-                    )
+                    (_config(mode), _hooks(), _content(), noEvaluatorConfig(), stakeTerms(stakeRequired, stakeBps))
                 )
             ),
             (bytes32)
@@ -182,18 +175,13 @@ contract TaskTermsTest is DiamondTestHelper {
         forwarder.relay(address(market), requester, REWARD, data);
     }
 
-    function _ids(bytes32 a) internal pure returns (bytes32[] memory ids) {
-        ids = new bytes32[](1);
-        ids[0] = a;
-    }
-
     function _assertTermsEq(ITMPCore.TaskTerms memory a, ITMPCore.TaskTerms memory b) internal pure {
         assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(b)), "terms differ");
     }
 
     /// @dev A task as a pre-rev025 diamond would have left it: no terms record at all.
     function _legacyTask(bytes4 mode) internal returns (bytes32 taskId) {
-        taskId = _createLegacy(mode, true, 1500);
+        taskId = _createWithStake(mode, true, 1500);
         probe.probeWipeTerms(taskId);
     }
 
@@ -213,34 +201,8 @@ contract TaskTermsTest is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
-    // createTask overload and legacy wrapper
+    // createTask
     // -------------------------------------------------------------------------
-
-    function test_LegacyCreateTask_RecordsDefaultsWithItsStake() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, true, 1500);
-        _assertTermsEq(market.getTaskTerms(taskId), LibTerms.defaults(true, 1500));
-        assertEq(market.getTaskTerms(taskId).version, 1, "version 1");
-    }
-
-    function test_LegacyCreateTask_EqualsOverloadWithDefaults() public {
-        bytes32 legacy = _createLegacy(TMP_CLAIM, true, 1500);
-        ITMPCore.TaskTerms memory t;
-        t.stakeRequired = true;
-        t.stakeBps = 1500;
-        bytes32 explicit = _createWithTerms(TMP_CLAIM, t);
-        _assertTermsEq(market.getTaskTerms(legacy), market.getTaskTerms(explicit));
-        ITMPCore.Task memory a = market.getTask(legacy);
-        ITMPCore.Task memory b = market.getTask(explicit);
-        assertEq(a.stakeRequired, b.stakeRequired, "legacy stakeRequired");
-        assertEq(a.stakeBps, b.stakeBps, "legacy stakeBps");
-    }
-
-    function test_LegacyCreateTask_EmitsTaskTermsSet() public {
-        bytes32 expectedId = keccak256(abi.encode(block.chainid, address(market), requester, uint256(0)));
-        vm.expectEmit(true, false, false, true, address(market));
-        emit ITMPCore.TaskTermsSet(expectedId, LibTerms.defaults(false, 0));
-        _createLegacy(TMP_BOUNTY, false, 0);
-    }
 
     function test_CreateTaskWithTerms_StoresTermsAndLegacyStake() public {
         ITMPCore.TaskTerms memory t = ITMPCore.TaskTerms({
@@ -401,189 +363,29 @@ contract TaskTermsTest is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
-    // Normalization
+    // Pre-rev025 records
     // -------------------------------------------------------------------------
 
-    function test_GetTaskTerms_UnnormalizedReturnsPendingRecord() public {
+    /// @dev rev026 removed normalization: a version-0 record (a task terminal at the rev025 cut)
+    ///      reads as stored and is never rewritten.
+    function test_VersionZeroTerms_ReadAsStored() public {
         bytes32 taskId = _legacyTask(TMP_CLAIM);
-        _assertTermsEq(market.getTaskTerms(taskId), LibTerms.defaults(true, 1500));
-        assertEq(probe.probeClock(taskId).deliveredAt, 0, "a view writes nothing");
-    }
-
-    function test_LazyNormalize_WritesVersionOne() public {
-        bytes32 taskId = _legacyTask(TMP_CLAIM);
-        vm.expectEmit(true, false, false, true, address(market));
-        emit ITMPCore.TaskTermsSet(taskId, LibTerms.defaults(true, 1500));
-        ITMPCore.TaskTerms memory t = probe.probeTerms(taskId);
-        _assertTermsEq(t, LibTerms.defaults(true, 1500));
-
-        vm.recordLogs();
-        probe.probeTerms(taskId);
-        assertEq(vm.getRecordedLogs().length, 0, "a normalized task is not rewritten");
-    }
-
-    function test_NormalizeTerms_SeedsDeliveredAtForDeliveredClaim() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
-        // A pre-rev025 delivery recorded neither terms nor a delivery clock.
-        probe.probeWipeTerms(taskId);
-        probe.probeWipeClock(taskId);
-
-        vm.warp(block.timestamp + DURATION + 30 days);
-        market.normalizeTerms(_ids(taskId));
-
-        assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
-        assertEq(probe.probeClock(taskId).deliveredAt, block.timestamp, "review window runs from normalization");
-        assertEq(probe.probeClock(taskId).decisionStartAt, 0, "no decision clock on a single-payee task");
-    }
-
-    /// @dev A task created before the cut but delivered after it already has a delivery clock.
-    ///      Normalizing it later must keep that window, not restart it from the normalization time.
-    function test_NormalizeTerms_KeepsDeliveredAtRecordedAfterCut() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        uint64 deliveredAt = uint64(block.timestamp + 1 hours);
-        vm.warp(deliveredAt);
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
-        // Version-0 terms with the delivery clock the post-cut submitWork recorded.
-        probe.probeWipeTerms(taskId);
-        probe.probeSetClock(taskId, deliveredAt, 0);
-
-        vm.warp(block.timestamp + 2 days);
-        market.normalizeTerms(_ids(taskId));
-
-        assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
-        assertEq(probe.probeClock(taskId).deliveredAt, deliveredAt, "existing delivery clock kept");
-        assertEq(
-            market.reviewDeadline(taskId),
-            uint256(deliveredAt) + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
-            "window still runs from the delivery"
-        );
-    }
-
-    /// @dev An open revision request already carries the review clock in revisionDueAt, so
-    ///      normalization must not seed deliveredAt over it.
-    function test_NormalizeTerms_OpenRevisionKeepsDeliveredAtZero() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
-        probe.probeWipeTerms(taskId);
-        uint64 dueAt = uint64(block.timestamp + 1 days);
-        probe.probeSetClock(taskId, 0, dueAt);
-
-        vm.warp(block.timestamp + 2 hours);
-        market.normalizeTerms(_ids(taskId));
-
-        assertEq(market.getTaskTerms(taskId).version, 1, "normalized");
-        assertEq(probe.probeClock(taskId).deliveredAt, 0, "deliveredAt not seeded over a revision");
-        assertEq(probe.probeClock(taskId).revisionDueAt, dueAt, "revision deadline kept");
-    }
-
-    /// @dev A pre-rev025 delivery recorded neither terms nor a delivery clock. Until it is
-    ///      normalized its review window reads as starting now, so reviewDeadline never reports
-    ///      "not under review" for a delivery that is awaiting review.
-    function test_ReviewDeadline_UnnormalizedLegacyDelivery_ReadsFromNow() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
-        probe.probeWipeTerms(taskId);
-        probe.probeWipeClock(taskId);
-
-        vm.warp(block.timestamp + 10 days);
-        assertEq(
-            market.reviewDeadline(taskId),
-            block.timestamp + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
-            "unnormalized delivery reads a full window from now"
-        );
-        vm.warp(block.timestamp + 1 hours);
-        assertEq(
-            market.reviewDeadline(taskId),
-            block.timestamp + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
-            "the pending window keeps tracking now until normalized"
-        );
-
-        uint256 normalizedAt = block.timestamp;
-        market.normalizeTerms(_ids(taskId));
-        vm.warp(block.timestamp + 1 hours);
-        assertEq(
-            market.reviewDeadline(taskId),
-            normalizedAt + LibTerms.DEFAULT_REVIEW_WINDOW_SECS,
-            "normalized delivery is fixed to the normalization time"
-        );
-    }
-
-    function test_ReviewDeadline_UnnormalizedLegacyUndelivered_IsZero() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        probe.probeWipeTerms(taskId);
-        probe.probeWipeClock(taskId);
-        assertEq(market.reviewDeadline(taskId), 0, "nothing to review");
-    }
-
-    function test_NormalizeTerms_UndeliveredClaimHasNoDeliveredAt() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        probe.probeWipeTerms(taskId);
-        market.normalizeTerms(_ids(taskId));
-        assertEq(probe.probeClock(taskId).deliveredAt, 0, "nothing to review");
-    }
-
-    function test_NormalizeTerms_SeedsDecisionStartAtForBounty() public {
-        bytes32 taskId = _legacyTask(TMP_BOUNTY);
-        vm.warp(block.timestamp + DURATION + 30 days);
-        market.normalizeTerms(_ids(taskId));
-        assertEq(probe.probeClock(taskId).decisionStartAt, block.timestamp, "decision deadline runs from now");
-        assertEq(probe.probeClock(taskId).deliveredAt, 0, "no delivery clock on a bounty");
-    }
-
-    function test_NormalizeTerms_IdempotentAcrossBatches() public {
-        bytes32 a = _legacyTask(TMP_BOUNTY);
-        bytes32 b = _legacyTask(TMP_CLAIM);
-        bytes32[] memory ids = new bytes32[](4);
-        ids[0] = a;
-        ids[1] = b;
-        ids[2] = a;
-        ids[3] = keccak256("nonexistent");
-        market.normalizeTerms(ids);
-        uint64 seeded = probe.probeClock(a).decisionStartAt;
-
-        vm.warp(block.timestamp + 1 days);
-        vm.recordLogs();
-        market.normalizeTerms(ids);
-        assertEq(vm.getRecordedLogs().length, 0, "second pass changes nothing");
-        assertEq(probe.probeClock(a).decisionStartAt, seeded, "clock not reseeded");
-        assertEq(market.getTaskTerms(b).version, 1, "b normalized");
-        assertEq(market.getTaskTerms(keccak256("nonexistent")).version, 0, "nonexistent untouched");
-    }
-
-    function test_NormalizeTerms_TerminalTaskUntouched() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
-        _relay(requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
-        probe.probeWipeTerms(taskId);
-
-        market.normalizeTerms(_ids(taskId));
-        probe.probeTerms(taskId);
-
         ITMPCore.TaskTerms memory zero;
         _assertTermsEq(market.getTaskTerms(taskId), zero);
-        assertEq(probe.probeClock(taskId).decisionStartAt, 0, "no clock seeded");
+
+        vm.recordLogs();
+        _assertTermsEq(probe.probeTerms(taskId), zero);
+        assertEq(vm.getRecordedLogs().length, 0, "a read writes nothing");
+        assertEq(market.getTaskTerms(taskId).version, 0, "still version 0");
     }
 
-    function test_NormalizeTerms_RevertsWhilePaused() public {
-        bytes32 taskId = _legacyTask(TMP_CLAIM);
-        vm.prank(owner);
-        market.pause();
-        vm.expectRevert(LibGuards.EnforcedPause.selector);
-        market.normalizeTerms(_ids(taskId));
-    }
-
-    function test_NormalizeTerms_LeavesExplicitTermsAlone() public {
-        ITMPCore.TaskTerms memory t;
-        t.rejectFeeBps = 1;
-        bytes32 taskId = _createWithTerms(TMP_CLAIM, t);
-        market.normalizeTerms(_ids(taskId));
-        assertEq(market.getTaskTerms(taskId).rejectFeeBps, 1, "chosen terms survive");
+    function test_ReviewDeadline_NoDeliveryClock_IsZero() public {
+        bytes32 taskId = _createWithStake(TMP_CLAIM, false, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        probe.probeWipeTerms(taskId);
+        probe.probeWipeClock(taskId);
+        assertEq(market.reviewDeadline(taskId), 0, "no clock, no review window");
     }
 
     // -------------------------------------------------------------------------
@@ -599,10 +401,10 @@ contract TaskTermsTest is DiamondTestHelper {
                     market.createTask,
                     (
                         taskConfig(reward, DURATION, TMP_CLAIM),
-                        ITMPCore.StakeConfig({ required: true, bps: bps }),
                         _hooks(),
                         _content(),
-                        noEvaluatorConfig()
+                        noEvaluatorConfig(),
+                        stakeTerms(true, bps)
                     )
                 )
             ),
@@ -633,7 +435,7 @@ contract TaskTermsTest is DiamondTestHelper {
     }
 
     function test_ClaimStake_NotRequired_ZeroStakeOk() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        bytes32 taskId = _createWithStake(TMP_CLAIM, false, 0);
         _claimWith(taskId, 0);
         assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed));
     }
@@ -648,14 +450,6 @@ contract TaskTermsTest is DiamondTestHelper {
         bytes32 taskId = _createStaked(REWARD, 1500);
         vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
         _relay(worker, 15e6 - 1, abi.encodeCall(market.claimTask, (taskId, 15e6)));
-    }
-
-    function test_ClaimStake_LegacyTaskUsesStoredStakeFields() public {
-        bytes32 taskId = _legacyTask(TMP_CLAIM);
-        vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
-        _claimWith(taskId, 15e6 - 1);
-        _claimWith(taskId, 15e6);
-        assertEq(market.getTask(taskId).stakeAmount, 15e6);
     }
 
     function test_ClaimStake_AcceptReturnsExactlyRecordedStake() public {
@@ -675,19 +469,13 @@ contract TaskTermsTest is DiamondTestHelper {
             REWARD,
             abi.encodeCall(
                 market.createTask,
-                (
-                    _config(TMP_CLAIM),
-                    ITMPCore.StakeConfig({ required: true, bps: 5001 }),
-                    _hooks(),
-                    _content(),
-                    noEvaluatorConfig()
-                )
+                (_config(TMP_CLAIM), _hooks(), _content(), noEvaluatorConfig(), stakeTerms(true, 5001))
             )
         );
     }
 
     function test_StakeBps_HalfAccepted() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, true, 5000);
+        bytes32 taskId = _createWithStake(TMP_CLAIM, true, 5000);
         assertEq(market.getTask(taskId).stakeBps, 5000);
     }
 
@@ -707,7 +495,7 @@ contract TaskTermsTest is DiamondTestHelper {
 
     function test_RateTask_PreRev025Bounty_FallsBackToSubmitters() public {
         address loser = address(0xC1);
-        bytes32 taskId = _createLegacy(TMP_BOUNTY, false, 0);
+        bytes32 taskId = _createWithStake(TMP_BOUNTY, false, 0);
         _relay(loser, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("L"))));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("W"))));
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("W"), 0)));
@@ -722,7 +510,7 @@ contract TaskTermsTest is DiamondTestHelper {
     }
 
     function test_RateTask_PreRev025Claim_FallsBackToTaskWorker() public {
-        bytes32 taskId = _createLegacy(TMP_CLAIM, false, 0);
+        bytes32 taskId = _createWithStake(TMP_CLAIM, false, 0);
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("W"))));
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("W"), 0)));
@@ -736,7 +524,7 @@ contract TaskTermsTest is DiamondTestHelper {
 
     function test_RateTask_Rev025Task_NoFallback() public {
         address loser = address(0xC1);
-        bytes32 taskId = _createLegacy(TMP_BOUNTY, false, 0);
+        bytes32 taskId = _createWithStake(TMP_BOUNTY, false, 0);
         _relay(loser, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("L"))));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("W"))));
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("W"), 0)));

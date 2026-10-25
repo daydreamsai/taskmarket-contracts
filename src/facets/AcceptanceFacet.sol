@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
@@ -31,6 +32,7 @@ contract AcceptanceFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -63,6 +65,7 @@ contract AcceptanceFacet {
         // frame to keep this function's local count under the --ir-minimum stack limit.
         _completeAcceptance(taskId, task, worker, requester, requesterAgentId, mode, verdict, s);
 
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -159,9 +162,11 @@ contract AcceptanceFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
 
         address requester = LibGuards._effectiveSender(s);
         _acceptSubmissions(taskId, requester, workers, shares, deliverables, requesterAgentId, s);
+        LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
 

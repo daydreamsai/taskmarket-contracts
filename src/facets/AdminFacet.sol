@@ -10,9 +10,12 @@ import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibRevision } from "../libraries/LibRevision.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
+import { LibEscrow } from "../libraries/LibEscrow.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFees } from "../interfaces/ITMPFees.sol";
 import { ITMPReputation } from "../interfaces/ITMPReputation.sol";
+import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 
 /// @title AdminFacet — owner-only admin operations and proxy initialization
 /// @notice Handles initialization, pause/unpause, fee settings, forwarder registry,
@@ -50,6 +53,8 @@ contract AdminFacet is Initializable {
         // this from the hardcoded literal 11 to LibRevision.CURRENT_REVISION, which tracks the
         // build -- see that library for the rule when adding a revision.
         s.diamondVersion = LibRevision.CURRENT_REVISION;
+        // A fresh diamond holds no pre-rev026 task, so every task it will hold is booked.
+        s.liabilitiesInitialised = true;
     }
 
     // -------------------------------------------------------------------------
@@ -142,6 +147,74 @@ contract AdminFacet is Initializable {
         AppStorage storage s = LibAppStorage.appStorage();
         s.feeRecipient = recipient;
         emit ITMPFees.FeeRecipientUpdated(recipient);
+    }
+
+    // -------------------------------------------------------------------------
+    // Hook gas stipend (Rev026)
+    // -------------------------------------------------------------------------
+
+    /// @notice Return the gas stipend forwarded to each hook call on this chain.
+    ///         Returns the compiled default (1,000,000) when the value has never been set.
+    function hookGasStipend() external view returns (uint256) {
+        return LibHooks._hookGasStipend(LibAppStorage.appStorage());
+    }
+
+    /// @notice Set this chain's hook gas stipend (owner only). Must be between
+    ///         LibHooks.HOOK_GAS_STIPEND and LibHooks.MAX_HOOK_GAS_STIPEND: lower would starve
+    ///         hooks that work today, higher could make the after-hook paths (cancel, expiry,
+    ///         verdicts) unreachable under a chain's transaction gas cap.
+    function setHookGasStipend(uint256 newStipend) external onlyOwner {
+        if (newStipend < LibHooks.HOOK_GAS_STIPEND || newStipend > LibHooks.MAX_HOOK_GAS_STIPEND) {
+            revert ITMPCore.InvalidHookGasStipend();
+        }
+        LibAppStorage.appStorage().hookGasStipend = newStipend;
+        emit ITMPCore.HookGasStipendUpdated(newStipend);
+    }
+
+    // -------------------------------------------------------------------------
+    // Escrow surplus (Rev026)
+    // -------------------------------------------------------------------------
+
+    /// @notice Send the balance no task is owed (balanceOf - totalLiabilities) to the fee
+    ///         recipient (owner only). Closed until every live task is booked.
+    function sweepSurplus() external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._nonReentrantBefore(s);
+        if (!s.liabilitiesInitialised) revert ITMPEscrow.LiabilitiesNotInitialised();
+        // An insolvent pool has no surplus; fail with the solvency error rather than an underflow.
+        LibEscrow.requireSolvent(s);
+        uint256 surplus = LibEscrow.balance(s) - s.totalLiabilities;
+        address to = s.feeRecipient;
+        if (surplus > 0 && !s.usdcToken.transfer(to, surplus)) revert ITMPCore.FeeTransferFailed();
+        LibEscrow.requireSolvent(s);
+        emit ITMPEscrow.SurplusSwept(to, surplus);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @notice Book live tasks created before rev026, in batches of IDs from the indexer (owner
+    ///         only). Unknown, terminal and already-booked IDs are skipped. Each task is booked at
+    ///         what its state owes in the same transaction, so payouts between batches are safe:
+    ///         an unbooked task releases nothing and a booked one releases what it was booked at.
+    ///         Stays open after completeLiabilities, so a live task the backfill missed can still
+    ///         be booked; if a sweep has taken its escrow, the owner returns it to the diamond
+    ///         first, or the solvency check refuses the booking.
+    function backfillLiabilities(bytes32[] calldata taskIds) external onlyOwner returns (uint256 booked) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        for (uint256 i; i < taskIds.length; ++i) {
+            if (LibEscrow.backfill(s, taskIds[i])) ++booked;
+        }
+        LibEscrow.requireSolvent(s);
+    }
+
+    /// @notice Mark the backfill complete once the runbook has reconciled the surplus against the
+    ///         escrow monitor (owner only). Opens the surplus sweep; backfillLiabilities stays
+    ///         open for a task the backfill missed.
+    function completeLiabilities() external onlyOwner {
+        AppStorage storage s = LibAppStorage.appStorage();
+        if (s.liabilitiesInitialised) revert ITMPEscrow.LiabilitiesAlreadyInitialised();
+        LibEscrow.requireSolvent(s);
+        s.liabilitiesInitialised = true;
+        emit ITMPEscrow.LiabilitiesInitialised(s.totalLiabilities, LibEscrow.balance(s) - s.totalLiabilities);
     }
 
     // -------------------------------------------------------------------------

@@ -56,34 +56,26 @@ library LibGuards {
         return msg.sender;
     }
 
-    /// @notice The payment the calling forwarder reports for this call, and whether it reports
-    ///         one at all. A forwarder without pgtrPaymentAmount (v1) reports none.
-    function _forwardedPayment() internal view returns (bool reported, uint256 paid) {
-        try IPGTRPaymentForwarder(msg.sender).pgtrPaymentAmount() returns (uint256 amount) {
-            return (true, amount);
+    /// @notice Reverts ForwardedPaymentMismatch unless the calling forwarder reports a payment of
+    ///         exactly `expected` for this call. A forwarder that cannot report one (v1) is not
+    ///         supported on any payment path.
+    function _requireReportedPayment(uint256 expected) internal view {
+        try IPGTRPaymentForwarder(msg.sender).pgtrPaymentAmount() returns (uint256 paid) {
+            if (paid != expected) revert ITMPCore.ForwardedPaymentMismatch();
         } catch {
-            return (false, 0);
+            revert ITMPCore.ForwardedPaymentMismatch();
         }
     }
 
-    /// @notice Reverts ForwardedPaymentMismatch when the calling forwarder reports a payment
-    ///         other than `expected`; returns false, checking nothing, when it reports none.
-    function _requireReportedPayment(uint256 expected) internal view returns (bool reported) {
-        uint256 paid;
-        (reported, paid) = _forwardedPayment();
-        if (reported && paid != expected) revert ITMPCore.ForwardedPaymentMismatch();
-    }
-
     /// @notice Reverts StakePaymentMismatch unless the calling forwarder reports a payment equal
-    ///         to stakeAmount for this call.
-    /// @dev Caller must already have passed _requireForwarder. A forwarder that cannot report an
-    ///      amount is accepted only for a zero stake, so an earlier forwarder keeps relaying
-    ///      unstaked claims while both are trusted.
+    ///         to stakeAmount for this call. A forwarder that cannot report one (v1) is not
+    ///         supported, even for a zero stake.
+    /// @dev Caller must already have passed _requireForwarder.
     function _requireStakePayment(uint256 stakeAmount) internal view {
         try IPGTRPaymentForwarder(msg.sender).pgtrPaymentAmount() returns (uint256 paid) {
             if (paid != stakeAmount) revert ITMPCore.StakePaymentMismatch();
         } catch {
-            if (stakeAmount != 0) revert ITMPCore.StakePaymentMismatch();
+            revert ITMPCore.StakePaymentMismatch();
         }
     }
 }

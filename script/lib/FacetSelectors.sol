@@ -40,6 +40,25 @@ library FacetSelectors {
         )
     );
 
+    /// @dev The rev018 `createTask` taking a StakeConfig, which rev025 kept beside the
+    ///      terms-taking overload and rev026 Removes. Written out for the same reason as
+    ///      LEGACY_CREATE_TASK: no facet serves it any more.
+    bytes4 internal constant REV018_CREATE_TASK = bytes4(
+        keccak256(
+            "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(bool,uint16),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address))"
+        )
+    );
+
+    /// @dev rev025's permissionless normalizeTerms, which rev026 Removes.
+    bytes4 internal constant NORMALIZE_TERMS = bytes4(keccak256("normalizeTerms(bytes32[])"));
+
+    /// @dev The selectors rev026 Removes.
+    function selectorsRemovedRev026() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = REV018_CREATE_TASK;
+        s[1] = NORMALIZE_TERMS;
+    }
+
     function cutFacetSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = DiamondCutFacet.diamondCut.selector;
@@ -55,6 +74,30 @@ library FacetSelectors {
     }
 
     function adminFacetSelectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory base = adminFacetSelectorsThroughRev025();
+        bytes4[] memory added = adminFacetSelectorsAddedRev026();
+        s = new bytes4[](base.length + added.length);
+        for (uint256 i; i < base.length; ++i) {
+            s[i] = base[i];
+        }
+        for (uint256 i; i < added.length; ++i) {
+            s[base.length + i] = added[i];
+        }
+    }
+
+    /// @dev rev026: the owner-only liability backfill and escrow surplus sweep, and the per-chain
+    ///      hook gas stipend.
+    function adminFacetSelectorsAddedRev026() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = AdminFacet.sweepSurplus.selector;
+        s[1] = AdminFacet.backfillLiabilities.selector;
+        s[2] = AdminFacet.completeLiabilities.selector;
+        s[3] = AdminFacet.hookGasStipend.selector;
+        s[4] = AdminFacet.setHookGasStipend.selector;
+    }
+
+    /// @dev The AdminFacet selector set as it stood at rev025, Replaced by the rev026 step.
+    function adminFacetSelectorsThroughRev025() internal pure returns (bytes4[] memory s) {
         bytes4[] memory base = adminFacetSelectorsThroughRev024();
         s = new bytes4[](base.length + 7);
         for (uint256 i; i < base.length; ++i) {
@@ -119,10 +162,11 @@ library FacetSelectors {
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {
         bytes4[] memory base = coreFacetSelectorsThroughRev024();
         bytes4[] memory moved = settlementFacetSelectorsFromCore();
-        s = new bytes4[](base.length - moved.length + 1);
+        // rev026 drops the rev018 createTask, which is in base and not in moved.
+        s = new bytes4[](base.length - moved.length);
         uint256 n;
         for (uint256 i; i < base.length; ++i) {
-            if (!_contains(moved, base[i])) s[n++] = base[i];
+            if (!_contains(moved, base[i]) && base[i] != REV018_CREATE_TASK) s[n++] = base[i];
         }
         // rev025: createTask with explicit settlement terms.
         s[n] = ITMPTerms.createTask.selector;
@@ -151,7 +195,7 @@ library FacetSelectors {
         s[7] = bytes4(keccak256("AUCTION_REVERSE_DUTCH()"));
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
-        s[10] = ITMPDiamond.createTask.selector;
+        s[10] = REV018_CREATE_TASK;
         s[11] = CoreFacet.claimTask.selector;
         s[12] = CoreFacet.selectWorker.selector;
         s[13] = CoreFacet.submitPitch.selector;
@@ -195,6 +239,27 @@ library FacetSelectors {
     }
 
     function registryFacetSelectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory base = registryFacetSelectorsThroughRev025();
+        bytes4[] memory added = registryFacetSelectorsAddedRev026();
+        s = new bytes4[](base.length + added.length);
+        for (uint256 i; i < base.length; ++i) {
+            s[i] = base[i];
+        }
+        for (uint256 i; i < added.length; ++i) {
+            s[base.length + i] = added[i];
+        }
+    }
+
+    /// @dev rev026: the escrow liability views.
+    function registryFacetSelectorsAddedRev026() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = RegistryFacet.totalLiabilities.selector;
+        s[1] = RegistryFacet.escrowRecord.selector;
+        s[2] = RegistryFacet.liabilitiesInitialised.selector;
+    }
+
+    /// @dev The RegistryFacet selector set as it stood through rev025, Replaced by the rev026 step.
+    function registryFacetSelectorsThroughRev025() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](29);
         s[0] = RegistryFacet.getTask.selector;
         s[1] = RegistryFacet.getWorkerStats.selector;
@@ -227,23 +292,26 @@ library FacetSelectors {
         s[28] = RegistryFacet.getTaskHooks.selector;
     }
 
-    /// @dev rev025: the settlement terms surface plus the settlement calls moved off CoreFacet.
+    /// @dev rev025: the settlement terms surface plus the settlement calls moved off CoreFacet,
+    ///      less normalizeTerms, which rev026 removed.
     function settlementFacetSelectors() internal pure returns (bytes4[] memory s) {
         bytes4[] memory added = settlementFacetSelectorsAdded();
         bytes4[] memory moved = settlementFacetSelectorsFromCore();
-        s = new bytes4[](added.length + moved.length);
+        s = new bytes4[](added.length - 1 + moved.length);
+        uint256 n;
         for (uint256 i; i < added.length; ++i) {
-            s[i] = added[i];
+            if (added[i] != NORMALIZE_TERMS) s[n++] = added[i];
         }
         for (uint256 i; i < moved.length; ++i) {
-            s[added.length + i] = moved[i];
+            s[n + i] = moved[i];
         }
     }
 
-    /// @dev rev025: the selectors SettlementFacet introduces, which rev025 Adds.
+    /// @dev rev025: the selectors SettlementFacet introduces, which rev025 Adds. Historical: it
+    ///      still names normalizeTerms, which rev026 Removes.
     function settlementFacetSelectorsAdded() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](11);
-        s[0] = SettlementFacet.normalizeTerms.selector;
+        s[0] = NORMALIZE_TERMS;
         s[1] = SettlementFacet.getTaskTerms.selector;
         s[2] = SettlementFacet.termsBounds.selector;
         s[3] = SettlementFacet.reviewDeadline.selector;

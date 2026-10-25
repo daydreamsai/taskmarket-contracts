@@ -14,6 +14,8 @@ import { Rev015Upgrade } from "../script/upgrades/Rev015Upgrade.s.sol";
 import { Rev018Upgrade } from "../script/upgrades/Rev018Upgrade.s.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
+import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev018UpgradeTest
@@ -70,7 +72,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         address coreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.claimTask.selector);
 
         bytes4[] memory newSel = new bytes4[](1);
-        newSel[0] = ITMPDiamond.createTask.selector;
+        newSel[0] = FacetSelectors.REV018_CREATE_TASK;
         bytes4[] memory legacySel = new bytes4[](1);
         legacySel[0] = FacetSelectors.LEGACY_CREATE_TASK;
 
@@ -87,7 +89,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 17, "must be at rev017 before rev018");
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector),
+            IDiamondLoupe(diamond).facetAddress(FacetSelectors.REV018_CREATE_TASK),
             address(0),
             "new selector must be absent pre-upgrade"
         );
@@ -99,7 +101,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
         assertEq(AdminFacet(diamond).diamondVersion(), 18, "diamondVersion must be 18 after rev018 upgrade");
 
-        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.createTask.selector);
+        address newCoreFacet = IDiamondLoupe(diamond).facetAddress(FacetSelectors.REV018_CREATE_TASK);
         assertNotEq(newCoreFacet, address(0), "evaluator-aware createTask must route");
         assertNotEq(newCoreFacet, oldCoreFacet, "CoreFacet must be replaced");
 
@@ -163,7 +165,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
 
     function _createTaskCalldata() private pure returns (bytes memory) {
         return abi.encodeWithSelector(
-            ITMPDiamond.createTask.selector,
+            ITMPTerms.createTask.selector,
             ITMPCore.TaskConfig({
                 reward: 1,
                 duration: 1 days,
@@ -172,7 +174,6 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
                 bidDeadline: 0,
                 auctionSubtype: bytes4(0)
             }),
-            ITMPCore.StakeConfig({ required: false, bps: 0 }),
             ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
             ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
             ITMPCore.TaskEvaluatorConfig({
@@ -182,7 +183,8 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
                 evaluationWindow: 0,
                 appealWindow: 0,
                 disputeResolver: address(0)
-            })
+            }),
+            stakeTerms(false, 0)
         );
     }
 

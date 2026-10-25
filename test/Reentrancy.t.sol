@@ -8,10 +8,10 @@ import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { LibGuards } from "../src/libraries/LibGuards.sol";
-import { TaskMarketForwarder } from "../src/TaskMarketForwarder.sol";
+import { TaskMarketForwarderV2 } from "../src/TaskMarketForwarderV2.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 
 /// @dev Payment token that, once armed, makes one arbitrary call from inside the transfer the
@@ -48,7 +48,7 @@ contract ReentrantToken is ERC20 {
     }
 
     function relayVia(
-        TaskMarketForwarder fwd,
+        TaskMarketForwarderV2 fwd,
         address sender,
         uint256 amount,
         uint256 validBefore,
@@ -186,10 +186,10 @@ contract DiamondReentrancyTest is DiamondTestHelper {
                     market.createTask,
                     (
                         taskConfig(REWARD, DURATION, market.BOUNTY()),
-                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                        noEvaluatorConfig()
+                        noEvaluatorConfig(),
+                        stakeTerms(false, 0)
                     )
                 )
             ),
@@ -401,13 +401,13 @@ contract DiamondReentrancyTest is DiamondTestHelper {
     }
 }
 
-/// @notice TaskMarketForwarder.relay is nonReentrant. The malicious token is itself the
+/// @notice TaskMarketForwarderV2.relay is nonReentrant. The malicious token is itself the
 ///         authorized relayer, so a re-entry from inside a payout passes every relay check
 ///         except the guard.
 contract ForwarderReentrancyTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ReentrantToken internal token;
-    TaskMarketForwarder internal forwarder;
+    TaskMarketForwarderV2 internal forwarder;
 
     address internal owner = address(1);
     address internal requester = address(3);
@@ -419,7 +419,7 @@ contract ForwarderReentrancyTest is DiamondTestHelper {
         token = new ReentrantToken();
         vm.startPrank(owner);
         market = deployDiamond(owner, address(token), owner, 500);
-        forwarder = new TaskMarketForwarder(address(token), address(market), address(token));
+        forwarder = new TaskMarketForwarderV2(address(token), address(market), address(token));
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         token.mint(address(token), 10_000 * 10 ** 6);
@@ -438,10 +438,10 @@ contract ForwarderReentrancyTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD, DURATION, market.BOUNTY()),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );

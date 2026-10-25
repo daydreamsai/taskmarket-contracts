@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import { Diamond } from "../../src/Diamond.sol";
 import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
+import { IDiamondLoupe } from "../../src/interfaces/IDiamondLoupe.sol";
 import { DiamondCutFacet } from "../../src/facets/DiamondCutFacet.sol";
 import { DiamondLoupeFacet } from "../../src/facets/DiamondLoupeFacet.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
@@ -16,6 +17,7 @@ import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
+import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { FacetSelectors } from "../../script/lib/FacetSelectors.sol";
 
 /// @dev Shared Diamond deploy helper for test setUp functions.
@@ -84,7 +86,29 @@ abstract contract DiamondTestHelper is Test {
         uint256 _version
     ) internal returns (address diamond) {
         diamond = address(deployDiamond(_owner, _usdc, _feeRecipient, _feeBps));
+        if (_version < 26) _routeRemovedRev026(diamond, _owner);
         placeAtVersion(diamond, _version);
+    }
+
+    /// @dev Route the selectors rev026 Removes, so an earlier step's Replace and rev026's Remove
+    ///      find them. The current facets no longer implement them: a call reverts, as on a
+    ///      diamond with no route.
+    function _routeRemovedRev026(address diamond, address _owner) internal {
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
+        bytes4[] memory core = new bytes4[](1);
+        core[0] = FacetSelectors.REV018_CREATE_TASK;
+        bytes4[] memory settlement = new bytes4[](1);
+        settlement[0] = FacetSelectors.NORMALIZE_TERMS;
+        cuts[0] = IDiamondCut.FacetCut(
+            IDiamondLoupe(diamond).facetAddress(ITMPTerms.createTask.selector), IDiamondCut.FacetCutAction.Add, core
+        );
+        cuts[1] = IDiamondCut.FacetCut(
+            IDiamondLoupe(diamond).facetAddress(FacetSelectors.settlementFacetSelectorsFromCore()[0]),
+            IDiamondCut.FacetCutAction.Add,
+            settlement
+        );
+        vm.prank(_owner);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
     }
 
     /// @dev Storage slot of AppStorage.diamondVersion: the struct's base slot plus the field's

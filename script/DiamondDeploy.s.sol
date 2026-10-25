@@ -30,6 +30,9 @@ import { FacetSelectors } from "./lib/FacetSelectors.sol";
 ///      FORGE_MIN_FEEDBACK_GAS            — if set, the feedback gas floor passed to setMinFeedbackGas;
 ///                                          unset leaves the 450,000 default (script/tempo.sh
 ///                                          requires FORGE_MIN_FEEDBACK_GAS_TEMPO_* for Tempo)
+///      FORGE_HOOK_GAS_STIPEND            — if set, the hook gas stipend passed to setHookGasStipend;
+///                                          unset leaves the 1,000,000 default (script/tempo.sh
+///                                          requires FORGE_HOOK_GAS_STIPEND_TEMPO_* for Tempo)
 contract DiamondDeploy is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -98,6 +101,12 @@ contract DiamondDeploy is Script {
         uint256 feedbackGasFloor = vm.envOr("FORGE_MIN_FEEDBACK_GAS", uint256(0));
         if (feedbackGasFloor != 0) {
             AdminFacet(address(diamond)).setMinFeedbackGas(feedbackGasFloor);
+        }
+
+        // rev026: per-chain gas stipend forwarded to each hook call.
+        uint256 hookStipend = vm.envOr("FORGE_HOOK_GAS_STIPEND", uint256(0));
+        if (hookStipend != 0) {
+            AdminFacet(address(diamond)).setHookGasStipend(hookStipend);
         }
 
         vm.stopBroadcast();

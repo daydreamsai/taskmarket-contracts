@@ -59,7 +59,7 @@ library LibTaskMarket {
     ///      construction and the task is Open by construction, so `NotRequester` and
     ///      `TaskNotOpen` have nothing to test.
     /// @param taskId    Task identifier
-    /// @param requester Authenticated requester; the address any stake is pulled from
+    /// @param requester Authenticated requester
     /// @param cfg       Evaluator terms to store
     /// @param s         AppStorage
     function _applyEvaluatorConfig(
@@ -92,16 +92,9 @@ library LibTaskMarket {
         evalCfg.appealWindow = cfg.appealWindow;
         evalCfg.disputeResolver = cfg.disputeResolver;
 
-        // A paying forwarder (v2) has already moved the stake into escrow as part of the relayed
-        // payment, alongside otherForwardedFunds (the reward on createTask). A v1 forwarder
-        // reports no payment, so the stake is still pulled from the requester's allowance.
-        if (!LibGuards._requireReportedPayment(otherForwardedFunds + cfg.evaluatorStake) && cfg.evaluatorStake > 0) {
-            // requester = _effectiveSender(s) = authenticated PGTR forwarder caller; not arbitrary
-            // slither-disable-next-line arbitrary-send-erc20
-            if (!s.usdcToken.transferFrom(requester, address(this), cfg.evaluatorStake)) {
-                revert ITMPCore.StakeTransferFailed();
-            }
-        }
+        // The forwarder has already moved the stake into escrow as part of the relayed payment,
+        // alongside otherForwardedFunds (the reward on createTask).
+        LibGuards._requireReportedPayment(otherForwardedFunds + cfg.evaluatorStake);
 
         // Emitted identically whichever entry point wrote the config, so an indexer sees one
         // event vocabulary for "this task has an evaluator" rather than having to infer it from

@@ -21,7 +21,7 @@ import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 ///
 ///      CoreFacet — `createTask`'s signature changed (evaluator terms added, and the task-shape
 ///        scalars grouped into ITMPCore.TaskConfig), so there is a new selector
-///        (ITMPDiamond.createTask.selector). The pre-rev018 nine-parameter selector
+///        (FacetSelectors.REV018_CREATE_TASK). The pre-rev018 nine-parameter selector
 ///        (FacetSelectors.LEGACY_CREATE_TASK) is NOT removed: it stays routed to the same newly
 ///        deployed CoreFacet, where a deprecated overload forwards it to the shared body with an
 ///        empty evaluator configuration. So this is Replace(existing, including the legacy
@@ -80,7 +80,7 @@ contract Rev018Upgrade is Script {
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Replace, _corePreRev018Selectors());
 
         bytes4[] memory newCreateTask = new bytes4[](1);
-        newCreateTask[0] = ITMPDiamond.createTask.selector;
+        newCreateTask[0] = FacetSelectors.REV018_CREATE_TASK;
         cuts[1] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, newCreateTask);
 
         cuts[2] =

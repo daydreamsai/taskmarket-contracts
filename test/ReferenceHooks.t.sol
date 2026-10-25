@@ -20,7 +20,7 @@ import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { TMPHookConformance } from "./helpers/TMPHookConformance.t.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
-import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 
 contract RequiredTagPolicyHookTest is TMPHookConformance {
@@ -342,7 +342,6 @@ contract AllowlistedWorkerHookDiamondIntegrationTest is DiamondTestHelper {
                     market.createTask,
                     (
                         taskConfig(REWARD, DURATION, mode, 0, 0, bytes4(0)),
-                        ITMPCore.StakeConfig({ required: false, bps: 0 }),
                         ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                         ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
                         ITMPCore.TaskEvaluatorConfig({
@@ -352,7 +351,8 @@ contract AllowlistedWorkerHookDiamondIntegrationTest is DiamondTestHelper {
                             evaluationWindow: uint32(2 days),
                             appealWindow: uint32(1 days),
                             disputeResolver: disputeResolver
-                        })
+                        }),
+                        stakeTerms(false, 0)
                     )
                 )
             ),
@@ -392,10 +392,10 @@ contract AllowlistedWorkerHookDiamondIntegrationTest is DiamondTestHelper {
                 market.createTask,
                 (
                     taskConfig(REWARD, DURATION, mode, pitchDeadline, bidDeadline, auctionSubtype),
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    noEvaluatorConfig()
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
                 )
             )
         );

@@ -3,12 +3,12 @@ pragma solidity ^0.8.24;
 
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
-import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
+import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
-/// @title LibTerms -- rev025 settlement terms: the single reader, normalization and validation
-/// @dev Settlement code reads terms only through `terms`, which writes a version 1 record for a
-///      non-terminal task created before rev025 the first time it is read. A terminal pre-rev025
-///      task is never normalized and keeps reading as all zeros.
+/// @title LibTerms -- rev025 settlement terms: the single reader and validation
+/// @dev Every task created since rev025 records version 1 terms at creation, and every task live
+///      at the rev025 cut was normalized to version 1 then. A task terminal at the cut was never
+///      normalized and keeps reading as all zeros, which no settlement path reaches.
 library LibTerms {
     /// @notice Reverts TermsFrozen once a worker is committed (claimed, selected, or past
     ///         delivery) or a Bounty or Benchmark submission is active. A bid alone commits no one.
@@ -41,10 +41,9 @@ library LibTerms {
     /// @dev releaseGraceBps is stored as grace + 1, and grace may run to 100% of the claim span.
     uint16 internal constant MAX_STORED_RELEASE_GRACE_BPS = 10001;
 
-    /// @notice Return the task's terms, normalizing a non-terminal pre-rev025 task first.
-    function terms(AppStorage storage s, bytes32 taskId) internal returns (ITMPCore.TaskTerms storage t) {
-        t = s.taskTerms[taskId];
-        if (t.version == 0) _normalize(s, taskId);
+    /// @notice Return the task's terms.
+    function terms(AppStorage storage s, bytes32 taskId) internal view returns (ITMPCore.TaskTerms storage) {
+        return s.taskTerms[taskId];
     }
 
     /// @notice Send a worker-stake penalty to the task's penaltyTo destination: the requester, or
@@ -83,86 +82,10 @@ library LibTerms {
         }
     }
 
-    /// @notice Normalize one task if it exists, is not terminal and is still at version 0.
-    ///         Does nothing otherwise, so a batch can repeat or include any id.
-    function normalize(AppStorage storage s, bytes32 taskId) internal {
-        if (s.taskTerms[taskId].version == 0) _normalize(s, taskId);
-    }
-
-    /// @dev Writes the record `pendingTerms` describes and seeds the clocks a pre-rev025 task
-    ///      never recorded: a delivery awaiting review gets `deliveredAt`, and a bounty or
-    ///      benchmark gets `decisionStartAt`, both at the normalization time, so no review window
-    ///      or decision deadline has already lapsed at the upgrade.
-    function _normalize(AppStorage storage s, bytes32 taskId) private {
-        ITMPCore.Task storage task = s.tasks[taskId];
-        if (!_normalizable(task)) return;
-
-        ITMPCore.TaskTerms memory t = _legacyDefaults(task);
-        s.taskTerms[taskId] = t;
-
-        if (s.taskEvaluatorConfigs[taskId].evaluator == address(0)) {
-            bytes4 mode = task.mode;
-            if (mode == TMP_BOUNTY || mode == TMP_BENCHMARK) {
-                s.taskClocks[taskId].decisionStartAt = uint64(block.timestamp);
-            } else if (_deliveryAwaitingReview(task)) {
-                // Only a delivery with no clock yet: one recorded after the cut keeps its window.
-                ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
-                if (clock.deliveredAt == 0 && clock.revisionDueAt == 0) clock.deliveredAt = uint64(block.timestamp);
-            }
-        }
-
-        emit ITMPCore.TaskTermsSet(taskId, t);
-    }
-
     /// @notice Smallest stake a claim must post under `terms`: ceil(reward * stakeBps / 10000).
     function minStake(ITMPCore.TaskTerms memory terms, uint256 reward) internal pure returns (uint256) {
         if (!terms.stakeRequired) return 0;
         return (reward * terms.stakeBps + 9999) / 10000;
-    }
-
-    /// @notice Whether a pre-rev025 task still holds a delivery awaiting review that normalization
-    ///         would start a review window for (no evaluator, not yet normalized).
-    function legacyDeliveryAwaitingReview(AppStorage storage s, bytes32 taskId) internal view returns (bool) {
-        ITMPCore.Task storage task = s.tasks[taskId];
-        return s.taskTerms[taskId].version == 0 && s.taskEvaluatorConfigs[taskId].evaluator == address(0)
-            && _deliveryAwaitingReview(task);
-    }
-
-    function _deliveryAwaitingReview(ITMPCore.Task storage task) private view returns (bool) {
-        bytes4 mode = task.mode;
-        return (mode == TMP_CLAIM || mode == TMP_PITCH || mode == TMP_AUCTION) && task.deliverable != bytes32(0)
-            && (task.status == ITMPCore.TaskStatus.Claimed || task.status == ITMPCore.TaskStatus.WorkerSelected);
-    }
-
-    /// @notice The record `terms` holds, or would write on first read, for a task. Being a view
-    ///         it never writes; a terminal or nonexistent version 0 task reads as stored.
-    function pendingTerms(AppStorage storage s, bytes32 taskId) internal view returns (ITMPCore.TaskTerms memory) {
-        ITMPCore.TaskTerms memory stored = s.taskTerms[taskId];
-        ITMPCore.Task storage task = s.tasks[taskId];
-        if (stored.version != 0 || !_normalizable(task)) return stored;
-        return _legacyDefaults(task);
-    }
-
-    function _normalizable(ITMPCore.Task storage task) private view returns (bool) {
-        if (task.requester == address(0)) return false;
-        ITMPCore.TaskStatus st = task.status;
-        return
-            st != ITMPCore.TaskStatus.Accepted && st != ITMPCore.TaskStatus.Expired
-                && st != ITMPCore.TaskStatus.Cancelled;
-    }
-
-    /// @dev Every term but the stake reads as the protocol default (zero encodings).
-    function _legacyDefaults(ITMPCore.Task storage task) private view returns (ITMPCore.TaskTerms memory t) {
-        t.version = TERMS_VERSION;
-        t.stakeRequired = task.stakeRequired;
-        t.stakeBps = task.stakeBps;
-    }
-
-    /// @notice The terms the legacy createTask records: protocol defaults with its own stake.
-    function defaults(bool stakeRequired, uint16 stakeBps) internal pure returns (ITMPCore.TaskTerms memory t) {
-        t.version = TERMS_VERSION;
-        t.stakeRequired = stakeRequired;
-        t.stakeBps = stakeBps;
     }
 
     /// @notice Revert unless `t` is within the protocol's bounds for a task of `mode`.

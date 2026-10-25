@@ -10,7 +10,7 @@ import { MockUSDC } from "../../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "../mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "../helpers/DiamondTestHelper.sol";
 import { taskConfig } from "../helpers/TaskConfigHelper.sol";
-import { noEvaluatorConfig } from "../helpers/EvaluatorConfigHelper.sol";
+import { noEvaluatorConfig, stakeTerms } from "../helpers/EvaluatorConfigHelper.sol";
 
 /// @dev Drives random task lifecycles across Claim, Bounty and Dutch-auction tasks, with and without
 ///      an evaluator, evaluator stake, claim stake and dispute resolver, and under random rev025
@@ -108,10 +108,10 @@ contract EscrowHandler is Test {
                 market.createTask,
                 (
                     config,
-                    ITMPCore.StakeConfig({ required: false, bps: 0 }),
                     ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
                     ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                    evalCfg
+                    evalCfg,
+                    stakeTerms(false, 0)
                 )
             )
         ) returns (
@@ -528,13 +528,21 @@ contract EscrowConservationInvariantTest is DiamondTestHelper {
         owed += ev.evaluatorStake;
     }
 
+    /// @dev rev026: the on-chain counter tracks the same formula, so one pass also checks that
+    ///      every task's booked amount equals what it owes and totalLiabilities equals their sum.
     function invariant_BalanceEqualsWhatLiveTasksOwe() public view {
         uint256 n = handler.taskCount();
         uint256 owed;
         for (uint256 i; i < n; i++) {
-            owed += _owed(handler.taskIds(i));
+            bytes32 id = handler.taskIds(i);
+            uint256 o = _owed(id);
+            (uint256 booked, bool tracked) = market.escrowRecord(id);
+            assertTrue(tracked, "every task created on rev026 is booked");
+            assertEq(booked, o, "booked amount must equal what the task owes");
+            owed += o;
         }
         assertEq(usdc.balanceOf(address(market)), owed, "diamond balance must equal live obligations");
+        assertEq(market.totalLiabilities(), owed, "totalLiabilities must equal live obligations");
     }
 
     function invariant_LapsedDecisionMovesNoFunds() public view {

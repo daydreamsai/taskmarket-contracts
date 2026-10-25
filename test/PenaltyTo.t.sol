@@ -5,7 +5,6 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
-import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
 import { TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
@@ -13,7 +12,6 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
-import { TermsProbeFacet, ITermsProbe } from "./TaskTerms.t.sol";
 
 /// @dev rev025 penaltyTo: every worker-stake forfeit goes to the requester by default or to the
 ///      protocol as fees, evaluator stakes keep their destinations, and forfeitAndReopen extends
@@ -22,7 +20,6 @@ contract PenaltyToTest is DiamondTestHelper {
     ITMPDiamond internal market;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
-    ITermsProbe internal probe;
 
     address internal owner = address(0xA0);
     address internal feeRecipient = address(0xFEE);
@@ -45,13 +42,7 @@ contract PenaltyToTest is DiamondTestHelper {
         market = deployDiamond(owner, address(usdc), feeRecipient, 500);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
-        bytes4[] memory sels = new bytes4[](1);
-        sels[0] = TermsProbeFacet.probeWipeTerms.selector;
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = IDiamondCut.FacetCut(address(new TermsProbeFacet()), IDiamondCut.FacetCutAction.Add, sels);
-        IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
         vm.stopPrank();
-        probe = ITermsProbe(address(market));
 
         usdc.mint(address(forwarder), 100_000e6);
         usdc.mint(requester, 1_000e6);
@@ -234,22 +225,6 @@ contract PenaltyToTest is DiamondTestHelper {
         vm.warp(market.getTask(taskId).expiryTime + 1);
         _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
         assertEq(market.getTask(taskId).expiryTime, block.timestamp + 2 days, "custom reopen extension");
-    }
-
-    function test_ForfeitAndReopen_LegacyTaskDefaultsToRequester() public {
-        bytes32 taskId = _create(_terms(ITMPCore.PenaltyTo.Protocol), noEvaluatorConfig());
-        _claim(taskId, worker);
-        probe.probeWipeTerms(taskId);
-        vm.warp(market.getTask(taskId).expiryTime + 1);
-
-        uint256 reqBefore = usdc.balanceOf(requester);
-        uint256 feeBefore = usdc.balanceOf(feeRecipient);
-        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
-
-        assertEq(usdc.balanceOf(requester) - reqBefore, STAKE, "normalized task pays the requester");
-        assertEq(usdc.balanceOf(feeRecipient), feeBefore, "nothing to the protocol");
-        assertEq(market.getTask(taskId).expiryTime, block.timestamp + 72 hours, "default extension");
-        assertEq(market.getTaskTerms(taskId).version, 1, "normalized on read");
     }
 
     // -------------------------------------------------------------------------

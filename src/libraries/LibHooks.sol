@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { AppStorage } from "./LibAppStorage.sol";
+import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 
@@ -20,13 +20,31 @@ library LibHooks {
     // EpochBudget/RewardVault, each with their own cold SSTORE writes) rather than the
     // bare minimum -- it is still a hard, fixed cap, far below a full transaction's gas
     // budget, so it does not weaken the DoS guard's intent.
+    //
+    // Rev026: this is the default and the floor. The stipend a hook call actually gets is the
+    // owner-set s.hookGasStipend once set (see _hookGasStipend), because one figure cannot fit
+    // every chain: a new storage slot costs about 20k gas on Base but about 250k on Tempo, where
+    // a hook that books several new slots in one call (a sponsored-funding reservation measured
+    // about 6.0M) cannot fit in 1M.
     uint256 internal constant HOOK_GAS_STIPEND = 1_000_000;
+    // Rev026: highest stipend setHookGasStipend accepts. An after-hook path must have the stipend
+    // left before each hook call (_dispatchAfterHooksFullGas), on top of the settlement work
+    // around it (about 3.5M on Tempo), so a stipend near a chain's per-transaction gas cap would
+    // make cancel, expiry and verdicts unreachable; 8M keeps that under the 2^24 cap.
+    uint256 internal constant MAX_HOOK_GAS_STIPEND = 8_000_000;
     // Covers the cold hook access, context encoding and the post-call event around a hook call.
     uint256 internal constant HOOK_GAS_MARGIN = 100_000;
 
     // -------------------------------------------------------------------------
     // Hook helpers — low-level
     // -------------------------------------------------------------------------
+
+    /// @notice The effective hook gas stipend: the owner-configured value, or HOOK_GAS_STIPEND
+    ///         when it has never been set (every diamond upgraded into rev026 reads zero here).
+    function _hookGasStipend(AppStorage storage s) internal view returns (uint256) {
+        uint256 configured = s.hookGasStipend;
+        return configured == 0 ? HOOK_GAS_STIPEND : configured;
+    }
 
     /// @notice Builds a TaskContext snapshot for hook callbacks.
     function _buildContext(bytes32 taskId, AppStorage storage s) internal view returns (ITMPCore.TaskContext memory) {
@@ -68,7 +86,7 @@ library LibHooks {
     ///         separate, additional guard against plain compute/loop griefing.
     function _safeHookCall(address hook, bytes memory callData) private returns (bool ok, bytes memory ret) {
         uint256 maxCopy = HOOK_MAX_RETURN_BYTES;
-        uint256 gasStipend = HOOK_GAS_STIPEND;
+        uint256 gasStipend = _hookGasStipend(LibAppStorage.appStorage());
         ret = new bytes(maxCopy);
         // Memory-safe: reads callData and writes only inside ret, which is allocated at maxCopy
         // bytes while the copy is capped at maxCopy, then shortens ret's length in place.
@@ -111,8 +129,9 @@ library LibHooks {
     ///         recovery outright: it only demands more gas (at most MAX_HOOKS stipends), which
     ///         any caller can supply, so a relayed limit cannot drop a hook's release unnoticed.
     function _dispatchAfterHooksFullGas(address[] memory hooks, bytes memory callData) internal {
+        uint256 stipend = _hookGasStipend(LibAppStorage.appStorage());
         for (uint256 i; i < hooks.length; i++) {
-            if (gasleft() < (HOOK_GAS_STIPEND * 64) / 63 + HOOK_GAS_MARGIN) {
+            if (gasleft() < (stipend * 64) / 63 + HOOK_GAS_MARGIN) {
                 revert ITMPCore.InsufficientGasForHook();
             }
             (bool ok,) = _safeHookCall(hooks[i], callData);
