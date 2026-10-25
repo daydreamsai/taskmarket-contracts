@@ -2,8 +2,9 @@
 
 ## Status
 
-Implemented, not yet deployed. Base Sepolia and Tempo Moderato are at rev025; Base mainnet follows
-once it is at rev025.
+Deployed on 2026-10-25 on Base Sepolia (84532), Tempo Moderato (42431), Tempo mainnet (4217) and
+Base mainnet (8453). Every chain's live tasks are backfilled and `liabilitiesInitialised` is true.
+The hook gas stipend is 7,000,000 on both Tempo chains and the 1,000,000 default on Base.
 
 ## Problem
 
