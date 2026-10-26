@@ -1,0 +1,10 @@
+target/
+test-ledger/
+.anchor/
+node_modules/
+# Keypairs never enter the repository.
+*.json
+!idl/*.json
+!package.json
+*-keypair.json
+id.json
