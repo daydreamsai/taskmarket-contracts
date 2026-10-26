@@ -1019,16 +1019,19 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
 
         // TOCTOU guard: budget may be exhausted between remaining() and checkAndConsume.
         // reservedTokenAmount stays 0 on failure so no _s().token reward is owed without
-        // blocking USDC payout. If _s().vault.reserve() itself reverts (insufficient _s().vault
-        // balance), that propagates and reverts the whole claim/select-worker call —
-        // consistent with _s().epochBudget's consumption being rolled back too. _s().epochBudget
-        // is a trusted owner-set contract with no callback mechanism, so the
-        // reentrancy-no-eth finding is a false positive.
+        // blocking USDC payout. _s().epochBudget is a trusted owner-set contract with no
+        // callback mechanism, so the reentrancy-no-eth finding is a false positive.
         // slither-disable-next-line reentrancy-no-eth
         try _s().epochBudget.checkAndConsume(requester, worker, bonusUsd) returns (uint64 epoch) {
-            state.reservedTokenAmount = tokenAmount;
-            state.consumedEpoch = epoch;
-            _s().vault.reserve(taskId, tokenAmount);
+            // The Diamond turns any check-hook revert into HookCheckClaimRejected, so a short
+            // vault must skip the bonus rather than block claimTask/selectWorker. The consumed
+            // budget is handed back, leaving the same state as the budget-exhausted branch.
+            try _s().vault.reserve(taskId, tokenAmount) {
+                state.reservedTokenAmount = tokenAmount;
+                state.consumedEpoch = epoch;
+            } catch {
+                try _s().epochBudget.release(requester, worker, bonusUsd, epoch) { } catch { }
+            }
         } catch { }
 
         emit RewardReserved(taskId, worker, rate, state.reservedTokenAmount);

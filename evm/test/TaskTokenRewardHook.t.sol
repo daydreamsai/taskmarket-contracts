@@ -1854,14 +1854,48 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
 
     // ─── Vault insufficient ───────────────────────────────────────────────────
 
-    function test_vaultInsufficient_revertsAtClaim() public {
+    function _drainVault() internal {
         uint256 avail = vault.available();
         vm.prank(owner);
         vault.withdraw(owner, avail);
+        assertEq(vault.available(), 0);
+    }
 
+    function _assertNoReservationNoStrandedBudget(bytes32 taskId) internal view {
+        (,,, uint256 reservedAmt,, address lockedWorker, bool reserved,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0, "no token reward owed against an empty vault");
+        assertTrue(reserved);
+        assertEq(lockedWorker, worker);
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(budget.workerUsed(worker), 0, "epoch budget released");
+        assertEq(budget.requesterUsed(requester), 0);
+        assertEq(budget.globalUsed(), 0);
+    }
+
+    function _completeAndAssertUsdcWithoutBonus(bytes32 taskId) internal {
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore);
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_vaultInsufficient_claimSucceedsWithoutReservation() public {
+        _drainVault();
         bytes32 taskId = _createClaimTask();
-        vm.expectRevert();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _assertNoReservationNoStrandedBudget(taskId);
+        _completeAndAssertUsdcWithoutBonus(taskId);
+    }
+
+    function test_vaultInsufficient_selectWorkerSucceedsWithoutReservation() public {
+        _drainVault();
+        bytes32 taskId = _createReservedTask(market.PITCH(), bytes4(0));
+        _relay(worker, 0, abi.encodeCall(market.submitPitch, (taskId, keccak256("pitch"))));
+        _relay(requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker)));
+        _assertNoReservationNoStrandedBudget(taskId);
+        _completeAndAssertUsdcWithoutBonus(taskId);
     }
 
     function test_vaultInsufficient_bounty_skipsBonusNotUSDP() public {

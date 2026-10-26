@@ -103,7 +103,7 @@ per-task `hookData` payload is needed.
 | Event | Hook call | Action |
 |---|---|---|
 | `createTask` | `checkFund` | Stores the initial `rewardUsd` from the task's USDC reward. Does not reserve tokens or read a rate yet. |
-| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context (the accepted price for an Auction), then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, the claim/select-worker call reverts. |
+| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context (the accepted price for an Auction), then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, reserves nothing, hands the consumed `EpochBudget` amount back and does not block the USDC flow. |
 | `submitWork` | `checkSubmit` | Validates worker matches the reserved worker (reserved tasks only). |
 | `evaluate` | `checkEvaluate` | No-op. |
 | `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays the reservation scaled by the reserved worker's award (see Reward Formula) and releases the rest; a zero award releases all of it. Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
@@ -210,10 +210,13 @@ a rate cut mid-task and protects the protocol from a rate spike mid-task.
 the vault is exhausted after reservation but before completion, the reserved amount is
 still available — it is held exclusively for this task.
 
-**Vault exhaustion at claim reverts.** If the vault cannot cover the full reservation,
-`checkClaim` / `checkSelectWorker` reverts (the `vault.reserve()` call is not
-try-caught). This is a hard failure, not graceful degradation — workers should not be
-able to claim a task they cannot be paid for.
+**Vault exhaustion at claim skips the bonus.** If the vault cannot cover the full
+reservation, `checkClaim` / `checkSelectWorker` reserves nothing and releases the
+`EpochBudget` amount it consumed, the same state as an exhausted budget. The Diamond
+rejects the claim when a check hook reverts, so a revert here would block every hooked
+claim and worker selection while the vault is short; the worker is still paid in USDC,
+which is the payment they claimed for. The bonus is a reward on top of it, and the vault
+is a pool that drains as rewards are paid and that the owner can withdraw from.
 
 **Budget/vault failures never block USDC.** If `EpochBudget.checkAndConsume` fails at
 reserve time, or the vault has zero DREAMS available at bounty settlement, the DREAMS
