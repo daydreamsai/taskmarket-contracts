@@ -10,3 +10,6 @@ Smart contracts for Taskmarket, grouped by chain family.
 | `docs/`   | Chain-neutral protocol specs, revision docs and security notes                           | `docs/` (unchanged) |
 
 Each family folder is its own tool root: run Foundry commands from `evm/`.
+
+Clone with `git clone --recursive`, or run `git submodule update --init --recursive` after
+cloning: the Foundry libraries under `evm/lib/` are git submodules.
