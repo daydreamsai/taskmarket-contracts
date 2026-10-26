@@ -198,7 +198,7 @@ the reward is shown, not only in a detail view.
   a transfer, can leave a vault holding less than its recorded `totalReserved + totalClaimable`.
   `available()` then reverts `Insolvent`. Such tokens must not be approved for listing.
 
-This has had a `make contract audit` (Slither) pass and automated internal review, not a
+This has had a `make contract evm audit` (Slither) pass and automated internal review, not a
 professional external audit — this team has no external audit capacity today. A real audit should
 be commissioned before any mainnet deployment moving non-trivial value.
 

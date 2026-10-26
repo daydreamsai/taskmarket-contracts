@@ -25,7 +25,7 @@ Every pull request runs three layers of automated contract analysis in CI.
 Run locally:
 
 ```bash
-make contract audit
+make contract evm audit
 # report written to packages/contracts/evm/reports/slither-audit.md
 ```
 
@@ -104,7 +104,7 @@ paused. The owner MUST unpause promptly once the emergency is resolved (deploy a
 `diamondCut`, then unpause). Task expiry windows are measured in days, so a short pause
 does not permanently strand funds.
 
-Admin operations: `make contract pause` / `make contract unpause`.
+Admin operations: `make contract evm pause` / `make contract evm unpause`.
 
 ### Push Payment Failure
 

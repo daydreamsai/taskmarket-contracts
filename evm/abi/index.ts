@@ -1,6 +1,6 @@
 // The generated files under ./generated/ and the .json files beside them are both
 // written by `make build contracts` (packages/contracts/scripts/generate-abi.ts).
-// Do not edit either by hand -- CI's `make contract abi-check` fails if they drift
+// Do not edit either by hand -- CI's `make contract evm abi-check` fails if they drift
 // from the contract sources. The backend indexer reads its event definitions from
 // here rather than hand-transcribing them
 // (apps/backend/src/services/indexer-abi-events.ts).

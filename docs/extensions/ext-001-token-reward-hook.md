@@ -382,7 +382,7 @@ and stay there is waiting for a quiet moment that never arrives. Freeze it inste
    Read `firstSeen(wallet)` and `banned(wallet)` from the **old** hook and write them in batches
    via `seedWalletHistory(wallets, firstSeenAt, isBanned)`. No race here -- this can be done days
    ahead, since it only reads state the old hook will not change.
-3. **`make contract pause <network>`.** Claim and select-worker now revert, so the set of
+3. **`make contract evm pause <network>`.** Claim and select-worker now revert, so the set of
    outstanding reservations is frozen.
 4. Carry **every non-settled reward state**, not only the reserved ones. Read
    `rewardStates(taskId)` from the old hook for every task in `RewardConfigured` (union the
@@ -406,7 +406,7 @@ and stay there is waiting for a quiet moment that never arrives. Freeze it inste
    lives on a hook that is no longer the one being read.
 5. Re-point: `vault.setHook(proxy)`, `budget.setHook(proxy)`, and `setDefaultHooks([proxy])` on
    the Diamond.
-6. **`make contract unpause <network>`.** In-flight tasks now settle against the new hook exactly
+6. **`make contract evm unpause <network>`.** In-flight tasks now settle against the new hook exactly
    as they would have against the old one.
 7. Point the consuming application at the new hook address **and rewind its event cursor** to the
    new hook's deploy block. A seed block configured for a fresh deployment is typically only a
@@ -467,9 +467,9 @@ reward-hook read (current rate, current bonus, claimable balance) is an on-deman
 
 ## Implementation
 
-Contracts: `packages/contracts/src/hooks/`
-Tests: `packages/contracts/test/TaskTokenRewardHook.t.sol`, `EpochBudget.t.sol`
-Deploy scripts: `packages/contracts/script/DeployRewardHook.s.sol`,
+Contracts: `packages/contracts/evm/src/hooks/`
+Tests: `packages/contracts/evm/test/TaskTokenRewardHook.t.sol`, `EpochBudget.t.sol`
+Deploy scripts: `packages/contracts/evm/script/DeployRewardHook.s.sol`,
 `DeployRewardHookTestnet.s.sol`
 Backend service: `apps/backend/src/services/contract.ts` (`contractGetDreamsPerUsdc`,
 `contractGetDreamsBonusBps`, `contractGetDreamsWorkerSplitBps`,
