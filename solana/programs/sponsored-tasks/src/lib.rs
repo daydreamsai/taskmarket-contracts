@@ -7,6 +7,8 @@ use anchor_spl::token_2022::spl_token_2022::state::Mint as MintState;
 use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
+use solana_keccak_hasher as keccak;
+use solana_secp256k1_recover::secp256k1_recover;
 
 pub mod error;
 pub mod events;
@@ -29,6 +31,14 @@ pub const REJECTED_MINT_EXTENSIONS: [ExtensionType; 5] = [
     ExtensionType::NonTransferable,
     ExtensionType::ConfidentialTransferMint,
 ];
+
+/// EIP-712 domain of the payout binding a Base agent signs. `chainId` is the agent's EVM chain and
+/// `salt` is this program's id, so a binding cannot be replayed on another chain or program.
+pub const PAYOUT_DOMAIN_NAME: &str = "Taskmarket Sponsored Tasks";
+pub const PAYOUT_DOMAIN_VERSION: &str = "1";
+const EIP712_DOMAIN_TYPE: &[u8] =
+    b"EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)";
+const PAYOUT_BINDING_TYPE: &[u8] = b"PayoutBinding(address agent,bytes32 payout,uint64 nonce)";
 
 #[program]
 pub mod sponsored_tasks {
@@ -392,6 +402,42 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
+    /// Binds a Base agent's Solana payout address from the agent's EIP-712 signature over
+    /// `PayoutBinding(agent, payout, nonce)`. Anyone may relay it: the signature, not the payer,
+    /// authorizes. A newer binding replaces the old one only with a higher nonce. Open while
+    /// paused, since it moves no funds.
+    pub fn bind_payout(
+        ctx: Context<BindPayout>,
+        base_chain_id: u64,
+        base_agent: [u8; 20],
+        payout: Pubkey,
+        nonce: u64,
+        signature: [u8; 65],
+    ) -> Result<()> {
+        let digest = payout_binding_digest(base_chain_id, &base_agent, &payout, nonce);
+        require!(
+            recover_evm_address(&digest, &signature)? == base_agent,
+            SponsoredTasksError::InvalidPayoutSignature
+        );
+        let binding = &mut ctx.accounts.binding;
+        // A fresh account is zeroed; the seeds tie an existing one to this agent.
+        if binding.base_agent == base_agent {
+            require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
+        }
+        binding.base_chain_id = base_chain_id;
+        binding.base_agent = base_agent;
+        binding.payout = payout;
+        binding.nonce = nonce;
+        binding.bump = ctx.bumps.binding;
+        emit_cpi!(PayoutBound {
+            base_chain_id,
+            base_agent,
+            payout,
+            nonce,
+        });
+        Ok(())
+    }
+
     /// Sponsor-only and open while paused. Takes the whole token balance, defaults every open
     /// reservation and unclaimed award by advancing the epoch, and closes the vault.
     pub fn emergency_exit(ctx: Context<EmergencyExit>) -> Result<()> {
@@ -498,6 +544,53 @@ fn require_settlers(config: &Config, signers: &[AccountInfo]) -> Result<()> {
         SponsoredTasksError::SettlerThresholdNotMet
     );
     Ok(())
+}
+
+/// The EIP-712 digest of a payout binding, as `eth_signTypedData_v4` builds it.
+pub fn payout_binding_digest(
+    base_chain_id: u64,
+    base_agent: &[u8; 20],
+    payout: &Pubkey,
+    nonce: u64,
+) -> [u8; 32] {
+    let domain = keccak::hashv(&[
+        keccak::hash(EIP712_DOMAIN_TYPE).as_ref(),
+        keccak::hash(PAYOUT_DOMAIN_NAME.as_bytes()).as_ref(),
+        keccak::hash(PAYOUT_DOMAIN_VERSION.as_bytes()).as_ref(),
+        &abi_word(base_chain_id),
+        ID.as_ref(),
+    ]);
+    let mut agent = [0u8; 32];
+    agent[12..].copy_from_slice(base_agent);
+    let message = keccak::hashv(&[
+        keccak::hash(PAYOUT_BINDING_TYPE).as_ref(),
+        &agent,
+        payout.as_ref(),
+        &abi_word(nonce),
+    ]);
+    keccak::hashv(&[b"\x19\x01", domain.as_ref(), message.as_ref()]).to_bytes()
+}
+
+fn abi_word(value: u64) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[24..].copy_from_slice(&value.to_be_bytes());
+    word
+}
+
+/// The EVM address that produced a 65-byte `r || s || v` signature over `digest`; `v` may be
+/// 0/1 or 27/28.
+fn recover_evm_address(digest: &[u8; 32], signature: &[u8; 65]) -> Result<[u8; 20]> {
+    let recovery_id = match signature[64] {
+        v @ (0 | 1) => v,
+        v @ (27 | 28) => v - 27,
+        _ => return err!(SponsoredTasksError::InvalidPayoutSignature),
+    };
+    let pubkey = secp256k1_recover(digest, recovery_id, &signature[..64])
+        .map_err(|_| error!(SponsoredTasksError::InvalidPayoutSignature))?;
+    let hash = keccak::hash(&pubkey.to_bytes());
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&hash.as_ref()[12..]);
+    Ok(address)
 }
 
 fn check_mint_extensions(mint: &AccountInfo) -> Result<()> {
@@ -654,6 +747,23 @@ pub struct RevokeSettlement<'info> {
     pub vault: Account<'info, Vault>,
     #[account(mut, has_one = vault)]
     pub reservation: Account<'info, Reservation>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+#[instruction(base_chain_id: u64, base_agent: [u8; 20])]
+pub struct BindPayout<'info> {
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + PayoutBinding::INIT_SPACE,
+        seeds = [PAYOUT_SEED, &base_chain_id.to_le_bytes(), &base_agent],
+        bump
+    )]
+    pub binding: Account<'info, PayoutBinding>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[event_cpi]

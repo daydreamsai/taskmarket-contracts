@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 pub const CONFIG_SEED: &[u8] = b"config";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const RESERVATION_SEED: &[u8] = b"task";
+pub const PAYOUT_SEED: &[u8] = b"payout";
 
 pub const MAX_SETTLERS: usize = 5;
 pub const MAX_MANAGERS: usize = 8;
@@ -137,4 +138,16 @@ impl Reservation {
             self.state
         }
     }
+}
+
+/// Where a Base agent's Solana awards are paid. `bind_payout` creates or replaces it from an
+/// EIP-712 signature by the agent; a replacement must carry a higher nonce.
+#[account]
+#[derive(InitSpace)]
+pub struct PayoutBinding {
+    pub base_chain_id: u64,
+    pub base_agent: [u8; 20],
+    pub payout: Pubkey,
+    pub nonce: u64,
+    pub bump: u8,
 }

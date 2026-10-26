@@ -17,7 +17,8 @@ use spl_associated_token_account_interface::address::get_associated_token_addres
 use spl_token_2022_interface::extension::{ExtensionType, StateWithExtensions};
 use sponsored_tasks::error::SponsoredTasksError;
 use sponsored_tasks::state::{
-    Config, ManagerInput, ManagerKey, Reservation, Vault, CONFIG_SEED, RESERVATION_SEED, VAULT_SEED,
+    Config, ManagerInput, ManagerKey, Reservation, Vault, CONFIG_SEED, PAYOUT_SEED,
+    RESERVATION_SEED, VAULT_SEED,
 };
 use sponsored_tasks::{accounts, instruction, ID};
 
@@ -94,6 +95,39 @@ pub fn reservation_pda(vault: &Pubkey, task_id: &[u8; 32]) -> Pubkey {
         &ID,
     )
     .0
+}
+
+pub fn payout_pda(base_chain_id: u64, agent: &[u8; 20]) -> Pubkey {
+    Pubkey::find_program_address(&[PAYOUT_SEED, &base_chain_id.to_le_bytes(), agent], &ID).0
+}
+
+pub fn bind_payout_ix(
+    payer: &Pubkey,
+    base_chain_id: u64,
+    base_agent: [u8; 20],
+    payout: Pubkey,
+    nonce: u64,
+    signature: [u8; 65],
+) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: accounts::BindPayout {
+            binding: payout_pda(base_chain_id, &base_agent),
+            payer: *payer,
+            system_program: anchor_lang::system_program::ID,
+            event_authority: event_authority(),
+            program: ID,
+        }
+        .to_account_metas(None),
+        data: instruction::BindPayout {
+            base_chain_id,
+            base_agent,
+            payout,
+            nonce,
+            signature,
+        }
+        .data(),
+    }
 }
 
 pub fn task_id(n: u8) -> [u8; 32] {

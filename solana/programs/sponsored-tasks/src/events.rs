@@ -97,3 +97,11 @@ pub struct VaultEmergencyExited {
     pub affected_reserved: u64,
     pub affected_claimable: u64,
 }
+
+#[event]
+pub struct PayoutBound {
+    pub base_chain_id: u64,
+    pub base_agent: [u8; 20],
+    pub payout: Pubkey,
+    pub nonce: u64,
+}

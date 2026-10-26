@@ -8,6 +8,101 @@
   },
   "instructions": [
     {
+      "name": "bind_payout",
+      "docs": [
+        "Binds a Base agent's Solana payout address from the agent's EIP-712 signature over",
+        "`PayoutBinding(agent, payout, nonce)`. Anyone may relay it: the signature, not the payer,",
+        "authorizes. A newer binding replaces the old one only with a higher nonce. Open while",
+        "paused, since it moves no funds."
+      ],
+      "discriminator": [
+        240,
+        37,
+        84,
+        232,
+        48,
+        214,
+        101,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "base_chain_id"
+              },
+              {
+                "kind": "arg",
+                "path": "base_agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "base_chain_id",
+          "type": "u64"
+        },
+        {
+          "name": "base_agent",
+          "type": {
+            "array": [
+              "u8",
+              20
+            ]
+          }
+        },
+        {
+          "name": "payout",
+          "type": "pubkey"
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
+        {
+          "name": "signature",
+          "type": {
+            "array": [
+              "u8",
+              65
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "create_vault",
       "discriminator": [
         29,
@@ -817,6 +912,19 @@
       ]
     },
     {
+      "name": "PayoutBinding",
+      "discriminator": [
+        54,
+        118,
+        38,
+        77,
+        41,
+        31,
+        135,
+        16
+      ]
+    },
+    {
       "name": "Reservation",
       "discriminator": [
         188,
@@ -894,6 +1002,19 @@
         66,
         204,
         73
+      ]
+    },
+    {
+      "name": "PayoutBound",
+      "discriminator": [
+        36,
+        192,
+        224,
+        115,
+        209,
+        194,
+        195,
+        31
       ]
     },
     {
@@ -1103,6 +1224,16 @@
       "code": 6022,
       "name": "Overflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidPayoutSignature",
+      "msg": "Payout binding signature is not from the Base agent"
+    },
+    {
+      "code": 6024,
+      "name": "StalePayoutNonce",
+      "msg": "Payout binding nonce is not above the current binding's"
     }
   ],
   "types": [
@@ -1322,6 +1453,72 @@
           {
             "name": "paused",
             "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PayoutBinding",
+      "docs": [
+        "Where a Base agent's Solana awards are paid. `bind_payout` creates or replaces it from an",
+        "EIP-712 signature by the agent; a replacement must carry a higher nonce."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "base_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_agent",
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          },
+          {
+            "name": "payout",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PayoutBound",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "base_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_agent",
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          },
+          {
+            "name": "payout",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
           }
         ]
       }

@@ -31,6 +31,7 @@ Accounts, all program-derived:
 | `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient |
 | `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
 | `Reservation` | `"task", vault, base_chain_id (u64 LE), base_task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, settled total, claim count |
+| `PayoutBinding` | `"payout", base_chain_id (u64 LE), base_agent (20 bytes)` | the Base agent's Solana payout address and the binding's nonce |
 
 The vault's tokens sit in the associated token account owned by the `Vault` PDA. A manager is a
 Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance.
@@ -48,10 +49,14 @@ Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance
 | `release` | settler threshold | open | returns a reservation to the vault; repeating it is a no-op |
 | `revoke_settlement` | admin | only while paused | resets a settled reservation with no claims to reserved and clears its root |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
+| `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the Base agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
 
 Settler signatures are passed as signer accounts after the named accounts. Every state change
-emits an event through `emit_cpi!`. `settle` and `claim` (blocked while paused), `claim_fee` (open)
-and payout binding are not built yet.
+emits an event through `emit_cpi!`. `settle` and `claim` (blocked while paused) and `claim_fee`
+(open) are not built yet.
+
+The payout binding's EIP-712 typed data is in
+`../docs/specs/sponsored-tasks/payout-binding.md`.
 
 ## Commands
 
