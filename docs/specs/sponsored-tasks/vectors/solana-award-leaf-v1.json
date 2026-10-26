@@ -1,0 +1,83 @@
+{
+  "name": "solana-award-leaf-v1",
+  "description": "One Solana Sponsored Task award list packed into the EVM award leaf. See ../event-and-error-vocabulary.md, section Award leaf.",
+  "hash": "keccak256",
+  "leafEncoding": [
+    "bytes32 vaultId",
+    "uint64 epoch",
+    "bytes32 allocationId",
+    "bytes32 taskId",
+    "uint256 leafIndex",
+    "address worker",
+    "uint256 netAmount"
+  ],
+  "leafHash": "keccak256(keccak256(abi.encode(vaultId, epoch, allocationId, taskId, leafIndex, worker, netAmount)))",
+  "nodeHash": "keccak256(sorted(a, b)) over the two 32-byte children, smaller first",
+  "inputs": {
+    "programId": "STvau1t111111111111111111111111111111111111",
+    "mint": "29d2S7vB453rNYFdR5Ycwt7y9haRT5fwVwL9zTmBhfV2",
+    "mintHex": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "sponsor": "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3",
+    "sponsorHex": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "vaultIdU64": "7",
+    "vault": "E9fYQatdmgJtd7wMVYDztDTkXgVH6J2KCcZm16u1LSYc",
+    "vaultSeeds": [
+      "\"vault\"",
+      "mint",
+      "sponsor",
+      "vault_id u64 little-endian"
+    ],
+    "epoch": "1",
+    "baseChainId": "8453",
+    "baseTaskId": "0xcfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c92174",
+    "baseTaskIdPreimage": "keccak256(utf8(\"taskmarket.sponsored-task.vector.task\"))",
+    "reservation": "9QcksedA3wPTVVLdrNwsVBxK99T1HTHpisdYkwFq3Pku",
+    "reservationSeeds": [
+      "\"task\"",
+      "vault",
+      "base_chain_id u64 little-endian",
+      "base_task_id"
+    ]
+  },
+  "packed": {
+    "vaultId": "0xc36027d0374db9a6390cf99618bbf1fa803fb604b269f26409ff4af8843c1465",
+    "epoch": "1",
+    "allocationId": "0x7cea48b0f18391c5909a7b11f475e64611f2d3bbe9246cb977d0250b2523bd1a",
+    "taskId": "0xcfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c92174"
+  },
+  "leaves": [
+    {
+      "leafIndex": 0,
+      "worker": "0x1111111111111111111111111111111111111111",
+      "netAmount": "925000000",
+      "abiEncoded": "0xc36027d0374db9a6390cf99618bbf1fa803fb604b269f26409ff4af8843c146500000000000000000000000000000000000000000000000000000000000000017cea48b0f18391c5909a7b11f475e64611f2d3bbe9246cb977d0250b2523bd1acfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c92174000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000037226140",
+      "leafHash": "0x032d3e02f02add16bb3a5835796568a22a2aaedc96b2cd2424be83c0559dbccd",
+      "proof": [
+        "0x69fb3fb10242774c564877cfa3f110e882bcc4cf921a45696ad70bbf426c577d",
+        "0xc29e58f4211af4bb2150170cccc0f08aa7c95aee1f13a9fdfeaccbab22ad8955"
+      ]
+    },
+    {
+      "leafIndex": 1,
+      "worker": "0x2222222222222222222222222222222222222222",
+      "netAmount": "462500000",
+      "abiEncoded": "0xc36027d0374db9a6390cf99618bbf1fa803fb604b269f26409ff4af8843c146500000000000000000000000000000000000000000000000000000000000000017cea48b0f18391c5909a7b11f475e64611f2d3bbe9246cb977d0250b2523bd1acfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c9217400000000000000000000000000000000000000000000000000000000000000010000000000000000000000002222222222222222222222222222222222222222000000000000000000000000000000000000000000000000000000001b9130a0",
+      "leafHash": "0xc29e58f4211af4bb2150170cccc0f08aa7c95aee1f13a9fdfeaccbab22ad8955",
+      "proof": [
+        "0xf4e2bd9acad76061f054223f639e53784a4d18f38b09a1de016285b51d673ef3"
+      ]
+    },
+    {
+      "leafIndex": 2,
+      "worker": "0x3333333333333333333333333333333333333333",
+      "netAmount": "1",
+      "abiEncoded": "0xc36027d0374db9a6390cf99618bbf1fa803fb604b269f26409ff4af8843c146500000000000000000000000000000000000000000000000000000000000000017cea48b0f18391c5909a7b11f475e64611f2d3bbe9246cb977d0250b2523bd1acfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c92174000000000000000000000000000000000000000000000000000000000000000200000000000000000000000033333333333333333333333333333333333333330000000000000000000000000000000000000000000000000000000000000001",
+      "leafHash": "0x69fb3fb10242774c564877cfa3f110e882bcc4cf921a45696ad70bbf426c577d",
+      "proof": [
+        "0x032d3e02f02add16bb3a5835796568a22a2aaedc96b2cd2424be83c0559dbccd",
+        "0xc29e58f4211af4bb2150170cccc0f08aa7c95aee1f13a9fdfeaccbab22ad8955"
+      ]
+    }
+  ],
+  "root": "0x1d841bb4a841d4b1da8479915b600532f333721bd54730de12f1eb9bda6c79ba"
+}
