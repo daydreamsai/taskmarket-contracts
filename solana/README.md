@@ -72,7 +72,33 @@ Tests run the built program in LiteSVM, with no validator and no network.
 CI runs all four in the `quality-solana` job (full-ci label) when this directory changes. After
 changing an instruction or account, copy `target/idl/*.json` into `idl/` and commit it.
 
+## Deploy, upgrade and verify
+
+Every deploy, upgrade and verification uses a verifiable build (`anchor build --verifiable`, in
+Anchor's pinned Docker image), so the bytes on chain can be rebuilt from the public source.
+`scripts/deploy.sh` holds the steps; the make targets wrap it.
+
+```sh
+make contract solana deploy devnet          # first deploy at SOLANA_PROGRAM_KEYPAIR's address
+make contract solana buffer devnet          # write the build to a buffer for an upgrade
+make contract solana upgrade devnet <buffer>  # upgrade from the buffer (deployer is the authority)
+make contract solana verify devnet          # compare the deployed program with the build
+```
+
+- `deploy` and `upgrade` accept `localnet` and `devnet` only. On `mainnet-beta`, `buffer` writes the
+  build and hands the buffer to `SOLANA_UPGRADE_AUTHORITY` (the multisig, required there); the
+  multisig executes the upgrade, then `verify` checks it.
+- `deploy` refuses a program keypair whose address differs from `declare_id!`. Set the real program
+  id in `declare_id!` and `Anchor.toml` in a reviewed change before the first deploy.
+- `verify` is read-only: it compares `solana-verify get-executable-hash` of the build with
+  `solana-verify get-program-hash` of the deployed program.
+- `DRY_RUN=1` builds and prints each chain-writing command instead of running it.
+- `SOLANA_RPC_URL` overrides the cluster's public endpoint; `SOLANA_PROGRAM_ID` overrides the
+  `declare_id!` address for `upgrade` and `verify`.
+
 ## Keys
 
 No keypair is committed. `declare_id!` holds a placeholder id; deployer, settler and relayer keys
-come from the environment at deploy time.
+come from the environment at deploy time. The deploy targets read `SOLANA_DEPLOYER_KEYPAIR` (fee
+payer and upgrade authority) and `SOLANA_PROGRAM_KEYPAIR` (program id, first deploy only) as paths
+to keypair files outside the repository, and refuse a path inside it.
