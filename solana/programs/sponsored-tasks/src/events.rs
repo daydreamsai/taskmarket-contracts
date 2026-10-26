@@ -39,12 +39,6 @@ pub struct VaultCreated {
 }
 
 #[event]
-pub struct VaultCapSet {
-    pub vault: Pubkey,
-    pub cap: u64,
-}
-
-#[event]
 pub struct VaultFunded {
     pub vault: Pubkey,
     pub funder: Pubkey,

@@ -65,8 +65,6 @@ pub struct Vault {
     pub status: VaultStatus,
     /// Reservations from an earlier epoch were defaulted by an emergency exit.
     pub epoch: u64,
-    /// Ceiling on `total_reserved`, in the vault's token; zero until the admin sets it.
-    pub cap: u64,
     pub total_funded: u64,
     pub total_reserved: u64,
     pub total_settled: u64,

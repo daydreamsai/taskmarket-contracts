@@ -695,62 +695,6 @@
       ]
     },
     {
-      "name": "set_caps",
-      "discriminator": [
-        173,
-        204,
-        47,
-        125,
-        102,
-        192,
-        240,
-        161
-      ],
-      "accounts": [
-        {
-          "name": "config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "admin",
-          "signer": true,
-          "relations": [
-            "config"
-          ]
-        },
-        {
-          "name": "vault",
-          "writable": true
-        },
-        {
-          "name": "event_authority"
-        },
-        {
-          "name": "program"
-        }
-      ],
-      "args": [
-        {
-          "name": "cap",
-          "type": "u64"
-        }
-      ]
-    },
-    {
       "name": "set_managers",
       "docs": [
         "Adds or updates managers; an existing manager's cap may not drop below what it has",
@@ -1005,19 +949,6 @@
       ]
     },
     {
-      "name": "VaultCapSet",
-      "discriminator": [
-        33,
-        113,
-        109,
-        226,
-        26,
-        41,
-        54,
-        38
-      ]
-    },
-    {
       "name": "VaultCreated",
       "discriminator": [
         117,
@@ -1140,41 +1071,36 @@
     },
     {
       "code": 6016,
-      "name": "VaultCapExceeded",
-      "msg": "Reservation exceeds the vault cap"
-    },
-    {
-      "code": 6017,
       "name": "InsufficientAvailable",
       "msg": "Reservation exceeds the vault's available balance"
     },
     {
-      "code": 6018,
+      "code": 6017,
       "name": "DeadlineInPast",
       "msg": "Reservation deadline is in the past"
     },
     {
-      "code": 6019,
+      "code": 6018,
       "name": "ReservationWrongState",
       "msg": "Reservation is not in the reserved state"
     },
     {
-      "code": 6020,
+      "code": 6019,
       "name": "EpochMismatch",
       "msg": "Reservation belongs to an earlier vault epoch"
     },
     {
-      "code": 6021,
+      "code": 6020,
       "name": "NotPaused",
       "msg": "Only allowed while the program is paused"
     },
     {
-      "code": 6022,
+      "code": 6021,
       "name": "SettlementHasClaims",
       "msg": "Settlement already has claims against it"
     },
     {
-      "code": 6023,
+      "code": 6022,
       "name": "Overflow",
       "msg": "Arithmetic overflow"
     }
@@ -1691,13 +1617,6 @@
             "type": "u64"
           },
           {
-            "name": "cap",
-            "docs": [
-              "Ceiling on `total_reserved`, in the vault's token; zero until the admin sets it."
-            ],
-            "type": "u64"
-          },
-          {
             "name": "total_funded",
             "type": "u64"
           },
@@ -1738,22 +1657,6 @@
           {
             "name": "bump",
             "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "VaultCapSet",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "cap",
-            "type": "u64"
           }
         ]
       }

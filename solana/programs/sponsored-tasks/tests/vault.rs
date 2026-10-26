@@ -112,7 +112,7 @@ fn set_admin_rejects_non_admin() {
 #[test]
 fn set_settlers_rotates_set_and_threshold() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let admin = env.admin.insecure_clone();
     let s0 = env.settlers[0].insecure_clone();
     let s1 = env.settlers[1].insecure_clone();
@@ -209,7 +209,6 @@ fn create_vault_spl_token() {
     assert_eq!(vault.vault_id, f.vault_id);
     assert_eq!(vault.status, VaultStatus::Active);
     assert_eq!(vault.epoch, 1);
-    assert_eq!(vault.cap, 0);
     assert!(vault.managers.is_empty());
     let events = env.events::<VaultCreated>();
     assert_eq!(events[0].vault, f.vault);
@@ -389,29 +388,6 @@ fn create_vault_rejected_while_paused() {
     env.svm.airdrop(&sponsor.pubkey(), 10_000_000_000).unwrap();
     let ix = create_vault_ix(&sponsor.pubkey(), &mint, &SPL_TOKEN, 1);
     assert_error(env.send(&[ix], &[&sponsor]), E::Paused);
-}
-
-#[test]
-fn set_caps_sets_vault_cap() {
-    let mut env = Env::new();
-    let f = env.vault_fixture(SPL_TOKEN, 0);
-    let admin = env.admin.insecure_clone();
-    env.send(&[f.set_caps_ix(&admin.pubkey(), 9)], &[&admin])
-        .unwrap();
-    assert_eq!(env.vault(&f.vault).cap, 9);
-    let events = env.events::<VaultCapSet>();
-    assert_eq!((events[0].vault, events[0].cap), (f.vault, 9));
-}
-
-#[test]
-fn set_caps_rejects_non_admin() {
-    let mut env = Env::new();
-    let f = env.vault_fixture(SPL_TOKEN, 0);
-    let sponsor = f.sponsor.insecure_clone();
-    assert_error(
-        env.send(&[f.set_caps_ix(&sponsor.pubkey(), 1_000)], &[&sponsor]),
-        E::NotAdmin,
-    );
 }
 
 #[test]
@@ -600,7 +576,7 @@ fn set_managers_rejected_after_exit() {
 #[test]
 fn reserve_records_reservation_and_totals() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 800, manager(1), 600);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 600);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     env.send(
@@ -641,7 +617,7 @@ fn reserve_records_reservation_and_totals() {
 fn reserve_rejects_manager_on_another_chain() {
     let mut env = Env::new();
     let tempo = manager_on(TEMPO_CHAIN_ID, 1);
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, tempo, 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, tempo, 1_000);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     // The task is on Base; the manager is a Tempo creator.
@@ -665,7 +641,7 @@ fn reserve_rejects_manager_on_another_chain() {
 #[test]
 fn reserve_rejects_non_settler() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let payer = env.payer.pubkey();
     for intruder in [Keypair::new(), f.sponsor.insecure_clone()] {
         assert_error(
@@ -681,7 +657,7 @@ fn reserve_rejects_non_settler() {
 #[test]
 fn reserve_ignores_unsigned_settler_account() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let settler = env.settlers[0].pubkey();
     let payer = env.payer.pubkey();
     let mut ix = f.reserve_ix(&payer, &[], task_id(1), 10, manager(1));
@@ -692,7 +668,7 @@ fn reserve_ignores_unsigned_settler_account() {
 #[test]
 fn reserve_enforces_settler_threshold() {
     let mut env = Env::with_threshold(3, 2);
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let s0 = env.settlers[0].insecure_clone();
     let s1 = env.settlers[1].insecure_clone();
     let payer = env.payer.pubkey();
@@ -721,7 +697,7 @@ fn reserve_enforces_settler_threshold() {
 #[test]
 fn reserve_rejected_while_paused() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     env.pause(true);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
@@ -732,9 +708,9 @@ fn reserve_rejected_while_paused() {
 }
 
 #[test]
-fn reserve_rejects_over_vault_cap() {
+fn reserve_bounded_by_manager_allowance_not_vault_size() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 300, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 300);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     env.send(
@@ -742,49 +718,33 @@ fn reserve_rejects_over_vault_cap() {
         &[&settler],
     )
     .unwrap();
-    // The cap bounds outstanding reservations, not each one.
+    // The allowance bounds the manager's outstanding reservations, not each one.
     assert_error(
         env.send(
             &[f.reserve_ix(&payer, &[&settler], task_id(2), 101, manager(1))],
             &[&settler],
         ),
-        E::VaultCapExceeded,
+        E::ManagerAllowanceExceeded,
     );
     env.send(
         &[f.reserve_ix(&payer, &[&settler], task_id(2), 100, manager(1))],
         &[&settler],
     )
     .unwrap();
-}
-
-#[test]
-fn reserve_rejects_new_vault_before_cap_is_set() {
-    let mut env = Env::new();
-    let f = env.vault_fixture(SPL_TOKEN, 1_000);
-    let sponsor = f.sponsor.insecure_clone();
-    env.send(
-        &[
-            f.fund_ix(&sponsor.pubkey(), &f.sponsor_token, 1_000),
-            f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(1), 1_000, true)]),
-        ],
-        &[&sponsor],
-    )
-    .unwrap();
-    let settler = env.settlers[0].insecure_clone();
-    let payer = env.payer.pubkey();
+    assert_eq!(env.vault(&f.vault).managers[0].reserved, 300);
     assert_error(
         env.send(
-            &[f.reserve_ix(&payer, &[&settler], task_id(1), 1, manager(1))],
+            &[f.reserve_ix(&payer, &[&settler], task_id(3), 1, manager(1))],
             &[&settler],
         ),
-        E::VaultCapExceeded,
+        E::ManagerAllowanceExceeded,
     );
 }
 
 #[test]
 fn reserve_rejects_over_manager_allowance() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 100);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 100);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     assert_error(
@@ -799,7 +759,7 @@ fn reserve_rejects_over_manager_allowance() {
 #[test]
 fn reserve_rejects_unknown_or_inactive_manager() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     assert_error(
@@ -827,7 +787,7 @@ fn reserve_rejects_unknown_or_inactive_manager() {
 #[test]
 fn reserve_rejects_over_available() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 100, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 100, manager(1), 1_000);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     assert_error(
@@ -842,7 +802,7 @@ fn reserve_rejects_over_available() {
 #[test]
 fn reserve_rejects_zero_amount_and_past_deadline() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     assert_error(
@@ -883,7 +843,7 @@ fn reserve_rejects_duplicate_task() {
 #[test]
 fn reserve_rejected_after_exit() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let sponsor = f.sponsor.insecure_clone();
     env.send(
         &[f.exit_ix(&sponsor.pubkey(), &f.sponsor_token)],
@@ -962,7 +922,7 @@ fn release_rejects_settled_reservation() {
 fn release_rejects_reservation_of_another_vault() {
     let mut env = Env::new();
     let (_, r) = env.reserved_vault(400);
-    let other = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let other = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let settler = env.settlers[0].insecure_clone();
     // Anchor ConstraintHasOne.
     assert_custom(
@@ -991,7 +951,7 @@ fn release_rejected_after_exit() {
 #[test]
 fn emergency_exit_takes_whole_balance_and_defaults_open_reservations() {
     let mut env = Env::new();
-    let f = env.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
     let settler = env.settlers[0].insecure_clone();
     let payer = env.payer.pubkey();
     env.send(
@@ -1058,7 +1018,7 @@ fn emergency_exit_takes_whole_balance_and_defaults_open_reservations() {
 #[test]
 fn emergency_exit_works_for_token_2022() {
     let mut env = Env::new();
-    let f = env.ready_vault(TOKEN_2022, 1_000, 1_000, manager(1), 1_000);
+    let f = env.ready_vault(TOKEN_2022, 1_000, manager(1), 1_000);
     let sponsor = f.sponsor.insecure_clone();
     env.send(
         &[f.exit_ix(&sponsor.pubkey(), &f.sponsor_token)],

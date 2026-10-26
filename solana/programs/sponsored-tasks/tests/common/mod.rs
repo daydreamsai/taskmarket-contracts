@@ -533,21 +533,6 @@ impl VaultFixture {
             data: instruction::EmergencyExit {}.data(),
         }
     }
-
-    pub fn set_caps_ix(&self, admin: &Pubkey, cap: u64) -> Instruction {
-        Instruction {
-            program_id: ID,
-            accounts: accounts::SetCaps {
-                config: config_pda(),
-                admin: *admin,
-                vault: self.vault,
-                event_authority: event_authority(),
-                program: ID,
-            }
-            .to_account_metas(None),
-            data: instruction::SetCaps { cap }.data(),
-        }
-    }
 }
 
 fn admin_accounts(admin: &Pubkey) -> Vec<AccountMeta> {
@@ -623,18 +608,16 @@ impl Env {
         }
     }
 
-    /// Funded with `funded`, vault cap `cap`, one active manager with allowance `allowance`.
+    /// Funded with `funded`, one active manager with allowance `allowance`.
     pub fn ready_vault(
         &mut self,
         token_program: Pubkey,
         funded: u64,
-        cap: u64,
         key: ManagerKey,
         allowance: u64,
     ) -> VaultFixture {
         let f = self.vault_fixture(token_program, funded);
         let sponsor = f.sponsor.insecure_clone();
-        let admin = self.admin.insecure_clone();
         self.send(
             &[
                 f.fund_ix(&sponsor.pubkey(), &f.sponsor_token, funded),
@@ -650,14 +633,12 @@ impl Env {
             &[&sponsor],
         )
         .expect("fund and set managers");
-        self.send(&[f.set_caps_ix(&admin.pubkey(), cap)], &[&admin])
-            .expect("set vault cap");
         f
     }
 
     /// A 1_000-token SPL vault with one `amount` reservation for `task_id(1)` by `manager(1)`.
     pub fn reserved_vault(&mut self, amount: u64) -> (VaultFixture, Pubkey) {
-        let f = self.ready_vault(SPL_TOKEN, 1_000, 1_000, manager(1), 1_000);
+        let f = self.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
         let settler = self.settlers[0].insecure_clone();
         let payer = self.payer.pubkey();
         self.send(

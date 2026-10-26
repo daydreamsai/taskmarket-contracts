@@ -104,7 +104,6 @@ pub mod sponsored_tasks {
         vault.vault_id = vault_id;
         vault.status = VaultStatus::Active;
         vault.epoch = 1;
-        vault.cap = 0;
         vault.total_funded = 0;
         vault.total_reserved = 0;
         vault.total_settled = 0;
@@ -121,15 +120,6 @@ pub mod sponsored_tasks {
             token_program: vault.token_program,
             vault_id,
             epoch: vault.epoch,
-        });
-        Ok(())
-    }
-
-    pub fn set_caps(ctx: Context<SetCaps>, cap: u64) -> Result<()> {
-        ctx.accounts.vault.cap = cap;
-        emit_cpi!(VaultCapSet {
-            vault: ctx.accounts.vault.key(),
-            cap,
         });
         Ok(())
     }
@@ -264,10 +254,6 @@ pub mod sponsored_tasks {
             .total_reserved
             .checked_add(amount)
             .ok_or(SponsoredTasksError::Overflow)?;
-        require!(
-            reserved_after <= vault.cap,
-            SponsoredTasksError::VaultCapExceeded
-        );
         require!(
             amount <= vault.available(),
             SponsoredTasksError::InsufficientAvailable
@@ -593,20 +579,6 @@ pub struct CreateVault<'info> {
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
-}
-
-#[event_cpi]
-#[derive(Accounts)]
-pub struct SetCaps<'info> {
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = config.bump,
-        has_one = admin @ SponsoredTasksError::NotAdmin
-    )]
-    pub config: Account<'info, Config>,
-    pub admin: Signer<'info>,
-    #[account(mut)]
-    pub vault: Account<'info, Vault>,
 }
 
 #[event_cpi]

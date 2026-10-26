@@ -34,8 +34,6 @@ pub enum SponsoredTasksError {
     ManagerChainMismatch,
     #[msg("Reservation exceeds the manager's remaining allowance")]
     ManagerAllowanceExceeded,
-    #[msg("Reservation exceeds the vault cap")]
-    VaultCapExceeded,
     #[msg("Reservation exceeds the vault's available balance")]
     InsufficientAvailable,
     #[msg("Reservation deadline is in the past")]

@@ -29,7 +29,7 @@ Accounts, all program-derived:
 | Account | Seeds | Holds |
 | ------- | ----- | ----- |
 | `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient |
-| `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, cap, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
+| `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
 | `Reservation` | `"task", vault, base_chain_id (u64 LE), base_task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, settled total, claim count |
 
 The vault's tokens sit in the associated token account owned by the `Vault` PDA. A manager is a
@@ -42,10 +42,9 @@ Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance
 | `set_settlers` | admin | open | replaces the settler set and threshold |
 | `pause` | admin | open | sets or clears the pause flag |
 | `create_vault` | sponsor | blocked | SPL Token or Token-2022; rejects transfer-fee, transfer-hook, permanent-delegate, non-transferable and confidential-transfer mints |
-| `set_caps` | admin | open | the vault's cap on outstanding reservations, in its token; a new vault's cap is zero |
 | `fund` | anyone | open | `transfer_checked`, then checks the vault received the exact amount |
 | `set_managers` | sponsor | open | allowance never below reserved plus spent |
-| `reserve` | settler threshold | blocked | the manager's chain must be the task's chain; bounded by the vault cap, the manager allowance and the available balance |
+| `reserve` | settler threshold | blocked | the manager's chain must be the task's chain; bounded by the manager allowance the sponsor set and the available balance |
 | `release` | settler threshold | open | returns a reservation to the vault; repeating it is a no-op |
 | `revoke_settlement` | admin | only while paused | resets a settled reservation with no claims to reserved and clears its root |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
