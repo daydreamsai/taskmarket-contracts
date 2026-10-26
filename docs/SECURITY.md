@@ -26,10 +26,10 @@ Run locally:
 
 ```bash
 make contract audit
-# report written to packages/contracts/reports/slither-audit.md
+# report written to packages/contracts/evm/reports/slither-audit.md
 ```
 
-Configuration: `packages/contracts/slither.config.json`
+Configuration: `packages/contracts/evm/slither.config.json`
 
 CI fails on any medium or high finding (`fail_on: medium`). The following detectors are excluded project-wide with justification:
 
@@ -51,7 +51,7 @@ Any suppression that applies to a specific line rather than the whole project us
 make lint-check contracts   # runs as part of the standard CI lint step
 ```
 
-Configuration: `packages/contracts/.solhint.json`
+Configuration: `packages/contracts/evm/.solhint.json`
 
 ---
 

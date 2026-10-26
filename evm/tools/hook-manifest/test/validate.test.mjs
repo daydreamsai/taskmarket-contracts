@@ -1195,7 +1195,7 @@ test("draft affirmative claims may await evidence but cannot be mistaken for pub
 
 test("documents ABI hookData as structurally checked publisher-attested metadata", () => {
   const docs = readFileSync(
-    new URL("../../../docs/taskmarket-hook-manifest.md", import.meta.url),
+    new URL("../../../../docs/taskmarket-hook-manifest.md", import.meta.url),
     "utf8",
   );
   assert.match(docs, /publisher-attested metadata/i);
@@ -1205,7 +1205,7 @@ test("documents ABI hookData as structurally checked publisher-attested metadata
 
 test("documents raw-source ingestion and the already-parsed precision limit", () => {
   const docs = readFileSync(
-    new URL("../../../docs/taskmarket-hook-manifest.md", import.meta.url),
+    new URL("../../../../docs/taskmarket-hook-manifest.md", import.meta.url),
     "utf8",
   );
   assert.match(docs, /inspectJson\(source\)/);
