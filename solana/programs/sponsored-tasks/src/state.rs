@@ -4,6 +4,7 @@ pub const CONFIG_SEED: &[u8] = b"config";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const RESERVATION_SEED: &[u8] = b"task";
 pub const PAYOUT_SEED: &[u8] = b"payout";
+pub const CLAIM_SEED: &[u8] = b"claim";
 
 pub const MAX_SETTLERS: usize = 5;
 pub const MAX_MANAGERS: usize = 8;
@@ -142,6 +143,10 @@ pub struct Reservation {
     pub fee_total: u64,
     /// Claims paid against `root`; `revoke_settlement` only acts while it is zero.
     pub claimed_count: u32,
+    /// Net amount paid by claims against `root`, never above `settled_total`.
+    pub claimed_total: u64,
+    /// `claim_fee` has paid `fee_total`; `revoke_settlement` only acts while it is false.
+    pub fee_claimed: bool,
     pub bump: u8,
     /// Unix time `settle` installed `root`; zero while no root is installed.
     pub settled_at: i64,
@@ -170,5 +175,15 @@ pub struct PayoutBinding {
     pub base_agent: [u8; 20],
     pub payout: Pubkey,
     pub nonce: u64,
+    pub bump: u8,
+}
+
+/// Exists once leaf `leaf_index` of a reservation's root has been paid; its existence is the
+/// double-claim guard. Seeds: `"claim", reservation, leaf_index (u32 LE)`.
+#[account]
+#[derive(InitSpace)]
+pub struct ClaimReceipt {
+    pub reservation: Pubkey,
+    pub leaf_index: u32,
     pub bump: u8,
 }

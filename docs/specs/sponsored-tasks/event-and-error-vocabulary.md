@@ -59,8 +59,8 @@ program only holds and pays the tokens.
 | `TaskReleased(allocationId, taskId, manager, amount)` | `TaskReleased { vault, reservation, base_chain_id, base_task_id, manager, amount }` | `task_released` | |
 | `SettlementInstalled(allocationId, taskId, rewardsRoot, leafCount, distributedGross, sponsoredTaskTotal, feeTotal, releasedAmount)` | `SettlementInstalled` (section 5) | `settlement_installed` | Emitted by `settle`; see [`settlement.md`](settlement.md). |
 | none | `SettlementRevoked { vault, reservation, root, settled_total }` | `settlement_revoked` | Solana-only. A Solana root rests on settler signatures alone, so the admin can reset an unclaimed root while paused. An EVM root comes from same-chain award events and cannot be forged by a key. |
-| `SponsoredTaskClaimed(allocationId, taskId, index, worker, destination, amount)` | `SponsoredTaskClaimed` (section 5) | `reward_claimed` | Not yet emitted on Solana; `claim` adds it. |
-| `FeeClaimed(allocationId, taskId, feeRecipient, destination, amount)` | `FeeClaimed` (section 5) | `fee_claimed` | Not yet emitted on Solana; `claim_fee` adds it. |
+| `SponsoredTaskClaimed(allocationId, taskId, index, worker, destination, amount)` | `SponsoredTaskClaimed` (section 5) | `reward_claimed` | Emitted by `claim`; see [`settlement.md`](settlement.md). |
+| `FeeClaimed(allocationId, taskId, feeRecipient, destination, amount)` | `FeeClaimed` (section 5) | `fee_claimed` | Emitted by `claim_fee`; see [`settlement.md`](settlement.md). |
 | `VaultEmergencyExited(vaultId, owner, recipient, closedEpoch, newEpoch, amountWithdrawn, affectedReserved, affectedClaimable)` | `VaultEmergencyExited { vault, sponsor, recipient, closed_epoch, new_epoch, amount_withdrawn, affected_reserved, affected_claimable }` | `vault_emergency_exited` | Same fields, same semantics: the whole balance leaves and open reservations of `closed_epoch` become defaulted. |
 | none | `VaultCapSet { vault, cap }` | none | Solana-only and scheduled for removal: the vault-level cap is dropped so caps match EVM (manager caps only). Indexers ignore it. |
 | none | `ConfigInitialized`, `AdminChanged`, `SettlersChanged`, `PauseSet`, `ClaimDelaySet` | `program_config` | Solana-only. One global `Config` account holds admin, settler set, threshold, pause and fee terms. On EVM these live in separate contracts (Ownable ownership, the fee policy, the diamond's pause) whose events are outside this vocabulary. |
@@ -184,6 +184,7 @@ and sponsor is the same PDA.
 | `DeadlineInPast` | The settler-signed reservation message carries a deadline. |
 | `SettlementHasClaims` | Guard on `revoke_settlement`. |
 | `InvalidClaimDelay` | `set_claim_delay` rejects zero and values above `i64::MAX`; the claim delay exists only on Solana (see [`settlement.md`](settlement.md)). |
+| `ClaimDelayNotElapsed` | `claim` and `claim_fee` before `Config.claim_delay_seconds` has passed since `settle`. An EVM root comes from same-chain award events and pays at once. |
 | `Overflow` | Checked arithmetic; EVM reverts with a panic. |
 
 ## 3. Normalized projection rows
@@ -356,6 +357,6 @@ reservation of `closed_epoch` in that vault, with the exit's envelope; the uniqu
 Errors these instructions add, named after their EVM counterparts in section 2:
 `InvalidSettlementTotals`, `SettlementExceedsReservation`, `InvalidClaimProof`,
 `ClaimAlreadyPaid`, `ClaimIndexOutOfBounds`, `NothingToClaim`, `NotFeeRecipient`,
-`PayoutNotBound`, `InvalidPayoutSignature` and `StalePayoutNonce`. `settle` reuses
+`PayoutNotBound`, `ClaimDelayNotElapsed`, `InvalidPayoutSignature` and `StalePayoutNonce`. `settle` reuses
 `SettlerThresholdNotMet`, `Paused`, `VaultNotActive`, `EpochMismatch` and
 `ReservationWrongState`; `claim` reuses `Paused` and `EpochMismatch`.

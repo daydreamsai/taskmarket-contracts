@@ -125,3 +125,26 @@ pub struct SettlementInstalled {
 pub struct ClaimDelaySet {
     pub claim_delay_seconds: u64,
 }
+
+#[event]
+pub struct SponsoredTaskClaimed {
+    pub vault: Pubkey,
+    pub reservation: Pubkey,
+    pub base_chain_id: u64,
+    pub base_task_id: [u8; 32],
+    pub leaf_index: u32,
+    pub worker: [u8; 20],
+    pub destination: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct FeeClaimed {
+    pub vault: Pubkey,
+    pub reservation: Pubkey,
+    pub base_chain_id: u64,
+    pub base_task_id: [u8; 32],
+    pub fee_recipient: Pubkey,
+    pub destination: Pubkey,
+    pub amount: u64,
+}

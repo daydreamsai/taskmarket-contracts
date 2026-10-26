@@ -58,4 +58,18 @@ pub enum SponsoredTasksError {
     SettlementExceedsReservation,
     #[msg("Claim delay must be between 1 second and i64::MAX")]
     InvalidClaimDelay,
+    #[msg("Award proof does not match the settlement root")]
+    InvalidClaimProof,
+    #[msg("Award leaf already claimed")]
+    ClaimAlreadyPaid,
+    #[msg("Award leaf index is not below the settlement's leaf count")]
+    ClaimIndexOutOfBounds,
+    #[msg("Nothing to claim")]
+    NothingToClaim,
+    #[msg("Caller is not the config fee recipient")]
+    NotFeeRecipient,
+    #[msg("Worker has no payout binding")]
+    PayoutNotBound,
+    #[msg("The settlement's claim delay has not passed")]
+    ClaimDelayNotElapsed,
 }

@@ -316,6 +316,8 @@ pub mod sponsored_tasks {
         reservation.settled_total = 0;
         reservation.fee_total = 0;
         reservation.claimed_count = 0;
+        reservation.claimed_total = 0;
+        reservation.fee_claimed = false;
         reservation.bump = ctx.bumps.reservation;
         reservation.settled_at = 0;
         emit_cpi!(TaskReserved {
@@ -469,6 +471,169 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
+    /// Blocked while paused. Pays award leaf `leaf_index` of a settled reservation to the
+    /// worker's bound payout address. Anyone may relay it: the proof against the settled root
+    /// authorizes, and the `ClaimReceipt` it creates makes a second claim of the leaf fail.
+    /// It pays only once `Config::claim_delay` has passed since `settle`.
+    pub fn claim(
+        ctx: Context<Claim>,
+        leaf_index: u32,
+        worker: [u8; 20],
+        amount: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        require!(!ctx.accounts.config.paused, SponsoredTasksError::Paused);
+        let vault_key = ctx.accounts.vault.key();
+        let reservation_key = ctx.accounts.reservation.key();
+        let vault = &ctx.accounts.vault;
+        require!(
+            vault.status == VaultStatus::Active,
+            SponsoredTasksError::VaultNotActive
+        );
+        let reservation = &ctx.accounts.reservation;
+        require!(
+            reservation.epoch == vault.epoch,
+            SponsoredTasksError::EpochMismatch
+        );
+        require!(
+            reservation.state == ReservationState::Settled,
+            SponsoredTasksError::ReservationWrongState
+        );
+        require_claim_delay_elapsed(&ctx.accounts.config, reservation)?;
+        require!(
+            leaf_index < reservation.leaf_count,
+            SponsoredTasksError::ClaimIndexOutOfBounds
+        );
+        require!(amount > 0, SponsoredTasksError::NothingToClaim);
+        // A fresh receipt is zeroed; an existing one already names this reservation.
+        require!(
+            ctx.accounts.receipt.reservation != reservation_key,
+            SponsoredTasksError::ClaimAlreadyPaid
+        );
+        let leaf = award_leaf(
+            &vault_key,
+            reservation.epoch,
+            &reservation_key,
+            &reservation.base_task_id,
+            leaf_index,
+            &worker,
+            amount,
+        );
+        require!(
+            verify_award_proof(&proof, &reservation.root, leaf),
+            SponsoredTasksError::InvalidClaimProof
+        );
+        let claimed_total = reservation
+            .claimed_total
+            .checked_add(amount)
+            .filter(|total| *total <= reservation.settled_total)
+            .ok_or(SponsoredTasksError::InvalidSettlementTotals)?;
+
+        let binding = &ctx.accounts.binding;
+        require!(
+            *binding.owner == ID && !binding.data_is_empty(),
+            SponsoredTasksError::PayoutNotBound
+        );
+        let payout = PayoutBinding::try_deserialize(&mut &binding.try_borrow_data()?[..])?.payout;
+        let destination = &ctx.accounts.destination_token_account;
+        require_keys_eq!(
+            destination.owner,
+            payout,
+            anchor_lang::error::ErrorCode::ConstraintTokenOwner
+        );
+
+        pay_from_vault(
+            vault,
+            &ctx.accounts.mint,
+            &ctx.accounts.vault_token_account,
+            destination,
+            &ctx.accounts.token_program,
+            amount,
+        )?;
+        let destination_key = destination.key();
+
+        let receipt = &mut ctx.accounts.receipt;
+        receipt.reservation = reservation_key;
+        receipt.leaf_index = leaf_index;
+        receipt.bump = ctx.bumps.receipt;
+        let reservation = &mut ctx.accounts.reservation;
+        reservation.claimed_total = claimed_total;
+        reservation.claimed_count = reservation
+            .claimed_count
+            .checked_add(1)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        let vault = &mut ctx.accounts.vault;
+        vault.total_claimed = vault
+            .total_claimed
+            .checked_add(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        emit_cpi!(SponsoredTaskClaimed {
+            vault: vault_key,
+            reservation: reservation_key,
+            base_chain_id: reservation.base_chain_id,
+            base_task_id: reservation.base_task_id,
+            leaf_index,
+            worker,
+            destination: destination_key,
+            amount,
+        });
+        Ok(())
+    }
+
+    /// Open while paused. The config fee recipient takes a settled reservation's fee to any
+    /// token account of the vault's mint, once, after the claim delay.
+    pub fn claim_fee(ctx: Context<ClaimFee>) -> Result<()> {
+        let vault_key = ctx.accounts.vault.key();
+        let reservation_key = ctx.accounts.reservation.key();
+        let vault = &ctx.accounts.vault;
+        require!(
+            vault.status == VaultStatus::Active,
+            SponsoredTasksError::VaultNotActive
+        );
+        let reservation = &ctx.accounts.reservation;
+        require!(
+            reservation.epoch == vault.epoch,
+            SponsoredTasksError::EpochMismatch
+        );
+        require!(
+            reservation.state == ReservationState::Settled,
+            SponsoredTasksError::ReservationWrongState
+        );
+        require_claim_delay_elapsed(&ctx.accounts.config, reservation)?;
+        let amount = reservation.fee_total;
+        require!(
+            amount > 0 && !reservation.fee_claimed,
+            SponsoredTasksError::NothingToClaim
+        );
+
+        pay_from_vault(
+            vault,
+            &ctx.accounts.mint,
+            &ctx.accounts.vault_token_account,
+            &ctx.accounts.destination_token_account,
+            &ctx.accounts.token_program,
+            amount,
+        )?;
+
+        ctx.accounts.reservation.fee_claimed = true;
+        let vault = &mut ctx.accounts.vault;
+        vault.total_claimed = vault
+            .total_claimed
+            .checked_add(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        let reservation = &ctx.accounts.reservation;
+        emit_cpi!(FeeClaimed {
+            vault: vault_key,
+            reservation: reservation_key,
+            base_chain_id: reservation.base_chain_id,
+            base_task_id: reservation.base_task_id,
+            fee_recipient: ctx.accounts.fee_recipient.key(),
+            destination: ctx.accounts.destination_token_account.key(),
+            amount,
+        });
+        Ok(())
+    }
+
     /// Admin-only and only while paused: undoes a settlement nobody has claimed against, so the
     /// settlers can sign a corrected root.
     pub fn revoke_settlement(ctx: Context<RevokeSettlement>) -> Result<()> {
@@ -489,7 +654,7 @@ pub mod sponsored_tasks {
             SponsoredTasksError::ReservationWrongState
         );
         require!(
-            reservation.claimed_count == 0,
+            reservation.claimed_count == 0 && !reservation.fee_claimed,
             SponsoredTasksError::SettlementHasClaims
         );
         let settled_total = reservation.settled_total;
@@ -579,31 +744,13 @@ pub mod sponsored_tasks {
         let amount = ctx.accounts.vault_token_account.amount;
 
         if amount > 0 {
-            let mint_key = vault.mint;
-            let sponsor_key = vault.sponsor;
-            let id_bytes = vault.vault_id.to_le_bytes();
-            let bump = [vault.bump];
-            let seeds: &[&[u8]] = &[
-                VAULT_SEED,
-                mint_key.as_ref(),
-                sponsor_key.as_ref(),
-                &id_bytes,
-                &bump,
-            ];
-            let signer = &[seeds];
-            transfer_checked(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.key(),
-                    TransferChecked {
-                        from: ctx.accounts.vault_token_account.to_account_info(),
-                        mint: ctx.accounts.mint.to_account_info(),
-                        to: ctx.accounts.recipient_token_account.to_account_info(),
-                        authority: ctx.accounts.vault.to_account_info(),
-                    },
-                    signer,
-                ),
+            pay_from_vault(
+                vault,
+                &ctx.accounts.mint,
+                &ctx.accounts.vault_token_account,
+                &ctx.accounts.recipient_token_account,
+                &ctx.accounts.token_program,
                 amount,
-                ctx.accounts.mint.decimals,
             )?;
         }
 
@@ -642,6 +789,52 @@ pub mod sponsored_tasks {
         });
         Ok(())
     }
+}
+
+/// Claims against a root wait `Config::claim_delay` seconds after `settle` installed it.
+fn require_claim_delay_elapsed(config: &Config, reservation: &Reservation) -> Result<()> {
+    let claimable_at = reservation
+        .settled_at
+        .saturating_add(config.claim_delay() as i64);
+    require!(
+        Clock::get()?.unix_timestamp >= claimable_at,
+        SponsoredTasksError::ClaimDelayNotElapsed
+    );
+    Ok(())
+}
+
+/// Transfers `amount` out of the vault's token account, signed by the vault PDA.
+fn pay_from_vault<'info>(
+    vault: &Account<'info, Vault>,
+    mint: &InterfaceAccount<'info, Mint>,
+    from: &InterfaceAccount<'info, TokenAccount>,
+    to: &InterfaceAccount<'info, TokenAccount>,
+    token_program: &Interface<'info, TokenInterface>,
+    amount: u64,
+) -> Result<()> {
+    let id_bytes = vault.vault_id.to_le_bytes();
+    let bump = [vault.bump];
+    let seeds: &[&[u8]] = &[
+        VAULT_SEED,
+        vault.mint.as_ref(),
+        vault.sponsor.as_ref(),
+        &id_bytes,
+        &bump,
+    ];
+    transfer_checked(
+        CpiContext::new_with_signer(
+            token_program.key(),
+            TransferChecked {
+                from: from.to_account_info(),
+                mint: mint.to_account_info(),
+                to: to.to_account_info(),
+                authority: vault.to_account_info(),
+            },
+            &[seeds],
+        ),
+        amount,
+        mint.decimals,
+    )
 }
 
 fn validate_settlers(settlers: &[Pubkey], threshold: u8) -> Result<()> {
@@ -911,6 +1104,65 @@ pub struct Settle<'info> {
     pub vault: Account<'info, Vault>,
     #[account(mut, has_one = vault)]
     pub reservation: Account<'info, Reservation>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+#[instruction(leaf_index: u32, worker: [u8; 20])]
+pub struct Claim<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(mut, has_one = mint, has_one = token_program)]
+    pub vault: Account<'info, Vault>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, address = vault.token_account)]
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, has_one = vault)]
+    pub reservation: Account<'info, Reservation>,
+    /// CHECK: the worker's `PayoutBinding` PDA; `claim` fails with `PayoutNotBound` while it
+    /// does not exist, and deserializes it otherwise.
+    #[account(
+        seeds = [PAYOUT_SEED, &reservation.base_chain_id.to_le_bytes(), &worker],
+        bump
+    )]
+    pub binding: UncheckedAccount<'info>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + ClaimReceipt::INIT_SPACE,
+        seeds = [CLAIM_SEED, reservation.key().as_ref(), &leaf_index.to_le_bytes()],
+        bump
+    )]
+    pub receipt: Account<'info, ClaimReceipt>,
+    #[account(mut, token::mint = mint, token::token_program = token_program)]
+    pub destination_token_account: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct ClaimFee<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.fee_recipient == fee_recipient.key()
+            @ SponsoredTasksError::NotFeeRecipient
+    )]
+    pub config: Account<'info, Config>,
+    pub fee_recipient: Signer<'info>,
+    #[account(mut, has_one = mint, has_one = token_program)]
+    pub vault: Account<'info, Vault>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, address = vault.token_account)]
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, has_one = vault)]
+    pub reservation: Account<'info, Reservation>,
+    #[account(mut, token::mint = mint, token::token_program = token_program)]
+    pub destination_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[event_cpi]

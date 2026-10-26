@@ -1,6 +1,6 @@
 # Sponsored Tasks: Solana settlement
 
-Status: Implemented by the Solana program's `settle` instruction. `claim` and `claim_fee` follow.
+Status: Implemented by the Solana program's `settle`, `claim` and `claim_fee` instructions.
 
 The task, its verdict and its awards live on Base. The settlers read the Base award events,
 rebuild the award list with the Solana ids (see the award leaf in
@@ -41,7 +41,47 @@ Effects mirror the EVM vault's `installSettlement`:
 - `SettlementInstalled` is emitted with `released_amount = amount - distributed_gross`.
 
 `revoke_settlement` reverses every one of these effects exactly, so a corrected root can be
-settled again after the pause lifts.
+settled again after the pause lifts. It refuses a settlement with any paid leaf or a paid fee
+(`SettlementHasClaims`).
+
+## Claim
+
+```text
+claim(leaf_index: u32, worker: [u8; 20], amount: u64, proof: Vec<[u8; 32]>)
+accounts: config, vault (mut), mint, vault token account (mut), reservation (mut, has_one vault),
+          binding (PayoutBinding PDA of reservation.base_chain_id and worker),
+          receipt (ClaimReceipt PDA, created), destination token account (mut), payer (mut, signer),
+          token program, system program, event authority, program
+```
+
+Anyone may relay a claim. Checks, in order: pause (`Paused`), vault active (`VaultNotActive`),
+current epoch (`EpochMismatch`), reservation `Settled` (`ReservationWrongState`), the claim
+delay passed since `settled_at` (`ClaimDelayNotElapsed`),
+`leaf_index < leaf_count` (`ClaimIndexOutOfBounds`), `amount > 0` (`NothingToClaim`), no receipt
+for the leaf yet (`ClaimAlreadyPaid`), the proof of `award_leaf(vault, epoch, reservation,
+base_task_id, leaf_index, worker, amount)` against the root (`InvalidClaimProof`), the running
+claimed total within `settled_total` (`InvalidSettlementTotals`), a binding for the worker
+(`PayoutNotBound`), and a destination owned by the bound payout address (Anchor
+`ConstraintTokenOwner`).
+
+The vault PDA signs a `transfer_checked` of `amount` to the destination. The reservation's
+`claimed_count` and `claimed_total` and the vault's `total_claimed` grow, and
+`SponsoredTaskClaimed` is emitted.
+
+## Claim fee
+
+```text
+claim_fee()
+accounts: config, fee_recipient (signer), vault (mut), mint, vault token account (mut),
+          reservation (mut, has_one vault), destination token account (mut), token program,
+          event authority, program
+```
+
+Open while paused, so a pause never traps fee funds. Checks: the signer is `Config.fee_recipient`
+(`NotFeeRecipient`), vault active, current epoch, reservation `Settled`, the claim delay passed
+(`ClaimDelayNotElapsed`), and an unpaid non-zero fee
+(`NothingToClaim`). It pays `fee_total` to any token account of the vault's mint, sets
+`fee_claimed`, adds the fee to `total_claimed` and emits `FeeClaimed`.
 
 ## Claim delay
 
@@ -77,6 +117,18 @@ settle with the same or a different root fails with `ReservationWrongState`. A t
 signature also cannot be replayed once its blockhash expires. The EVM vault returns quietly for
 an identical second install; Solana rejects it so a relayer sees the conflict.
 
-**Fee.** Fee terms are global in `Config` and read at settle. The fee is carved from the awarded
+**Double claim.** Each paid leaf leaves a `ClaimReceipt` account at
+`["claim", reservation, leaf_index]`. The account is created with `init_if_needed` so that a second
+claim reaches the program and fails with the named `ClaimAlreadyPaid` instead of a framework
+"account in use" error. Receipts outlive the claim; a root with receipts cannot be revoked, so a
+receipt always refers to the root it was paid against.
+
+**Payout.** The leaf names the worker by their Base address, so it matches the Base award. The
+program pays only the token account owned by the address in the worker's `PayoutBinding`, which
+the worker signed for (see [`payout-binding.md`](payout-binding.md)); the relayer cannot choose
+the destination.
+
+**Fee.** Fee terms are global in `Config` and read at settle. The fee recipient is read from
+`Config` at `claim_fee`, so rotating it redirects unpaid fees. The fee is carved from the awarded
 gross and counted in `total_settled` with the net awards, so it stays backed by the vault's
 tokens until `claim_fee` pays it.

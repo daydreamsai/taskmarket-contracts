@@ -103,6 +103,256 @@
       ]
     },
     {
+      "name": "claim",
+      "docs": [
+        "Blocked while paused. Pays award leaf `leaf_index` of a settled reservation to the",
+        "worker's bound payout address. Anyone may relay it: the proof against the settled root",
+        "authorizes, and the `ClaimReceipt` it creates makes a second claim of the leaf fail.",
+        "It pays only once `Config::claim_delay` has passed since `settle`."
+      ],
+      "discriminator": [
+        62,
+        198,
+        214,
+        193,
+        213,
+        159,
+        108,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "reservation"
+          ]
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "reservation",
+          "writable": true
+        },
+        {
+          "name": "binding",
+          "docs": [
+            "does not exist, and deserializes it otherwise."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reservation.base_chain_id",
+                "account": "Reservation"
+              },
+              {
+                "kind": "arg",
+                "path": "worker"
+              }
+            ]
+          }
+        },
+        {
+          "name": "receipt",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  108,
+                  97,
+                  105,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reservation"
+              },
+              {
+                "kind": "arg",
+                "path": "leaf_index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination_token_account",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "leaf_index",
+          "type": "u32"
+        },
+        {
+          "name": "worker",
+          "type": {
+            "array": [
+              "u8",
+              20
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "proof",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "claim_fee",
+      "docs": [
+        "Open while paused. The config fee recipient takes a settled reservation's fee to any",
+        "token account of the vault's mint, once, after the claim delay."
+      ],
+      "discriminator": [
+        169,
+        32,
+        79,
+        137,
+        136,
+        232,
+        70,
+        137
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_recipient",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "reservation"
+          ]
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "reservation",
+          "writable": true
+        },
+        {
+          "name": "destination_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "create_vault",
       "discriminator": [
         29,
@@ -1039,6 +1289,19 @@
   ],
   "accounts": [
     {
+      "name": "ClaimReceipt",
+      "discriminator": [
+        223,
+        233,
+        11,
+        229,
+        124,
+        165,
+        207,
+        28
+      ]
+    },
+    {
       "name": "Config",
       "discriminator": [
         155,
@@ -1132,6 +1395,19 @@
       ]
     },
     {
+      "name": "FeeClaimed",
+      "discriminator": [
+        202,
+        108,
+        15,
+        80,
+        101,
+        18,
+        217,
+        158
+      ]
+    },
+    {
       "name": "ManagerConfigured",
       "discriminator": [
         139,
@@ -1207,6 +1483,19 @@
         240,
         207,
         230
+      ]
+    },
+    {
+      "name": "SponsoredTaskClaimed",
+      "discriminator": [
+        251,
+        193,
+        33,
+        11,
+        10,
+        185,
+        186,
+        98
       ]
     },
     {
@@ -1415,6 +1704,41 @@
       "code": 6027,
       "name": "InvalidClaimDelay",
       "msg": "Claim delay must be between 1 second and i64::MAX"
+    },
+    {
+      "code": 6028,
+      "name": "InvalidClaimProof",
+      "msg": "Award proof does not match the settlement root"
+    },
+    {
+      "code": 6029,
+      "name": "ClaimAlreadyPaid",
+      "msg": "Award leaf already claimed"
+    },
+    {
+      "code": 6030,
+      "name": "ClaimIndexOutOfBounds",
+      "msg": "Award leaf index is not below the settlement's leaf count"
+    },
+    {
+      "code": 6031,
+      "name": "NothingToClaim",
+      "msg": "Nothing to claim"
+    },
+    {
+      "code": 6032,
+      "name": "NotFeeRecipient",
+      "msg": "Caller is not the config fee recipient"
+    },
+    {
+      "code": 6033,
+      "name": "PayoutNotBound",
+      "msg": "Worker has no payout binding"
+    },
+    {
+      "code": 6034,
+      "name": "ClaimDelayNotElapsed",
+      "msg": "The settlement's claim delay has not passed"
     }
   ],
   "types": [
@@ -1442,6 +1766,30 @@
           {
             "name": "claim_delay_seconds",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimReceipt",
+      "docs": [
+        "Exists once leaf `leaf_index` of a reservation's root has been paid; its existence is the",
+        "double-claim guard. Seeds: `\"claim\", reservation, leaf_index (u32 LE)`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "reservation",
+            "type": "pubkey"
+          },
+          {
+            "name": "leaf_index",
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -1523,6 +1871,47 @@
           {
             "name": "fee_recipient",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reservation",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_task_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }
@@ -1821,6 +2210,20 @@
             "type": "u32"
           },
           {
+            "name": "claimed_total",
+            "docs": [
+              "Net amount paid by claims against `root`, never above `settled_total`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_claimed",
+            "docs": [
+              "`claim_fee` has paid `fee_total`; `revoke_settlement` only acts while it is false."
+            ],
+            "type": "bool"
+          },
+          {
             "name": "bump",
             "type": "u8"
           },
@@ -1959,6 +2362,56 @@
           {
             "name": "threshold",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SponsoredTaskClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reservation",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_task_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "type": "u32"
+          },
+          {
+            "name": "worker",
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }

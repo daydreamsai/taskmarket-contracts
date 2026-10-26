@@ -7,6 +7,7 @@ use anchor_lang::{
 };
 use litesvm::types::{FailedTransactionMetadata, TransactionMetadata};
 use litesvm::LiteSVM;
+use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_message::Message;
@@ -17,10 +18,10 @@ use spl_associated_token_account_interface::address::get_associated_token_addres
 use spl_token_2022_interface::extension::{ExtensionType, StateWithExtensions};
 use sponsored_tasks::error::SponsoredTasksError;
 use sponsored_tasks::state::{
-    Config, ManagerInput, ManagerKey, Reservation, Vault, CONFIG_SEED, PAYOUT_SEED,
-    RESERVATION_SEED, VAULT_SEED,
+    Config, ManagerInput, ManagerKey, PayoutBinding, Reservation, Vault, CLAIM_SEED, CONFIG_SEED,
+    PAYOUT_SEED, RESERVATION_SEED, VAULT_SEED,
 };
-use sponsored_tasks::{accounts, instruction, ID};
+use sponsored_tasks::{accounts, award_leaf, instruction, ID};
 
 const PROGRAM_SO: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -130,6 +131,45 @@ pub fn bind_payout_ix(
     }
 }
 
+pub fn receipt_pda(reservation: &Pubkey, leaf_index: u32) -> Pubkey {
+    Pubkey::find_program_address(
+        &[CLAIM_SEED, reservation.as_ref(), &leaf_index.to_le_bytes()],
+        &ID,
+    )
+    .0
+}
+
+/// One award: `(leaf_index, worker, net_amount)`.
+pub type Award = (u32, [u8; 20], u64);
+
+fn hash_pair(a: [u8; 32], b: [u8; 32]) -> [u8; 32] {
+    use sha3::{Digest, Keccak256};
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let mut h = Keccak256::new();
+    h.update(lo);
+    h.update(hi);
+    h.finalize().into()
+}
+
+/// The award root and per-leaf proofs for one or two awards (a single leaf is its own root).
+pub fn award_tree(
+    vault: &Pubkey,
+    epoch: u64,
+    reservation: &Pubkey,
+    task: &[u8; 32],
+    awards: &[Award],
+) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
+    let leaves: Vec<[u8; 32]> = awards
+        .iter()
+        .map(|(i, w, a)| award_leaf(vault, epoch, reservation, task, *i, w, *a))
+        .collect();
+    match leaves.as_slice() {
+        [only] => (*only, vec![vec![]]),
+        [a, b] => (hash_pair(*a, *b), vec![vec![*b], vec![*a]]),
+        _ => panic!("award_tree builds one or two leaves"),
+    }
+}
+
 pub fn task_id(n: u8) -> [u8; 32] {
     let mut id = [0u8; 32];
     id[31] = n;
@@ -150,6 +190,7 @@ pub struct Env {
     pub upgrade_authority: Keypair,
     pub admin: Keypair,
     pub settlers: Vec<Keypair>,
+    pub fee_recipient: Keypair,
     pub last: Option<TransactionMetadata>,
 }
 
@@ -182,6 +223,7 @@ impl Env {
             upgrade_authority,
             admin,
             settlers,
+            fee_recipient: Keypair::new(),
             last: None,
         }
     }
@@ -261,7 +303,7 @@ impl Env {
                 settlers,
                 threshold,
                 fee_bps,
-                fee_recipient: Pubkey::new_unique(),
+                fee_recipient: self.fee_recipient.pubkey(),
             }
             .data(),
         };
@@ -382,6 +424,43 @@ impl Env {
             self.send(&ixs, &[]).expect("mint to");
         }
         ata
+    }
+
+    /// Creates a program-owned account holding `value`, for states no instruction can reach in
+    /// a test (a binding for an EVM address whose key the test does not hold).
+    pub fn put<T: AccountSerialize>(&mut self, key: &Pubkey, value: &T, space: usize) {
+        let mut data = Vec::new();
+        value.try_serialize(&mut data).unwrap();
+        data.resize(space, 0);
+        let lamports = self.svm.minimum_balance_for_rent_exemption(space);
+        self.svm
+            .set_account(
+                *key,
+                Account {
+                    lamports,
+                    data,
+                    owner: ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap();
+    }
+
+    /// Binds `worker`'s awards on Base to `payout`.
+    pub fn put_binding(&mut self, worker: [u8; 20], payout: Pubkey) {
+        let binding = PayoutBinding {
+            base_chain_id: BASE_CHAIN_ID,
+            base_agent: worker,
+            payout,
+            nonce: 1,
+            bump: 0,
+        };
+        self.put(
+            &payout_pda(BASE_CHAIN_ID, &worker),
+            &binding,
+            8 + <PayoutBinding as anchor_lang::Space>::INIT_SPACE,
+        );
     }
 
     pub fn pause(&mut self, paused: bool) {
@@ -585,6 +664,70 @@ impl VaultFixture {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_ix(
+        &self,
+        payer: &Pubkey,
+        reservation: Pubkey,
+        leaf_index: u32,
+        worker: [u8; 20],
+        amount: u64,
+        proof: Vec<[u8; 32]>,
+        destination: Pubkey,
+    ) -> Instruction {
+        Instruction {
+            program_id: ID,
+            accounts: accounts::Claim {
+                config: config_pda(),
+                vault: self.vault,
+                mint: self.mint,
+                vault_token_account: self.vault_token,
+                reservation,
+                binding: payout_pda(BASE_CHAIN_ID, &worker),
+                receipt: receipt_pda(&reservation, leaf_index),
+                destination_token_account: destination,
+                payer: *payer,
+                token_program: self.token_program,
+                system_program: anchor_lang::system_program::ID,
+                event_authority: event_authority(),
+                program: ID,
+            }
+            .to_account_metas(None),
+            data: instruction::Claim {
+                leaf_index,
+                worker,
+                amount,
+                proof,
+            }
+            .data(),
+        }
+    }
+
+    pub fn claim_fee_ix(
+        &self,
+        fee_recipient: &Pubkey,
+        reservation: Pubkey,
+        destination: Pubkey,
+    ) -> Instruction {
+        Instruction {
+            program_id: ID,
+            accounts: accounts::ClaimFee {
+                config: config_pda(),
+                fee_recipient: *fee_recipient,
+                vault: self.vault,
+                mint: self.mint,
+                vault_token_account: self.vault_token,
+                reservation,
+                destination_token_account: destination,
+                token_program: self.token_program,
+                event_authority: event_authority(),
+                program: ID,
+            }
+            .to_account_metas(None),
+            data: instruction::ClaimFee {}.data(),
+        }
+    }
+
     pub fn revoke_ix(&self, admin: &Pubkey, reservation: Pubkey) -> Instruction {
         Instruction {
             program_id: ID,
@@ -663,6 +806,12 @@ impl Env {
         let mut clock = self.svm.get_sysvar::<anchor_lang::prelude::Clock>();
         clock.unix_timestamp = unix_timestamp;
         self.svm.set_sysvar(&clock);
+    }
+
+    /// Moves the clock past the default claim delay.
+    pub fn pass_claim_delay(&mut self) {
+        let now = self.now();
+        self.warp_to(now + sponsored_tasks::state::DEFAULT_CLAIM_DELAY_SECONDS as i64);
     }
 
     pub fn now(&self) -> i64 {
