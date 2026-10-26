@@ -75,7 +75,8 @@ make contract solana idl-check  # build, then diff target/idl against the commit
 Tests run the built program in LiteSVM, with no validator and no network.
 
 CI runs all four in the `quality-solana` job (full-ci label) when this directory changes. After
-changing an instruction or account, copy `target/idl/*.json` into `idl/` and commit it.
+changing an instruction or account, copy `target/idl/*.json` into `idl/` and commit it, then run
+`make solana-client` to regenerate the typed client generated from that IDL and commit it too.
 
 ## Deploy, upgrade and verify
 
