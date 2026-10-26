@@ -1,0 +1,26 @@
+{
+  "address": "STvau1t111111111111111111111111111111111111",
+  "metadata": {
+    "name": "sponsored_tasks",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Taskmarket Sponsored Tasks vault for Solana"
+  },
+  "instructions": [
+    {
+      "name": "ping",
+      "discriminator": [
+        173,
+        0,
+        94,
+        236,
+        73,
+        133,
+        225,
+        153
+      ],
+      "accounts": [],
+      "args": []
+    }
+  ]
+}
