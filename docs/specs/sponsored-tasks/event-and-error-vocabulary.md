@@ -57,13 +57,13 @@ program only holds and pays the tokens.
 | `TaskReserved(allocationId, taskId, manager, epoch, grossAmount, feeBps, feeRecipient, termsHash)` | `TaskReserved { vault, reservation, base_chain_id, base_task_id, manager, epoch, nonce, deadline, amount }` | `task_reserved` | EVM fixes fee terms and a terms hash per allocation; Solana fee terms are global and read at settle, and Solana adds the settler `nonce` and `deadline`. |
 | `TaskBound(allocationId, taskId)` | none | `task_bound` | EVM-only. On EVM a cross-chain allocation is reserved before its task id exists. A Solana reservation is created for a known `(base_chain_id, base_task_id)`, which are in its seeds. |
 | `TaskReleased(allocationId, taskId, manager, amount)` | `TaskReleased { vault, reservation, base_chain_id, base_task_id, manager, amount }` | `task_released` | |
-| `SettlementInstalled(allocationId, taskId, rewardsRoot, leafCount, distributedGross, sponsoredTaskTotal, feeTotal, releasedAmount)` | `SettlementInstalled` (section 5) | `settlement_installed` | Not yet emitted on Solana; `settle` adds it. |
+| `SettlementInstalled(allocationId, taskId, rewardsRoot, leafCount, distributedGross, sponsoredTaskTotal, feeTotal, releasedAmount)` | `SettlementInstalled` (section 5) | `settlement_installed` | Emitted by `settle`; see [`settlement.md`](settlement.md). |
 | none | `SettlementRevoked { vault, reservation, root, settled_total }` | `settlement_revoked` | Solana-only. A Solana root rests on settler signatures alone, so the admin can reset an unclaimed root while paused. An EVM root comes from same-chain award events and cannot be forged by a key. |
 | `SponsoredTaskClaimed(allocationId, taskId, index, worker, destination, amount)` | `SponsoredTaskClaimed` (section 5) | `reward_claimed` | Not yet emitted on Solana; `claim` adds it. |
 | `FeeClaimed(allocationId, taskId, feeRecipient, destination, amount)` | `FeeClaimed` (section 5) | `fee_claimed` | Not yet emitted on Solana; `claim_fee` adds it. |
 | `VaultEmergencyExited(vaultId, owner, recipient, closedEpoch, newEpoch, amountWithdrawn, affectedReserved, affectedClaimable)` | `VaultEmergencyExited { vault, sponsor, recipient, closed_epoch, new_epoch, amount_withdrawn, affected_reserved, affected_claimable }` | `vault_emergency_exited` | Same fields, same semantics: the whole balance leaves and open reservations of `closed_epoch` become defaulted. |
 | none | `VaultCapSet { vault, cap }` | none | Solana-only and scheduled for removal: the vault-level cap is dropped so caps match EVM (manager caps only). Indexers ignore it. |
-| none | `ConfigInitialized`, `AdminChanged`, `SettlersChanged`, `PauseSet` | `program_config` | Solana-only. One global `Config` account holds admin, settler set, threshold, pause and fee terms. On EVM these live in separate contracts (Ownable ownership, the fee policy, the diamond's pause) whose events are outside this vocabulary. |
+| none | `ConfigInitialized`, `AdminChanged`, `SettlersChanged`, `PauseSet`, `ClaimDelaySet` | `program_config` | Solana-only. One global `Config` account holds admin, settler set, threshold, pause and fee terms. On EVM these live in separate contracts (Ownable ownership, the fee policy, the diamond's pause) whose events are outside this vocabulary. |
 | none | `PayoutBound` (section 5) | `payout_bound` | Solana-only. A Solana claim pays the worker's bound Solana address; an EVM claim pays the EVM worker or a signed `claimTo` destination. |
 
 ### SponsoredTaskHook (Base task lifecycle)
@@ -183,6 +183,7 @@ and sponsor is the same PDA.
 | `VaultCapExceeded` | Scheduled for removal with `VaultCapSet`. |
 | `DeadlineInPast` | The settler-signed reservation message carries a deadline. |
 | `SettlementHasClaims` | Guard on `revoke_settlement`. |
+| `InvalidClaimDelay` | `set_claim_delay` rejects zero and values above `i64::MAX`; the claim delay exists only on Solana (see [`settlement.md`](settlement.md)). |
 | `Overflow` | Checked arithmetic; EVM reverts with a panic. |
 
 ## 3. Normalized projection rows
@@ -242,7 +243,7 @@ joins to the task's hook rows.
 | `vault_emergency_exited` | `owner`, `recipient`, `closedEpoch`, `newEpoch`, `amountWithdrawn`, `affectedReserved`, `affectedClaimable` |
 | `task_defaulted_by_owner` | reservation fields |
 | `payout_bound` | `agentChainId` (number), `agentAddress` (EVM address), `payout` (base58), `nonce` |
-| `program_config` | `admin`, `settlers` (array of base58), `threshold`, `paused`, `feeBps`, `feeRecipient`; each Solana config event fills the fields it carries |
+| `program_config` | `admin`, `settlers` (array of base58), `threshold`, `paused`, `feeBps`, `feeRecipient`, `claimDelaySeconds`; each Solana config event fills the fields it carries |
 
 Base hook kinds (`task_funded`, `completion_committed`, `entitlement` and the rest) use the EVM
 event's field names in camelCase, with the envelope and reservation fields above.

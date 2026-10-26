@@ -105,3 +105,23 @@ pub struct PayoutBound {
     pub payout: Pubkey,
     pub nonce: u64,
 }
+
+#[event]
+pub struct SettlementInstalled {
+    pub vault: Pubkey,
+    pub reservation: Pubkey,
+    pub base_chain_id: u64,
+    pub base_task_id: [u8; 32],
+    pub epoch: u64,
+    pub root: [u8; 32],
+    pub leaf_count: u32,
+    pub distributed_gross: u64,
+    pub settled_total: u64,
+    pub fee_total: u64,
+    pub released_amount: u64,
+}
+
+#[event]
+pub struct ClaimDelaySet {
+    pub claim_delay_seconds: u64,
+}

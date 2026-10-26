@@ -8,6 +8,8 @@ pub const PAYOUT_SEED: &[u8] = b"payout";
 pub const MAX_SETTLERS: usize = 5;
 pub const MAX_MANAGERS: usize = 8;
 pub const MAX_FEE_BPS: u16 = 10_000;
+/// Claim delay used while `Config::claim_delay_seconds` is unset (zero).
+pub const DEFAULT_CLAIM_DELAY_SECONDS: u64 = 3_600;
 
 #[account]
 #[derive(InitSpace)]
@@ -23,6 +25,19 @@ pub struct Config {
     pub fee_bps: u16,
     pub fee_recipient: Pubkey,
     pub bump: u8,
+    /// Seconds after `settle` before `claim` and `claim_fee` pay against the installed root.
+    /// Zero (unset) reads as `DEFAULT_CLAIM_DELAY_SECONDS`; `set_claim_delay` never stores zero.
+    pub claim_delay_seconds: u64,
+}
+
+impl Config {
+    pub fn claim_delay(&self) -> u64 {
+        if self.claim_delay_seconds == 0 {
+            DEFAULT_CLAIM_DELAY_SECONDS
+        } else {
+            self.claim_delay_seconds
+        }
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
@@ -117,13 +132,19 @@ pub struct Reservation {
     pub state: ReservationState,
     /// Zero until a settlement installs the award root.
     pub root: [u8; 32],
-    /// Total the installed root awards; `settle` sets it and adds it to `Vault::total_settled`
-    /// while moving `amount` out of `Vault::total_reserved`, leaving the manager's `reserved`
-    /// untouched so `revoke_settlement` can reverse it exactly.
+    /// Leaves under `root`; a claim's `leaf_index` must be below it.
+    pub leaf_count: u32,
+    /// Sum of the leaves' net amounts under `root`.
     pub settled_total: u64,
+    /// Fee carved from the awarded gross at `settle`, paid out by `claim_fee`.
+    /// `settle` moves `amount` out of `Vault::total_reserved` and adds `settled_total + fee_total`
+    /// to `Vault::total_settled`; the rest of `amount` returns to the available balance.
+    pub fee_total: u64,
     /// Claims paid against `root`; `revoke_settlement` only acts while it is zero.
     pub claimed_count: u32,
     pub bump: u8,
+    /// Unix time `settle` installed `root`; zero while no root is installed.
+    pub settled_at: i64,
 }
 
 impl Reservation {

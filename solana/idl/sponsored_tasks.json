@@ -790,6 +790,63 @@
       ]
     },
     {
+      "name": "set_claim_delay",
+      "docs": [
+        "Admin-only and open while paused. Sets how long after `settle` claims wait, so the root",
+        "watcher can flag a forged root and the admin can pause and revoke it before it pays."
+      ],
+      "discriminator": [
+        233,
+        84,
+        186,
+        131,
+        47,
+        245,
+        138,
+        90
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "claim_delay_seconds",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "set_managers",
       "docs": [
         "Adds or updates managers; an existing manager's cap may not drop below what it has",
@@ -895,6 +952,89 @@
           "type": "u8"
         }
       ]
+    },
+    {
+      "name": "settle",
+      "docs": [
+        "Settler-gated and blocked while paused. Installs the award root of a reserved task, as",
+        "the EVM vault's `installSettlement`: `settled_total` is the sum of the leaves' net",
+        "amounts, `fee_total` the fee carved from `distributed_gross`, and the reserved amount the",
+        "awards do not cover returns to the vault's available balance. A second settle fails."
+      ],
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "reservation"
+          ]
+        },
+        {
+          "name": "reservation",
+          "writable": true
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "leaf_count",
+          "type": "u32"
+        },
+        {
+          "name": "distributed_gross",
+          "type": "u64"
+        },
+        {
+          "name": "settled_total",
+          "type": "u64"
+        },
+        {
+          "name": "fee_total",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -966,6 +1106,19 @@
       ]
     },
     {
+      "name": "ClaimDelaySet",
+      "discriminator": [
+        164,
+        159,
+        144,
+        216,
+        149,
+        253,
+        203,
+        3
+      ]
+    },
+    {
       "name": "ConfigInitialized",
       "discriminator": [
         181,
@@ -1015,6 +1168,19 @@
         194,
         195,
         31
+      ]
+    },
+    {
+      "name": "SettlementInstalled",
+      "discriminator": [
+        170,
+        254,
+        164,
+        122,
+        154,
+        203,
+        211,
+        226
       ]
     },
     {
@@ -1234,6 +1400,21 @@
       "code": 6024,
       "name": "StalePayoutNonce",
       "msg": "Payout binding nonce is not above the current binding's"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidSettlementTotals",
+      "msg": "Settlement totals do not add up or do not match the root"
+    },
+    {
+      "code": 6026,
+      "name": "SettlementExceedsReservation",
+      "msg": "Settlement awards more than the reservation holds"
+    },
+    {
+      "code": 6027,
+      "name": "InvalidClaimDelay",
+      "msg": "Claim delay must be between 1 second and i64::MAX"
     }
   ],
   "types": [
@@ -1249,6 +1430,18 @@
           {
             "name": "admin",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimDelaySet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "claim_delay_seconds",
+            "type": "u64"
           }
         ]
       }
@@ -1292,6 +1485,14 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "claim_delay_seconds",
+            "docs": [
+              "Seconds after `settle` before `claim` and `claim_fee` pay against the installed root.",
+              "Zero (unset) reads as `DEFAULT_CLAIM_DELAY_SECONDS`; `set_claim_delay` never stores zero."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1590,11 +1791,25 @@
             }
           },
           {
+            "name": "leaf_count",
+            "docs": [
+              "Leaves under `root`; a claim's `leaf_index` must be below it."
+            ],
+            "type": "u32"
+          },
+          {
             "name": "settled_total",
             "docs": [
-              "Total the installed root awards; `settle` sets it and adds it to `Vault::total_settled`",
-              "while moving `amount` out of `Vault::total_reserved`, leaving the manager's `reserved`",
-              "untouched so `revoke_settlement` can reverse it exactly."
+              "Sum of the leaves' net amounts under `root`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_total",
+            "docs": [
+              "Fee carved from the awarded gross at `settle`, paid out by `claim_fee`.",
+              "`settle` moves `amount` out of `Vault::total_reserved` and adds `settled_total + fee_total`",
+              "to `Vault::total_settled`; the rest of `amount` returns to the available balance."
             ],
             "type": "u64"
           },
@@ -1608,6 +1823,13 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "settled_at",
+            "docs": [
+              "Unix time `settle` installed `root`; zero while no root is installed."
+            ],
+            "type": "i64"
           }
         ]
       }
@@ -1628,6 +1850,68 @@
           },
           {
             "name": "DefaultedByOwner"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettlementInstalled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reservation",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_task_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "epoch",
+            "type": "u64"
+          },
+          {
+            "name": "root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_count",
+            "type": "u32"
+          },
+          {
+            "name": "distributed_gross",
+            "type": "u64"
+          },
+          {
+            "name": "settled_total",
+            "type": "u64"
+          },
+          {
+            "name": "fee_total",
+            "type": "u64"
+          },
+          {
+            "name": "released_amount",
+            "type": "u64"
           }
         ]
       }

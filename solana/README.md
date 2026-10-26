@@ -28,9 +28,9 @@ Accounts, all program-derived:
 
 | Account | Seeds | Holds |
 | ------- | ----- | ----- |
-| `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient |
+| `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient, claim delay |
 | `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
-| `Reservation` | `"task", vault, base_chain_id (u64 LE), base_task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, settled total, claim count |
+| `Reservation` | `"task", vault, base_chain_id (u64 LE), base_task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, settle time |
 | `PayoutBinding` | `"payout", base_chain_id (u64 LE), base_agent (20 bytes)` | the Base agent's Solana payout address and the binding's nonce |
 
 The vault's tokens sit in the associated token account owned by the `Vault` PDA. A manager is a
@@ -42,18 +42,21 @@ Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance
 | `set_admin` | admin | open | hands the admin role to a new key |
 | `set_settlers` | admin | open | replaces the settler set and threshold |
 | `pause` | admin | open | sets or clears the pause flag |
+| `set_claim_delay` | admin | open | sets the seconds claims wait after `settle` (default 3600, never zero) |
 | `create_vault` | sponsor | blocked | SPL Token or Token-2022; rejects transfer-fee, transfer-hook, permanent-delegate, non-transferable and confidential-transfer mints |
 | `fund` | anyone | open | `transfer_checked`, then checks the vault received the exact amount |
 | `set_managers` | sponsor | open | allowance never below reserved plus spent |
 | `reserve` | settler threshold | blocked | the manager's chain must be the task's chain; bounded by the manager allowance the sponsor set and the available balance |
 | `release` | settler threshold | open | returns a reservation to the vault; repeating it is a no-op |
-| `revoke_settlement` | admin | only while paused | resets a settled reservation with no claims to reserved and clears its root |
+| `settle` | settler threshold | blocked | installs the award root, net total and fee of a reserved task; the rest of the reservation returns to the vault; a second settle fails |
+| `revoke_settlement` | admin | only while paused | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
 | `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the Base agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
 
 Settler signatures are passed as signer accounts after the named accounts. Every state change
-emits an event through `emit_cpi!`. `settle` and `claim` (blocked while paused) and `claim_fee`
-(open) are not built yet.
+emits an event through `emit_cpi!`. `claim` (blocked while paused) and `claim_fee` (open) are not
+built yet. Settlement and the award leaf format are in
+`../docs/specs/sponsored-tasks/settlement.md`.
 
 The payout binding's EIP-712 typed data is in
 `../docs/specs/sponsored-tasks/payout-binding.md`.

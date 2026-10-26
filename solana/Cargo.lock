@@ -4117,6 +4117,7 @@ dependencies = [
  "anchor-spl",
  "k256",
  "litesvm",
+ "serde_json",
  "sha3",
  "solana-account",
  "solana-instruction 3.5.1",

@@ -62,6 +62,7 @@ pub mod sponsored_tasks {
         config.fee_bps = fee_bps;
         config.fee_recipient = fee_recipient;
         config.bump = ctx.bumps.config;
+        config.claim_delay_seconds = DEFAULT_CLAIM_DELAY_SECONDS;
         emit_cpi!(ConfigInitialized {
             admin,
             settlers,
@@ -100,6 +101,20 @@ pub mod sponsored_tasks {
     pub fn pause(ctx: Context<AdminConfig>, paused: bool) -> Result<()> {
         ctx.accounts.config.paused = paused;
         emit_cpi!(PauseSet { paused });
+        Ok(())
+    }
+
+    /// Admin-only and open while paused. Sets how long after `settle` claims wait, so the root
+    /// watcher can flag a forged root and the admin can pause and revoke it before it pays.
+    pub fn set_claim_delay(ctx: Context<AdminConfig>, claim_delay_seconds: u64) -> Result<()> {
+        require!(
+            claim_delay_seconds > 0 && claim_delay_seconds <= i64::MAX as u64,
+            SponsoredTasksError::InvalidClaimDelay
+        );
+        ctx.accounts.config.claim_delay_seconds = claim_delay_seconds;
+        emit_cpi!(ClaimDelaySet {
+            claim_delay_seconds
+        });
         Ok(())
     }
 
@@ -297,9 +312,12 @@ pub mod sponsored_tasks {
         reservation.amount = amount;
         reservation.state = ReservationState::Reserved;
         reservation.root = [0; 32];
+        reservation.leaf_count = 0;
         reservation.settled_total = 0;
+        reservation.fee_total = 0;
         reservation.claimed_count = 0;
         reservation.bump = ctx.bumps.reservation;
+        reservation.settled_at = 0;
         emit_cpi!(TaskReserved {
             vault: vault_key,
             reservation: reservation.key(),
@@ -357,6 +375,100 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
+    /// Settler-gated and blocked while paused. Installs the award root of a reserved task, as
+    /// the EVM vault's `installSettlement`: `settled_total` is the sum of the leaves' net
+    /// amounts, `fee_total` the fee carved from `distributed_gross`, and the reserved amount the
+    /// awards do not cover returns to the vault's available balance. A second settle fails.
+    pub fn settle(
+        ctx: Context<Settle>,
+        root: [u8; 32],
+        leaf_count: u32,
+        distributed_gross: u64,
+        settled_total: u64,
+        fee_total: u64,
+    ) -> Result<()> {
+        let config = &ctx.accounts.config;
+        require_settlers(config, ctx.remaining_accounts)?;
+        require!(!config.paused, SponsoredTasksError::Paused);
+        let fee_bps = config.fee_bps;
+
+        let vault_key = ctx.accounts.vault.key();
+        let vault = &mut ctx.accounts.vault;
+        require!(
+            vault.status == VaultStatus::Active,
+            SponsoredTasksError::VaultNotActive
+        );
+        let reservation = &mut ctx.accounts.reservation;
+        require!(
+            reservation.epoch == vault.epoch,
+            SponsoredTasksError::EpochMismatch
+        );
+        require!(
+            reservation.state == ReservationState::Reserved,
+            SponsoredTasksError::ReservationWrongState
+        );
+        require!(
+            distributed_gross <= reservation.amount,
+            SponsoredTasksError::SettlementExceedsReservation
+        );
+        require!(
+            settled_total.checked_add(fee_total) == Some(distributed_gross),
+            SponsoredTasksError::InvalidSettlementTotals
+        );
+        let maximum_fee = (distributed_gross as u128 * fee_bps as u128 / 10_000) as u64;
+        require!(fee_total <= maximum_fee, SponsoredTasksError::InvalidFeeBps);
+        // A root exactly when there are awards to claim.
+        let has_awards = settled_total > 0;
+        require!(
+            has_awards == (root != [0; 32]) && has_awards == (leaf_count > 0),
+            SponsoredTasksError::InvalidSettlementTotals
+        );
+
+        let amount = reservation.amount;
+        let account = vault
+            .managers
+            .iter_mut()
+            .find(|m| m.key == reservation.manager)
+            .ok_or(SponsoredTasksError::ManagerNotActive)?;
+        account.reserved = account
+            .reserved
+            .checked_sub(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        account.spent = account
+            .spent
+            .checked_add(distributed_gross)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        vault.total_reserved = vault
+            .total_reserved
+            .checked_sub(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        vault.total_settled = vault
+            .total_settled
+            .checked_add(distributed_gross)
+            .ok_or(SponsoredTasksError::Overflow)?;
+
+        reservation.state = ReservationState::Settled;
+        reservation.root = root;
+        reservation.leaf_count = leaf_count;
+        reservation.settled_total = settled_total;
+        reservation.fee_total = fee_total;
+        reservation.settled_at = Clock::get()?.unix_timestamp;
+        emit_cpi!(SettlementInstalled {
+            vault: vault_key,
+            reservation: reservation.key(),
+            base_chain_id: reservation.base_chain_id,
+            base_task_id: reservation.base_task_id,
+            epoch: reservation.epoch,
+            root,
+            leaf_count,
+            distributed_gross,
+            settled_total,
+            fee_total,
+            released_amount: amount - distributed_gross,
+        });
+        Ok(())
+    }
+
     /// Admin-only and only while paused: undoes a settlement nobody has claimed against, so the
     /// settlers can sign a corrected root.
     pub fn revoke_settlement(ctx: Context<RevokeSettlement>) -> Result<()> {
@@ -381,18 +493,36 @@ pub mod sponsored_tasks {
             SponsoredTasksError::SettlementHasClaims
         );
         let settled_total = reservation.settled_total;
+        let distributed_gross = settled_total
+            .checked_add(reservation.fee_total)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        let amount = reservation.amount;
+        if let Some(account) = vault
+            .managers
+            .iter_mut()
+            .find(|m| m.key == reservation.manager)
+        {
+            account.reserved = account
+                .reserved
+                .checked_add(amount)
+                .ok_or(SponsoredTasksError::Overflow)?;
+            account.spent = account.spent.saturating_sub(distributed_gross);
+        }
         vault.total_settled = vault
             .total_settled
-            .checked_sub(settled_total)
+            .checked_sub(distributed_gross)
             .ok_or(SponsoredTasksError::Overflow)?;
         vault.total_reserved = vault
             .total_reserved
-            .checked_add(reservation.amount)
+            .checked_add(amount)
             .ok_or(SponsoredTasksError::Overflow)?;
         let root = reservation.root;
         reservation.state = ReservationState::Reserved;
         reservation.root = [0; 32];
+        reservation.leaf_count = 0;
         reservation.settled_total = 0;
+        reservation.fee_total = 0;
+        reservation.settled_at = 0;
         emit_cpi!(SettlementRevoked {
             vault: vault_key,
             reservation: reservation.key(),
@@ -571,6 +701,45 @@ pub fn payout_binding_digest(
     keccak::hashv(&[b"\x19\x01", domain.as_ref(), message.as_ref()]).to_bytes()
 }
 
+/// An award leaf in the EVM vault's format, as OpenZeppelin `StandardMerkleTree` builds it:
+/// `keccak256(keccak256(abi.encode(vaultId, epoch, allocationId, taskId, leafIndex, worker,
+/// netAmount)))`, with the vault and reservation PDAs as `vaultId` and `allocationId`.
+pub fn award_leaf(
+    vault: &Pubkey,
+    epoch: u64,
+    reservation: &Pubkey,
+    base_task_id: &[u8; 32],
+    leaf_index: u32,
+    worker: &[u8; 20],
+    net_amount: u64,
+) -> [u8; 32] {
+    let mut worker_word = [0u8; 32];
+    worker_word[12..].copy_from_slice(worker);
+    let inner = keccak::hashv(&[
+        vault.as_ref(),
+        &abi_word(epoch),
+        reservation.as_ref(),
+        base_task_id,
+        &abi_word(leaf_index as u64),
+        &worker_word,
+        &abi_word(net_amount),
+    ]);
+    keccak::hash(inner.as_ref()).to_bytes()
+}
+
+/// Folds `proof` into `leaf` with sorted-pair keccak nodes and compares the result with `root`.
+pub fn verify_award_proof(proof: &[[u8; 32]], root: &[u8; 32], leaf: [u8; 32]) -> bool {
+    let computed = proof.iter().fold(leaf, |node, sibling| {
+        let (a, b) = if node <= *sibling {
+            (node, *sibling)
+        } else {
+            (*sibling, node)
+        };
+        keccak::hashv(&[&a, &b]).to_bytes()
+    });
+    computed == *root
+}
+
 fn abi_word(value: u64) -> [u8; 32] {
     let mut word = [0u8; 32];
     word[24..].copy_from_slice(&value.to_be_bytes());
@@ -725,6 +894,17 @@ pub struct Reserve<'info> {
 #[event_cpi]
 #[derive(Accounts)]
 pub struct Release<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+    #[account(mut, has_one = vault)]
+    pub reservation: Account<'info, Reservation>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct Settle<'info> {
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, Config>,
     #[account(mut)]

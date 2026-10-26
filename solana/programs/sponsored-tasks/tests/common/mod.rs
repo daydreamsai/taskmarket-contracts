@@ -391,6 +391,28 @@ impl Env {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SettleTerms {
+    pub root: [u8; 32],
+    pub leaf_count: u32,
+    pub distributed_gross: u64,
+    pub settled_total: u64,
+    pub fee_total: u64,
+}
+
+impl SettleTerms {
+    /// Awards of `settled_total` net plus `fee_total`, which together are the distributed gross.
+    pub fn awards(root: [u8; 32], leaf_count: u32, settled_total: u64, fee_total: u64) -> Self {
+        SettleTerms {
+            root,
+            leaf_count,
+            distributed_gross: settled_total + fee_total,
+            settled_total,
+            fee_total,
+        }
+    }
+}
+
 pub struct VaultFixture {
     pub sponsor: Keypair,
     pub mint: Pubkey,
@@ -534,6 +556,35 @@ impl VaultFixture {
         }
     }
 
+    pub fn settle_ix(
+        &self,
+        settlers: &[&Keypair],
+        reservation: Pubkey,
+        terms: SettleTerms,
+    ) -> Instruction {
+        let mut metas = accounts::Settle {
+            config: config_pda(),
+            vault: self.vault,
+            reservation,
+            event_authority: event_authority(),
+            program: ID,
+        }
+        .to_account_metas(None);
+        metas.extend(settler_metas(settlers));
+        Instruction {
+            program_id: ID,
+            accounts: metas,
+            data: instruction::Settle {
+                root: terms.root,
+                leaf_count: terms.leaf_count,
+                distributed_gross: terms.distributed_gross,
+                settled_total: terms.settled_total,
+                fee_total: terms.fee_total,
+            }
+            .data(),
+        }
+    }
+
     pub fn revoke_ix(&self, admin: &Pubkey, reservation: Pubkey) -> Instruction {
         Instruction {
             program_id: ID,
@@ -592,6 +643,32 @@ pub fn set_admin_ix(admin: &Pubkey, new_admin: Pubkey) -> Instruction {
         program_id: ID,
         accounts: admin_accounts(admin),
         data: instruction::SetAdmin { new_admin }.data(),
+    }
+}
+
+pub fn set_claim_delay_ix(admin: &Pubkey, claim_delay_seconds: u64) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: admin_accounts(admin),
+        data: instruction::SetClaimDelay {
+            claim_delay_seconds,
+        }
+        .data(),
+    }
+}
+
+impl Env {
+    /// Moves the cluster clock to `unix_timestamp`.
+    pub fn warp_to(&mut self, unix_timestamp: i64) {
+        let mut clock = self.svm.get_sysvar::<anchor_lang::prelude::Clock>();
+        clock.unix_timestamp = unix_timestamp;
+        self.svm.set_sysvar(&clock);
+    }
+
+    pub fn now(&self) -> i64 {
+        self.svm
+            .get_sysvar::<anchor_lang::prelude::Clock>()
+            .unix_timestamp
     }
 }
 
@@ -684,8 +761,8 @@ impl Env {
         (f, r)
     }
 
-    /// Stages what `settle` will leave behind: the reservation settled with `root` and
-    /// `settled_total`, and the vault totals moved from reserved to settled.
+    /// Settles the reservation through `settle` with root `[9; 32]`, one leaf, no fee and
+    /// `settled_total` awarded, then stages `claimed_count` claims against it.
     pub fn stage_settlement(
         &mut self,
         f: &VaultFixture,
@@ -693,15 +770,22 @@ impl Env {
         settled_total: u64,
         claimed_count: u32,
     ) {
-        let mut reservation = self.reservation(r);
-        reservation.state = sponsored_tasks::state::ReservationState::Settled;
-        reservation.root = [9; 32];
-        reservation.settled_total = settled_total;
-        reservation.claimed_count = claimed_count;
-        self.write(r, &reservation);
-        let mut vault = self.vault(&f.vault);
-        vault.total_reserved -= reservation.amount;
-        vault.total_settled += settled_total;
-        self.write(&f.vault, &vault);
+        let settler = self.settlers[0].insecure_clone();
+        let terms = SettleTerms::awards([9; 32], 1, settled_total, 0);
+        // settle is blocked while paused; lift the pause around it and restore it.
+        let paused = self.config().paused;
+        if paused {
+            self.pause(false);
+        }
+        self.send(&[f.settle_ix(&[&settler], *r, terms)], &[&settler])
+            .expect("settle");
+        if paused {
+            self.pause(true);
+        }
+        if claimed_count > 0 {
+            let mut reservation = self.reservation(r);
+            reservation.claimed_count = claimed_count;
+            self.write(r, &reservation);
+        }
     }
 }

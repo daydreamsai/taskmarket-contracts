@@ -52,4 +52,10 @@ pub enum SponsoredTasksError {
     InvalidPayoutSignature,
     #[msg("Payout binding nonce is not above the current binding's")]
     StalePayoutNonce,
+    #[msg("Settlement totals do not add up or do not match the root")]
+    InvalidSettlementTotals,
+    #[msg("Settlement awards more than the reservation holds")]
+    SettlementExceedsReservation,
+    #[msg("Claim delay must be between 1 second and i64::MAX")]
+    InvalidClaimDelay,
 }
