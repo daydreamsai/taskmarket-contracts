@@ -23,6 +23,8 @@ contract DeployTargetTest is Test {
         vm.setEnv("FORGE_DIAMOND_ADDRESS_84532", vm.toString(address(0xB84532)));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_4217", vm.toString(address(0x74217)));
         vm.setEnv("FORGE_DIAMOND_ADDRESS_42431", vm.toString(address(0x742431)));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_4663", vm.toString(address(0x84663)));
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_46630", vm.toString(address(0x846630)));
     }
 
     function test_DiamondFor_MapsEveryKnownChain() public {
@@ -34,6 +36,10 @@ contract DeployTargetTest is Test {
         assertEq(harness.diamondFor(), address(0x74217));
         vm.chainId(42431);
         assertEq(harness.diamondFor(), address(0x742431));
+        vm.chainId(4663);
+        assertEq(harness.diamondFor(), address(0x84663));
+        vm.chainId(46630);
+        assertEq(harness.diamondFor(), address(0x846630));
     }
 
     function test_DiamondFor_RevertsOnUnknownChain() public {
