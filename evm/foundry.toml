@@ -47,8 +47,13 @@ network = "tempo"
 "84532" = "${FORGE_RPC_URL_84532}"
 "4217" = "${FORGE_RPC_URL_4217}"
 "42431" = "${FORGE_RPC_URL_42431}"
+"4663" = "${FORGE_RPC_URL_4663}"
+"46630" = "${FORGE_RPC_URL_46630}"
 localhost = "http://127.0.0.1:8545"
 
 [etherscan]
 "8453" = { key = "${FORGE_ETHERSCAN_API_KEY}", chain = 8453, url = "https://api.etherscan.io/v2/api?chainid=8453" }
 "84532" = { key = "${FORGE_ETHERSCAN_API_KEY}", chain = 84532, url = "https://api.etherscan.io/v2/api?chainid=84532" }
+# Robinhood Chain explorers are Blockscout, which takes an Etherscan-style API and ignores the key.
+"4663" = { key = "blockscout", chain = 4663, url = "https://robinhoodchain.blockscout.com/api/" }
+"46630" = { key = "blockscout", chain = 46630, url = "https://explorer.testnet.chain.robinhood.com/api/" }
