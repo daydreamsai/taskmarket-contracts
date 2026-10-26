@@ -110,6 +110,7 @@ export function gasEnv(dir) {
     GAS_COUNT: join(dir, "gas-count"),
     FORGE_RPC_URL_42431: "http://tempo-moderato.invalid",
     FORGE_RPC_URL_4217: "http://tempo.invalid",
-    TEMPO_GAS_FORK_PORT: String(20000 + Math.floor(Math.random() * 20000)),
+    // No fixed TEMPO_GAS_FORK_PORT: tempo-gas.sh picks a free port itself and retries a busy
+    // one, where a random fixed port could land on a socket the runner already has open.
   };
 }
