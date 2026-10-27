@@ -13,7 +13,8 @@ import { SponsoredTasksVault } from "./SponsoredTasksVault.sol";
 ///      verifying contract), checked against the current `owner()` with `SignatureChecker`, so an
 ///      ERC-1271 owner such as a Safe signs too. Each carries the vault's sequential `ownerNonce`
 ///      and a `deadline`: a signature works once, only on this vault and chain, only before its
-///      deadline, and only while its signer is still the owner. Advancing the nonce with
+///      deadline, and only while its signer is still the owner. Completing an ownership transfer
+///      also advances the nonce. Advancing the nonce with
 ///      `cancelOwnerSignatures` revokes every outstanding signed action.
 /// @dev A relayer that submits one of these calls only pays its gas. It cannot change what was
 ///      signed, and every token movement pays the recipient or the vault the signer named.
@@ -88,6 +89,20 @@ contract SponsoredTasksVaultV2 is SponsoredTasksVault {
         uint256 nonce = ownerNonce;
         ownerNonce = nonce + 1;
         emit OwnerSignatureUsed(msg.sender, nonce);
+    }
+
+    /// @dev Every completed ownership transfer advances `ownerNonce`, so a signature an earlier
+    ///      owner made cannot become valid again if ownership later returns to them. Setting the
+    ///      first owner at initialization leaves the nonce at zero. Only `acceptOwnership` reaches
+    ///      here after initialization; starting a two-step transfer does not.
+    function _transferOwnership(address newOwner) internal override {
+        address previousOwner = owner();
+        super._transferOwnership(newOwner);
+        if (previousOwner != address(0)) {
+            uint256 nonce = ownerNonce;
+            ownerNonce = nonce + 1;
+            emit OwnerSignatureUsed(previousOwner, nonce);
+        }
     }
 
     /// @notice Fund the vault straight from `funder` with their EIP-3009 authorization, so a

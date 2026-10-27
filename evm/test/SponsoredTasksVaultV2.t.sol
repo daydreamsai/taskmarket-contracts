@@ -236,9 +236,62 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
         vm.expectRevert(SponsoredTasksVaultV2.InvalidOwnerSignature.selector);
         vault.configureManagerBySig(manager, 500e6, true, deadline, oldOwnerSig);
         vault.configureManagerBySig(
-            manager, 500e6, true, deadline, _configureSig(newOwnerKey, manager, 500e6, true, 0, deadline)
+            manager, 500e6, true, deadline, _configureSig(newOwnerKey, manager, 500e6, true, 1, deadline)
         );
         assertEq(vault.managerAccount(manager).cap, 500e6);
+    }
+
+    function _handOver(address from, address to) internal {
+        vm.prank(from);
+        vault.transferOwnership(to);
+        vm.prank(to);
+        vault.acceptOwnership();
+    }
+
+    function test_AcceptOwnershipAdvancesTheNonce() public {
+        address newOwner = vm.addr(0xC0FFEE);
+        vm.prank(vaultOwner);
+        vault.transferOwnership(newOwner);
+        assertEq(vault.ownerNonce(), 0);
+        vm.expectEmit(true, true, false, false, address(vault));
+        emit OwnerSignatureUsed(vaultOwner, 0);
+        vm.prank(newOwner);
+        vault.acceptOwnership();
+        assertEq(vault.ownerNonce(), 1);
+    }
+
+    function test_PendingTransferKeepsTheOwnersSignaturesValid() public {
+        address newOwner = vm.addr(0xC0FFEE);
+        uint256 deadline = vm.getBlockTimestamp() + 1 hours;
+        bytes memory sig = _configureSig(ownerKey, manager, 500e6, true, 0, deadline);
+        vm.prank(vaultOwner);
+        vault.transferOwnership(newOwner);
+        vault.configureManagerBySig(manager, 500e6, true, deadline, sig);
+        assertEq(vault.managerAccount(manager).cap, 500e6);
+    }
+
+    function test_RevertWhen_FormerOwnerSignatureIsReplayedAfterOwnershipReturns() public {
+        uint256 otherKey = 0xC0FFEE;
+        address other = vm.addr(otherKey);
+        vm.prank(funder);
+        token.approve(address(vault), 100e6);
+        vm.prank(funder);
+        vault.fund(100e6);
+        uint256 deadline = vm.getBlockTimestamp() + 1 hours;
+        bytes memory staleSig = _withdrawSig(ownerKey, vaultOwner, 100e6, 0, deadline);
+
+        _handOver(vaultOwner, other);
+        _handOver(other, vaultOwner);
+        assertEq(vault.owner(), vaultOwner);
+        assertEq(vault.ownerNonce(), 2);
+
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidOwnerSignature.selector);
+        vault.withdrawAvailableBySig(vaultOwner, 100e6, deadline, staleSig);
+
+        vault.withdrawAvailableBySig(
+            vaultOwner, 100e6, deadline, _withdrawSig(ownerKey, vaultOwner, 100e6, 2, deadline)
+        );
+        assertEq(vault.ownerNonce(), 3);
     }
 
     function test_CancelOwnerSignaturesRevokesOutstandingActions() public {

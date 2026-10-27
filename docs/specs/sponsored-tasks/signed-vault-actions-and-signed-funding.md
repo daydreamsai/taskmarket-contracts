@@ -60,6 +60,15 @@ A used signature advances `ownerNonce` and emits `OwnerSignatureUsed(owner, nonc
 replayed. The domain names the vault and the chain, so a signature cannot be used on another vault
 or chain. A signature from a previous owner stops working when ownership moves.
 
+Completing an ownership transfer (`acceptOwnership`) also advances `ownerNonce` and emits
+`OwnerSignatureUsed(previousOwner, nonce)`. Checking the signer against the current owner alone is
+not enough: if ownership moved A to B and back to A without the nonce advancing, every unexpired
+signature A made before the first transfer would become valid again, including a withdrawal A
+prepared before handing the vault over. Advancing the nonce on each transfer revokes those
+signatures for good. `transferOwnership` only records a pending owner, so it changes nothing until
+the transfer is accepted; outstanding signatures stay valid while a transfer is pending. Setting the
+first owner at initialization leaves the nonce at zero.
+
 `fundWithAuthorization` calls the token's `receiveWithAuthorization(funder, vault, amount,
 validAfter, validBefore, nonce, signature)`, the bytes-signature form that USDC v2.2 implements,
 which also takes ERC-1271 signatures. The token refuses the call unless the vault is the payee, so
