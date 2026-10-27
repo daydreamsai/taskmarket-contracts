@@ -24,17 +24,17 @@ One settler per remote chain, deployed first; a settler-mode `SponsoredTaskFacto
 with the settler as its immutable controller. Every vault that factory creates is an ordinary vault
 whose controller is the settler.
 
-| Function | Who | Paused | Effect |
-| --- | --- | --- | --- |
-| `reserve(ReserveRequest, bytes[])` | anyone, with settler signatures | blocked | records the commitment and calls `vault.reserveTask` |
-| `release(ReleaseRequest, bytes[])` | anyone, with settler signatures | open | calls `vault.releaseTask`; a second release is a no-op |
-| `settle(SettleRequest, bytes[])` | anyone, with settler signatures | blocked | stores the root as pending with `settledAt`; does not touch the vault |
-| `finalize(vault, allocationId)` | anyone | blocked | once `block.timestamp >= settledAt + claimDelaySeconds`, calls `vault.installSettlement` |
-| `revokeSettlement(vault, allocationId)` | owner | open | deletes a pending root; the allocation returns to reserved |
-| `pause`, `unpause` | owner | -- | immediate |
-| `setSettlers(address[], uint8)` / `applySettlers` / `cancelSettlers` | owner schedules, anyone applies | -- | 48h timelock |
-| `setAuthority(address)` / `applyAuthority` / `cancelAuthority` | owner schedules, anyone applies | -- | 48h timelock |
-| `setClaimDelay(uint64)` / `applyClaimDelay` / `cancelClaimDelay` | owner | -- | a raise is immediate; a reduction waits 48h |
+| Function                                                             | Who                             | Paused  | Effect                                                                                   |
+| -------------------------------------------------------------------- | ------------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `reserve(ReserveRequest, bytes[])`                                   | anyone, with settler signatures | blocked | records the commitment and calls `vault.reserveTask`                                     |
+| `release(ReleaseRequest, bytes[])`                                   | anyone, with settler signatures | open    | calls `vault.releaseTask`; a second release is a no-op                                   |
+| `settle(SettleRequest, bytes[])`                                     | anyone, with settler signatures | blocked | stores the root as pending with `settledAt`; does not touch the vault                    |
+| `finalize(vault, allocationId)`                                      | anyone                          | blocked | once `block.timestamp >= settledAt + claimDelaySeconds`, calls `vault.installSettlement` |
+| `revokeSettlement(vault, allocationId)`                              | owner                           | open    | deletes a pending root; the allocation returns to reserved                               |
+| `pause`, `unpause`                                                   | owner                           | --      | immediate                                                                                |
+| `setSettlers(address[], uint8)` / `applySettlers` / `cancelSettlers` | owner schedules, anyone applies | --      | 48h timelock                                                                             |
+| `setAuthority(address)` / `applyAuthority` / `cancelAuthority`       | owner schedules, anyone applies | --      | 48h timelock                                                                             |
+| `setClaimDelay(uint64)` / `applyClaimDelay` / `cancelClaimDelay`     | owner                           | --      | a raise is immediate; a reduction waits 48h                                              |
 
 Per-allocation state, keyed by `(vault, allocationId)`: `None`, `Reserved`, `Pending`, `Settled`,
 `Released`. `release` requires `Reserved`, so a pending root must be revoked before its allocation
@@ -97,7 +97,7 @@ An opt-in ERC-8195 hook, separate from `SponsoredTaskHook`. It calls no vault an
 tokens; the only token it moves is the per-task creation fee.
 
 - `checkFund` decodes `FundingRequest { remoteChainId, vault, vaultId, token, grossAmount,
-  commitmentNonce, epoch, feeBps, feeRecipient, taskTermsHash }`, checks the task terms hash as
+commitmentNonce, epoch, feeBps, feeRecipient, taskTermsHash }`, checks the task terms hash as
   `SponsoredTaskHook` does, rejects a reused `(remoteChainId, vault, commitmentNonce)`, and emits
   `RemoteSponsoredTaskCommitted` with the allocation id above.
 - In the same `checkFund` it charges the manager's `SponsoredTaskFeeBank` credit once, keyed by
