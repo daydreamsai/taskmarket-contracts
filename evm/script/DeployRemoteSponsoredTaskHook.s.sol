@@ -12,14 +12,15 @@ interface ISponsoredTaskHookFeeBank {
     function feeBank() external view returns (ISponsoredTaskFeeBank);
 }
 
-/// @notice Deploys the Base half of settler mode, `RemoteSponsoredTaskHook`, behind an ERC-1967
-///         proxy, with its own fee bank and fee bank guard. See
+/// @notice Deploys a task chain's half of settler mode, `RemoteSponsoredTaskHook`, behind an ERC-1967
+///         proxy, with its own fee bank and fee bank guard. Any chain with a Taskmarket diamond
+///         (Base, Tempo) takes one, so a vault on any other chain can fund its tasks. See
 ///         `docs/specs/sponsored-tasks/evm-attested-settler.md`.
 /// @dev Required env vars:
 ///
 ///   FORGE_DEV_PRIVATE_KEY                   -- deployer key; owns nothing once this script ends
-///   FORGE_DIAMOND_ADDRESS                   -- TaskMarket Diamond proxy on Base
-///   FORGE_SPONSORED_TASK_HOOK_ADDRESS       -- the deployed Base `SponsoredTaskHook` proxy; the
+///   FORGE_DIAMOND_ADDRESS                   -- TaskMarket Diamond proxy on the task chain
+///   FORGE_SPONSORED_TASK_HOOK_ADDRESS       -- the chain's deployed `SponsoredTaskHook` proxy; the
 ///                                              new fee bank copies its fee bank's token, fee
 ///                                              amount and fee recipient, so a remote task costs
 ///                                              the same creation fee as a hook-mode task

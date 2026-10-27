@@ -63,6 +63,12 @@ contract MockTaskmarketForSponsoredTask {
         _tags[taskId].push(keccak256("sponsored-task"));
     }
 
+    /// @dev The backend creates tasks with no on-chain content; vector tests prime that shape.
+    function setContent(bytes32 taskId, bytes32 contentHash, string calldata contentURI) external {
+        _metadata[taskId].contentHash = contentHash;
+        _metadata[taskId].contentURI = contentURI;
+    }
+
     function setStatus(bytes32 taskId, ITMPCore.TaskStatus status) external {
         _tasks[taskId].status = status;
     }

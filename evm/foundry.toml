@@ -17,7 +17,11 @@ invariant = { runs = 64 }
 # which is why this is a comment and not a setting.
 # DiamondSelectorParity.t.sol enumerates the upgrade-step scripts to assert the fresh-deploy
 # version seed matches the highest one, so it needs to read that directory listing.
-fs_permissions = [{ access = "read", path = "./script/upgrades" }]
+# RemoteSponsoredTaskHookFundingVector.t.sol replays the backend-built funding vectors.
+fs_permissions = [
+    { access = "read", path = "./script/upgrades" },
+    { access = "read", path = "../docs/specs/sponsored-tasks/vectors" },
+]
 # Emitted on every build so `forge inspect <c> storageLayout` works without a clean rebuild.
 # Without it the layout is absent from the artifact and `forge inspect` errors -- which reads
 # very much like "this contract has no storage" if the caller is not careful. `make contract
