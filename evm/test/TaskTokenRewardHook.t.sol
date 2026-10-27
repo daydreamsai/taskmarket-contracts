@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import { VmSafe } from "forge-std/Vm.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
 import { TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHook.sol";
@@ -3216,6 +3217,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
     ///      whole call, and about 286k left when the eighth winner starts, so the loop clears
     ///      BONUS_AWARD_GAS_FLOOR with about 86k to spare.
     function test_recoverReserve_fullVerdictAtGasFloor_paysEveryCappedWinner() public {
+        _skipUnderCoverage();
         uint256 winners = hook.MAX_BONUS_AWARDS();
         uint256 zeros = 50 - winners - 21; // 21 zero awards ahead of the winners, 21 past the cap
         bytes32 taskId = _fullBountyFailedOnComplete(zeros);
@@ -3310,7 +3312,16 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(budget.globalUsed(), winnersPaid * 1e6, "budget matches what was paid");
     }
 
+    /// @dev Skips a test whose assertions pin gas costs of the optimised build. `forge coverage`
+    ///      compiles with `--ir-minimum` and instruments every branch, so each award costs more
+    ///      and fewer winners fit the same stipend (5 instead of 7 or 8, every coverage run).
+    ///      The gas these tests pin is the deployed build's; the ordinary test run checks it.
+    function _skipUnderCoverage() internal {
+        if (vm.isContext(VmSafe.ForgeContext.Coverage)) vm.skip(true);
+    }
+
     function test_checkComplete_bountyFirstTimeWinnersWithinStipend() public {
+        _skipUnderCoverage();
         bytes32 taskId = _evaluatedBounty();
         _manyAwardVerdict(taskId, 12, 0);
         vm.recordLogs();
