@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Deploys TaskMarketForwarderV2 against an existing diamond on a chain that pays gas in its native
-# coin (Base, Robinhood Chain), checks its getters against the inputs, then trusts it on the diamond
+# coin (Base), checks its getters against the inputs, then trusts it on the diamond
 # with addForwarder (onlyOwner, so the deployer key must own the diamond).
 #
-#   make deploy-forwarder 84532|8453|4663|46630
+#   make deploy-forwarder 84532|8453
 #
-# Usage: script/base-forwarder.sh <84532|8453|4663|46630>
+# Usage: script/base-forwarder.sh <84532|8453>
 #
 # Inputs are read ONLY from the chain-suffixed variables (FORGE_*_<chainId>); unsuffixed
 # names are overwritten from them before forge runs, so a value meant for another chain cannot leak
@@ -15,8 +15,8 @@ set -euo pipefail
 
 CHAIN_ID="${1:-}"
 case "$CHAIN_ID" in
-  84532|8453|4663|46630) ;;
-  *) echo "Usage: script/base-forwarder.sh <84532|8453|4663|46630>" >&2; exit 1 ;;
+  84532|8453) ;;
+  *) echo "Usage: script/base-forwarder.sh <84532|8453>" >&2; exit 1 ;;
 esac
 RPC="$CHAIN_ID"
 

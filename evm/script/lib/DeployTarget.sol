@@ -13,12 +13,13 @@ library DeployTarget {
     uint256 internal constant BASE_SEPOLIA = 84532;
     uint256 internal constant TEMPO_MAINNET = 4217;
     uint256 internal constant TEMPO_MODERATO = 42431;
-    /// @dev Robinhood Chain (an Arbitrum Orbit chain) serves Sponsored Tasks only; its diamond
-    ///      exists to run the Sponsored Task hook.
+    /// @dev Robinhood Chain (an Arbitrum Orbit chain) runs Sponsored Tasks in settler mode
+    ///      (rev029): a settler-mode factory plus `SponsoredTaskSettler`, with no diamond to upgrade.
     uint256 internal constant ROBINHOOD_MAINNET = 4663;
     uint256 internal constant ROBINHOOD_TESTNET = 46630;
 
     error UnknownDeployTarget(uint256 chainId);
+    error SettlerModeChainHasNoDiamond(uint256 chainId);
 
     /// @notice The env var holding the diamond address for `chainId`.
     function diamondEnvVar(uint256 chainId) internal pure returns (string memory) {
@@ -26,8 +27,9 @@ library DeployTarget {
         if (chainId == BASE_SEPOLIA) return "FORGE_DIAMOND_ADDRESS_84532";
         if (chainId == TEMPO_MAINNET) return "FORGE_DIAMOND_ADDRESS_4217";
         if (chainId == TEMPO_MODERATO) return "FORGE_DIAMOND_ADDRESS_42431";
-        if (chainId == ROBINHOOD_MAINNET) return "FORGE_DIAMOND_ADDRESS_4663";
-        if (chainId == ROBINHOOD_TESTNET) return "FORGE_DIAMOND_ADDRESS_46630";
+        if (chainId == ROBINHOOD_MAINNET || chainId == ROBINHOOD_TESTNET) {
+            revert SettlerModeChainHasNoDiamond(chainId);
+        }
         revert UnknownDeployTarget(chainId);
     }
 

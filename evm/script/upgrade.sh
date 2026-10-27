@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Diamond upgrade orchestrator -- run via
-# `make upgrade <84532|8453|42431|4217|4663|46630> [revNNN]`.
+# `make upgrade <84532|8453|42431|4217> [revNNN]`.
 #
 # With no revision argument, applies every script/upgrades/RevNNNUpgrade.s.sol whose target
 # revision is greater than the diamond's current diamondVersion, in ascending order.
@@ -61,16 +61,9 @@ elif [ "$NETWORK" = "4217" ]; then
   RPC_URL="4217"
   CHAIN_ID=4217
   DIAMOND="${FORGE_DIAMOND_ADDRESS_4217:?FORGE_DIAMOND_ADDRESS_4217 not set}"
-elif [ "$NETWORK" = "4663" ]; then
-  RPC_URL="4663"
-  CHAIN_ID=4663
-  DIAMOND="${FORGE_DIAMOND_ADDRESS_4663:?FORGE_DIAMOND_ADDRESS_4663 not set}"
-elif [ "$NETWORK" = "46630" ]; then
-  RPC_URL="46630"
-  CHAIN_ID=46630
-  DIAMOND="${FORGE_DIAMOND_ADDRESS_46630:?FORGE_DIAMOND_ADDRESS_46630 not set}"
 else
-  echo "Usage: script/upgrade.sh <84532|8453|42431|4217|4663|46630> [revNNN]" >&2
+  echo "Usage: script/upgrade.sh <84532|8453|42431|4217> [revNNN]" >&2
+  echo "  Robinhood Chain (4663, 46630) runs Sponsored Tasks in settler mode and has no diamond." >&2
   exit 1
 fi
 
