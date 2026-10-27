@@ -338,7 +338,9 @@ contract EvaluatorFacet {
     }
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
-    ///         Anyone may call this once the window has passed.
+    ///         Permissionless in the protocol: any party may trigger it once the window has
+    ///         passed. This implementation requires the PGTR forwarder, so it is relayed rather
+    ///         than called directly from an EOA.
     function evaluatorTimeout(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);

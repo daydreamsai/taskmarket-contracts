@@ -108,6 +108,11 @@ and may be called without a PGTR forwarder:
 - All `AdminFacet` functions — owner-only via `LibDiamond.enforceIsContractOwner`
 - `diamondCut` — owner-only
 
+`evaluatorTimeout` is permissionless in the protocol: once the evaluation window has passed, any
+party may trigger it. Taskmarket's implementation gates it with `_requireForwarder` like the other
+task-flow functions, so in this deployment it is called through the PGTR forwarder (the Taskmarket
+relayer) rather than directly from an EOA.
+
 `LibGuards._effectiveSender(s)` returns `IPGTRForwarder(msg.sender).pgtrSender()` when
 the caller is a trusted forwarder, otherwise `msg.sender`. The `msg.sender` branch is
 unreachable for PGTR-gated functions in normal operation but is retained as a defensive
