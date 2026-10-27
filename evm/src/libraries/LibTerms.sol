@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { TMP_AUCTION, TMP_CLAIM } from "../interfaces/ITMPModes.sol";
+import { LibProject } from "./LibProject.sol";
 
 /// @title LibTerms -- rev025 settlement terms: the single reader and validation
 /// @dev Every task created since rev025 records version 1 terms at creation, and every task live
@@ -59,12 +60,16 @@ library LibTerms {
     ///         the fee recipient booked as protocol fees. Worker stakes only; evaluator stakes keep
     ///         their own destinations. The caller clears the stake and emits its event.
     function payWorkerPenalty(AppStorage storage s, bytes32 taskId, uint256 amount) internal {
-        address to = s.tasks[taskId].requester;
+        if (amount == 0) return;
+        bool ok;
         if (terms(s, taskId).penaltyTo == ITMPCore.PenaltyTo.Protocol) {
-            to = s.feeRecipient;
             s.totalFeesCollected += amount;
+            ok = s.usdcToken.transfer(s.feeRecipient, amount);
+        } else {
+            // Rev028: a project task's penalty goes to its project, like any other requester money.
+            ok = LibProject.payRequester(s, taskId, amount);
         }
-        if (amount > 0 && !s.usdcToken.transfer(to, amount)) revert ITMPCore.ForfeitTransferFailed();
+        if (!ok) revert ITMPCore.ForfeitTransferFailed();
     }
 
     /// @notice expiryTime = max(expiryTime, now + resolutionWindowSecs) when a verdict is appealed, so

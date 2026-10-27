@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibTaskCreation } from "../libraries/LibTaskCreation.sol";
@@ -151,7 +152,7 @@ contract CoreFacet {
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (task.mode == AUCTION && s.taskBids[taskId].length != 0) revert ITMPCore.BidsExist();
@@ -202,7 +203,7 @@ contract CoreFacet {
         }
         if (refund > 0) {
             uint256 balanceBefore = LibEscrow.balance(s);
-            if (!s.usdcToken.transfer(task.requester, refund)) revert ITMPCore.USDCRefundFailed();
+            if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.USDCRefundFailed();
             LibEscrow.release(s, taskId, balanceBefore);
         } else if (newReward > originalReward) {
             LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.RewardIncrease, false);

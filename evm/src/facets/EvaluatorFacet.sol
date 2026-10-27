@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
@@ -55,7 +56,7 @@ contract EvaluatorFacet {
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
 
@@ -245,7 +246,7 @@ contract EvaluatorFacet {
         evalCfg.evaluationWindow = 0;
         evalCfg.appealWindow = 0;
         if (refund > 0) {
-            if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
+            if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.RefundFailed();
         }
         _forfeitClaimStake(taskId, task, claimant, s);
         if (evalFee > 0) {
@@ -540,7 +541,7 @@ contract EvaluatorFacet {
             if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
         }
         if (remaining > totalAwarded) {
-            if (!s.usdcToken.transfer(requester, remaining - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
+            if (!LibProject.payRequester(s, taskId, remaining - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
         }
     }
 }

@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFeedback } from "../interfaces/ITMPFeedback.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
+import { ITMPProject } from "../interfaces/ITMPProject.sol";
 
 /// @notice Unified application storage for all TaskMarket Diamond facets.
 ///         Stored at a fixed keccak256 slot; new fields must only be appended.
@@ -107,6 +108,21 @@ struct AppStorage {
     // both read as zero on a diamond upgraded into rev027.
     mapping(bytes32 => address) reservedWorkers;
     mapping(address => uint256) workerAgentIds;
+    // Rev028: projects, kept by ProjectFacet and LibProject. IDs run from 1; a task's zero
+    // projectId means it belongs to no project. A project's available budget is counted in
+    // totalLiabilities. projectPrepaid is nonzero only inside createProjectTask: it is what the
+    // project paid for the task being created, so the creation payment checks expect that
+    // amount and no forwarded payment. Appended at the end per the storage-layout rule.
+    uint256 projectCount;
+    mapping(uint256 => ITMPProject.Project) projects;
+    mapping(uint256 => bytes32[]) projectTaskIds;
+    mapping(bytes32 => uint256) taskProjects;
+    mapping(bytes32 => address) taskCreators;
+    uint256 projectPrepaid;
+    // Rev028: operator grants per project and operator, and the operator that created a project
+    // task (zero for an owner-created one).
+    mapping(uint256 => mapping(address => ITMPProject.Grant)) projectGrants;
+    mapping(bytes32 => address) taskOperators;
 }
 
 library LibAppStorage {

@@ -42,7 +42,7 @@ contract RatingFacet {
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         if (task.status != ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskNotAccepted();
         if (rating > 100) revert ITMPCore.RatingMustBe0To100();
 

@@ -13,6 +13,7 @@ import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
+import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { ITMPReservation } from "../../src/interfaces/ITMPReservation.sol";
@@ -446,5 +447,30 @@ library FacetSelectors {
         s[0] = FeedbackFacet.setFeedbackValue.selector;
         s[1] = FeedbackFacet.feedbackValue.selector;
         s[2] = FeedbackFacet.requesterAgentOf.selector;
+    }
+
+    /// @dev rev028: projects. Every ProjectFacet selector is new in rev028.
+    function projectFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](15);
+        s[0] = ProjectFacet.createProject.selector;
+        s[1] = ProjectFacet.topUpProject.selector;
+        s[2] = ProjectFacet.closeProject.selector;
+        s[3] = ProjectFacet.createProjectTask.selector;
+        s[4] = ProjectFacet.getProject.selector;
+        s[5] = ProjectFacet.projectOf.selector;
+        s[6] = ProjectFacet.taskCreatedBy.selector;
+        s[7] = ProjectFacet.projectTaskCount.selector;
+        s[8] = ProjectFacet.projectTasks.selector;
+        s[9] = ProjectFacet.projectCount.selector;
+        s[10] = ProjectFacet.grantOperator.selector;
+        s[11] = ProjectFacet.acceptGrant.selector;
+        s[12] = ProjectFacet.revokeOperator.selector;
+        s[13] = ProjectFacet.getGrant.selector;
+        s[14] = ProjectFacet.taskOperator.selector;
+    }
+
+    /// @dev Every selector rev028 Adds, on any facet.
+    function selectorsAddedRev028() internal pure returns (bytes4[] memory s) {
+        s = projectFacetSelectors();
     }
 }

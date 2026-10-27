@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibReview } from "../libraries/LibReview.sol";
@@ -36,7 +37,7 @@ contract AcceptanceFacet {
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
 
         bytes4 mode = task.mode;
         _validateAcceptSubmission(task, taskId, worker, deliverable, s);
@@ -110,7 +111,7 @@ contract AcceptanceFacet {
         if (mode == AUCTION) {
             uint256 refund = s.taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
             if (refund > 0) {
-                if (!s.usdcToken.transfer(task.requester, refund)) revert ITMPCore.AuctionRefundFailed();
+                if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.AuctionRefundFailed();
             }
         }
 
@@ -264,7 +265,7 @@ contract AcceptanceFacet {
         AppStorage storage s
     ) private {
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.MultiSubmissionOnlyForBountyBenchmark();
         if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) revert ITMPCore.UseEvaluate();
         if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
@@ -350,7 +351,7 @@ contract AcceptanceFacet {
         if (totalFee > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
         }
-        _refundSplitRemainder(task.reward, requester, awards, s);
+        _refundSplitRemainder(taskId, task.reward, awards, s);
 
         emit ITMPCore.RequesterReputation(
             taskId,
@@ -370,18 +371,15 @@ contract AcceptanceFacet {
     /// @dev Each award is rounded down from its share, so the awards can sum to a few base units less
     ///      than the reward; that remainder belongs to the requester, not the pooled balance. Its own
     ///      frame keeps _payMultiAwards under the --ir-minimum stack limit.
-    function _refundSplitRemainder(
-        uint256 reward,
-        address requester,
-        ITMPCore.Award[] memory awards,
-        AppStorage storage s
-    ) private {
+    function _refundSplitRemainder(bytes32 taskId, uint256 reward, ITMPCore.Award[] memory awards, AppStorage storage s)
+        private
+    {
         uint256 totalAwarded = 0;
         for (uint256 i; i < awards.length; ++i) {
             totalAwarded += awards[i].amount;
         }
         if (reward > totalAwarded) {
-            if (!s.usdcToken.transfer(requester, reward - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
+            if (!LibProject.payRequester(s, taskId, reward - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
         }
     }
 

@@ -94,7 +94,7 @@ library LibTaskMarket {
 
         // The forwarder has already moved the stake into escrow as part of the relayed payment,
         // alongside otherForwardedFunds (the reward on createTask).
-        LibGuards._requireReportedPayment(otherForwardedFunds + cfg.evaluatorStake);
+        LibGuards._requireFunding(s, otherForwardedFunds + cfg.evaluatorStake);
 
         // Emitted identically whichever entry point wrote the config, so an indexer sees one
         // event vocabulary for "this task has an evaluator" rather than having to infer it from

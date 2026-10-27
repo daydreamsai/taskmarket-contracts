@@ -94,7 +94,7 @@ contract WorkerFacet {
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         if (task.mode != TMP_PITCH) revert ITMPCore.NotAPitchTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();

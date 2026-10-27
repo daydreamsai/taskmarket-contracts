@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
@@ -72,7 +73,7 @@ contract SettlementFacet {
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.InvalidMode();
         if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
             revert ITMPCore.TaskNotOpen();
@@ -108,7 +109,7 @@ contract SettlementFacet {
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         if (task.mode != CLAIM) revert ITMPCore.NotAClaimTask();
         if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
         if (task.deliverable != bytes32(0)) revert ITMPCore.DeliveryPending();
@@ -167,7 +168,7 @@ contract SettlementFacet {
         uint256 refundAmount = task.reward;
         task.status = ITMPCore.TaskStatus.Expired;
         task.reward = 0;
-        if (!s.usdcToken.transfer(task.requester, refundAmount)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, refundAmount)) revert ITMPCore.RefundFailed();
 
         emit ITMPCore.TaskExpired(taskId, task.requester, refundAmount);
         emit ITMPCore.RequesterReputation(
@@ -260,7 +261,7 @@ contract SettlementFacet {
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
-        if (requester != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, requester);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (task.mode == AUCTION) {
             if (s.taskBids[taskId].length != 0) revert ITMPCore.BidsExist();
@@ -276,7 +277,7 @@ contract SettlementFacet {
         task.status = ITMPCore.TaskStatus.Cancelled;
         uint256 refundAmount = task.reward;
         address requesterAddr = task.requester;
-        if (!s.usdcToken.transfer(requesterAddr, refundAmount)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, refundAmount)) revert ITMPCore.RefundFailed();
         _refundEvaluatorStake(taskId, requesterAddr, s);
 
         // Requester reputation signal for a Bounty/Benchmark cancel: "cancelled_after_submissions"
@@ -392,7 +393,7 @@ contract SettlementFacet {
         task.status = ITMPCore.TaskStatus.Cancelled;
         uint256 refund = task.reward;
         address requesterAddr = task.requester;
-        if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.RefundFailed();
         _refundEvaluatorStake(taskId, requesterAddr, s);
 
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
@@ -423,7 +424,7 @@ contract SettlementFacet {
         uint256 refund = task.reward;
         task.reward = 0;
         address requesterAddr = task.requester;
-        if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.RefundFailed();
         _refundEvaluatorStake(taskId, requesterAddr, s);
         emit ITMPCore.TaskExpired(taskId, requesterAddr, refund);
         LibHooks._onExpireHooks(taskId, s);
@@ -572,7 +573,7 @@ contract SettlementFacet {
     {
         task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
-        if (LibGuards._effectiveSender(s) != task.requester) revert ITMPCore.NotRequester();
+        LibGuards._requireRequester(s, taskId, LibGuards._effectiveSender(s));
         _requireDelivered(taskId, task, s);
     }
 
@@ -606,7 +607,7 @@ contract SettlementFacet {
         if (auction) {
             uint256 refund = s.taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
             if (refund > 0) {
-                if (!s.usdcToken.transfer(task.requester, refund)) revert ITMPCore.AuctionRefundFailed();
+                if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.AuctionRefundFailed();
             }
         }
         emit ITMPCore.TaskCompleted(taskId, task.requester, worker, payment - fee, fee);
@@ -668,7 +669,7 @@ contract SettlementFacet {
         uint256 refund = task.reward;
         task.reward = 0;
         if (refund > 0) {
-            if (!s.usdcToken.transfer(task.requester, refund)) revert ITMPCore.RefundFailed();
+            if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.RefundFailed();
         }
         emit ITMPCore.TaskExpired(taskId, task.requester, refund);
     }
@@ -682,7 +683,7 @@ contract SettlementFacet {
         uint256 stake = evalCfg.evaluatorStake;
         if (stake == 0) return;
         evalCfg.evaluatorStake = 0;
-        if (!s.usdcToken.transfer(requesterAddr, stake)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, stake)) revert ITMPCore.RefundFailed();
         emit ITMPEvaluator.EvaluatorStakeRefunded(taskId, requesterAddr, stake);
     }
 
@@ -716,7 +717,7 @@ contract SettlementFacet {
             s.totalFeesCollected += evaluatorForfeited;
         }
 
-        if (!s.usdcToken.transfer(requesterAddr, refundAmount)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, refundAmount)) revert ITMPCore.RefundFailed();
 
         if (evaluatorForfeited > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, evaluatorForfeited)) revert ITMPCore.ForfeitTransferFailed();
@@ -754,7 +755,7 @@ contract SettlementFacet {
             s.totalFeesCollected += evaluatorForfeited;
         }
 
-        if (!s.usdcToken.transfer(task.requester, refundAmount)) revert ITMPCore.RefundFailed();
+        if (!LibProject.payRequester(s, taskId, refundAmount)) revert ITMPCore.RefundFailed();
 
         if (task.mode == CLAIM && task.stakeAmount > 0) {
             uint256 stake = task.stakeAmount;

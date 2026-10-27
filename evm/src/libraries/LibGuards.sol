@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { AppStorage } from "./LibAppStorage.sol";
+import { LibProject } from "./LibProject.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { IPGTRForwarder } from "../interfaces/IPGTRForwarder.sol";
 import { IPGTRPaymentForwarder } from "../interfaces/IPGTRPaymentForwarder.sol";
@@ -56,6 +57,18 @@ library LibGuards {
         return msg.sender;
     }
 
+    /// @notice Reverts NotRequester unless `caller` may act as the task's requester. Every
+    ///         requester entrypoint checks through here, so who may act for a requester is decided
+    ///         in one place: task.requester, except on a task an operator created in a project,
+    ///         where the grant's terms decide between the operator and the project owner.
+    function _requireRequester(AppStorage storage s, bytes32 taskId, address caller) internal view {
+        if (s.taskOperators[taskId] == address(0)) {
+            if (caller != s.tasks[taskId].requester) revert ITMPCore.NotRequester();
+        } else if (!LibProject.mayAct(s, taskId, caller)) {
+            revert ITMPCore.NotRequester();
+        }
+    }
+
     /// @notice Reverts ForwardedPaymentMismatch unless the calling forwarder reports a payment of
     ///         exactly `expected` for this call. A forwarder that cannot report one (v1) is not
     ///         supported on any payment path.
@@ -65,6 +78,19 @@ library LibGuards {
         } catch {
             revert ITMPCore.ForwardedPaymentMismatch();
         }
+    }
+
+    /// @notice The task-funding check: as _requireReportedPayment, except inside createProjectTask
+    ///         (rev028), where the project has already paid `projectPrepaid` from its budget, so
+    ///         the funding must equal that and the forwarder must report no payment.
+    function _requireFunding(AppStorage storage s, uint256 expected) internal view {
+        uint256 prepaid = s.projectPrepaid;
+        if (prepaid == 0) {
+            _requireReportedPayment(expected);
+            return;
+        }
+        if (expected != prepaid) revert ITMPCore.ForwardedPaymentMismatch();
+        _requireReportedPayment(0);
     }
 
     /// @notice Reverts StakePaymentMismatch unless the calling forwarder reports a payment equal

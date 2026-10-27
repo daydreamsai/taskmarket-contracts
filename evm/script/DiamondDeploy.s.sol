@@ -9,6 +9,7 @@ import { DiamondLoupeFacet } from "../src/facets/DiamondLoupeFacet.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
 import { WorkerFacet } from "../src/facets/WorkerFacet.sol";
+import { ProjectFacet } from "../src/facets/ProjectFacet.sol";
 import { AuctionFacet } from "../src/facets/AuctionFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
@@ -129,6 +130,7 @@ contract DiamondDeploy is Script {
         console.log("SettlementFacet:    ", cuts[9].facetAddress);
         console.log("FeedbackFacet:      ", cuts[10].facetAddress);
         console.log("WorkerFacet:        ", cuts[11].facetAddress);
+        console.log("ProjectFacet:       ", cuts[12].facetAddress);
     }
 
     function _buildCuts(
@@ -142,7 +144,7 @@ contract DiamondDeploy is Script {
         address rating,
         address registry
     ) internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](12);
+        cuts = new IDiamondCut.FacetCut[](13);
         cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
         cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors());
         cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors());
@@ -158,6 +160,7 @@ contract DiamondDeploy is Script {
         );
         cuts[10] = _feedbackCut();
         cuts[11] = _workerCut();
+        cuts[12] = _projectCut();
     }
 
     /// @dev Its own frame keeps _buildCuts under the stack limit.
@@ -172,6 +175,13 @@ contract DiamondDeploy is Script {
     function _workerCut() internal returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut(
             address(new WorkerFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.workerFacetSelectors()
+        );
+    }
+
+    /// @dev rev028: projects. Its own frame keeps _buildCuts under the stack limit.
+    function _projectCut() internal returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(
+            address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()
         );
     }
 }

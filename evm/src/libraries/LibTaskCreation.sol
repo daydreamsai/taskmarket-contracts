@@ -181,7 +181,7 @@ library LibTaskCreation {
             revert ITMPCore.InvalidEvaluator();
         }
         // The reward is the whole payment of an evaluator-less create.
-        LibGuards._requireReportedPayment(s.tasks[taskId].reward);
+        LibGuards._requireFunding(s, s.tasks[taskId].reward);
     }
 
     function _buildAndCheckHooks(bytes32 taskId, ITMPCore.HookConfig calldata hookConfig, AppStorage storage s)
