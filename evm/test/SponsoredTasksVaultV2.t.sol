@@ -12,10 +12,10 @@ import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTask
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
 import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 
-contract Rev030ControllerStandIn { }
+contract VaultV2ControllerStandIn { }
 
 /// @dev A contract wallet (a Safe stand-in) that accepts an ERC-1271 signature from its one key.
-contract Rev030ContractWallet {
+contract VaultV2ContractWallet {
     address public immutable signer;
 
     constructor(address signer_) {
@@ -28,8 +28,8 @@ contract Rev030ContractWallet {
     }
 }
 
-/// @notice Shared rev030 setup: a v2 factory over MockUSDC (EIP-3009 with ERC-1271 support).
-abstract contract Rev030Base is Test {
+/// @notice Shared vault v2 setup: a v2 factory over MockUSDC (EIP-3009 with ERC-1271 support).
+abstract contract VaultV2Base is Test {
     bytes32 internal constant RECEIVE_WITH_AUTHORIZATION_TYPEHASH = keccak256(
         "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
     );
@@ -53,7 +53,7 @@ abstract contract Rev030Base is Test {
     function setUp() public virtual {
         vaultOwner = vm.addr(ownerKey);
         funder = vm.addr(funderKey);
-        controller = address(new Rev030ControllerStandIn());
+        controller = address(new VaultV2ControllerStandIn());
         token = new MockUSDC();
         policy = new SponsoredTaskFeePolicy(address(this), 50, feeRecipient);
         registry = new SponsoredTaskRegistry(address(this));
@@ -95,7 +95,7 @@ abstract contract Rev030Base is Test {
     }
 }
 
-contract SponsoredTasksVaultV2Test is Rev030Base {
+contract SponsoredTasksVaultV2Test is VaultV2Base {
     SponsoredTasksVaultV2 internal vault;
 
     event VaultFunded(address indexed funder, uint256 amount);
@@ -300,7 +300,7 @@ contract SponsoredTasksVaultV2Test is Rev030Base {
     // ---- ERC-1271 owner (a Safe) --------------------------------------------------------------
 
     function test_ContractWalletOwnerSignsThroughErc1271() public {
-        Rev030ContractWallet safe = new Rev030ContractWallet(vm.addr(ownerKey));
+        VaultV2ContractWallet safe = new VaultV2ContractWallet(vm.addr(ownerKey));
         (address safeVaultAddress,) = factory.createVault(address(token), address(safe), keccak256("safe"));
         SponsoredTasksVaultV2 safeVault = SponsoredTasksVaultV2(safeVaultAddress);
         uint256 deadline = vm.getBlockTimestamp() + 1 hours;
@@ -383,7 +383,7 @@ contract SponsoredTasksVaultV2Test is Rev030Base {
     }
 
     function test_ContractWalletFundsThroughErc1271() public {
-        Rev030ContractWallet safe = new Rev030ContractWallet(vm.addr(funderKey));
+        VaultV2ContractWallet safe = new VaultV2ContractWallet(vm.addr(funderKey));
         token.mint(address(safe), 30e6);
         bytes32 nonce = keccak256("safe-fund");
         bytes memory sig = _receiveAuthorization(

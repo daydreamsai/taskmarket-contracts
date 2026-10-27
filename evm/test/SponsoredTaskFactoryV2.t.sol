@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
-import { Rev030Base, Rev030ContractWallet } from "./SponsoredTasksVaultV2.t.sol";
+import { VaultV2Base, VaultV2ContractWallet } from "./SponsoredTasksVaultV2.t.sol";
 
-contract SponsoredTaskFactoryV2Test is Rev030Base {
+contract SponsoredTaskFactoryV2Test is VaultV2Base {
     bytes32 internal constant SALT = keccak256("launch");
 
     event VaultCreated(
@@ -83,7 +83,7 @@ contract SponsoredTaskFactoryV2Test is Rev030Base {
     }
 
     function test_ContractWalletOwnerCreatesThroughErc1271() public {
-        Rev030ContractWallet safe = new Rev030ContractWallet(vm.addr(ownerKey));
+        VaultV2ContractWallet safe = new VaultV2ContractWallet(vm.addr(ownerKey));
         uint256 deadline = vm.getBlockTimestamp() + 1 hours;
         bytes memory sig = _createSig(ownerKey, address(safe), SALT, 0, deadline);
         vm.prank(relayer);

@@ -8,7 +8,7 @@ import { IERC3009Receive } from "./interfaces/IERC3009Receive.sol";
 import { ISponsoredTaskFeeBank } from "./interfaces/ISponsoredTaskFeeBank.sol";
 
 /// @title SponsoredTaskFeeBankDepositor
-/// @notice rev030: deposits fee credit from a depositor's EIP-3009 authorization, so a relayer
+/// @notice Deposits fee credit from a depositor's EIP-3009 authorization, so a relayer
 ///         can submit the deposit and pay its gas. It pulls the fee token from the depositor and
 ///         passes it to the existing fee bank with `depositFor(manager, amount)` in the same call.
 /// @dev Stateless and ownerless: it holds no tokens and no allowance between calls. The manager

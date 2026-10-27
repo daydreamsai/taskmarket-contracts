@@ -6,7 +6,7 @@ import { IERC3009Receive } from "./interfaces/IERC3009Receive.sol";
 import { SponsoredTasksVault } from "./SponsoredTasksVault.sol";
 
 /// @title SponsoredTasksVaultV2
-/// @notice rev030: the v1 vault plus owner actions authorized by the owner's signature and
+/// @notice The v1 vault plus owner actions authorized by the owner's signature and
 ///         funding authorized by the funder's EIP-3009 signature, so anyone (a relayer) can submit
 ///         them and pay the gas. Every v1 entry point is unchanged.
 /// @dev Signed owner actions are EIP-712 typed data in this vault's own domain (the vault is the

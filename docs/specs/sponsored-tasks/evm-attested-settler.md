@@ -1,9 +1,9 @@
-# Rev029 -- EVM attested settler
+# Sponsored Tasks -- EVM attested settler
 
 ## Status
 
 Implemented in `evm/src/hooks/sponsored-task/SponsoredTaskSettler.sol` and
-`evm/src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol`. Not deployed. This revision adds two
+`evm/src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol`. Not deployed. This spec covers two
 standalone contracts; it does not change the Diamond, `AppStorage`, `SponsoredTasksVault`,
 `SponsoredTaskFactory` or `SponsoredTaskHook`.
 

@@ -8,7 +8,7 @@ import { SponsoredTasksVaultV2 } from "./SponsoredTasksVaultV2.sol";
 import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol";
 
 /// @title SponsoredTaskFactoryV2
-/// @notice rev030: permissionless deterministic deployment of `SponsoredTasksVaultV2` clones,
+/// @notice Permissionless deterministic deployment of `SponsoredTasksVaultV2` clones,
 ///         with a relayable create the vault owner authorizes by signature.
 /// @dev Deployed beside the v1 factory, which keeps serving the vaults it made. The
 ///      implementation, controller, and fee policy are fixed for this factory version.

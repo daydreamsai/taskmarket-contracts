@@ -15,7 +15,7 @@ import { ISponsoredTaskSettlerAuthority } from "./interfaces/ISponsoredTaskSettl
 /// @notice The controller of a settler-mode `SponsoredTaskFactory` on an EVM chain that does not
 ///         run the Taskmarket Diamond. The task lives on Base; this contract reserves, releases and
 ///         settles the task's allocation in the remote vault on the signed word of a settler set.
-/// @dev Specified in `docs/specs/erc8195/rev029-evm-attested-settler.md`.
+/// @dev Specified in `docs/specs/sponsored-tasks/evm-attested-settler.md`.
 ///
 ///      Every state-changing call is authorized by EIP-712 signatures bound to this chain's id and
 ///      this contract's address, so anyone may relay it and a signature for one chain or settler

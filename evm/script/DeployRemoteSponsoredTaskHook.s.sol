@@ -14,7 +14,7 @@ interface ISponsoredTaskHookFeeBank {
 
 /// @notice Deploys the Base half of settler mode, `RemoteSponsoredTaskHook`, behind an ERC-1967
 ///         proxy, with its own fee bank and fee bank guard. See
-///         `docs/specs/erc8195/rev029-evm-attested-settler.md`.
+///         `docs/specs/sponsored-tasks/evm-attested-settler.md`.
 /// @dev Required env vars:
 ///
 ///   FORGE_DEV_PRIVATE_KEY                   -- deployer key; owns nothing once this script ends

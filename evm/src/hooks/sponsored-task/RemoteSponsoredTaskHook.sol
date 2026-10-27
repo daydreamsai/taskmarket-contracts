@@ -16,7 +16,7 @@ import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
 /// @title RemoteSponsoredTaskHook
 /// @notice The Base half of settler mode: binds a Taskmarket task to a Sponsored Task vault on a
 ///         remote chain that has no Taskmarket Diamond.
-/// @dev Specified in `docs/specs/erc8195/rev029-evm-attested-settler.md`.
+/// @dev Specified in `docs/specs/sponsored-tasks/evm-attested-settler.md`.
 ///
 ///      At funding it records the commitment `(remoteChainId, vault, token, grossAmount,
 ///      commitmentNonce)`; at completion it commits the verdict's awards; and the permissionless

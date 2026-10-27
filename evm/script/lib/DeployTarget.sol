@@ -13,8 +13,8 @@ library DeployTarget {
     uint256 internal constant BASE_SEPOLIA = 84532;
     uint256 internal constant TEMPO_MAINNET = 4217;
     uint256 internal constant TEMPO_MODERATO = 42431;
-    /// @dev Robinhood Chain (an Arbitrum Orbit chain) runs Sponsored Tasks in settler mode
-    ///      (rev029): a settler-mode factory plus `SponsoredTaskSettler`, with no diamond to upgrade.
+    /// @dev Robinhood Chain (an Arbitrum Orbit chain) runs Sponsored Tasks in settler mode:
+    ///      a settler-mode factory plus `SponsoredTaskSettler`, with no diamond to upgrade.
     uint256 internal constant ROBINHOOD_MAINNET = 4663;
     uint256 internal constant ROBINHOOD_TESTNET = 46630;
 

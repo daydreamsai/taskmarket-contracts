@@ -9,7 +9,7 @@ import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskS
 
 /// @notice Deploys settler mode on a remote EVM chain that has no Taskmarket Diamond: a registry,
 ///         the fee policy, the `SponsoredTaskSettler` and a factory whose controller is the settler.
-///         See `docs/specs/erc8195/rev029-evm-attested-settler.md`.
+///         See `docs/specs/sponsored-tasks/evm-attested-settler.md`.
 /// @dev Required env vars:
 ///
 ///   FORGE_DEV_PRIVATE_KEY                    -- deployer key; owns nothing once the admin accepts

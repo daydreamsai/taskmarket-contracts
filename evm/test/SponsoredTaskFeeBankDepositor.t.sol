@@ -6,9 +6,9 @@ import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { SponsoredTaskFeeBankDepositor } from "../src/hooks/sponsored-task/SponsoredTaskFeeBankDepositor.sol";
 import { ISponsoredTaskFeeBank } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskFeeBank.sol";
-import { Rev030Base, Rev030ContractWallet } from "./SponsoredTasksVaultV2.t.sol";
+import { VaultV2Base, VaultV2ContractWallet } from "./SponsoredTasksVaultV2.t.sol";
 
-contract SponsoredTaskFeeBankDepositorTest is Rev030Base {
+contract SponsoredTaskFeeBankDepositorTest is VaultV2Base {
     SponsoredTaskFeeBank internal bank;
     SponsoredTaskFeeBankDepositor internal depositor;
 
@@ -84,7 +84,7 @@ contract SponsoredTaskFeeBankDepositorTest is Rev030Base {
     }
 
     function test_ContractWalletDepositsThroughErc1271() public {
-        Rev030ContractWallet safe = new Rev030ContractWallet(funder);
+        VaultV2ContractWallet safe = new VaultV2ContractWallet(funder);
         token.mint(address(safe), 10e6);
         uint256 validBefore = vm.getBlockTimestamp() + 1 hours;
         bytes memory sig = _signDeposit(funderKey, address(safe), address(safe), 10e6, "safe", validBefore);

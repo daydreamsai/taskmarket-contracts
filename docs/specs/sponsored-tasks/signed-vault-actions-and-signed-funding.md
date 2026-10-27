@@ -1,10 +1,10 @@
-# Rev030 -- Signed vault owner actions and signed funding
+# Sponsored Tasks -- Signed vault owner actions and signed funding
 
 ## Status
 
 Implemented in `evm/src/hooks/sponsored-task/SponsoredTasksVaultV2.sol`,
 `evm/src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol` and
-`evm/src/hooks/sponsored-task/SponsoredTaskFeeBankDepositor.sol`. Not deployed. This revision adds
+`evm/src/hooks/sponsored-task/SponsoredTaskFeeBankDepositor.sol`. Not deployed. This spec covers
 three contracts. It does not change the Diamond, `AppStorage`, `SponsoredTaskHook`,
 `SponsoredTaskFeeBank`, `SponsoredTaskRegistry` or any deployed vault. `SponsoredTasksVault` (v1)
 moves the bodies of `fund`, `configureManager`, `withdrawAvailable` and `emergencyExitVault` into
@@ -114,11 +114,11 @@ still sees the owner as `msg.sender`. An owner who cannot does so through a v2 v
 
 ## Deployment
 
-Code only in this revision. On each chain:
+Code only so far. On each chain:
 
 1. Deploy `SponsoredTaskFactoryV2(hook, feePolicy, registry)` with the same hook and fee policy as
    the v1 factory, and `SponsoredTaskFeeBankDepositor(feeBank)`
-   (`make deploy-sponsored-task-rev030 <chain>`).
+   (`make deploy-sponsored-task-vault-v2 <chain>`).
 2. The registry owner calls `SponsoredTaskRegistry.setFactory(factoryV2, true)`. The script prints
    that call when the deployer is not the owner.
 3. Record both addresses in the chain registry so the backend indexes the new factory and relays
