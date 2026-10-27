@@ -93,12 +93,18 @@ reads to show the vault's trust tier.
 
 ### Base: `RemoteSponsoredTaskHook`
 
-An opt-in ERC-8195 hook, separate from `SponsoredTaskHook`. It moves no tokens and calls no vault.
+An opt-in ERC-8195 hook, separate from `SponsoredTaskHook`. It calls no vault and moves no project
+tokens; the only token it moves is the per-task creation fee.
 
 - `checkFund` decodes `FundingRequest { remoteChainId, vault, vaultId, token, grossAmount,
   commitmentNonce, epoch, feeBps, feeRecipient, taskTermsHash }`, checks the task terms hash as
   `SponsoredTaskHook` does, rejects a reused `(remoteChainId, vault, commitmentNonce)`, and emits
   `RemoteSponsoredTaskCommitted` with the allocation id above.
+- In the same `checkFund` it charges the manager's `SponsoredTaskFeeBank` credit once, keyed by
+  the task id, exactly as `SponsoredTaskHook` does for a Base-local task. Too little credit reverts
+  `InsufficientCredit` and rolls back the whole task creation, commitment included. The fee is not
+  refunded when the task is cancelled or expires: the settler releases the remote reservation, and
+  the fee stays paid, as for a hook-mode task.
 - `checkComplete` commits the verdict's awards digest. Above `MAX_AWARDS` (8) the commitment is
   marked unsettleable instead of reverting, and the settler releases it.
 - `onCancel`, `onExpire` and the permissionless `finalizeRelease` emit `TerminalReleaseCommitted`.
@@ -143,6 +149,15 @@ can never reserve more than a manager's remaining allowance or the vault's avail
 machine, the stored commitment nonce, the used-digest record and the vault's own allocation state.
 On Base, a commitment nonce can fund only one task per remote vault.
 
+**The same creation fee as hook mode.** A remote task uses Taskmarket on Base exactly as a hook-mode
+task does, so it pays the same flat per-task fee, in USDC on Base, at the moment it commits. The fee
+bank is the remote hook's own: the Base hook's fee bank is held by a `SponsoredTaskFeeBankGuard`,
+which can revoke a charger but never add one, so the remote hook cannot be authorized there. Its
+deploy script copies the Base fee bank's token, fee amount and fee recipient, and puts the new
+bank behind its own guard with the same ceiling, so the two fees start equal and can each only move
+within that ceiling. Managers deposit fee credit into the remote hook's fee bank for remote tasks.
+The hook reads the bank from an immutable, so the proxy's storage layout is unchanged.
+
 **A separate Base hook.** The live `SponsoredTaskHook` is the controller of every Base-local vault.
 Adding a non-token path to it would put every Base vault behind a new upgrade; a separate hook
 leaves it untouched.
@@ -151,5 +166,7 @@ leaves it untouched.
 
 `script/DeploySponsoredTaskSettler.s.sol` deploys, on the remote chain, the registry, the fee
 policy, the settler and a factory whose controller is the settler, and hands every owner role to
-the admin contract. `script/DeployRemoteSponsoredTaskHook.s.sol` deploys the Base hook behind an
-ERC-1967 proxy owned by the admin contract. Neither script registers a Diamond default hook.
+the admin contract. `script/DeployRemoteSponsoredTaskHook.s.sol` deploys, on Base, a fee bank
+copying the Base hook's fee terms, the remote hook behind an ERC-1967 proxy owned by the admin
+contract, and a `SponsoredTaskFeeBankGuard` administered by the admin contract that takes the fee
+bank's ownership with the hook as its only charger. Neither script registers a Diamond default hook.
