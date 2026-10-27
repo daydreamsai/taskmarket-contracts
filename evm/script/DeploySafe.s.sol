@@ -23,7 +23,7 @@ interface ISafeProxyFactory {
 }
 
 /// @notice Deploys a Gnosis/Safe wallet via Safe's own canonical factory, for use as a contract
-///         admin where an EOA is rejected (e.g. SponsoredTaskFeeBankGuard's `AdminMustBeContract`).
+///         admin where an EOA is rejected (e.g. the Sponsored Task factory's `FeeAdminMustBeContract`).
 /// @dev Uses Safe v1.4.1's canonical deployment -- the same three addresses on every chain that
 ///      has them, verified on-chain against Base mainnet (8453) and Base Sepolia (84532) before
 ///      being hardcoded here (see https://github.com/safe-global/safe-deployments,

@@ -21,11 +21,6 @@ export const SponsoredTaskHookABI = [
         "internalType": "contract IERC20"
       },
       {
-        "name": "feeBank_",
-        "type": "address",
-        "internalType": "contract ISponsoredTaskFeeBank"
-      },
-      {
         "name": "registry_",
         "type": "address",
         "internalType": "contract ISponsoredTaskRegistry"
@@ -847,19 +842,6 @@ export const SponsoredTaskHookABI = [
       }
     ],
     "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "feeBank",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract ISponsoredTaskFeeBank"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",

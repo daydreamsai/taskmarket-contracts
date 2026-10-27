@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import { SponsoredTaskCreationFee } from "./SponsoredTaskCreationFee.sol";
 import { SponsoredTasksVaultV2 } from "./SponsoredTasksVaultV2.sol";
 import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol";
 
@@ -11,8 +12,11 @@ import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol"
 /// @notice Permissionless deterministic deployment of `SponsoredTasksVaultV2` clones,
 ///         with a relayable create the vault owner authorizes by signature.
 /// @dev Deployed beside the v1 factory, which keeps serving the vaults it made. The
-///      implementation, controller, and fee policy are fixed for this factory version.
-contract SponsoredTaskFactoryV2 is EIP712 {
+///      implementation, controller, and fee policy are fixed for this factory version. Creating a
+///      vault pays the one-time creation fee (`SponsoredTaskCreationFee`) from the creator: by
+///      allowance for `createVault` and `createVaultBySig`, or by an EIP-3009 authorization bound to
+///      the signed create for `createVaultBySigWithFeeAuthorization`.
+contract SponsoredTaskFactoryV2 is EIP712, SponsoredTaskCreationFee {
     uint32 public constant IMPLEMENTATION_VERSION = 2;
 
     bytes32 public constant CREATE_VAULT_TYPEHASH =
@@ -47,9 +51,19 @@ contract SponsoredTaskFactoryV2 is EIP712 {
         bytes32 userSalt
     );
 
-    constructor(address controller_, address feePolicy_, ISponsoredTaskRegistry registry_)
-        EIP712("SponsoredTaskFactory", "2")
-    {
+    /// @notice The creator's EIP-3009 authorization paying the creation fee of one signed create.
+    struct FeeAuthorization {
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes signature;
+    }
+
+    constructor(
+        address controller_,
+        address feePolicy_,
+        ISponsoredTaskRegistry registry_,
+        CreationFeeConfig memory creationFee_
+    ) EIP712("SponsoredTaskFactory", "2") SponsoredTaskCreationFee(creationFee_) {
         if (controller_ == address(0) || feePolicy_ == address(0) || address(registry_) == address(0)) {
             revert ZeroAddress();
         }
@@ -70,7 +84,8 @@ contract SponsoredTaskFactoryV2 is EIP712 {
         external
         returns (address vault, bytes32 vaultId)
     {
-        return _createVault(msg.sender, token, vaultOwner, userSalt);
+        (vault, vaultId) = _createVault(msg.sender, token, vaultOwner, userSalt);
+        _collectCreationFee(vault, msg.sender);
     }
 
     /// @notice Create a vault the owner authorized by signature, so a relayer can submit it. The
@@ -83,15 +98,40 @@ contract SponsoredTaskFactoryV2 is EIP712 {
         uint256 deadline,
         bytes calldata signature
     ) external returns (address vault, bytes32 vaultId) {
-        if (block.timestamp > deadline) revert CreateSignatureExpired(deadline);
-        if (vaultOwner == address(0)) revert ZeroAddress();
-        uint256 nonce = createNonces[vaultOwner];
-        bytes32 digest = _hashTypedDataV4(
-            keccak256(abi.encode(CREATE_VAULT_TYPEHASH, token, vaultOwner, userSalt, nonce, deadline))
+        _useCreateSignature(token, vaultOwner, userSalt, deadline, signature);
+        (vault, vaultId) = _createVault(vaultOwner, token, vaultOwner, userSalt);
+        _collectCreationFee(vault, vaultOwner);
+    }
+
+    /// @notice `createVaultBySig` with the creation fee paid by the owner's EIP-3009
+    ///         authorization to this factory, so a relayer can submit a create for an owner who
+    ///         holds only the fee token. The authorization's nonce must be
+    ///         `feeAuthorizationNonce(vaultOwner, createNonces[vaultOwner])`, which ties it to this
+    ///         one signed create.
+    function createVaultBySigWithFeeAuthorization(
+        address token,
+        address vaultOwner,
+        bytes32 userSalt,
+        uint256 deadline,
+        bytes calldata signature,
+        FeeAuthorization calldata feeAuthorization
+    ) external returns (address vault, bytes32 vaultId) {
+        uint256 nonce = _useCreateSignature(token, vaultOwner, userSalt, deadline, signature);
+        (vault, vaultId) = _createVault(vaultOwner, token, vaultOwner, userSalt);
+        _collectCreationFeeWithAuthorization(
+            vault,
+            vaultOwner,
+            feeAuthorization.validAfter,
+            feeAuthorization.validBefore,
+            feeAuthorizationNonce(vaultOwner, nonce),
+            feeAuthorization.signature
         );
-        if (!SignatureChecker.isValidSignatureNow(vaultOwner, digest, signature)) revert InvalidCreateSignature();
-        createNonces[vaultOwner] = nonce + 1;
-        return _createVault(vaultOwner, token, vaultOwner, userSalt);
+    }
+
+    /// @notice The EIP-3009 nonce a vault owner signs to pay the fee of the signed create that
+    ///         carries `createNonce`.
+    function feeAuthorizationNonce(address vaultOwner, uint256 createNonce) public view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), vaultOwner, createNonce));
     }
 
     /// @notice The EIP-712 digest a vault owner signs for `createVaultBySig`.
@@ -144,6 +184,23 @@ contract SponsoredTaskFactoryV2 is EIP712 {
         registry.registerVault(vault, vaultId, IMPLEMENTATION_VERSION);
 
         emit VaultCreated(vaultId, vault, vaultOwner, creator, token, block.chainid, IMPLEMENTATION_VERSION, userSalt);
+    }
+
+    function _useCreateSignature(
+        address token,
+        address vaultOwner,
+        bytes32 userSalt,
+        uint256 deadline,
+        bytes calldata signature
+    ) private returns (uint256 nonce) {
+        if (block.timestamp > deadline) revert CreateSignatureExpired(deadline);
+        if (vaultOwner == address(0)) revert ZeroAddress();
+        nonce = createNonces[vaultOwner];
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(abi.encode(CREATE_VAULT_TYPEHASH, token, vaultOwner, userSalt, nonce, deadline))
+        );
+        if (!SignatureChecker.isValidSignatureNow(vaultOwner, digest, signature)) revert InvalidCreateSignature();
+        createNonces[vaultOwner] = nonce + 1;
     }
 
     function _deploymentSalt(address creator, address vaultOwner, address token, bytes32 userSalt)

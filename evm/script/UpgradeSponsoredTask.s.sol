@@ -5,7 +5,6 @@ import { Script, console } from "forge-std/Script.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import { ISponsoredTaskFeeBank } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskFeeBank.sol";
 import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskRegistry.sol";
 
 /// @title UpgradeSponsoredTask — deploy a new SponsoredTaskHook implementation and upgrade the
@@ -14,7 +13,7 @@ import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/I
 ///         or its external interface. The proxy address and every
 ///         in-flight TaskAllocation stay exactly as they are -- only the code behind the proxy
 ///         changes. Mirrors UpgradeRewardHook.s.sol's role for TaskTokenRewardHook.
-/// @dev    Unlike TaskTokenRewardHook, this hook's `taskmarket`/`usdc`/`feeBank`/`registry` are
+/// @dev    Unlike TaskTokenRewardHook, this hook's `taskmarket`/`usdc`/`registry` are
 ///         `immutable` and baked into the implementation's own bytecode at construction, so this
 ///         script must re-supply the exact same values the current proxy was deployed with --
 ///         re-read them from the live proxy rather than from env vars, so a stale or wrong env
@@ -23,7 +22,10 @@ import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/I
 ///   FORGE_DEV_PRIVATE_KEY           — owner key (must match the hook proxy's own owner())
 ///   FORGE_SPONSORED_TASK_HOOK_ADDRESS — the EXISTING SponsoredTaskHook proxy to upgrade in place
 ///
-/// Once the hook is owned by the guard-admin Safe or timelock (every deployment from
+/// Upgrading a hook deployed with a per-task creation fee to this implementation stops that
+/// charge: the current implementation takes no fee at task creation.
+///
+/// Once the hook is owned by the admin Safe or timelock (every deployment from
 /// DeploySponsoredTask.s.sol is), the deployer key cannot upgrade it. In that case this script
 /// deploys the new implementation only and prints the `upgradeToAndCall` target and calldata for
 /// the hook owner to propose and execute; it never calls the proxy itself.
@@ -37,14 +39,13 @@ contract UpgradeSponsoredTask is Script {
 
         address diamond = hook.diamond();
         IERC20 usdc = hook.usdc();
-        ISponsoredTaskFeeBank feeBank = hook.feeBank();
         ISponsoredTaskRegistry registry = hook.registry();
 
         bool senderOwnsHook = hook.owner() == vm.addr(ownerKey);
 
         vm.startBroadcast(ownerKey);
 
-        address newImplementation = address(new SponsoredTaskHook(diamond, usdc, feeBank, registry));
+        address newImplementation = address(new SponsoredTaskHook(diamond, usdc, registry));
         if (senderOwnsHook) hook.upgradeToAndCall(newImplementation, "");
 
         vm.stopBroadcast();

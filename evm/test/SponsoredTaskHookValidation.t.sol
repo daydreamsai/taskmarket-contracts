@@ -11,8 +11,8 @@ import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTyp
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -36,7 +36,6 @@ contract SponsoredTaskHookValidationTest is Test {
     SponsoredTaskFeePolicy private feePolicy;
     SponsoredTaskRegistry private registry;
     SponsoredTaskFactory private factory;
-    SponsoredTaskFeeBank private feeBank;
     SponsoredTaskHook private hook;
     SponsoredTasksVault private vault;
 
@@ -46,11 +45,11 @@ contract SponsoredTaskHookValidationTest is Test {
         projectToken = new MockERC20("Project", "PROJECT", 18, address(this));
         feePolicy = new SponsoredTaskFeePolicy(address(this), TOKEN_FEE_BPS, TOKEN_FEE_RECIPIENT);
         registry = new SponsoredTaskRegistry(address(this));
-        feeBank = new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), 1_000_000, CREATION_FEE_RECIPIENT);
-        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, registry);
-        feeBank.setCharger(address(hook), true);
+        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        factory = new SponsoredTaskFactory(address(hook), address(feePolicy), registry);
+        factory = new SponsoredTaskFactory(
+            address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256("hook-vault"));
         vault = SponsoredTasksVault(vaultAddress);
@@ -60,10 +59,6 @@ contract SponsoredTaskHookValidationTest is Test {
         vault.fund(GROSS * 100);
 
         usdc.mint(MANAGER, 10_000_000);
-        vm.startPrank(MANAGER);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(10_000_000);
-        vm.stopPrank();
 
         market.primeTask(TASK_ID, MANAGER, address(usdc), NATIVE_REWARD, TMP_BOUNTY, address(hook));
     }
@@ -74,37 +69,20 @@ contract SponsoredTaskHookValidationTest is Test {
 
     function test_ConstructorRejectsZeroDependencies() external {
         vm.expectRevert(SponsoredTaskHook.ZeroAddress.selector);
-        new SponsoredTaskHook(address(market), IERC20(address(0)), feeBank, registry);
+        new SponsoredTaskHook(address(market), IERC20(address(0)), registry);
 
         vm.expectRevert(SponsoredTaskHook.ZeroAddress.selector);
-        new SponsoredTaskHook(address(market), IERC20(address(usdc)), SponsoredTaskFeeBank(address(0)), registry);
-
-        vm.expectRevert(SponsoredTaskHook.ZeroAddress.selector);
-        new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, SponsoredTaskRegistry(address(0)));
+        new SponsoredTaskHook(address(market), IERC20(address(usdc)), SponsoredTaskRegistry(address(0)));
     }
 
     function test_ConstructorRejectsNonContractDependencies() external {
         address eoaToken = makeAddr("eoaToken");
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskHook.InvalidContract.selector, eoaToken));
-        new SponsoredTaskHook(address(market), IERC20(eoaToken), feeBank, registry);
-
-        address eoaFeeBank = makeAddr("eoaFeeBank");
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskHook.InvalidContract.selector, eoaFeeBank));
-        new SponsoredTaskHook(address(market), IERC20(address(usdc)), SponsoredTaskFeeBank(eoaFeeBank), registry);
+        new SponsoredTaskHook(address(market), IERC20(eoaToken), registry);
 
         address eoaRegistry = makeAddr("eoaRegistry");
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskHook.InvalidContract.selector, eoaRegistry));
-        new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, SponsoredTaskRegistry(eoaRegistry));
-    }
-
-    function test_ConstructorRejectsFeeBankWithMismatchedPaymentToken() external {
-        MockERC20 otherToken = new MockERC20("Other", "OTH", 6, address(this));
-        SponsoredTaskFeeBank mismatchedFeeBank =
-            new SponsoredTaskFeeBank(address(this), IERC20(address(otherToken)), 1_000_000, CREATION_FEE_RECIPIENT);
-        vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTaskHook.WrongPaymentToken.selector, address(usdc), address(otherToken))
-        );
-        new SponsoredTaskHook(address(market), IERC20(address(usdc)), mismatchedFeeBank, registry);
+        new SponsoredTaskHook(address(market), IERC20(address(usdc)), SponsoredTaskRegistry(eoaRegistry));
     }
 
     // ---------------------------------------------------------------------
@@ -139,7 +117,9 @@ contract SponsoredTaskHookValidationTest is Test {
 
     function test_FundRejectsVaultWithWrongController() external {
         address foreignController = address(new DummyController());
-        SponsoredTaskFactory otherFactory = new SponsoredTaskFactory(foreignController, address(feePolicy), registry);
+        SponsoredTaskFactory otherFactory = new SponsoredTaskFactory(
+            foreignController, address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
         registry.setFactory(address(otherFactory), true);
         (address foreignVaultAddress,) =
             otherFactory.createVault(address(projectToken), address(this), keccak256("foreign-vault"));

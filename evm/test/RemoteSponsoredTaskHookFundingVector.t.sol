@@ -2,11 +2,9 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
 /// @notice Replays the cross-chain funding vector the backend builds
@@ -16,7 +14,6 @@ import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 contract RemoteSponsoredTaskHookFundingVectorTest is Test {
     string private constant VECTOR = "../docs/specs/sponsored-tasks/vectors/remote-funding-hookdata-v1.json";
     uint256 private constant REWARD = 1_000_000;
-    uint256 private constant CREATION_FEE = 1_000_000;
 
     function testBaseTaskFundedFromRobinhoodVault() public {
         _replay("baseFromRobinhood");
@@ -80,18 +77,8 @@ contract RemoteSponsoredTaskHookFundingVectorTest is Test {
 
         market = new MockTaskmarketForSponsoredTask();
         MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
-        SponsoredTaskFeeBank feeBank =
-            new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), CREATION_FEE, address(0xC0FFEE));
-        deployCodeTo(
-            "RemoteSponsoredTaskHook.sol:RemoteSponsoredTaskHook", abi.encode(address(market), feeBank), hookAddress
-        );
+        deployCodeTo("RemoteSponsoredTaskHook.sol:RemoteSponsoredTaskHook", abi.encode(address(market)), hookAddress);
         hook = RemoteSponsoredTaskHook(hookAddress);
-        feeBank.setCharger(hookAddress, true);
-        usdc.mint(manager, CREATION_FEE);
-        vm.startPrank(manager);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(CREATION_FEE);
-        vm.stopPrank();
 
         market.primeTask(taskId, manager, address(usdc), REWARD, TMP_BOUNTY, hookAddress);
         market.setContent(taskId, bytes32(0), "");

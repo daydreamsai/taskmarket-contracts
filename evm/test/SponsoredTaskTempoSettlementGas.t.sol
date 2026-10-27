@@ -10,8 +10,8 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -46,12 +46,11 @@ contract SponsoredTaskTempoSettlementGasTest is Test {
         MockERC20 projectToken = new MockERC20("Project", "PROJECT", 18, address(this));
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(address(this), TOKEN_FEE_BPS, address(0xFEE1));
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
-        SponsoredTaskFeeBank feeBank =
-            new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), 1_000_000, address(0xFEE2));
-        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, registry);
-        feeBank.setCharger(address(hook), true);
+        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(address(hook), address(feePolicy), registry);
+        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+            address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256("tempo-gas"));
         vault = SponsoredTasksVault(vaultAddress);
@@ -61,10 +60,6 @@ contract SponsoredTaskTempoSettlementGasTest is Test {
         vault.fund(GROSS * 100);
 
         usdc.mint(MANAGER, 100_000_000);
-        vm.startPrank(MANAGER);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(100_000_000);
-        vm.stopPrank();
     }
 
     function testMaxAwardVerdictCommitsWithinTempoStipend() external {

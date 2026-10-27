@@ -2,11 +2,13 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
 
 /// @notice Covers SponsoredTasksVault's own direct-call validation branches -- `fund`'s
@@ -28,7 +30,9 @@ contract SponsoredTasksVaultValidationTest is Test {
         token = new MockERC20("Project", "PROJECT", 18, address(this));
         feePolicy = new SponsoredTaskFeePolicy(address(this), 50, makeAddr("feeRecipient"));
         registry = new SponsoredTaskRegistry(address(this));
-        factory = new SponsoredTaskFactory(controller, address(feePolicy), registry);
+        factory = new SponsoredTaskFactory(
+            controller, address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(token), address(this), keccak256("validation-vault"));
         vault = SponsoredTasksVault(vaultAddress);

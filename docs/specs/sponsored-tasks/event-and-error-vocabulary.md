@@ -84,15 +84,12 @@ award list it signs.
 | `SponsoredTaskDefaultedByOwner(taskId, vaultId, allocationId)` | `task_defaulted_by_owner` | On Solana the same row is derived (section 5). |
 | `SponsoredTaskUnsettleableAwardCount(taskId, allocationId, awardCount)` | `unsettleable_award_count` | |
 
-### Factory, registry, fee policy, fee bank and guard (EVM-only)
+### Factory, registry and fee policy (EVM-only)
 
 `SponsoredTaskFactory.VaultCreated`, `SponsoredTaskRegistry.FactoryAuthorizationUpdated` and
-`VaultRegistered`, `SponsoredTaskFeePolicy.FeeTermsUpdated`, the fee bank's
-`ChargerAuthorizationUpdated`, `CreditDeposited`, `CreditWithdrawn`, `FeeCharged`,
-`FeeChargeReplayed` and `FeeConfigUpdated`, and the guard's `ChargerRevoked`,
-`FeeBankOwnershipAccepted` and `FutureFeeConfigUpdated` are EVM-only. Solana vaults are created
-directly by `create_vault` at a PDA, with no factory or registry, and the 1 USDC creation fee for
-a Solana vault is charged on Base through the same fee bank. `VaultCreated` and `VaultRegistered`
+`VaultRegistered`, `SponsoredTaskFeePolicy.FeeTermsUpdated`, and the factory's
+`CreationFeeUpdated` and `CreationFeePaid` are EVM-only. Solana vaults are created directly by
+`create_vault` at a PDA, with no factory or registry. `VaultCreated` and `VaultRegistered`
 feed the `vault_created` row; the rest project to EVM-specific rows outside this vocabulary.
 
 ## 2. Error map
@@ -151,20 +148,16 @@ enforced by an account constraint or seed derivation and surfaces as a framework
 (`SponsoredTaskTerms`) are Base-only: they guard the task lifecycle and award calculation, which
 stay on Base for every vault chain.
 
-### Factory, registry, fee policy, fee bank and guard (EVM-only)
+### Factory, registry and fee policy (EVM-only)
 
-`SponsoredTaskFactory` (`ZeroAddress`, `InvalidContract`, `VaultAlreadyExists`),
+`SponsoredTaskFactory` (`ZeroAddress`, `InvalidContract`, `VaultAlreadyExists`, and from
+`SponsoredTaskCreationFee` `FeeAdminMustBeContract`, `FeeTokenRequired`, `FeeCeilingExceeded`,
+`FeeRecipientRequired`, `FeeRecipientInvalid`, `FeeTransferAmountMismatch`,
+`OwnershipRenunciationDisabled`),
 `SponsoredTaskRegistry` (`ZeroAddress`, `InvalidContract`, `UnauthorizedFactory`,
 `VaultAlreadyRegistered`, `VaultIdentityMismatch`, `VaultNotActive`,
-`InvalidVaultConfiguration`), `SponsoredTaskFeePolicy` (`FeeBpsTooHigh`, `FeeRecipientRequired`),
-`ISponsoredTaskFeeBank` (`ChargerRequired`, `FeeRecipientRequired`, `FeeRecipientIsBank`,
-`FeeTokenRequired`, `InsufficientCredit`, `InvalidAmount`, `InvalidManager`, `InvalidRecipient`,
-`InvalidUniqueKey`, `TokenTransferAmountMismatch`, `TokenRecipientAmountMismatch`,
-`UnauthorizedCharger`, `UniqueKeyConflict`) and `SponsoredTaskFeeBankGuard`
-(`AdminMustBeContract`, `AlreadyAcceptedFeeBankOwnership`, `FeeBankNotControlled`,
-`FeeBankPendingOwnerMismatch`, `FeeBankRequired`, `FeeCeilingExceeded`, `HookFeeBankMismatch`,
-`HookFeeBankQueryFailed`, `HookNotAuthorized`, `HookRequired`, `OwnershipRenunciationDisabled`)
-are EVM-only for the same reason as their events. A Solana vault is created by `create_vault`, so
+`InvalidVaultConfiguration`) and `SponsoredTaskFeePolicy` (`FeeBpsTooHigh`,
+`FeeRecipientRequired`) are EVM-only for the same reason as their events. A Solana vault is created by `create_vault`, so
 an already-existing vault is the Anchor `init` failure; a duplicate `vault_id` for the same mint
 and sponsor is the same PDA.
 

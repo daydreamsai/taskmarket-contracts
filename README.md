@@ -35,8 +35,6 @@ Vaults are clones: find them with the factory's `vaultCount()` and `vaultAt(inde
 | --------------------------- | -------------------------------------------- |
 | Sponsored Task hook (proxy) | `0x6031aFC2df6a03B08826aa75F90D3890B825618b` |
 | Vault factory               | `0x92076c62558b4f77Bddd3ca8E00271128AfeD818` |
-| Fee bank                    | `0x407852432810342e77FEd378bE6C1D3336b0913A` |
-| Fee bank guard              | `0x871f75350D59878f3d9d26E743ec220E706F7613` |
 | Registry                    | `0xd622e5f875c33e08708CC1E14b0e71870ba5b398` |
 | Fee policy                  | `0x31dB23CBf958f1286521b3dE2A0Ee6940380a7fb` |
 | USDC                        | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
@@ -48,8 +46,6 @@ Vaults are clones: find them with the factory's `vaultCount()` and `vaultAt(inde
 | --------------------------- | -------------------------------------------- |
 | Sponsored Task hook (proxy) | `0x3BACEAAb845CC195f00cbC4929CC2a8e4B82E46B` |
 | Vault factory               | `0xec2b7e70edB7738199549A4e45c2d34EA2B9b929` |
-| Fee bank                    | `0xbCC7D52B0661C866D6087b41B302c37b0B193761` |
-| Fee bank guard              | `0x26Ab2589F08f168747937d3b0b9ac000742adF63` |
 | Registry                    | `0x871f75350D59878f3d9d26E743ec220E706F7613` |
 | Fee policy                  | `0xb42e8297d5FdBCC2c07Ec69D79CF8f46FB1c0374` |
 | USDC                        | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
@@ -57,15 +53,13 @@ Vaults are clones: find them with the factory's `vaultCount()` and `vaultAt(inde
 
 ### Tempo Testnet (42431)
 
-Rewards and the fee bank use OUSD (6 decimals) instead of USDC, and gas is paid in a TIP-20 fee
+Rewards and the vault creation fee use OUSD (6 decimals) instead of USDC, and gas is paid in a TIP-20 fee
 token rather than a native coin.
 
 | Contract                    | Address                                      |
 | --------------------------- | -------------------------------------------- |
 | Sponsored Task hook (proxy) | `0x9af5D54B90FCd88F22a190d055a7A98f5aB43CcF` |
 | Vault factory               | `0x942F2bF7105eC73797B2530Ba00D293330fBD613` |
-| Fee bank                    | `0x5e407Eb0deB4216a59D46f736A7b6d00476909e1` |
-| Fee bank guard              | `0x105Df5af5735045a1c602eeeBEAe0876ecCcA7E2` |
 | Registry                    | `0x06AB8249E0352B82E8B42d3e14ABBd4FA14Fa716` |
 | Fee policy                  | `0x199354b8Bdb4757C1F5B81866e6cf2A503AB7af5` |
 | OUSD                        | `0x20c0000000000000000000006a37da5c996874be` |

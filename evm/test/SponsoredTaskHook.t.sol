@@ -12,8 +12,8 @@ import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTyp
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockSponsoredTasksVault } from "./mocks/MockSponsoredTasksVault.sol";
 
@@ -237,7 +237,6 @@ contract SponsoredTaskHookTest is Test {
     SponsoredTaskFeePolicy private feePolicy;
     SponsoredTaskRegistry private registry;
     SponsoredTaskFactory private factory;
-    SponsoredTaskFeeBank private feeBank;
     SponsoredTaskHook private hook;
     SponsoredTasksVault private vault;
 
@@ -247,11 +246,11 @@ contract SponsoredTaskHookTest is Test {
         projectToken = new MockERC20("Project", "PROJECT", 18, address(this));
         feePolicy = new SponsoredTaskFeePolicy(address(this), TOKEN_FEE_BPS, TOKEN_FEE_RECIPIENT);
         registry = new SponsoredTaskRegistry(address(this));
-        feeBank = new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), 1_000_000, CREATION_FEE_RECIPIENT);
-        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, registry);
-        feeBank.setCharger(address(hook), true);
+        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        factory = new SponsoredTaskFactory(address(hook), address(feePolicy), registry);
+        factory = new SponsoredTaskFactory(
+            address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
         registry.setFactory(address(factory), true);
         (address vaultAddress, bytes32 createdVaultId) =
             factory.createVault(address(projectToken), address(this), keccak256("hook-vault"));
@@ -263,15 +262,11 @@ contract SponsoredTaskHookTest is Test {
         vault.fund(GROSS * 100);
 
         usdc.mint(MANAGER, 10_000_000);
-        vm.startPrank(MANAGER);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(10_000_000);
-        vm.stopPrank();
 
         market.primeTask(TASK_ID, MANAGER, address(usdc), NATIVE_REWARD, TMP_BOUNTY, address(hook));
     }
 
-    function testLocalFundingAtomicallyReservesGrossAndChargesOneDollar() external {
+    function testLocalFundingAtomicallyReservesGrossAndChargesNoFee() external {
         _fundLocal();
 
         SponsoredTaskTypes.Allocation memory reserved = _vaultAllocation(vault, TASK_ID);
@@ -279,9 +274,9 @@ contract SponsoredTaskHookTest is Test {
         assertEq(reserved.manager, MANAGER);
         assertEq(reserved.taskId, TASK_ID);
         assertEq(uint8(reserved.status), uint8(SponsoredTaskTypes.AllocationStatus.Reserved));
-        assertEq(feeBank.creditOf(MANAGER), 9_000_000);
-        assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), 1_000_000);
-        assertTrue(feeBank.isCharged(TASK_ID));
+        // Task creation charges nothing; the one-time fee is paid when the vault is created.
+        assertEq(usdc.balanceOf(MANAGER), 10_000_000);
+        assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), 0);
     }
 
     function testTaskTermsCommitmentBindsTaskmarketUsdcReward() external {
@@ -291,16 +286,12 @@ contract SponsoredTaskHookTest is Test {
         assertTrue(original != changed);
     }
 
-    function testInsufficientCreationFeeRollsBackReservation() external {
+    function testManagerWithoutUsdcCanStillCreateATask() external {
         vm.prank(MANAGER);
-        feeBank.withdrawCredit(10_000_000, MANAGER);
+        usdc.transfer(address(0xDEAD), 10_000_000);
 
-        bytes memory hookData = _localHookData(TASK_ID);
-        vm.expectRevert();
-        market.callCheckFund(hook, TASK_ID, hookData);
-
-        assertEq(uint8(_vaultAllocation(vault, TASK_ID).status), uint8(SponsoredTaskTypes.AllocationStatus.None));
-        assertEq(vault.totalReserved(), 0);
+        _fundLocal();
+        assertEq(uint8(_vaultAllocation(vault, TASK_ID).status), uint8(SponsoredTaskTypes.AllocationStatus.Reserved));
     }
 
     function testUnregisteredLookalikeVaultCannotAdvertiseAnUnbackedSponsoredTask() external {
@@ -323,8 +314,6 @@ contract SponsoredTaskHookTest is Test {
 
         vm.expectRevert(SponsoredTaskHook.VaultMismatch.selector);
         market.callCheckFund(hook, TASK_ID, hookData);
-        assertEq(feeBank.creditOf(MANAGER), 10_000_000);
-        assertFalse(feeBank.isCharged(TASK_ID));
         assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHook.HookStatus.None));
     }
 

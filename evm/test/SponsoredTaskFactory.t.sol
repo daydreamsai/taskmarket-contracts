@@ -2,9 +2,11 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
@@ -30,7 +32,9 @@ contract SponsoredTaskFactoryTest is Test {
         token = new MockERC20("Project", "PROJECT", 18, address(this));
         policy = new SponsoredTaskFeePolicy(policyOwner, 50, feeRecipient);
         registry = new SponsoredTaskRegistry(address(this));
-        factory = new SponsoredTaskFactory(controller, address(policy), registry);
+        factory = new SponsoredTaskFactory(
+            controller, address(policy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
         registry.setFactory(address(factory), true);
     }
 
@@ -151,29 +155,45 @@ contract SponsoredTaskFactoryTest is Test {
 
     function test_ConstructorValidatesControllerAndFeePolicy() public {
         vm.expectRevert(SponsoredTaskFactory.ZeroAddress.selector);
-        new SponsoredTaskFactory(address(0), address(policy), registry);
+        new SponsoredTaskFactory(
+            address(0), address(policy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
 
         vm.expectRevert(SponsoredTaskFactory.ZeroAddress.selector);
-        new SponsoredTaskFactory(controller, address(0), registry);
+        new SponsoredTaskFactory(controller, address(0), registry, SponsoredTaskFeeConfig.none(IERC20(address(token))));
 
         vm.expectRevert(SponsoredTaskFactory.ZeroAddress.selector);
-        new SponsoredTaskFactory(controller, address(policy), ISponsoredTaskRegistry(address(0)));
+        new SponsoredTaskFactory(
+            controller,
+            address(policy),
+            ISponsoredTaskRegistry(address(0)),
+            SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
 
         address notPolicy = makeAddr("notPolicy");
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskFactory.InvalidContract.selector, notPolicy));
-        new SponsoredTaskFactory(controller, notPolicy, registry);
+        new SponsoredTaskFactory(controller, notPolicy, registry, SponsoredTaskFeeConfig.none(IERC20(address(token))));
 
         address notController = makeAddr("notController");
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskFactory.InvalidContract.selector, notController));
-        new SponsoredTaskFactory(notController, address(policy), registry);
+        new SponsoredTaskFactory(
+            notController, address(policy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
 
         address notRegistry = makeAddr("notRegistry");
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskFactory.InvalidContract.selector, notRegistry));
-        new SponsoredTaskFactory(controller, address(policy), ISponsoredTaskRegistry(notRegistry));
+        new SponsoredTaskFactory(
+            controller,
+            address(policy),
+            ISponsoredTaskRegistry(notRegistry),
+            SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
     }
 
     function test_CreateVaultRequiresAuthorizedFactoryAndRollsBackClone() public {
-        SponsoredTaskFactory unauthorized = new SponsoredTaskFactory(controller, address(policy), registry);
+        SponsoredTaskFactory unauthorized = new SponsoredTaskFactory(
+            controller, address(policy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
         address predicted = unauthorized.predictVault(creator, vaultOwner, address(token), USER_SALT);
 
         vm.prank(creator);
@@ -191,5 +211,32 @@ contract SponsoredTaskFactoryTest is Test {
         SponsoredTasksVault implementation = SponsoredTasksVault(factory.implementation());
         vm.expectRevert();
         implementation.initialize(keccak256("implementation"), address(token), vaultOwner, controller, address(policy));
+    }
+
+    function test_CreateVaultPaysTheOneTimeCreationFee() public {
+        MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
+        address creationFeeRecipient = makeAddr("creationFeeRecipient");
+        SponsoredTaskFactory charging = new SponsoredTaskFactory(
+            controller,
+            address(policy),
+            registry,
+            SponsoredTaskFeeConfig.charging(IERC20(address(usdc)), 1_000_000, creationFeeRecipient)
+        );
+        registry.setFactory(address(charging), true);
+        usdc.mint(creator, 1_000_000);
+
+        vm.prank(creator);
+        vm.expectRevert();
+        charging.createVault(address(token), vaultOwner, USER_SALT);
+
+        vm.startPrank(creator);
+        usdc.approve(address(charging), 1_000_000);
+        (address vault,) = charging.createVault(address(token), vaultOwner, USER_SALT);
+        vm.stopPrank();
+
+        assertTrue(charging.isVault(vault));
+        assertEq(usdc.balanceOf(creationFeeRecipient), 1_000_000);
+        assertEq(usdc.balanceOf(creator), 0);
+        assertEq(usdc.balanceOf(address(charging)), 0);
     }
 }

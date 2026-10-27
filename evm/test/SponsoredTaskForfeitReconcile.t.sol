@@ -10,7 +10,7 @@ import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTyp
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
@@ -49,7 +49,6 @@ contract SponsoredTaskForfeitReconcileTest is Test {
     MockTaskmarketForSponsoredTask private market;
     MockERC20 private usdc;
     MockERC20 private projectToken;
-    SponsoredTaskFeeBank private feeBank;
     SponsoredTaskHook private hook;
     SponsoredTasksVault private vault;
 
@@ -60,11 +59,11 @@ contract SponsoredTaskForfeitReconcileTest is Test {
 
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(address(this), TOKEN_FEE_BPS, TOKEN_FEE_RECIPIENT);
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
-        feeBank = new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), 1_000_000, CREATION_FEE_RECIPIENT);
-        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, registry);
-        feeBank.setCharger(address(hook), true);
+        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(address(hook), address(feePolicy), registry);
+        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+            address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256("forfeit-vault"));
         vault = SponsoredTasksVault(vaultAddress);
@@ -74,10 +73,6 @@ contract SponsoredTaskForfeitReconcileTest is Test {
         vault.fund(GROSS * 100);
 
         usdc.mint(MANAGER, 10_000_000);
-        vm.startPrank(MANAGER);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(10_000_000);
-        vm.stopPrank();
 
         market.primeTask(TASK_ID, MANAGER, address(usdc), NATIVE_REWARD, TMP_CLAIM, address(hook));
     }
@@ -91,7 +86,7 @@ contract SponsoredTaskForfeitReconcileTest is Test {
         market.callOnForfeit(hook, TASK_ID, WORKER);
 
         _assertReservedAccounting();
-        assertEq(feeBank.creditOf(MANAGER), 9_000_000, "forfeit must not refund or recharge the creation fee");
+        assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), 0, "a task, forfeited or not, never pays a creation fee");
     }
 
     function testSwallowedForfeitThenCancellationReleasesExactlyOnceAcrossReconcileAndDuplicateCallback() external {

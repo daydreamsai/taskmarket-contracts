@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SponsoredTaskCreationFee } from "../src/hooks/sponsored-task/SponsoredTaskCreationFee.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
@@ -15,12 +17,17 @@ import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskS
 ///   FORGE_DEV_PRIVATE_KEY                    -- deployer key; owns nothing once the admin accepts
 ///                                               the registry
 ///   FORGE_SPONSORED_TASK_SETTLER_ADMIN       -- a deployed contract (Safe or timelock) that owns the
-///                                               settler and the fee policy, and the registry once it
-///                                               calls `acceptOwnership()`
+///                                               settler, the fee policy and the factory's creation
+///                                               fee, and the registry once it calls
+///                                               `acceptOwnership()`
 ///   FORGE_SPONSORED_TASK_SETTLER_ADDRESSES   -- comma-separated settler addresses, in any order
 ///   FORGE_SPONSORED_TASK_SETTLER_THRESHOLD   -- signatures required (default 1)
 ///   FORGE_SPONSORED_TASK_TOKEN_FEE_BPS       -- project-token fee (default 750 = 7.5%)
 ///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT -- where the project-token fee is paid
+///   FORGE_USDC_TOKEN_ADDRESS                 -- the token the vault creation fee is paid in
+///   FORGE_SPONSORED_TASK_CREATION_FEE_USDC   -- one-time vault creation fee (default 1_000_000 = $1)
+///   FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT -- where vault creation fees are paid
+///   FORGE_SPONSORED_TASK_FEE_CEILING_USDC    -- the factory's immutable ceiling on the creation fee
 contract DeploySponsoredTaskSettler is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -39,7 +46,18 @@ contract DeploySponsoredTaskSettler is Script {
             vm.envAddress("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT")
         );
         SponsoredTaskSettler settler = new SponsoredTaskSettler(admin, settlers, threshold);
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(address(settler), address(feePolicy), registry);
+        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+            address(settler),
+            address(feePolicy),
+            registry,
+            SponsoredTaskCreationFee.CreationFeeConfig({
+                admin: admin,
+                token: IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS")),
+                amount: vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000)),
+                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT"),
+                ceiling: vm.envUint("FORGE_SPONSORED_TASK_FEE_CEILING_USDC")
+            })
+        );
         registry.setFactory(address(factory), true);
         registry.transferOwnership(admin);
         vm.stopBroadcast();
@@ -47,6 +65,7 @@ contract DeploySponsoredTaskSettler is Script {
         require(settler.owner() == admin, "Settler: owner is not the admin");
         require(factory.controller() == address(settler), "Settler: factory controller is not the settler");
         require(feePolicy.owner() == admin, "Settler: fee policy owner is not the admin");
+        require(factory.owner() == admin, "Settler: factory fee owner is not the admin");
         require(registry.pendingOwner() == admin, "Settler: registry not pending to the admin");
 
         console.log("=== Sponsored Task settler mode deployment ===");

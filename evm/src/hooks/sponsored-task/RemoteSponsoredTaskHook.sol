@@ -9,7 +9,6 @@ import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../../interfaces/ITMPDiamond.sol";
 import { TMP_AUCTION } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHook } from "../base/BaseTMPHook.sol";
-import { ISponsoredTaskFeeBank } from "./interfaces/ISponsoredTaskFeeBank.sol";
 import { SponsoredTaskSettlement } from "./libraries/SponsoredTaskSettlement.sol";
 import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
 
@@ -25,12 +24,7 @@ import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
 ///      service reads these events and drives the remote `SponsoredTaskSettler`. It is a separate
 ///      contract from `SponsoredTaskHook`, which stays the controller of every Base-local vault.
 ///
-///      The one token it does move is the per-task creation fee: at funding it charges the manager's
-///      `SponsoredTaskFeeBank` credit once, keyed by the task id, exactly as `SponsoredTaskHook` does
-///      for a Base-local task. Its fee bank is its own (the Base hook's fee bank guard cannot add a
-///      charger), deployed with the Base fee bank's token, amount and recipient, so a remote task
-///      costs the same fee as a hook-mode task. The fee is not refunded when the task is cancelled
-///      or expires; only the remote reservation is released.
+///      Creating a task charges no fee; the one-time fee is paid when the remote vault is created.
 ///
 ///      UUPS-upgradeable with fixed-slot storage, the same pattern `SponsoredTaskHook` uses.
 contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, UUPSUpgradeable {
@@ -40,10 +34,6 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     uint32 public constant MAX_AWARDS = 8;
     /// @notice How long after the Base task's expiry an unsettled reservation may be released.
     uint256 public constant RESERVATION_RELEASE_GRACE = 7 days;
-
-    /// @notice The Base fee bank charged once per task at commitment, keyed by task id. An
-    ///         immutable of the implementation, so it takes no proxy storage.
-    ISponsoredTaskFeeBank public immutable feeBank;
 
     enum HookStatus {
         None,
@@ -176,10 +166,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     );
     event SponsoredTaskUnsettleableAwardCount(bytes32 indexed taskId, bytes32 indexed allocationId, uint256 awardCount);
 
-    constructor(address taskmarket_, ISponsoredTaskFeeBank feeBank_) BaseTMPHook(taskmarket_) {
-        if (address(feeBank_) == address(0)) revert ZeroAddress();
-        if (address(feeBank_).code.length == 0) revert InvalidContract(address(feeBank_));
-        feeBank = feeBank_;
+    constructor(address taskmarket_) BaseTMPHook(taskmarket_) {
         _disableInitializers();
     }
 
@@ -340,12 +327,6 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
             revert CommitmentNonceUsed(request.remoteChainId, request.vault, request.commitmentNonce, existing);
         }
         _s().taskByCommitment[key] = taskId;
-
-        // Charge in the same transaction as Taskmarket creation, as `SponsoredTaskHook` does. Any
-        // later revert rolls this back, and charge() reverts on every real failure
-        // (InsufficientCredit etc.), so the receipt never needs checking here.
-        // slither-disable-next-line unused-return
-        feeBank.charge(ctx.requester, taskId);
 
         _recordCommitment(taskId, ctx.requester, request);
         return true;

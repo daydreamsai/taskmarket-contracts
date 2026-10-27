@@ -36,15 +36,14 @@ standard.
 |---|---|
 | `SponsoredTaskHook` | `ITMPHook` implementation; the only contract that talks to the Diamond. UUPS-upgradeable, single canonical deployment. |
 | `SponsoredTasksVault` | Per-vault escrow, deployed as an EIP-1167 clone; holds one vault's tokens and tracks available/reserved/claimable/paid/withdrawn balances. Immutable — never upgraded. |
-| `SponsoredTaskFactory` | Permissionless `createVault` — deploys a new vault clone and registers it. |
+| `SponsoredTaskFactory` | Permissionless `createVault` — deploys a new vault clone, registers it, and takes a one-time creation fee from the creator. |
+| `SponsoredTaskCreationFee` | The factory's creation fee: amount and recipient set by a contract admin (Safe/timelock), never above an immutable ceiling, paid straight from the creator to the recipient and never refunded. |
 | `SponsoredTaskRegistry` | Owner-gated allowlist of authorized factories; the canonical "is this a real vault" source of truth the hook checks against. |
-| `SponsoredTaskFeeBank` | Manager's prefunded USDC credit balance, charged a flat creation fee per task at `checkFund` time. |
-| `SponsoredTaskFeeBankGuard` | Non-upgradeable contract that permanently narrows administration of one exact `SponsoredTaskFeeBank` to a deployed contract (Safe/timelock) — closes the raw FeeBank owner's ability to authorize an arbitrary credit-draining charger. |
 | `SponsoredTaskFeePolicy` | Owner-configurable project-token fee (bps + recipient), snapshotted per vault at reservation time. |
 | `SponsoredTaskSettlement` (library) | Computes the Merkle tree of per-worker net entitlements from a verdict's awards. |
 | `SponsoredTaskTerms` (library) | Hashes a snapshot of live Taskmarket task terms so `hookData` cannot be replayed against a task whose terms changed after it was built. |
 
-The hook is UUPS-upgradeable, deliberately unlike vaults: its `taskmarket`/`usdc`/`feeBank`/`registry`
+The hook is UUPS-upgradeable, deliberately unlike vaults: its `taskmarket`/`usdc`/`registry`
 dependencies are `immutable`, baked into the implementation contract's bytecode, correct only
 because there is exactly one canonical proxy for this hook. Vaults are immutable clones of a
 fixed implementation — new vault logic ships as a new factory version; existing vaults keep
@@ -93,21 +92,19 @@ than trusted by inspection: a wrong field name or ABI type produces a hash that 
 
 1. **Authorize.** Vault owner calls `vault.configureManager(manager, cap, true)` — mandatory;
    `reserveTask` reverts `ManagerNotActive` without it.
-2. **Fund fee credit.** Manager `approve`s USDC to `SponsoredTaskFeeBank` and calls `deposit` —
-   the credit `checkFund` charges the flat creation fee against.
-3. **Create.** Manager creates a Taskmarket task with the hook and its `hookData` attached.
+2. **Create.** Manager creates a Taskmarket task with the hook and its `hookData` attached.
    `checkFund` validates the request, reserves `grossAmount` from the vault
-   (`available → reserved`), and charges the creation fee — all in the same transaction as
+   (`available → reserved`) — in the same transaction as
    `createTask`. Any later revert (including an unmet precondition above) rolls the whole task
    creation back.
-4. **Execute.** The task follows its normal Taskmarket lifecycle and evaluation.
-5. **Complete.** The mandatory `checkComplete` callback commits the verdict's awards digest.
+3. **Execute.** The task follows its normal Taskmarket lifecycle and evaluation.
+4. **Complete.** The mandatory `checkComplete` callback commits the verdict's awards digest.
    **Nothing in this step pays anyone** — see Settlement below.
-6. **Settle.** A permissionless `finalizeSettlement(taskId, awards)` call — supplying the exact
+5. **Settle.** A permissionless `finalizeSettlement(taskId, awards)` call — supplying the exact
    awarded array, verified against the committed digest — installs a Merkle root on the vault.
-7. **Claim.** Each awarded worker signs a destination-bound EIP-712 claim; the backend relays it
+6. **Claim.** Each awarded worker signs a destination-bound EIP-712 claim; the backend relays it
    gaslessly. Destination is bound inside the signature — no manager or owner can redirect it.
-8. **Release.** Cancellation, expiry, or forfeiture returns the unearned reservation to
+7. **Release.** Cancellation, expiry, or forfeiture returns the unearned reservation to
    `available` and restores the manager's spend capacity via `finalizeRelease`/`reconcile`.
 
 ---
@@ -173,7 +170,7 @@ the reward is shown, not only in a detail view.
 
 - **Fee-on-transfer / rebasing tokens are rejected, not silently mishandled.** Both funding and
   payout paths use exact balance-diff transfer checks.
-- **Manager cap exhaustion, an exited vault, or a missing FeeBank credit each revert the
+- **Manager cap exhaustion or an exited vault each revert the
   whole `createTask`** — these must be pre-flighted by any client before payment rather than
   discovered only after a revert.
 - **Sequential per-worker claim nonces.** `claimTo` requires a strictly increasing
@@ -206,11 +203,10 @@ be commissioned before any mainnet deployment moving non-trivial value.
 
 ## Deployment
 
-See `script/DeploySponsoredTask.s.sol` (initial deploy — forces `SponsoredTaskFeeBankGuard`
-ownership of the FeeBank unconditionally) and `script/UpgradeSponsoredTask.s.sol` (in-place
-UUPS upgrade for the hook only, mirroring `UpgradeRewardHook.s.sol`).
-`script/DeploySponsoredTaskFeeBankGuard.s.sol` is a separate, mainnet-only, runtime-hash-pinned
-hardening script for re-activating or auditing a guard independent of the main deploy flow.
+See `script/DeploySponsoredTask.s.sol` (initial deploy — the hook, the fee policy and the
+factory's creation fee are owned by a contract admin from the start) and
+`script/UpgradeSponsoredTask.s.sol` (in-place UUPS upgrade for the hook only, mirroring
+`UpgradeRewardHook.s.sol`).
 
 Makefile targets: `make deploy-sponsored-task <testnet|mainnet|preview>`,
 `make upgrade-sponsored-task <testnet|mainnet>`.

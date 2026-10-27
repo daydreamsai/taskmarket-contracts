@@ -12,7 +12,6 @@ import { TMP_AUCTION } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHook } from "../base/BaseTMPHook.sol";
 import { SponsoredTaskTypes } from "./SponsoredTaskTypes.sol";
 import { ISponsoredTasksVault } from "./interfaces/ISponsoredTasksVault.sol";
-import { ISponsoredTaskFeeBank } from "./interfaces/ISponsoredTaskFeeBank.sol";
 import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol";
 import { SponsoredTaskSettlement } from "./libraries/SponsoredTaskSettlement.sol";
 import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
@@ -88,7 +87,6 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
     }
 
     IERC20 public immutable usdc;
-    ISponsoredTaskFeeBank public immutable feeBank;
     ISponsoredTaskRegistry public immutable registry;
 
     /// @dev Fixed-slot storage, the same pattern `TaskTokenRewardHook` uses and the Diamond's own
@@ -182,20 +180,11 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
     ///      one canonical deployment of this hook. `_disableInitializers` prevents anyone from
     ///      calling `initialize` directly on the implementation, per the same pattern documented
     ///      on `TaskTokenRewardHook`.
-    constructor(address taskmarket_, IERC20 usdc_, ISponsoredTaskFeeBank feeBank_, ISponsoredTaskRegistry registry_)
-        BaseTMPHook(taskmarket_)
-    {
-        if (address(usdc_) == address(0) || address(feeBank_) == address(0) || address(registry_) == address(0)) {
-            revert ZeroAddress();
-        }
+    constructor(address taskmarket_, IERC20 usdc_, ISponsoredTaskRegistry registry_) BaseTMPHook(taskmarket_) {
+        if (address(usdc_) == address(0) || address(registry_) == address(0)) revert ZeroAddress();
         if (address(usdc_).code.length == 0) revert InvalidContract(address(usdc_));
-        if (address(feeBank_).code.length == 0) revert InvalidContract(address(feeBank_));
         if (address(registry_).code.length == 0) revert InvalidContract(address(registry_));
-        if (address(feeBank_.feeToken()) != address(usdc_)) {
-            revert WrongPaymentToken(address(usdc_), address(feeBank_.feeToken()));
-        }
         usdc = usdc_;
-        feeBank = feeBank_;
         registry = registry_;
         _disableInitializers();
     }
@@ -388,12 +377,6 @@ contract SponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, 
         if (existingTask != bytes32(0)) {
             revert AllocationBindingConflict(request.vault, allocationId, existingTask);
         }
-
-        // Charge in the same transaction as Taskmarket creation. Any later revert rolls this back.
-        // The receipt is only useful to a caller wanting the recorded values -- charge() reverts
-        // on every real failure (InsufficientCredit etc.), so success never needs checking here.
-        // slither-disable-next-line unused-return
-        feeBank.charge(ctx.requester, taskId);
 
         _recordAllocation(taskId, allocationId, ctx.requester, request, termsHash);
         return true;

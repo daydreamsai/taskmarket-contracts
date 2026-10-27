@@ -5,7 +5,7 @@ import { Script, console2 } from "forge-std/Script.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 /// @notice Deploys a `TimelockController` in front of a Safe, for use as
-///         `FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN` -- so a fee change the Safe proposes only
+///         `FORGE_SPONSORED_TASK_ADMIN` -- so a fee change the Safe proposes only
 ///         takes effect after a public minimum delay, rather than the instant a threshold of
 ///         signers approves it.
 /// @dev The Safe is the timelock's proposer, executor, and canceller; the deployer never holds

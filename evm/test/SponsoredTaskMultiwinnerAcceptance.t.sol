@@ -10,8 +10,8 @@ import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTyp
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -49,7 +49,6 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
     MockERC20 private projectToken;
     SponsoredTaskFeePolicy private feePolicy;
     SponsoredTaskRegistry private registry;
-    SponsoredTaskFeeBank private feeBank;
     SponsoredTaskHook private hook;
     SponsoredTasksVault private vault;
 
@@ -67,11 +66,11 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
         projectToken = new MockERC20("Project", "PROJECT", 18, address(this));
         feePolicy = new SponsoredTaskFeePolicy(address(this), FEE_BPS, FEE_RECIPIENT);
         registry = new SponsoredTaskRegistry(address(this));
-        feeBank = new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), 1_000_000, CREATION_FEE_RECIPIENT);
-        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), feeBank, registry);
-        feeBank.setCharger(address(hook), true);
+        hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(address(hook), address(feePolicy), registry);
+        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+            address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) =
             factory.createVault(address(projectToken), address(this), keccak256("multiwinner-vault"));
@@ -83,10 +82,6 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
         vault.fund(10 * GROSS);
 
         usdc.mint(MANAGER, 10_000_000);
-        vm.startPrank(MANAGER);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(10_000_000);
-        vm.stopPrank();
 
         market.primeTask(LOCAL_TASK, MANAGER, address(usdc), NATIVE_REWARD, TMP_BOUNTY, address(hook));
     }

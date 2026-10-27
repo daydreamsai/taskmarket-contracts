@@ -4,8 +4,7 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
-import { SponsoredTaskFeeBankGuard } from "../src/hooks/sponsored-task/SponsoredTaskFeeBankGuard.sol";
+import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
@@ -13,7 +12,7 @@ import { DeploySponsoredTask } from "../script/DeploySponsoredTask.s.sol";
 import { UpgradeSponsoredTask } from "../script/UpgradeSponsoredTask.s.sol";
 
 /// @dev Code-bearing Safe/timelock stand-in that can accept two-step ownership transfers.
-contract SponsoredTaskGuardAdminStandIn {
+contract SponsoredTaskAdminStandIn {
     function acceptOwnership(address ownable) external {
         SponsoredTaskRegistry(ownable).acceptOwnership();
     }
@@ -35,12 +34,12 @@ contract SponsoredTaskDeployScriptsTest is Test {
 
     address private deployer;
     MockERC20 private usdc;
-    SponsoredTaskGuardAdminStandIn private admin;
+    SponsoredTaskAdminStandIn private admin;
 
     function setUp() public {
         deployer = vm.addr(DEPLOYER_KEY);
         usdc = new MockERC20("Mock USDC", "USDC", 6, address(this));
-        admin = new SponsoredTaskGuardAdminStandIn();
+        admin = new SponsoredTaskAdminStandIn();
 
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(DEPLOYER_KEY));
         vm.setEnv("FORGE_USDC_TOKEN_ADDRESS", vm.toString(address(usdc)));
@@ -49,7 +48,7 @@ contract SponsoredTaskDeployScriptsTest is Test {
         vm.setEnv("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT", vm.toString(address(0xFEE)));
         vm.setEnv("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", "750");
         vm.setEnv("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", vm.toString(address(0xFEE)));
-        vm.setEnv("FORGE_SPONSORED_TASK_FEE_BANK_GUARD_ADMIN", vm.toString(address(admin)));
+        vm.setEnv("FORGE_SPONSORED_TASK_ADMIN", vm.toString(address(admin)));
         vm.setEnv("FORGE_SPONSORED_TASK_FEE_CEILING_USDC", "2000000");
     }
 
@@ -75,34 +74,53 @@ contract SponsoredTaskDeployScriptsTest is Test {
         }
     }
 
-    function test_DeploySponsoredTask_GuardAdminOwnsHookFeePolicyAndRegistry() public {
+    /// @dev The factory is the only address the registry authorizes in this script.
+    function _factoryOf(Vm.Log[] memory logs) private pure returns (SponsoredTaskFactory factory) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == SponsoredTaskRegistry.FactoryAuthorizationUpdated.selector) {
+                factory = SponsoredTaskFactory(address(uint160(uint256(logs[i].topics[1]))));
+            }
+        }
+    }
+
+    function test_DeploySponsoredTask_AdminOwnsHookFeePolicyCreationFeeAndRegistry() public {
         (SponsoredTaskHook hook, SponsoredTaskRegistry registry, SponsoredTaskFeePolicy feePolicy) = _deploy();
 
-        assertEq(hook.owner(), address(admin), "hook proxy must be owned by the guard admin");
-        assertEq(feePolicy.owner(), address(admin), "fee policy must be owned by the guard admin");
+        assertEq(hook.owner(), address(admin), "hook proxy must be owned by the admin");
+        assertEq(feePolicy.owner(), address(admin), "fee policy must be owned by the admin");
         assertEq(registry.owner(), deployer, "registry stays with the deployer until accepted");
-        assertEq(registry.pendingOwner(), address(admin), "registry must be pending to the guard admin");
-        SponsoredTaskFeeBank bank = SponsoredTaskFeeBank(address(hook.feeBank()));
-        assertEq(SponsoredTaskFeeBankGuard(bank.owner()).owner(), address(admin));
+        assertEq(registry.pendingOwner(), address(admin), "registry must be pending to the admin");
 
         admin.acceptOwnership(address(registry));
         assertEq(registry.owner(), address(admin));
     }
 
-    function test_DeploySponsoredTask_DeployerCannotUpgradeTheChargerHook() public {
+    function test_DeploySponsoredTask_FactoryTakesTheConfiguredCreationFee() public {
+        vm.recordLogs();
+        new DeploySponsoredTask().run();
+        SponsoredTaskFactory factory = _factoryOf(vm.getRecordedLogs());
+
+        assertEq(factory.owner(), address(admin), "creation fee must be owned by the admin");
+        assertEq(address(factory.feeToken()), address(usdc));
+        assertEq(factory.creationFee(), 1_000_000);
+        assertEq(factory.creationFeeRecipient(), address(0xFEE));
+        assertEq(factory.feeCeiling(), 2_000_000);
+    }
+
+    function test_DeploySponsoredTask_DeployerCannotUpgradeTheHook() public {
         (SponsoredTaskHook hook,,) = _deploy();
-        address impl = address(new SponsoredTaskHook(address(0xD1A), usdc, hook.feeBank(), hook.registry()));
+        address impl = address(new SponsoredTaskHook(address(0xD1A), usdc, hook.registry()));
         vm.prank(deployer);
         vm.expectRevert();
         hook.upgradeToAndCall(impl, "");
     }
 
-    function test_RevertWhen_DeploySponsoredTask_GuardAdminIsNotAContract() public {
+    function test_RevertWhen_DeploySponsoredTask_AdminIsNotAContract() public {
         // Strip the stand-in's code rather than repointing the process-global env var, which
         // would leak into other tests running alongside this one.
         vm.etch(address(admin), "");
         DeploySponsoredTask script = new DeploySponsoredTask();
-        vm.expectRevert("Sponsored Task: guard admin must be a contract");
+        vm.expectRevert("Sponsored Task: admin must be a contract");
         script.run();
     }
 
@@ -121,7 +139,7 @@ contract SponsoredTaskDeployScriptsTest is Test {
         );
 
         // The owner executes the printed call.
-        address impl = address(new SponsoredTaskHook(address(0xD1A), usdc, hook.feeBank(), hook.registry()));
+        address impl = address(new SponsoredTaskHook(address(0xD1A), usdc, hook.registry()));
         admin.call(address(hook), script.upgradeCalldata(impl));
         assertEq(address(uint160(uint256(vm.load(address(hook), ERC1967_IMPLEMENTATION_SLOT)))), impl);
     }

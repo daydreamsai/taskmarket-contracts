@@ -2,19 +2,18 @@
 
 ## Status
 
-Implemented in `evm/src/hooks/sponsored-task/SponsoredTasksVaultV2.sol`,
-`evm/src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol` and
-`evm/src/hooks/sponsored-task/SponsoredTaskFeeBankDepositor.sol`. Not deployed. This spec covers
-three contracts. It does not change the Diamond, `AppStorage`, `SponsoredTaskHook`,
-`SponsoredTaskFeeBank`, `SponsoredTaskRegistry` or any deployed vault. `SponsoredTasksVault` (v1)
+Implemented in `evm/src/hooks/sponsored-task/SponsoredTasksVaultV2.sol` and
+`evm/src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol`. This spec covers two contracts. It does
+not change the Diamond, `AppStorage`, `SponsoredTaskHook`, `SponsoredTaskRegistry` or any
+deployed vault. `SponsoredTasksVault` (v1)
 moves the bodies of `fund`, `configureManager`, `withdrawAvailable` and `emergencyExitVault` into
 internal functions that v2 reuses. Every v1 entry point behaves exactly as before.
 
 ## Problem
 
 Every owner action on a vault (`configureManager`, `withdrawAvailable`, `emergencyExitVault`) is
-gated on `msg.sender`, and `fund` and the fee bank's `deposit`/`depositFor` pull from `msg.sender`
-after an `approve`. Whoever sends the transaction pays its gas, so a sponsor needs the chain's gas
+gated on `msg.sender`, and `fund` and the factory's creation fee pull from `msg.sender` after an
+`approve`. Whoever sends the transaction pays its gas, so a sponsor needs the chain's gas
 token before they can do anything. A third party (a relayer) that pays the gas cannot act for the
 owner without a way to carry the owner's authority in the call itself.
 
@@ -23,7 +22,7 @@ only an EOA that can sign an authorization can use it. Browser wallets mostly ca
 contract wallet such as a Safe has no EOA key to delegate.
 
 Vaults are immutable minimal clones, so new entry points need a new implementation and a new
-factory. The fee bank's address is immutable in the hook, so it stays as it is.
+factory.
 
 ## Change
 
@@ -93,27 +92,21 @@ owner, with ERC-1271 for contract owners, over
 `CreateVault(address token,address vaultOwner,bytes32 userSalt,uint256 nonce,uint256 deadline)`.
 The nonce is `createNonces[vaultOwner]`. Errors: `CreateSignatureExpired`, `InvalidCreateSignature`.
 
-### `SponsoredTaskFeeBankDepositor`
+### Signed create with the creation fee
 
-A stateless, ownerless helper in front of the existing fee bank.
-`depositWithAuthorization(depositor, manager, amount, validAfter, validBefore, salt, signature)`
-pulls `amount` of the fee token from `depositor` with `receiveWithAuthorization`. It then calls
-`feeBank.depositFor(manager, amount)` and resets its allowance to zero, all in one transaction, and
-emits `CreditDepositedWithAuthorization(depositor, manager, amount, creditAfter)`. The EIP-3009 nonce
-the depositor signs is `authorizationNonce(manager, salt) = keccak256(chainId, depositor contract,
-manager, salt)`. So the signature also commits to the manager: submitting it for another manager
-fails the token's signature check. The fee bank's `depositFor` checks it received exactly
-`amount`, so the contract holds no tokens and no allowance between calls.
-
-In the fee bank's own `CreditDeposited` event the payer is the depositor contract. The depositing
-account is in `CreditDepositedWithAuthorization`.
+`createVaultBySigWithFeeAuthorization(token, vaultOwner, userSalt, deadline, signature,
+feeAuthorization)` is `createVaultBySig` with the factory's one-time creation fee paid by the
+owner's EIP-3009 `receiveWithAuthorization` to the factory, which forwards it to the fee recipient
+in the same call. The authorization's nonce must be `feeAuthorizationNonce(vaultOwner, nonce) =
+keccak256(chainId, factory, vaultOwner, nonce)` for the create nonce being used, so it pays for that
+one signed create and no other. `createVaultBySig` takes the fee from the owner's allowance instead.
 
 ## Who pays and who holds funds
 
 A relayer that submits any of these calls pays only the gas. It cannot change any signed field.
-Every token movement is authorized by the account whose tokens move and goes to the vault, fee
-bank or recipient that account signed for. No contract here holds funds for a relayer, and a
-relayer's balance is never part of a vault's or the fee bank's accounting.
+Every token movement is authorized by the account whose tokens move and goes to the vault or
+recipient that account signed for. No contract here holds funds for a relayer, and a relayer's
+balance is never part of a vault's accounting.
 
 ## Existing vaults
 
@@ -125,9 +118,8 @@ still sees the owner as `msg.sender`. An owner who cannot does so through a v2 v
 
 Code only so far. On each chain:
 
-1. Deploy `SponsoredTaskFactoryV2(hook, feePolicy, registry)` with the same hook and fee policy as
-   the v1 factory, and `SponsoredTaskFeeBankDepositor(feeBank)`
-   (`make deploy-sponsored-task-vault-v2 <chain>`).
+1. Deploy `SponsoredTaskFactoryV2(hook, feePolicy, registry, creationFee)` with the same hook and
+   fee policy as the v1 factory (`make deploy-sponsored-task-vault-v2 <chain>`).
 2. The registry owner calls `SponsoredTaskRegistry.setFactory(factoryV2, true)`. The script prints
    that call when the deployer is not the owner.
 3. Record both addresses in the chain registry so the backend indexes the new factory and relays
@@ -135,13 +127,12 @@ Code only so far. On each chain:
 
 ## Tests
 
-`evm/test/SponsoredTasksVaultV2.t.sol`, `SponsoredTaskFactoryV2.t.sol` and
-`SponsoredTaskFeeBankDepositor.t.sol` cover:
+`evm/test/SponsoredTasksVaultV2.t.sol` and `SponsoredTaskFactoryV2.t.sol` cover:
 
 - replay, deadline, wrong signer and changed signed fields;
 - cross-vault replay, a signer who is no longer the owner, and cancellation;
 - ERC-1271 owners and funders;
 - funding accounting and events, with the funder recorded and never the relayer;
 - signed create addresses and events;
-- the depositor's manager binding, replay and expiry;
+- the creation fee: paid once by allowance or by an authorization tied to one signed create, refused without it, never refunded, and bounded by the ceiling;
 - the unchanged v1 entry points.

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
+import { SponsoredTaskCreationFee } from "./SponsoredTaskCreationFee.sol";
 import { SponsoredTasksVault } from "./SponsoredTasksVault.sol";
 import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol";
 
@@ -9,7 +10,8 @@ import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol"
 /// @notice Permissionless deterministic deployment and discovery for one-token vaults.
 /// @dev The implementation, controller, and fee policy are fixed for this factory version. A new
 ///      factory is deployed for a future implementation rather than changing existing vaults.
-contract SponsoredTaskFactory {
+///      Creating a vault pays the one-time creation fee (`SponsoredTaskCreationFee`) from the caller.
+contract SponsoredTaskFactory is SponsoredTaskCreationFee {
     uint32 public constant IMPLEMENTATION_VERSION = 1;
 
     address public immutable implementation;
@@ -37,7 +39,12 @@ contract SponsoredTaskFactory {
         bytes32 userSalt
     );
 
-    constructor(address controller_, address feePolicy_, ISponsoredTaskRegistry registry_) {
+    constructor(
+        address controller_,
+        address feePolicy_,
+        ISponsoredTaskRegistry registry_,
+        CreationFeeConfig memory creationFee_
+    ) SponsoredTaskCreationFee(creationFee_) {
         if (controller_ == address(0) || feePolicy_ == address(0) || address(registry_) == address(0)) {
             revert ZeroAddress();
         }
@@ -53,7 +60,8 @@ contract SponsoredTaskFactory {
 
     /// @notice Create a vault owned by an EOA or contract wallet such as a Safe.
     /// @dev Including `msg.sender` in the deployment salt prevents another account from consuming
-    ///      the caller's chosen salt. Funding is deliberately separate and permissionless.
+    ///      the caller's chosen salt. Funding is deliberately separate and permissionless. The caller
+    ///      pays the creation fee and must have approved this factory for it.
     function createVault(address token, address vaultOwner, bytes32 userSalt)
         external
         returns (address vault, bytes32 vaultId)
@@ -79,6 +87,7 @@ contract SponsoredTaskFactory {
         emit VaultCreated(
             vaultId, vault, vaultOwner, msg.sender, token, block.chainid, IMPLEMENTATION_VERSION, userSalt
         );
+        _collectCreationFee(vault, msg.sender);
     }
 
     function predictVault(address creator, address vaultOwner, address token, bytes32 userSalt)

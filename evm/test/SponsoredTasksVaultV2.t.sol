@@ -2,11 +2,13 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
@@ -57,7 +59,9 @@ abstract contract VaultV2Base is Test {
         token = new MockUSDC();
         policy = new SponsoredTaskFeePolicy(address(this), 50, feeRecipient);
         registry = new SponsoredTaskRegistry(address(this));
-        factory = new SponsoredTaskFactoryV2(controller, address(policy), registry);
+        factory = new SponsoredTaskFactoryV2(
+            controller, address(policy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
+        );
         registry.setFactory(address(factory), true);
         vm.warp(1_000_000);
     }

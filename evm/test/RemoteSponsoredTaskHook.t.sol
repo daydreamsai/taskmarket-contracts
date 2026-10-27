@@ -10,11 +10,10 @@ import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTyp
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
 import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskSettler.sol";
 import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
-import { SponsoredTaskFeeBank } from "../src/hooks/sponsored-task/SponsoredTaskFeeBank.sol";
-import { ISponsoredTaskFeeBank } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskFeeBank.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -38,24 +37,31 @@ contract RemoteSponsoredTaskHookTest is Test {
     SponsoredTaskSettler private settler;
     SponsoredTasksVault private vault;
     MockERC20 private usdc;
-    SponsoredTaskFeeBank private feeBank;
 
-    /// @dev The same $1 creation fee the Base hook-mode tests charge.
+    /// @dev The one-time vault creation fee the settler-mode factory takes.
     uint256 private constant CREATION_FEE = 1_000_000;
-    uint256 private constant MANAGER_CREDIT = 10_000_000;
+    uint256 private constant MANAGER_USDC = 10_000_000;
     address private constant CREATION_FEE_RECIPIENT = address(0xC0FFEE);
 
     function setUp() public {
         // Remote chain: settler-mode factory and a funded vault.
         vm.chainId(REMOTE_CHAIN_ID);
         token = new MockERC20("Project", "PROJECT", 18, address(this));
+        usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(address(this), FEE_BPS, FEE_RECIPIENT);
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
         address[] memory settlers = new address[](1);
         settlers[0] = vm.addr(SETTLER_KEY);
         settler = new SponsoredTaskSettler(address(this), settlers, 1);
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(address(settler), address(feePolicy), registry);
+        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+            address(settler),
+            address(feePolicy),
+            registry,
+            SponsoredTaskFeeConfig.charging(IERC20(address(usdc)), CREATION_FEE, CREATION_FEE_RECIPIENT)
+        );
         registry.setFactory(address(factory), true);
+        usdc.mint(address(this), CREATION_FEE);
+        usdc.approve(address(factory), CREATION_FEE);
         (address v,) = factory.createVault(address(token), address(this), keccak256("remote"));
         vault = SponsoredTasksVault(v);
         vault.configureManager(MANAGER, GROSS * 10, true);
@@ -66,20 +72,13 @@ contract RemoteSponsoredTaskHookTest is Test {
         // Base: the remote hook behind its proxy.
         vm.chainId(BASE_CHAIN_ID);
         market = new MockTaskmarketForSponsoredTask();
-        usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
-        feeBank = new SponsoredTaskFeeBank(address(this), IERC20(address(usdc)), CREATION_FEE, CREATION_FEE_RECIPIENT);
-        address implementation = address(new RemoteSponsoredTaskHook(address(market), feeBank));
+        address implementation = address(new RemoteSponsoredTaskHook(address(market)));
         hook = RemoteSponsoredTaskHook(
             address(
                 new ERC1967Proxy(implementation, abi.encodeCall(RemoteSponsoredTaskHook.initialize, (address(this))))
             )
         );
-        feeBank.setCharger(address(hook), true);
-        usdc.mint(MANAGER, MANAGER_CREDIT);
-        vm.startPrank(MANAGER);
-        usdc.approve(address(feeBank), type(uint256).max);
-        feeBank.deposit(MANAGER_CREDIT);
-        vm.stopPrank();
+        usdc.mint(MANAGER, MANAGER_USDC);
         market.primeTask(TASK_ID, MANAGER, address(0x05DC), NATIVE_REWARD, TMP_BOUNTY, address(hook));
     }
 
@@ -220,34 +219,15 @@ contract RemoteSponsoredTaskHookTest is Test {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Fee bank: per-task creation fee
+    // Creation fee: paid once by the vault creator, never per task
     // ---------------------------------------------------------------------------------------------
 
-    function testFundingChargesTheCreationFeeOnce() public {
-        _fund();
-        assertTrue(feeBank.isCharged(TASK_ID));
-        assertEq(feeBank.creditOf(MANAGER), MANAGER_CREDIT - CREATION_FEE);
+    function testVaultCreationPaidTheFeeOnce() public view {
         assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), CREATION_FEE);
-        ISponsoredTaskFeeBank.ChargeReceipt memory receipt = feeBank.getReceipt(TASK_ID);
-        assertEq(receipt.manager, MANAGER);
-        assertEq(receipt.charger, address(hook));
-        assertEq(receipt.amount, CREATION_FEE);
-
-        // A second commitment for the same task reverts and charges nothing more.
-        bytes memory data = hook.encodeHookData(_request());
-        vm.expectRevert(abi.encodeWithSelector(RemoteSponsoredTaskHook.CommitmentAlreadyExists.selector, TASK_ID));
-        market.callCheckFund(hook, TASK_ID, data);
-
-        // Completion and settlement never charge again.
-        ITMPCore.Award[] memory awards = _twoAwards();
-        _commitAccepted(awards);
-        hook.finalizeSettlement(TASK_ID, awards);
-        hook.reconcile(TASK_ID);
-        assertEq(feeBank.creditOf(MANAGER), MANAGER_CREDIT - CREATION_FEE);
-        assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), CREATION_FEE);
+        assertEq(usdc.balanceOf(address(this)), 0);
     }
 
-    function testEachRemoteTaskPaysTheSameFee() public {
+    function testRemoteTasksChargeNoFee() public {
         _fund();
         bytes32 otherTask = keccak256("other-task");
         market.primeTask(otherTask, MANAGER, address(0x05DC), NATIVE_REWARD, TMP_BOUNTY, address(hook));
@@ -255,37 +235,17 @@ contract RemoteSponsoredTaskHookTest is Test {
         r.commitmentNonce = NONCE + 1;
         r.taskTermsHash = hook.currentTaskTermsHash(otherTask);
         market.callCheckFund(hook, otherTask, hook.encodeHookData(r));
-        assertEq(feeBank.getReceipt(otherTask).amount, feeBank.getReceipt(TASK_ID).amount);
-        assertEq(feeBank.creditOf(MANAGER), MANAGER_CREDIT - 2 * CREATION_FEE);
+
+        // Completion and settlement charge nothing either.
+        ITMPCore.Award[] memory awards = _twoAwards();
+        _commitAccepted(awards);
+        hook.finalizeSettlement(TASK_ID, awards);
+        hook.reconcile(TASK_ID);
+        assertEq(usdc.balanceOf(MANAGER), MANAGER_USDC);
+        assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), CREATION_FEE);
     }
 
-    function testUnderfundedFeeBankRollsBackTheCommitment() public {
-        vm.prank(MANAGER);
-        feeBank.withdrawCredit(MANAGER_CREDIT - CREATION_FEE + 1, MANAGER);
-
-        bytes memory data = hook.encodeHookData(_request());
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ISponsoredTaskFeeBank.InsufficientCredit.selector, MANAGER, CREATION_FEE - 1, CREATION_FEE
-            )
-        );
-        market.callCheckFund(hook, TASK_ID, data);
-
-        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.None));
-        assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE), bytes32(0));
-        assertFalse(feeBank.isCharged(TASK_ID));
-        assertEq(feeBank.creditOf(MANAGER), CREATION_FEE - 1);
-    }
-
-    function testUnauthorizedHookCannotCommit() public {
-        feeBank.setCharger(address(hook), false);
-        bytes memory data = hook.encodeHookData(_request());
-        vm.expectRevert(abi.encodeWithSelector(ISponsoredTaskFeeBank.UnauthorizedCharger.selector, address(hook)));
-        market.callCheckFund(hook, TASK_ID, data);
-        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.None));
-    }
-
-    function testCancelReleasesTheReservationButKeepsTheFee() public {
+    function testCancelReleasesTheReservationAndRefundsNoFee() public {
         _fund();
         RemoteSponsoredTaskHook.Commitment memory c = hook.commitment(TASK_ID);
 
@@ -322,18 +282,9 @@ contract RemoteSponsoredTaskHookTest is Test {
         settler.release(rel, _sign(settler.releaseDigest(rel)));
         assertEq(vault.totalReserved(), 0);
 
-        // The creation fee is not refunded on cancel, the same as for a hook-mode task.
-        assertTrue(feeBank.isCharged(TASK_ID));
-        assertEq(feeBank.creditOf(MANAGER), MANAGER_CREDIT - CREATION_FEE);
+        // The vault creation fee is never refunded, and the task itself was free.
         assertEq(usdc.balanceOf(CREATION_FEE_RECIPIENT), CREATION_FEE);
-    }
-
-    function testConstructorRequiresADeployedFeeBank() public {
-        vm.expectRevert(RemoteSponsoredTaskHook.ZeroAddress.selector);
-        new RemoteSponsoredTaskHook(address(market), ISponsoredTaskFeeBank(address(0)));
-        vm.expectRevert(abi.encodeWithSelector(RemoteSponsoredTaskHook.InvalidContract.selector, address(0xBEEF)));
-        new RemoteSponsoredTaskHook(address(market), ISponsoredTaskFeeBank(address(0xBEEF)));
-        assertEq(address(hook.feeBank()), address(feeBank));
+        assertEq(usdc.balanceOf(MANAGER), MANAGER_USDC);
     }
 
     // ---------------------------------------------------------------------------------------------

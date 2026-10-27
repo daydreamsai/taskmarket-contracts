@@ -142,7 +142,7 @@ storage slot costs about 20,000 gas.
 
 Tempo prices state creation far higher: about 250,000 gas per new slot. A hook whose `checkFund`
 books new state in several slots cannot fit in 1,000,000 there. The Sponsored Task hook's
-`checkFund` (a vault reservation, a fee-bank charge receipt and the hook's allocation records)
+`checkFund` (a vault reservation and the hook's allocation records)
 measured 5.5M to 6.0M gas per call on a local Tempo chain, so every sponsored task creation reverted
 `HookCheckFundRejected`. The same facet code has to run on Base and Tempo, so one constant cannot be
 right for both.
