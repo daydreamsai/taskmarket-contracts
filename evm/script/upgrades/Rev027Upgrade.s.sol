@@ -9,6 +9,7 @@ import { CoreFacet } from "../../src/facets/CoreFacet.sol";
 import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
+import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
@@ -18,13 +19,17 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      Adds the version 2 createTask and createTask with a reserved worker; the rev025 selector
 ///      stays routed to the version 1 overload. Adds WorkerFacet with claimTask taking the
 ///      worker's agent ID. Replaces SettlementFacet and Adds
-///      declineReservation and getReservation. Replaces FeedbackFacet and Adds workerAgentOf.
+///      declineReservation, getReservation and requesterTimeout (the permissionless refund of a
+///      Bounty or Benchmark whose decision window lapsed with live submissions). Replaces
+///      FeedbackFacet and Adds workerAgentOf; its views also report the default for the new
+///      "requester_timeout" event key. Replaces EvaluatorFacet: evaluatorTimeout no longer
+///      requires the forwarder, so anyone can call it directly.
 ///      Every other facet is unchanged: none acts on the reserved worker, and the new terms
 ///      field sits after every field they read.
 /// @dev CoreFacet is also split: claimTask (both overloads), selectWorker, submitPitch, submitProof
 ///      and submitWork move to a new WorkerFacet with their selectors unchanged, and task creation
 ///      moves into LibTaskCreation, so CoreFacet keeps room under the contract size limit.
-/// @dev One diamondCut transaction: four facets and about forty selectors, well under the
+/// @dev One diamondCut transaction: five facets and about forty selectors, well under the
 ///      Tempo per-transaction gas cap that made rev026 split its cut.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
@@ -57,15 +62,17 @@ contract Rev027Upgrade is Script {
         console.log("WorkerFacet:    ", loupe.facetAddress(FacetSelectors.workerFacetSelectors()[0]));
         console.log("SettlementFacet:", loupe.facetAddress(FacetSelectors.settlementFacetSelectors()[0]));
         console.log("FeedbackFacet:  ", loupe.facetAddress(FacetSelectors.feedbackFacetSelectors()[0]));
+        console.log("EvaluatorFacet: ", loupe.facetAddress(FacetSelectors.evalFacetSelectors()[0]));
         console.log("diamondVersion: ", TARGET_VERSION);
     }
 
     function _cut() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](8);
+        cuts = new IDiamondCut.FacetCut[](9);
         address core = address(new CoreFacet());
         address worker = address(new WorkerFacet());
         address settlement = address(new SettlementFacet());
         address feedback = address(new FeedbackFacet());
+        address evaluator = address(new EvaluatorFacet());
         cuts[0] = IDiamondCut.FacetCut(
             core, IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectorsKeptRev027()
         );
@@ -89,5 +96,7 @@ contract Rev027Upgrade is Script {
         cuts[7] = IDiamondCut.FacetCut(
             feedback, IDiamondCut.FacetCutAction.Add, FacetSelectors.feedbackFacetSelectorsAddedRev027()
         );
+        cuts[8] =
+            IDiamondCut.FacetCut(evaluator, IDiamondCut.FacetCutAction.Replace, FacetSelectors.evalFacetSelectors());
     }
 }

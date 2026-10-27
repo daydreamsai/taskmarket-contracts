@@ -141,6 +141,46 @@ contract SettlementFacet {
         LibGuards._nonReentrantAfter(s);
     }
 
+    /// @notice Rev027: permissionless exit for a Bounty or Benchmark without an evaluator whose
+    ///         decision window lapsed with live submissions. Winners cannot be chosen
+    ///         permissionlessly, so the neutral outcome is a refund of the escrow to the
+    ///         requester, with the strongest negative requester signal (RequesterReputation
+    ///         event_ "requester_timeout", carrying the live submission count). It reads no
+    ///         caller, so it does not require the PGTR forwarder. Bypasses the reward hooks
+    ///         except onExpire, which cannot block it.
+    function requesterTimeout(bytes32 taskId) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
+
+        ITMPCore.Task storage task = s.tasks[taskId];
+        if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.InvalidMode();
+        if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
+            revert ITMPCore.TaskNotOpen();
+        }
+        if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
+        if (!LibReview.decisionLapsed(s, taskId, task)) revert ITMPCore.DecisionWindowNotLapsed();
+
+        uint32 live = uint32(s.taskActiveSubmissionCount[taskId]);
+        uint256 refundAmount = task.reward;
+        task.status = ITMPCore.TaskStatus.Expired;
+        task.reward = 0;
+        if (!s.usdcToken.transfer(task.requester, refundAmount)) revert ITMPCore.RefundFailed();
+
+        emit ITMPCore.TaskExpired(taskId, task.requester, refundAmount);
+        emit ITMPCore.RequesterReputation(
+            taskId, task.requester, LibFeedback.REQUESTER_TIMEOUT, refundAmount, live, false
+        );
+        LibFeedback.requester(s, taskId, task.requester, 0, LibFeedback.REQUESTER_TIMEOUT, task.mode);
+
+        // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch (dispatchAfterHooks).
+        LibHooks._onExpireHooks(taskId, s);
+        LibEscrow.release(s, taskId, balanceBefore);
+        LibGuards._nonReentrantAfter(s);
+    }
+
     /// @notice The claimed worker gives up a Claim task before delivery and expiry. The stake
     ///         penalty is zero through the grace period, then rises linearly to the full stake at
     ///         expiry; the rest of the stake returns to the worker and the task reopens.

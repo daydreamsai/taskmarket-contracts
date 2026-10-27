@@ -6,7 +6,7 @@ import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
 import { LibGuards } from "../src/libraries/LibGuards.sol";
-import { TMP_BOUNTY, TMP_BENCHMARK } from "../src/interfaces/ITMPModes.sol";
+import { TMP_BOUNTY, TMP_BENCHMARK, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
@@ -255,5 +255,143 @@ contract DecisionDeadlineTest is DiamondTestHelper {
         _expectRelayRevert(requester, abi.encodeCall(market.cancelTask, (taskId, 0)), paused);
         vm.expectRevert(paused);
         market.refundExpired(taskId, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // rev027: requesterTimeout
+    // -------------------------------------------------------------------------
+
+    address internal stranger = address(0xBEEF);
+
+    function test_RequesterTimeout_OpenWindowReverts() public {
+        bytes32 taskId = _submitted(TMP_BOUNTY);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.DecisionWindowNotLapsed.selector);
+        market.requesterTimeout(taskId);
+        // The boundary: at the deadline itself the requester can still decide.
+        vm.warp(_deadline(taskId));
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.DecisionWindowNotLapsed.selector);
+        market.requesterTimeout(taskId);
+    }
+
+    function test_RequesterTimeout_AnyoneRefundsRequesterAfterWindow() public {
+        _assertRequesterTimeoutRefunds(TMP_BOUNTY);
+        _assertRequesterTimeoutRefunds(TMP_BENCHMARK);
+    }
+
+    function _assertRequesterTimeoutRefunds(bytes4 mode) internal {
+        bytes32 taskId = _submitted(mode);
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        uint256 workersBefore = usdc.balanceOf(worker) + usdc.balanceOf(worker2);
+        vm.warp(_deadline(taskId) + 1);
+        _assertLapsedReverts(taskId);
+
+        // Called directly by a third party: no forwarder, no requester.
+        vm.expectEmit(true, true, false, true, address(market));
+        emit RequesterReputation(taskId, requester, keccak256("requester_timeout"), REWARD, 2, false);
+        vm.prank(stranger);
+        market.requesterTimeout(taskId);
+
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Expired), "expired");
+        assertEq(market.getTask(taskId).reward, 0, "reward liability cleared");
+        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "requester refunded in full");
+        assertEq(usdc.balanceOf(worker) + usdc.balanceOf(worker2), workersBefore, "no submitter is paid");
+        assertEq(usdc.balanceOf(stranger), 0, "the caller earns nothing");
+
+        // Terminal: neither the timeout nor a settlement can run again.
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.TaskNotOpen.selector);
+        market.requesterTimeout(taskId);
+        _expectRelayRevert(requester, _acceptAllData(taskId), ITMPCore.TaskNotOpen.selector);
+    }
+
+    function test_RequesterTimeout_ReputationSignalIsEmittedOnce() public {
+        bytes32 taskId = _submitted(TMP_BOUNTY);
+        vm.warp(_deadline(taskId) + 1);
+        vm.recordLogs();
+        vm.prank(stranger);
+        market.requesterTimeout(taskId);
+        assertEq(_countSignal(vm.getRecordedLogs(), keccak256("requester_timeout")), 1);
+    }
+
+    function test_RequesterTimeout_DefaultFeedbackValueIsStrongNegative() public view {
+        (int128 value, bool isSet) = market.feedbackValue(keccak256("requester_timeout"));
+        assertEq(value, -100, "default");
+        assertFalse(isSet);
+    }
+
+    function test_RequesterTimeout_NeedsLiveSubmissions() public {
+        bytes32 taskId = _create(TMP_BOUNTY, noEvaluatorConfig());
+        vm.warp(_deadline(taskId) + 1);
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.NoActiveSubmissions.selector);
+        market.requesterTimeout(taskId);
+
+        // Every submission rejected inside the window leaves nothing to time out.
+        bytes32 rejected = _submitted(TMP_BOUNTY);
+        _relay(requester, 0, _rejectData(rejected, worker));
+        _relay(requester, 0, _rejectData(rejected, worker2));
+        vm.warp(_deadline(rejected) + 1);
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.NoActiveSubmissions.selector);
+        market.requesterTimeout(rejected);
+    }
+
+    function test_RequesterTimeout_RefusesOtherModesAndStates() public {
+        bytes32 claim = _create(TMP_CLAIM, noEvaluatorConfig());
+        vm.warp(vm.getBlockTimestamp() + DURATION + DECISION + 1);
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.InvalidMode.selector);
+        market.requesterTimeout(claim);
+
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.TaskDoesNotExist.selector);
+        market.requesterTimeout(keccak256("missing"));
+
+        bytes32 accepted = _submitted(TMP_BOUNTY);
+        _relay(requester, 0, _acceptAllData(accepted));
+        vm.warp(vm.getBlockTimestamp() + DURATION + DECISION + 1);
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.TaskNotOpen.selector);
+        market.requesterTimeout(accepted);
+    }
+
+    function test_RequesterTimeout_EvaluatorTaskIsNotTimedOutByThePermissionlessCall() public {
+        ITMPCore.TaskEvaluatorConfig memory ev = ITMPCore.TaskEvaluatorConfig({
+            evaluator: evaluator,
+            evaluatorStake: 0,
+            evaluatorFeeBps: 0,
+            evaluationWindow: uint32(2 days),
+            appealWindow: uint32(1 days),
+            disputeResolver: address(0)
+        });
+        bytes32 taskId = _create(TMP_BOUNTY, ev);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        vm.warp(market.getTask(taskId).expiryTime + DECISION + 30 days);
+        vm.prank(stranger);
+        vm.expectRevert(ITMPCore.DecisionWindowNotLapsed.selector);
+        market.requesterTimeout(taskId);
+    }
+
+    function test_RequesterTimeout_PauseBlocksIt() public {
+        bytes32 taskId = _submitted(TMP_BOUNTY);
+        vm.warp(_deadline(taskId) + 1);
+        vm.prank(owner);
+        market.pause();
+        vm.prank(stranger);
+        vm.expectRevert(LibGuards.EnforcedPause.selector);
+        market.requesterTimeout(taskId);
+    }
+
+    function test_RequesterTimeout_ReleasesLiabilities() public {
+        bytes32 taskId = _submitted(TMP_BOUNTY);
+        assertEq(market.totalLiabilities(), REWARD, "booked while live");
+        vm.warp(_deadline(taskId) + 1);
+        vm.prank(stranger);
+        market.requesterTimeout(taskId);
+        assertEq(market.totalLiabilities(), 0, "released");
+        assertEq(usdc.balanceOf(address(market)), 0, "escrow empty");
     }
 }

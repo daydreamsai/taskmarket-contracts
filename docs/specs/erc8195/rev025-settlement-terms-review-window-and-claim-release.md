@@ -445,6 +445,9 @@ having rejected all of them may cancel or refund, on the record through the exis
 refund; the requester settles only through `acceptSubmissions`. The task's reward-hook reserve stays
 reserved until then.
 
+Rev027 adds the permissionless `requesterTimeout`, which refunds the escrow to the requester once
+this window lapses with live submissions; see `rev027-reservation-mode.md`.
+
 #### `acceptSubmissions` and evaluator award loops (changed)
 
 - `MAX_SUBMISSION_WINNERS = 50` is a public constant with a getter. `acceptSubmissions` and the

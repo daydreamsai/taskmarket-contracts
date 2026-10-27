@@ -40,6 +40,9 @@ contract EscrowHandler is Test {
     uint256 public lapsedViolations;
     // acceptSubmissions that settled above the winner cap, moved funds doing so, or failed at it.
     uint256 public capViolations;
+    // A requesterTimeout that succeeded before the decision window lapsed, or that, on a lapsed
+    // Bounty, failed, left the status wrong, or did not move exactly the reward to the requester.
+    uint256 public timeoutViolations;
     mapping(bytes32 => uint256) internal activeSubs;
     mapping(bytes32 => mapping(address => uint256)) internal subsBy;
 
@@ -392,6 +395,109 @@ contract EscrowHandler is Test {
     }
 
     // -------------------------------------------------------------------------
+    // Permissionless timeouts, called directly with no forwarder
+    // -------------------------------------------------------------------------
+
+    function _stranger(uint256 callerSeed) internal pure returns (address) {
+        return address(uint160(0xBEEF00 + (callerSeed % 3)));
+    }
+
+    /// @dev evaluatorTimeout from an arbitrary caller, not through the forwarder.
+    function evaluatorTimeoutDirect(uint256 seed, uint256 callerSeed) external {
+        if (taskIds.length == 0) return;
+        vm.prank(_stranger(callerSeed));
+        try market.evaluatorTimeout(_task(seed)) {
+            ++calls["evaluatorTimeoutDirect"];
+        } catch { }
+    }
+
+    /// @dev Reaches an evaluator timeout on purpose: a Claim task with an evaluator is claimed and
+    ///      delivered, so it sits in Review, then warped past the evaluation window and timed out by a
+    ///      stranger directly, with no forwarder. It must succeed and leave Review.
+    function reviewThenEvaluatorTimeoutDirect(uint256 reward, uint256 termsSeed, uint256 workerSeed, uint256 callerSeed)
+        external
+    {
+        if (_full()) return;
+        uint256 before = taskIds.length;
+        _createWithTerms(
+            taskConfig(bound(reward, 1e6, 500e6), 7 days, TMP_CLAIM),
+            _evalConfig(true, 0, false, 0),
+            _terms(termsSeed, false)
+        );
+        if (taskIds.length == before) return;
+        bytes32 id = taskIds[taskIds.length - 1];
+        address w = workers[workerSeed % WORKERS];
+        uint256 stake = (market.getTask(id).reward * market.getTaskTerms(id).stakeBps + 9999) / 10000;
+        if (!_relay(w, stake, abi.encodeCall(market.claimTask, (id, stake)))) return;
+        if (!_relay(w, 0, abi.encodeCall(market.submitWork, (id, keccak256(abi.encode(w)))))) return;
+        if (market.getTask(id).status != ITMPCore.TaskStatus.Review) return;
+        vm.warp(block.timestamp + 2 days + 1);
+        vm.prank(_stranger(callerSeed));
+        try market.evaluatorTimeout(id) {
+            ++calls["evaluatorTimeoutLapsedDirect"];
+            if (market.getTask(id).status == ITMPCore.TaskStatus.Review) ++timeoutViolations;
+        } catch {
+            ++timeoutViolations;
+        }
+    }
+
+    /// @dev requesterTimeout from an arbitrary caller on any task. It may only succeed once the
+    ///      handler's own tally says the decision window lapsed with live submissions.
+    function requesterTimeout(uint256 seed, uint256 callerSeed) external {
+        if (taskIds.length == 0) return;
+        bytes32 id = _task(seed);
+        bool lapsed = _decisionLapsed(id);
+        vm.prank(_stranger(callerSeed));
+        try market.requesterTimeout(id) {
+            ++calls["requesterTimeout"];
+            if (!lapsed) ++timeoutViolations;
+        } catch { }
+    }
+
+    /// @dev Reaches a lapsed decision window with live submissions on purpose: a fresh Bounty with
+    ///      two submissions is warped past its decision deadline, then timed out by a stranger. It
+    ///      must succeed, and move exactly the reward from the diamond to the requester.
+    function lapseThenRequesterTimeout(uint256 reward, uint256 windowSeed, uint256 callerSeed) external {
+        if (_full()) return;
+        uint256 before = taskIds.length;
+        ITMPCore.TaskTerms memory t = _terms(0, false);
+        t.decisionWindowSecs = uint32(bound(windowSeed, 1 days, 5 days));
+        _createWithTerms(taskConfig(bound(reward, 1e6, 500e6), 7 days, TMP_BOUNTY), noEvaluatorConfig(), t);
+        if (taskIds.length == before) return;
+        bytes32 id = taskIds[taskIds.length - 1];
+        for (uint256 i; i < 2; i++) {
+            address w = workers[i];
+            if (_relay(w, 0, abi.encodeCall(market.submitWork, (id, keccak256(abi.encode(w)))))) {
+                ++activeSubs[id];
+                ++subsBy[id][w];
+            }
+        }
+        if (activeSubs[id] == 0) return;
+        ITMPCore.Task memory task = market.getTask(id);
+        uint256 target = uint256(task.expiryTime) + t.decisionWindowSecs + 1;
+        if (target > block.timestamp) vm.warp(target);
+        if (!_decisionLapsed(id)) {
+            ++timeoutViolations;
+            return;
+        }
+
+        uint256 requesterBefore = usdc.balanceOf(REQUESTER);
+        uint256 poolBefore = usdc.balanceOf(address(market));
+        address caller = _stranger(callerSeed);
+        vm.prank(caller);
+        try market.requesterTimeout(id) {
+            ++calls["requesterTimeoutLapsed"];
+            if (
+                usdc.balanceOf(REQUESTER) != requesterBefore + task.reward
+                    || usdc.balanceOf(address(market)) != poolBefore - task.reward || usdc.balanceOf(caller) != 0
+                    || market.getTask(id).status != ITMPCore.TaskStatus.Expired
+            ) ++timeoutViolations;
+        } catch {
+            ++timeoutViolations;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Evaluator, resolver and anyone
     // -------------------------------------------------------------------------
 
@@ -549,12 +655,20 @@ contract EscrowConservationInvariantTest is DiamondTestHelper {
         assertEq(handler.lapsedViolations(), 0, "reject/cancel/refund must fail past the decision deadline");
     }
 
+    function invariant_RequesterTimeoutOnlyAfterTheDecisionWindow() public view {
+        assertEq(
+            handler.timeoutViolations(),
+            0,
+            "requesterTimeout must wait for the lapse, then refund exactly the reward to the requester"
+        );
+    }
+
     function invariant_WinnerCapHolds() public view {
         assertEq(handler.capViolations(), 0, "acceptSubmissions must settle up to 50 winners and refuse 51");
     }
 
     function afterInvariant() public view {
-        string[18] memory names = [
+        string[22] memory names = [
             "lapsedAttempt",
             "acceptAfterLapse",
             "winnerCapAccepted",
@@ -572,7 +686,11 @@ contract EscrowConservationInvariantTest is DiamondTestHelper {
             "settleLapsedReview",
             "releaseClaim",
             "rateTask",
-            "claimStaked"
+            "claimStaked",
+            "requesterTimeout",
+            "requesterTimeoutLapsed",
+            "evaluatorTimeoutDirect",
+            "evaluatorTimeoutLapsedDirect"
         ];
         for (uint256 i; i < names.length; i++) {
             console.log(names[i], handler.calls(names[i]));

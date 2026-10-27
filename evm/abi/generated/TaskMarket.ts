@@ -4838,6 +4838,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "requesterTimeout",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "reviewDeadline",
     "inputs": [
       {
@@ -5149,6 +5162,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "DecisionWindowLapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DecisionWindowNotLapsed",
     "inputs": []
   },
   {

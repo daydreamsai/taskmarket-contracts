@@ -102,16 +102,17 @@ User-facing task-flow functions call `LibGuards._requireForwarder(s)`. Direct ca
 EOAs or non-registered contracts will revert. The following functions are explicitly exempt
 and may be called without a PGTR forwarder:
 
-- `refundExpired` — fund-recovery invariant; must always be callable once a task expires
+- `refundExpired` — fund-recovery invariant; callable once a task expires (a Bounty or Benchmark with live
+  submissions waits for its decision window; see `requesterTimeout`)
 - `finalizeVerdict` — permissionless after appeal window closes
+- `evaluatorTimeout` — permissionless once the evaluation window has passed (rev027; earlier revisions
+  required the forwarder)
+- `requesterTimeout` — permissionless once a Bounty or Benchmark's decision window lapses with live
+  submissions; refunds the requester (rev027)
+- `settleLapsedReview` — permissionless once a review window lapses
 - `resolveDispute` — callable by the designated dispute resolver address only
 - All `AdminFacet` functions — owner-only via `LibDiamond.enforceIsContractOwner`
 - `diamondCut` — owner-only
-
-`evaluatorTimeout` is permissionless in the protocol: once the evaluation window has passed, any
-party may trigger it. Taskmarket's implementation gates it with `_requireForwarder` like the other
-task-flow functions, so in this deployment it is called through the PGTR forwarder (the Taskmarket
-relayer) rather than directly from an EOA.
 
 `LibGuards._effectiveSender(s)` returns `IPGTRForwarder(msg.sender).pgtrSender()` when
 the caller is a trusted forwarder, otherwise `msg.sender`. The `msg.sender` branch is

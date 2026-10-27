@@ -324,3 +324,70 @@ worker, and the new terms field sits after every field they read. There is no ba
 | `packages/contracts/evm/src/facets/FeedbackFacet.sol`           | `workerAgentOf`                                                |
 | `packages/contracts/evm/script/upgrades/Rev027Upgrade.s.sol`    | New: the cut                                                   |
 | `packages/contracts/evm/script/lib/FacetSelectors.sol`          | rev027 selector sets; the rev025 `createTask` written out      |
+
+## Requester timeout and a permissionless evaluator timeout
+
+Every role that can stall a task should have an exit that does not depend on that role. Through
+rev027 two did not:
+
+- A Bounty or Benchmark without an evaluator, once its decision window lapsed with live
+  submissions, could be settled only by its requester (`acceptSubmissions`). `refundExpired`,
+  `rejectSubmission` and `cancelTask` all reverted `DecisionWindowLapsed` (rev025, "Decision
+  deadline"), and nothing paid out automatically, so an abandoned task's escrow, and its
+  reward-hook reserve, stayed locked forever.
+- `evaluatorTimeout` was documented as callable by anyone, but began with `_requireForwarder`, so
+  it worked only through the relayer. When a delivered task sat in `Review`, `refundExpired`
+  reverted `DeliveryPending`, so the exit depended on the relayer being available.
+
+### Forwarder rule
+
+A function that does not read its caller does not require the PGTR forwarder. The liveness exits
+read no caller and are callable directly by anyone: `refundExpired`, `finalizeVerdict`,
+`settleLapsedReview`, `evaluatorTimeout` and `requesterTimeout`. A relayer may
+still call them on a user's behalf, as a convenience and not a gate. Role-gated actions that
+read the sender through `_effectiveSender` (accept, reject, `forfeitAndReopen` and the like) stay
+forwarder-only.
+
+### Change 1 -- `requesterTimeout(bytes32 taskId)`
+
+Callable by anyone, with no forwarder, once a Bounty or Benchmark task without an evaluator has
+live submissions and its decision deadline, `max(expiryTime, decisionStartAt) +
+decisionWindowSecs`, has passed (strictly after: at the deadline the requester can still decide).
+
+Effect: the task becomes `Expired`, its reward liability is cleared and the whole escrow is
+refunded to the requester. The onExpire hooks run in a try/catch, as for `refundExpired`, and
+cannot block the refund. Winners cannot be chosen permissionlessly, so a refund is the only
+neutral outcome. An equal split among submitters was rejected: it pays spam entries as much as
+real work and invites flooding abandoned tasks with submissions.
+
+Signal: `RequesterReputation` is emitted with `event_ = keccak256("requester_timeout")`, `reward`
+the refunded amount and `submissionCount` the number of live submissions. The event also feeds
+the ERC-8004 reputation registry through the new feedback key `requester_timeout`, whose compiled-in
+default is -100 (the floor `setFeedbackValue` allows) and which the owner can change. That is
+stronger than `expired_after_rejections` (-25) and than `decision_deadline_lapsed`, which carries
+no on-chain feedback value by default. Requester feedback goes to the requester's stored agent
+binding; a third party cannot supply or change it.
+
+Reverts: `TaskDoesNotExist`; `InvalidMode` (not a Bounty or Benchmark); `TaskNotOpen` (not Open or
+PendingApproval, including an already settled or refunded task); `NoActiveSubmissions`; and
+`DecisionWindowNotLapsed` while the requester can still decide, or when the task has an
+evaluator (its exits are the evaluator's verdict and `evaluatorTimeout`).
+
+### Change 2 -- the worker-side exit is `refundExpired`
+
+A claimed worker who misses the deadline without delivering needs no new function. `refundExpired`
+is callable by anyone on a claimed, undelivered, expired task: it refunds the requester and
+forfeits the worker's stake. That is the neutral outcome, as the requester's refund is for
+`requesterTimeout`. Reopening the task for a new worker (`forfeitAndReopen`) is a decision about
+the task, so it stays with the requester, unchanged and forwarder-only.
+
+### Change 3 -- `evaluatorTimeout` is permissionless
+
+`evaluatorTimeout` drops `_requireForwarder`. It never read its caller, so nothing else changes.
+
+### Upgrade
+
+The same `Rev027Upgrade` cut carries these changes: it Adds `requesterTimeout` to the Settlement
+selectors it already Adds, Replaces `FeedbackFacet` (already part of the cut, so its views report
+the new key's default) and also Replaces `EvaluatorFacet` for the dropped gate. No `AppStorage`
+change.

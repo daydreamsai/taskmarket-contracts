@@ -4830,6 +4830,19 @@
   },
   {
     "type": "function",
+    "name": "requesterTimeout",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "reviewDeadline",
     "inputs": [
       {
@@ -5141,6 +5154,11 @@
   {
     "type": "error",
     "name": "DecisionWindowLapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DecisionWindowNotLapsed",
     "inputs": []
   },
   {

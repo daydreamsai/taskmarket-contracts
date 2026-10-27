@@ -177,6 +177,7 @@ interface ITMPCore is IERC165 {
     error ReviewWindowOpen();
     error ReviewWindowClosed();
     error DecisionWindowLapsed();
+    error DecisionWindowNotLapsed();
     error RevisionsExhausted();
     error TooManyWinners();
     /// @notice A task's terms cannot change once a worker is committed or a submission is active.
@@ -627,6 +628,8 @@ interface ITMPCore is IERC165 {
     ///           "expired_no_action"           — task expired with no submissions ever
     ///           "expired_after_rejections"    — task expired after all submissions were rejected
     ///           "decision_deadline_lapsed"    — accepted after the decision deadline (emitted with "completed")
+    ///           "requester_timeout"           — requesterTimeout refunded the task after the decision deadline
+    ///                                           lapsed with live submissions (submissionCount is the live count)
     ///         submissionCount is 0 for cancelled/expired-after-rejection (rejectSubmission decrements
     ///         taskActiveSubmissionCount; the event_ field is the authoritative discriminator).
     event RequesterReputation(
@@ -768,6 +771,14 @@ interface ITMPCore is IERC165 {
     ///         to Open status.
     /// @param taskId Task identifier
     function forfeitAndReopen(bytes32 taskId) external;
+
+    /// @notice Rev027: permissionless exit for a Bounty or Benchmark without an evaluator whose
+    ///         decision window lapsed with live submissions. Refunds the escrow to the requester
+    ///         and emits RequesterReputation with event_ keccak256("requester_timeout"). Winners
+    ///         cannot be chosen permissionlessly, so the refund is the only neutral outcome.
+    ///         Reverts DecisionWindowNotLapsed while the requester can still decide.
+    /// @param taskId Task identifier
+    function requesterTimeout(bytes32 taskId) external;
 
     /// @notice Get task details.
     /// @param taskId Task identifier

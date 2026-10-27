@@ -856,4 +856,41 @@ contract ReviewWindowTest is DiamondTestHelper {
         market.refundExpired(taskId, 0);
         _expectRelayRevert(requester, abi.encodeCall(market.forfeitAndReopen, (taskId)), paused);
     }
+
+    // -------------------------------------------------------------------------
+    // rev027: permissionless exits called directly, with no forwarder
+    // -------------------------------------------------------------------------
+
+    function test_EvaluatorTimeout_AnyoneCallsItDirectly() public {
+        bytes32 taskId = _staleReview(TMP_CLAIM);
+        vm.prank(keeper);
+        market.evaluatorTimeout(taskId);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed), "back under review");
+    }
+
+    /// @dev The worker-side exit: a claimed worker who never delivers is timed out by anyone through
+    ///      refundExpired, which refunds the requester and forfeits the stake. Reopening instead is
+    ///      the requester's own decision (forfeitAndReopen).
+    function test_ClaimedWorkerNeverDelivered_AnyoneRefundsAtExpiry() public {
+        bytes32 taskId = _create(TMP_CLAIM, _terms());
+        _take(taskId, TMP_CLAIM, worker);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+
+        vm.prank(keeper);
+        market.refundExpired(taskId, 0);
+
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Expired), "expired");
+        assertGe(_bal(requester), REWARD, "requester refunded");
+        assertEq(_bal(worker), 0, "the stake is forfeited, not returned");
+        assertEq(_bal(keeper), 0, "the caller earns nothing");
+    }
+
+    function test_ForfeitAndReopen_StillRequesterOnly() public {
+        bytes32 taskId = _create(TMP_CLAIM, _terms());
+        _take(taskId, TMP_CLAIM, worker);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _expectRelayRevert(keeper, abi.encodeCall(market.forfeitAndReopen, (taskId)), ITMPCore.NotRequester.selector);
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Open), "requester reopens");
+    }
 }

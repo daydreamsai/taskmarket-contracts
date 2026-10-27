@@ -20,6 +20,10 @@ library LibFeedback {
     bytes32 internal constant CANCELLED_AFTER_SUBMISSIONS = keccak256("cancelled_after_submissions");
     bytes32 internal constant EXPIRED_NO_ACTION = keccak256("expired_no_action");
     bytes32 internal constant EXPIRED_AFTER_REJECTIONS = keccak256("expired_after_rejections");
+    // Rev027: a Bounty or Benchmark whose decision window lapsed with live submissions, refunded
+    // by the permissionless requesterTimeout. The requester left submitted work unjudged, so it
+    // carries the strongest negative default.
+    bytes32 internal constant REQUESTER_TIMEOUT = keccak256("requester_timeout");
     // Worker feedback is the requester's 0-100 rating scaled by this value in percent, so the
     // default of 100 sends the rating unchanged and 0 turns worker feedback off.
     bytes32 internal constant WORKER_RATING = keccak256("worker_rating");
@@ -37,6 +41,7 @@ library LibFeedback {
         if (key == COMPLETED || key == WORKER_RATING) return 100;
         if (key == CANCELLED_AFTER_SUBMISSIONS || key == EXPIRED_AFTER_REJECTIONS) return -25;
         if (key == RESERVATION_FORFEITED) return -25;
+        if (key == REQUESTER_TIMEOUT) return -100;
         // RESERVATION_DECLINED, RESERVATION_LAPSED and every other key default to 0.
         return 0;
     }

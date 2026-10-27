@@ -90,8 +90,7 @@ interface ITMPEvaluator is IERC165 {
     function resolveDispute(bytes32 taskId, ITMPCore.VerdictType verdictType, ITMPCore.Award[] calldata awards) external;
 
     /// @notice Trigger evaluator timeout after the evaluation window expires.
-    ///         Permissionless in the protocol (Taskmarket's implementation relays it through the
-    ///         PGTR forwarder): any party may trigger it once the window has passed, so the
+    ///         Permissionless: anyone may call it directly once the window has passed, so the
     ///         worker can return a delivered task to review. Forfeits the evaluator stake to the fee recipient and
     ///         returns a delivered Claim/Pitch/Auction task to the review window, else PendingApproval.
     function evaluatorTimeout(bytes32 taskId) external;

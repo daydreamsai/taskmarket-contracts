@@ -379,11 +379,12 @@ library FacetSelectors {
         s = _concat(settlementFacetSelectorsThroughRev026(), settlementFacetSelectorsAddedRev027());
     }
 
-    /// @dev rev027: decline and the reservation view.
+    /// @dev rev027: decline, the reservation view and the permissionless requester timeout.
     function settlementFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = SettlementFacet.declineReservation.selector;
         s[1] = SettlementFacet.getReservation.selector;
+        s[2] = SettlementFacet.requesterTimeout.selector;
     }
 
     /// @dev The SettlementFacet selector set as it stood at rev026, Replaced by the rev026 and
