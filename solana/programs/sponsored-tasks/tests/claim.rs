@@ -392,7 +392,6 @@ fn revoke_rejected_after_a_claim() {
     let t = settled(&mut env, SPL_TOKEN);
     let payer = env.payer.pubkey();
     env.send(&[t.claim_ix(&payer, 0)], &[]).unwrap();
-    env.pause(true);
     let admin = env.admin.insecure_clone();
     assert_error(
         env.send(&[t.f.revoke_ix(&admin.pubkey(), t.r)], &[&admin]),
@@ -473,11 +472,10 @@ fn revoke_during_the_claim_delay_blocks_claims_on_that_root() {
     env.warp_to(10_000);
     let (f, r, claim) = settled_now(&mut env);
     env.warp_to(10_600);
-    env.pause(true);
+    // No pause: revoke acts on this one reservation only.
     let admin = env.admin.insecure_clone();
     env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
         .unwrap();
-    env.pause(false);
 
     // Long after the delay the revoked root still pays nothing, nor does its fee.
     env.warp_to(100_000);
@@ -492,6 +490,24 @@ fn revoke_during_the_claim_delay_blocks_claims_on_that_root() {
         E::ReservationWrongState,
     );
     assert_eq!(env.vault(&f.vault).total_claimed, 0);
+}
+
+#[test]
+fn revoke_without_pause_leaves_claims_on_other_vaults_running() {
+    let mut env = Env::new();
+    env.warp_to(10_000);
+    let (bad, bad_r, _) = settled_now(&mut env);
+    let other = settled(&mut env, SPL_TOKEN);
+    let admin = env.admin.insecure_clone();
+    env.send(&[bad.revoke_ix(&admin.pubkey(), bad_r)], &[&admin])
+        .unwrap();
+    assert!(!env.config().paused);
+
+    let payer = env.payer.pubkey();
+    env.send(&[other.claim_ix(&payer, 0)], &[]).unwrap();
+    env.send(&[other.claim_ix(&payer, 1)], &[]).unwrap();
+    assert_eq!(env.token_balance(&other.payouts[0]), 300);
+    assert_eq!(env.token_balance(&other.payouts[1]), 70);
 }
 
 // The shared award leaf test vector, packages/contracts/docs/specs/sponsored-tasks/vectors.

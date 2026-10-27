@@ -1092,15 +1092,16 @@ fn revoke_settlement_resets_unclaimed_settlement_while_paused() {
 }
 
 #[test]
-fn revoke_settlement_requires_pause() {
+fn revoke_settlement_works_without_pause() {
     let mut env = Env::new();
     let (f, r) = env.reserved_vault(400);
     env.stage_settlement(&f, &r, 400, 0);
+    assert!(!env.config().paused);
     let admin = env.admin.insecure_clone();
-    assert_error(
-        env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin]),
-        E::NotPaused,
-    );
+    env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
+        .unwrap();
+    assert_eq!(env.reservation(&r).state, ReservationState::Reserved);
+    assert_eq!(env.vault(&f.vault).total_settled, 0);
 }
 
 #[test]

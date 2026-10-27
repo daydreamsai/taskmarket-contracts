@@ -105,7 +105,7 @@ pub mod sponsored_tasks {
     }
 
     /// Admin-only and open while paused. Sets how long after `settle` claims wait, so the root
-    /// watcher can flag a forged root and the admin can pause and revoke it before it pays.
+    /// watcher can flag a forged root and the admin can revoke it before it pays.
     pub fn set_claim_delay(ctx: Context<AdminConfig>, claim_delay_seconds: u64) -> Result<()> {
         require!(
             claim_delay_seconds > 0 && claim_delay_seconds <= i64::MAX as u64,
@@ -634,10 +634,11 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
-    /// Admin-only and only while paused: undoes a settlement nobody has claimed against, so the
-    /// settlers can sign a corrected root.
+    /// Admin-only and open whether or not the program is paused: undoes a settlement nobody has
+    /// claimed against, so the settlers can sign a corrected root. It needs no pause because it
+    /// touches only the one reservation, so revoking a bad root leaves claims on every other
+    /// vault running; a claimed leaf or fee still blocks it.
     pub fn revoke_settlement(ctx: Context<RevokeSettlement>) -> Result<()> {
-        require!(ctx.accounts.config.paused, SponsoredTasksError::NotPaused);
         let vault_key = ctx.accounts.vault.key();
         let vault = &mut ctx.accounts.vault;
         require!(

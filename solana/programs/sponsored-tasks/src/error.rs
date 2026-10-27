@@ -42,6 +42,7 @@ pub enum SponsoredTasksError {
     ReservationWrongState,
     #[msg("Reservation belongs to an earlier vault epoch")]
     EpochMismatch,
+    /// Retired: no instruction returns it. Kept so later error codes do not shift.
     #[msg("Only allowed while the program is paused")]
     NotPaused,
     #[msg("Settlement already has claims against it")]

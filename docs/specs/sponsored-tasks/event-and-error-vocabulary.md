@@ -58,7 +58,7 @@ program only holds and pays the tokens.
 | `TaskBound(allocationId, taskId)` | none | `task_bound` | EVM-only. On EVM a cross-chain allocation is reserved before its task id exists. A Solana reservation is created for a known `(base_chain_id, base_task_id)`, which are in its seeds. |
 | `TaskReleased(allocationId, taskId, manager, amount)` | `TaskReleased { vault, reservation, base_chain_id, base_task_id, manager, amount }` | `task_released` | |
 | `SettlementInstalled(allocationId, taskId, rewardsRoot, leafCount, distributedGross, sponsoredTaskTotal, feeTotal, releasedAmount)` | `SettlementInstalled` (section 5) | `settlement_installed` | Emitted by `settle`; see [`settlement.md`](settlement.md). |
-| none | `SettlementRevoked { vault, reservation, root, settled_total }` | `settlement_revoked` | Solana-only. A Solana root rests on settler signatures alone, so the admin can reset an unclaimed root while paused. An EVM root comes from same-chain award events and cannot be forged by a key. |
+| none | `SettlementRevoked { vault, reservation, root, settled_total }` | `settlement_revoked` | Solana-only. A Solana root rests on settler signatures alone, so the admin can reset an unclaimed root, without pausing the program. An EVM root comes from same-chain award events and cannot be forged by a key. |
 | `SponsoredTaskClaimed(allocationId, taskId, index, worker, destination, amount)` | `SponsoredTaskClaimed` (section 5) | `reward_claimed` | Emitted by `claim`; see [`settlement.md`](settlement.md). |
 | `FeeClaimed(allocationId, taskId, feeRecipient, destination, amount)` | `FeeClaimed` (section 5) | `fee_claimed` | Emitted by `claim_fee`; see [`settlement.md`](settlement.md). |
 | `VaultEmergencyExited(vaultId, owner, recipient, closedEpoch, newEpoch, amountWithdrawn, affectedReserved, affectedClaimable)` | `VaultEmergencyExited { vault, sponsor, recipient, closed_epoch, new_epoch, amount_withdrawn, affected_reserved, affected_claimable }` | `vault_emergency_exited` | Same fields, same semantics: the whole balance leaves and open reservations of `closed_epoch` become defaulted. |
@@ -176,7 +176,7 @@ and sponsor is the same PDA.
 | `NotSponsor` | Anchor `has_one` on the vault sponsor; EVM uses `OwnableUnauthorizedAccount`. |
 | `InvalidSettlers`, `InvalidThreshold`, `SettlerThresholdNotMet` | Settler-set authorization exists only on Solana. |
 | `InvalidFeeBps` | Fee terms are set in `Config`; EVM rejects them in the fee policy (`FeeBpsTooHigh`). |
-| `Paused`, `NotPaused` | The program-wide pause, which also blocks claims; the EVM vault has no pause. |
+| `Paused`, `NotPaused` | The program-wide pause, which also blocks claims; the EVM vault has no pause. No instruction returns `NotPaused` any more (`revoke_settlement` needs no pause); it keeps its code so later codes do not shift. |
 | `UnsupportedMintExtension` | Token-2022 extension checks at `create_vault`. |
 | `TooManyManagers` | Account size bound on the vault's manager list. |
 | `ManagerChainMismatch` | A Solana manager is keyed by EVM chain; the reservation's `base_chain_id` must match it. |

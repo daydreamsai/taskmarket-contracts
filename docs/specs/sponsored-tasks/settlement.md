@@ -15,13 +15,13 @@ accounts: config, vault (mut), reservation (mut, has_one vault), event authority
           then the settler signers
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `root` | sorted-pair keccak root of the award leaves; zero exactly when `settled_total` is zero |
-| `leaf_count` | number of leaves; zero exactly when `settled_total` is zero |
-| `settled_total` | sum of the leaves' `netAmount` (`sponsoredTaskTotal` on EVM) |
-| `fee_total` | fee carved from the awarded gross, at most `distributed_gross * Config.fee_bps / 10000` |
-| `distributed_gross` | `settled_total + fee_total`, at most the reservation's `amount` |
+| Field               | Meaning                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `root`              | sorted-pair keccak root of the award leaves; zero exactly when `settled_total` is zero  |
+| `leaf_count`        | number of leaves; zero exactly when `settled_total` is zero                             |
+| `settled_total`     | sum of the leaves' `netAmount` (`sponsoredTaskTotal` on EVM)                            |
+| `fee_total`         | fee carved from the awarded gross, at most `distributed_gross * Config.fee_bps / 10000` |
+| `distributed_gross` | `settled_total + fee_total`, at most the reservation's `amount`                         |
 
 Checks, in order: settler threshold (`SettlerThresholdNotMet`), pause (`Paused`), vault active
 (`VaultNotActive`), current epoch (`EpochMismatch`), reservation `Reserved`
@@ -91,10 +91,13 @@ sets it with `set_claim_delay` (open while paused; zero and values above `i64::M
 only a `Config` written before the field existed can hold, reads as that default. The field is
 appended after every earlier `Config` field so the existing layout is unchanged.
 
-`revoke_settlement` works throughout the delay (the program must be paused, as always). It clears
+`revoke_settlement` works throughout the delay, whether or not the program is paused. It clears
 `root` and `settled_at` and returns the reservation to `Reserved`, so a revoked root can never be
 claimed against: a later claim fails on the reservation state, and a corrected root starts a new
-delay when the settlers install it.
+delay when the settlers install it. Revoke needs no program-wide pause because it touches only
+the one reservation, so revoking one bad root leaves claims on every other vault running, as the
+EVM settler mode does. It stays admin-only and is refused (`SettlementHasClaims`) once a leaf or
+the fee has been claimed against the root.
 
 ## Reasoning
 
@@ -107,7 +110,7 @@ may pay the fee; the settler signatures authorize.
 
 **Claim delay.** On Solana a root rests on the settler signature alone. The delay gives the root
 watcher, which rebuilds the expected root from the Base award events, time to flag a root that
-does not match, and the admin time to pause and revoke it, before any token leaves the vault. An
+does not match, and the admin time to revoke it, before any token leaves the vault. An
 honest award waits one delay. The delay is a `Config` setting rather than a constant so it can be
 tuned once watcher latency is measured, and it never drops to zero, so a watcher always has a
 window.

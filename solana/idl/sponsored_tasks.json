@@ -927,8 +927,10 @@
     {
       "name": "revoke_settlement",
       "docs": [
-        "Admin-only and only while paused: undoes a settlement nobody has claimed against, so the",
-        "settlers can sign a corrected root."
+        "Admin-only and open whether or not the program is paused: undoes a settlement nobody has",
+        "claimed against, so the settlers can sign a corrected root. It needs no pause because it",
+        "touches only the one reservation, so revoking a bad root leaves claims on every other",
+        "vault running; a claimed leaf or fee still blocks it."
       ],
       "discriminator": [
         187,
@@ -1043,7 +1045,7 @@
       "name": "set_claim_delay",
       "docs": [
         "Admin-only and open while paused. Sets how long after `settle` claims wait, so the root",
-        "watcher can flag a forged root and the admin can pause and revoke it before it pays."
+        "watcher can flag a forged root and the admin can revoke it before it pays."
       ],
       "discriminator": [
         233,
