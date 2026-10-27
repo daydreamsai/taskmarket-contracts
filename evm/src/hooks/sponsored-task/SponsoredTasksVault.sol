@@ -197,18 +197,35 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
     /// @notice Fund the vault with an exact amount of a conventional ERC-20.
     /// @dev Fee-on-transfer and otherwise inexact incoming transfers are rejected atomically.
     function fund(uint256 amount) external onlyActive nonReentrant {
-        if (amount == 0) revert GrossAmountRequired();
-        uint256 balanceBefore = projectToken.balanceOf(address(this));
-        uint256 funderBalanceBefore = projectToken.balanceOf(msg.sender);
+        (uint256 balanceBefore, uint256 funderBalanceBefore) = _fundingSnapshot(msg.sender, amount);
         projectToken.safeTransferFrom(msg.sender, address(this), amount);
+        _recordFunding(msg.sender, amount, balanceBefore, funderBalanceBefore);
+    }
+
+    /// @dev The vault's and the funder's balances before a funding pull. Every funding path takes
+    ///      this snapshot and then `_recordFunding`, so each keeps the exact sent/received checks
+    ///      and the `totalFunded`/`VaultFunded` accounting.
+    function _fundingSnapshot(address funder, uint256 amount)
+        internal
+        view
+        returns (uint256 balanceBefore, uint256 funderBalanceBefore)
+    {
+        if (amount == 0) revert GrossAmountRequired();
+        balanceBefore = projectToken.balanceOf(address(this));
+        funderBalanceBefore = projectToken.balanceOf(funder);
+    }
+
+    function _recordFunding(address funder, uint256 amount, uint256 balanceBefore, uint256 funderBalanceBefore)
+        internal
+    {
         uint256 balanceAfter = projectToken.balanceOf(address(this));
-        uint256 funderBalanceAfter = projectToken.balanceOf(msg.sender);
+        uint256 funderBalanceAfter = projectToken.balanceOf(funder);
         uint256 received = balanceAfter >= balanceBefore ? balanceAfter - balanceBefore : 0;
         uint256 sent = funderBalanceBefore >= funderBalanceAfter ? funderBalanceBefore - funderBalanceAfter : 0;
         if (sent != amount) revert TokenSenderAmountMismatch(amount, sent);
         if (received != amount) revert TokenTransferAmountMismatch(amount, received);
         totalFunded += amount;
-        emit VaultFunded(msg.sender, amount);
+        emit VaultFunded(funder, amount);
     }
 
     /// @notice Balance not backing a live reservation or earned-but-unclaimed payout.
@@ -320,6 +337,10 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
 
     /// @notice Grant, increase, reduce, revoke, or reactivate a manager's lifetime token allowance.
     function configureManager(address manager, uint256 newCap, bool active) external onlyOwner onlyActive {
+        _configureManager(manager, newCap, active);
+    }
+
+    function _configureManager(address manager, uint256 newCap, bool active) internal {
         if (manager == address(0)) revert ZeroAddress();
         SponsoredTaskTypes.ManagerAccount storage account = _managers[manager];
         uint256 minimum = account.reserved + account.spent;
@@ -330,12 +351,17 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
     }
 
     function withdrawAvailable(address recipient, uint256 amount) external onlyOwner onlyActive nonReentrant {
+        _withdrawAvailable(msg.sender, recipient, amount);
+    }
+
+    /// @dev `vaultOwner` is the owner who authorized the withdrawal, named in the event.
+    function _withdrawAvailable(address vaultOwner, address recipient, uint256 amount) internal {
         if (recipient == address(0)) revert ZeroAddress();
         uint256 availableAmount = available();
         if (amount > availableAmount) revert InsufficientAvailable(amount, availableAmount);
         totalWithdrawn += amount;
         _transferExact(recipient, amount);
-        emit AvailableWithdrawn(msg.sender, recipient, amount);
+        emit AvailableWithdrawn(vaultOwner, recipient, amount);
     }
 
     /// @inheritdoc ISponsoredTasksVault
@@ -617,6 +643,11 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
     ///      the exit is the only path left that can move the balance. It still reverts when the
     ///      recipient receives nothing, so a redirecting token cannot send the balance elsewhere.
     function emergencyExitVault(address recipient) external onlyOwner onlyActive nonReentrant returns (uint256 amount) {
+        return _emergencyExitVault(msg.sender, recipient);
+    }
+
+    /// @dev `vaultOwner` is the owner who authorized the exit, named in the event.
+    function _emergencyExitVault(address vaultOwner, address recipient) internal returns (uint256 amount) {
         if (recipient == address(0)) revert ZeroAddress();
 
         uint64 closedEpoch = epoch;
@@ -634,7 +665,7 @@ contract SponsoredTasksVault is ISponsoredTasksVault, Ownable2StepUpgradeable, E
 
         _transferExit(recipient, amount);
         emit VaultEmergencyExited(
-            vaultId, msg.sender, recipient, closedEpoch, epoch, amount, affectedReserved, affectedClaimable
+            vaultId, vaultOwner, recipient, closedEpoch, epoch, amount, affectedReserved, affectedClaimable
         );
     }
 

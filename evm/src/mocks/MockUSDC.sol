@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 /// @notice Mintable mock USDC with EIP-3009 transfer authorizations, for disposable
 ///         preview/sandbox chains. X402's exact scheme settles via
@@ -223,7 +223,10 @@ contract MockUSDC is ERC20, EIP712 {
         if (_authorizationUsed[from][nonce]) revert AuthorizationAlreadyUsed();
 
         bytes32 structHash = keccak256(abi.encode(typehash, from, to, value, validAfter, validBefore, nonce));
-        if (ECDSA.recover(_hashTypedDataV4(structHash), signature) != from) revert InvalidSignature();
+        // Like USDC v2.2: ECDSA for an EOA, ERC-1271 for a contract wallet.
+        if (!SignatureChecker.isValidSignatureNow(from, _hashTypedDataV4(structHash), signature)) {
+            revert InvalidSignature();
+        }
 
         _authorizationUsed[from][nonce] = true;
         emit AuthorizationUsed(from, nonce);

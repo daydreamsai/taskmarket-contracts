@@ -23,3 +23,6 @@ export { SponsoredTaskRegistryABI } from './generated/SponsoredTaskRegistry';
 export { SponsoredTaskFeeBankABI } from './generated/SponsoredTaskFeeBank';
 export { SponsoredTaskFeeBankGuardABI } from './generated/SponsoredTaskFeeBankGuard';
 export { SponsoredTaskFeePolicyABI } from './generated/SponsoredTaskFeePolicy';
+export { SponsoredTasksVaultV2ABI } from './generated/SponsoredTasksVaultV2';
+export { SponsoredTaskFactoryV2ABI } from './generated/SponsoredTaskFactoryV2';
+export { SponsoredTaskFeeBankDepositorABI } from './generated/SponsoredTaskFeeBankDepositor';
