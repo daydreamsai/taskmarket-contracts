@@ -183,6 +183,16 @@ interface ITMPCore is IERC165 {
     error TermsFrozen();
     error ReleaseNotAllowed();
 
+    // Reserved worker (Rev027)
+    /// @notice Only a task's reserved worker may claim or decline it.
+    error NotReservedWorker();
+    /// @notice The reserved worker claimed or declined after the accept-by time.
+    error AcceptWindowClosed();
+    /// @notice The task has no reserved worker.
+    error NotReserved();
+    /// @notice updateTask on a task whose reserved worker has not yet claimed, declined or lapsed.
+    error ReservationPending();
+
     // -------------------------------------------------------------------------
     // Types
     // -------------------------------------------------------------------------
@@ -379,13 +389,36 @@ interface ITMPCore is IERC165 {
         Refund
     }
 
-    /// @notice Rev025: a task's settlement terms, packed into one storage slot (28 of 32 bytes).
+    /// @notice Rev025: a task's settlement terms, packed into one storage slot (32 of 32 bytes since
+    ///         rev027).
     /// @dev A zero window term means the protocol default. releaseGraceBps, rejectFeeBps and
     ///      maxRevisions store the value plus one so that zero can mean "default" while "no
     ///      grace", "no fee" and "no revisions" stay expressible. version 0 means the task predates
     ///      rev025 and was terminal at the rev025 cut; createTask ignores the caller's version and
-    ///      stores 1.
+    ///      stores the current one (2 since rev027; tasks created before rev027 read 1).
+    ///      acceptWindowSecs (rev027) is the reserved worker's accept window: 0 means the 72-hour
+    ///      default on a task with a reserved worker, and must be 0 on any other task.
     struct TaskTerms {
+        uint8 version;
+        bool stakeRequired;
+        uint16 stakeBps;
+        PenaltyTo penaltyTo;
+        uint32 reviewWindowSecs;
+        uint32 decisionWindowSecs;
+        uint32 reopenExtensionSecs;
+        ReleaseAllowed releaseAllowed;
+        uint16 releaseGraceBps;
+        RejectOutcome rejectOutcome;
+        uint16 rejectFeeBps;
+        uint8 maxRevisions;
+        uint32 resolutionWindowSecs;
+        uint32 acceptWindowSecs;
+    }
+
+    /// @notice The rev025 TaskTerms encoding (terms version 1, without acceptWindowSecs), taken by
+    ///         the createTask overload rev027 keeps routed so callers can move to the version 2
+    ///         encoding after the cut rather than in lockstep with it.
+    struct TaskTermsV1 {
         uint8 version;
         bool stakeRequired;
         uint16 stakeBps;
@@ -469,6 +502,18 @@ interface ITMPCore is IERC165 {
     /// @notice Rev025: a task's settlement terms were recorded, at creation or on normalization
     ///         of a pre-rev025 task.
     event TaskTermsSet(bytes32 indexed taskId, TaskTerms terms);
+
+    /// @notice Rev027: a Claim task was created with a reserved worker, who alone may claim it, up to
+    ///         and including acceptBy. Emitted after TaskCreated.
+    event TaskReserved(bytes32 indexed taskId, address indexed worker, uint256 acceptBy);
+
+    /// @notice Rev027: the reserved worker declined; the task is Cancelled and refunded. Emitted
+    ///         after TaskCancelled.
+    event ReservationDeclined(bytes32 indexed taskId, address indexed worker);
+
+    /// @notice Rev027: the accept-by time passed with the task unclaimed and refundExpired ended it.
+    ///         Emitted after TaskExpired.
+    event ReservationLapsed(bytes32 indexed taskId, address indexed worker);
 
     /// @notice Rev025: the requester rejected a delivery inside its review window.
     event DeliveryRejected(bytes32 indexed taskId, address indexed worker, uint256 rejectFee, uint256 stakeForfeited);

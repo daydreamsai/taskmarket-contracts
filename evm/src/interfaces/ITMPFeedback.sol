@@ -18,6 +18,12 @@ interface ITMPFeedback {
     ///         supplied by a trusted forwarder on an accept, cancel or refund.
     event RequesterAgentBound(address indexed requester, uint256 indexed agentId);
 
+    /// @notice Rev027: a worker address was bound, or rebound, to an ERC-8004 agent ID supplied by
+    ///         a trusted forwarder relaying the worker's own declineReservation. Reservation
+    ///         feedback (reservation_declined, reservation_lapsed, reservation_forfeited) goes to
+    ///         this ID.
+    event WorkerAgentBound(address indexed worker, uint256 indexed agentId);
+
     /// @notice A configured feedback value is outside [-100, 100].
     error FeedbackValueOutOfRange(int128 value);
 
@@ -30,4 +36,7 @@ interface ITMPFeedback {
 
     /// @notice The agent ID bound to a requester address, or 0 when unbound.
     function requesterAgentOf(address requester) external view returns (uint256);
+
+    /// @notice Rev027: the agent ID bound to a worker address for reservation feedback, or 0.
+    function workerAgentOf(address worker) external view returns (uint256);
 }

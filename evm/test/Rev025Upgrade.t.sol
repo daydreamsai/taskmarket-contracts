@@ -8,7 +8,6 @@ import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
 import { RatingFacet } from "../src/facets/RatingFacet.sol";
-import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { Rev025Upgrade } from "../script/upgrades/Rev025Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
@@ -41,9 +40,9 @@ contract Rev025UpgradeTest is Test, DiamondTestHelper {
     ///      already routes them; removing them reconstructs a rev024 diamond so the Add path runs.
     function _rev025Selectors() internal pure returns (bytes4[] memory s) {
         bytes4[] memory settlement = FacetSelectors.settlementFacetSelectorsAdded();
-        bytes4[] memory feedback = FacetSelectors.feedbackFacetSelectors();
+        bytes4[] memory feedback = FacetSelectors.feedbackFacetSelectorsThroughRev026();
         s = new bytes4[](settlement.length + feedback.length + 8);
-        s[0] = ITMPTerms.createTask.selector;
+        s[0] = FacetSelectors.REV025_CREATE_TASK;
         s[1] = AdminFacet.setTermsBounds.selector;
         s[2] = AdminFacet.setTaskLimits.selector;
         s[3] = AdminFacet.taskLimits.selector;

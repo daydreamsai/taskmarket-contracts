@@ -115,7 +115,7 @@ contract Rev018Upgrade is Script {
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
         s[10] = FacetSelectors.LEGACY_CREATE_TASK;
-        s[11] = CoreFacet.claimTask.selector;
+        s[11] = ITMPDiamond.claimTask.selector;
         s[12] = CoreFacet.selectWorker.selector;
         s[13] = CoreFacet.submitPitch.selector;
         s[14] = CoreFacet.submitProof.selector;

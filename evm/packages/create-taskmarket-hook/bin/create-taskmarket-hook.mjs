@@ -299,6 +299,29 @@ contract {{HOOK_NAME}}LifecycleTest is DiamondTestHelper {
         uint32 resolutionWindowSecs;
     }
 
+    struct DefaultTermsV2 {
+        uint8 version;
+        bool stakeRequired;
+        uint16 stakeBps;
+        uint8 penaltyTo;
+        uint32 reviewWindowSecs;
+        uint32 decisionWindowSecs;
+        uint32 reopenExtensionSecs;
+        uint8 releaseAllowed;
+        uint16 releaseGraceBps;
+        uint8 rejectOutcome;
+        uint16 rejectFeeBps;
+        uint8 maxRevisions;
+        uint32 resolutionWindowSecs;
+        uint32 acceptWindowSecs;
+    }
+
+    bytes4 private constant TERMS_V2_CREATE_TASK = bytes4(
+        keccak256(
+            "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address),(uint8,bool,uint16,uint8,uint32,uint32,uint32,uint8,uint16,uint8,uint16,uint8,uint32,uint32))"
+        )
+    );
+
     bytes4 private constant TERMS_CREATE_TASK = bytes4(
         keccak256(
             "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address),(uint8,bool,uint16,uint8,uint32,uint32,uint32,uint8,uint16,uint8,uint16,uint8,uint32))"
@@ -319,13 +342,18 @@ contract {{HOOK_NAME}}LifecycleTest is DiamondTestHelper {
     ///      the call is encoded for whichever one ITMPDiamond declares. The terms are version 1 with
     ///      every other field at its protocol default (zero). DefaultTerms mirrors TaskTerms field
     ///      for field (enums as uint8), so it ABI-encodes the same on a dependency that predates
-    ///      TaskTerms.
+    ///      TaskTerms. Version 2 terms (rev027) add acceptWindowSecs, which stays zero here.
     function _createTaskCall(address[] memory hooks) private view returns (bytes memory) {
         bytes4 selector = ITMPDiamond.createTask.selector;
         ITMPCore.TaskConfig memory config = taskConfig(REWARD, 1 days, market.BOUNTY());
         ITMPCore.HookConfig memory hookConfig = ITMPCore.HookConfig({contracts: hooks, data: hex""});
         ITMPCore.TaskContent memory content =
             ITMPCore.TaskContent({contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0)});
+        if (selector == TERMS_V2_CREATE_TASK) {
+            DefaultTermsV2 memory termsV2;
+            termsV2.version = 2;
+            return abi.encodeWithSelector(selector, config, hookConfig, content, noEvaluatorConfig(), termsV2);
+        }
         if (selector != TERMS_CREATE_TASK) {
             return abi.encodeWithSelector(
                 selector, config, ITMPCore.StakeConfig({required: false, bps: 0}), hookConfig, content, noEvaluatorConfig()

@@ -32,4 +32,10 @@ contract FeedbackFacet {
     function requesterAgentOf(address requester) external view returns (uint256) {
         return LibAppStorage.appStorage().requesterAgentIds[requester];
     }
+
+    /// @notice Rev027: the agent ID bound to a worker address for reservation feedback, or 0 when
+    ///         unbound. Written by LibFeedback on the worker's own relayed declineReservation.
+    function workerAgentOf(address worker) external view returns (uint256) {
+        return LibAppStorage.appStorage().workerAgentIds[worker];
+    }
 }

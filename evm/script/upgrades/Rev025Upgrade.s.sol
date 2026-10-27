@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
 import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
-import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
@@ -59,7 +58,7 @@ contract Rev025Upgrade is Script {
         address ratingFacet = address(new RatingFacet());
 
         bytes4[] memory newCore = new bytes4[](1);
-        newCore[0] = ITMPTerms.createTask.selector;
+        newCore[0] = FacetSelectors.REV025_CREATE_TASK;
         bytes4[] memory newAdmin = new bytes4[](7);
         newAdmin[0] = AdminFacet.setTermsBounds.selector;
         newAdmin[1] = AdminFacet.setTaskLimits.selector;
@@ -129,7 +128,9 @@ contract Rev025Upgrade is Script {
     /// @dev Its own frame keeps run() under the stack limit.
     function _feedbackCut() internal returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut(
-            address(new FeedbackFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.feedbackFacetSelectors()
+            address(new FeedbackFacet()),
+            IDiamondCut.FacetCutAction.Add,
+            FacetSelectors.feedbackFacetSelectorsThroughRev026()
         );
     }
 }

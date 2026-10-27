@@ -23,11 +23,21 @@ library LibFeedback {
     // Worker feedback is the requester's 0-100 rating scaled by this value in percent, so the
     // default of 100 sends the rating unchanged and 0 turns worker feedback off.
     bytes32 internal constant WORKER_RATING = keccak256("worker_rating");
+    // Rev027: worker keys for a Claim task with a reserved worker, sent to the worker's bound
+    // agent (workerAgentIds). Declining is a legitimate answer, so it costs nothing by default. A
+    // lapse costs nothing on chain by default: the contract cannot tell an offer the worker never
+    // saw from one it ignored, and anyone may trigger a lapse, so lapses are counted off chain. A
+    // forfeit (claimed, never delivered) matches the other -25 penalties.
+    bytes32 internal constant RESERVATION_DECLINED = keccak256("reservation_declined");
+    bytes32 internal constant RESERVATION_LAPSED = keccak256("reservation_lapsed");
+    bytes32 internal constant RESERVATION_FORFEITED = keccak256("reservation_forfeited");
 
     /// @notice The compiled-in default for an event key, used while the owner has not set one.
     function defaultValue(bytes32 key) internal pure returns (int128) {
         if (key == COMPLETED || key == WORKER_RATING) return 100;
         if (key == CANCELLED_AFTER_SUBMISSIONS || key == EXPIRED_AFTER_REJECTIONS) return -25;
+        if (key == RESERVATION_FORFEITED) return -25;
+        // RESERVATION_DECLINED, RESERVATION_LAPSED and every other key default to 0.
         return 0;
     }
 
@@ -67,6 +77,26 @@ library LibFeedback {
         int128 v = int128((int256(uint256(rating)) * int256(value(s, WORKER_RATING))) / 100);
         if (v == 0) return;
         _send(s, taskId, workerAgentId, v, "tmp.task.rating", mode, feedbackURI, feedbackHash);
+    }
+
+    /// @notice Rev027: send reservation feedback for an event key to the worker's bound agent ID.
+    ///         Nothing is sent while the worker is unbound or the value is 0. The task is a Claim
+    ///         task, so tag2 is the claim mode's name.
+    function reservedWorker(AppStorage storage s, bytes32 taskId, address workerAddr, bytes32 key) internal {
+        uint256 agentId = s.workerAgentIds[workerAddr];
+        int128 v = value(s, key);
+        if (agentId == 0 || v == 0) return;
+        _send(s, taskId, agentId, v, "tmp.task.worker", TMP_CLAIM, "", bytes32(0));
+    }
+
+    /// @notice Rev027: bind a worker address to the agent ID a trusted forwarder passes when
+    ///         relaying that worker's own call, as resolveRequester binds a requester. A passed 0
+    ///         never unbinds.
+    function bindWorker(AppStorage storage s, address workerAddr, uint256 passedAgentId) internal {
+        if (passedAgentId == 0 || passedAgentId == s.workerAgentIds[workerAddr]) return;
+        if (!s.trustedForwarders[msg.sender] || LibGuards._effectiveSender(s) != workerAddr) return;
+        s.workerAgentIds[workerAddr] = passedAgentId;
+        emit ITMPFeedback.WorkerAgentBound(workerAddr, passedAgentId);
     }
 
     /// @notice The agent ID requester feedback goes to: the requester's stored binding.

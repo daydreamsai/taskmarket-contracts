@@ -75,8 +75,8 @@ contract Rev026Upgrade is Script {
 
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         console.log("Rev026 upgrade complete. Diamond:", diamond);
-        console.log("CoreFacet:      ", loupe.facetAddress(FacetSelectors.coreFacetSelectors()[0]));
-        console.log("SettlementFacet:", loupe.facetAddress(FacetSelectors.settlementFacetSelectors()[0]));
+        console.log("CoreFacet:      ", loupe.facetAddress(FacetSelectors.coreFacetSelectorsThroughRev026()[0]));
+        console.log("SettlementFacet:", loupe.facetAddress(FacetSelectors.settlementFacetSelectorsThroughRev026()[0]));
         console.log("AcceptanceFacet:", loupe.facetAddress(FacetSelectors.acceptFacetSelectors()[0]));
         console.log("EvaluatorFacet: ", loupe.facetAddress(FacetSelectors.evalFacetSelectors()[0]));
         console.log("AdminFacet:     ", loupe.facetAddress(FacetSelectors.adminFacetSelectorsAddedRev026()[0]));
@@ -95,12 +95,14 @@ contract Rev026Upgrade is Script {
     function _firstCut(address registryFacet) internal returns (IDiamondCut.FacetCut[] memory cuts) {
         cuts = new IDiamondCut.FacetCut[](5);
         cuts[0] = IDiamondCut.FacetCut(
-            address(new CoreFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.coreFacetSelectors()
+            address(new CoreFacet()),
+            IDiamondCut.FacetCutAction.Replace,
+            FacetSelectors.coreFacetSelectorsThroughRev026()
         );
         cuts[1] = IDiamondCut.FacetCut(
             address(new SettlementFacet()),
             IDiamondCut.FacetCutAction.Replace,
-            FacetSelectors.settlementFacetSelectors()
+            FacetSelectors.settlementFacetSelectorsThroughRev026()
         );
         cuts[2] = IDiamondCut.FacetCut(
             address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()

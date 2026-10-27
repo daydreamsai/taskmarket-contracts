@@ -14,6 +14,7 @@ import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
+import { ITMPReservation } from "../../src/interfaces/ITMPReservation.sol";
 
 /// @title FacetSelectors — single source of truth for each facet's current (steady-state)
 ///        selector set.
@@ -46,6 +47,15 @@ library FacetSelectors {
     bytes4 internal constant REV018_CREATE_TASK = bytes4(
         keccak256(
             "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(bool,uint16),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address))"
+        )
+    );
+
+    /// @dev The rev025 `createTask` taking version 1 terms. rev027's version 2 TaskTerms changed
+    ///      `ITMPTerms.createTask.selector`, so the selector rev025 Added, and rev027 keeps routed
+    ///      to its legacy overload, is written out.
+    bytes4 internal constant REV025_CREATE_TASK = bytes4(
+        keccak256(
+            "createTask((uint256,uint256,bytes4,uint256,uint256,bytes4),(address[],bytes),(bytes32,string,bytes32[]),(address,uint256,uint16,uint32,uint32,address),(uint8,bool,uint16,uint8,uint32,uint32,uint32,uint8,uint16,uint8,uint16,uint8,uint32))"
         )
     );
 
@@ -160,6 +170,30 @@ library FacetSelectors {
     }
 
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = _concat(coreFacetSelectorsThroughRev026(), coreFacetSelectorsAddedRev027());
+    }
+
+    /// @dev rev027: createTask with version 2 terms, and createTask with a reserved worker. The
+    ///      version 1 overload keeps rev025's selector. claimTask with the worker's agent ID.
+    function coreFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = ITMPTerms.createTask.selector;
+        s[1] = ITMPReservation.createTask.selector;
+        s[2] = ITMPReservation.claimTask.selector;
+    }
+
+    function _concat(bytes4[] memory a, bytes4[] memory b) private pure returns (bytes4[] memory s) {
+        s = new bytes4[](a.length + b.length);
+        for (uint256 i; i < a.length; ++i) {
+            s[i] = a[i];
+        }
+        for (uint256 i; i < b.length; ++i) {
+            s[a.length + i] = b[i];
+        }
+    }
+
+    /// @dev The CoreFacet selector set as it stood at rev026, Replaced by the rev026 and rev027 steps.
+    function coreFacetSelectorsThroughRev026() internal pure returns (bytes4[] memory s) {
         bytes4[] memory base = coreFacetSelectorsThroughRev024();
         bytes4[] memory moved = settlementFacetSelectorsFromCore();
         // rev026 drops the rev018 createTask, which is in base and not in moved.
@@ -168,8 +202,8 @@ library FacetSelectors {
         for (uint256 i; i < base.length; ++i) {
             if (!_contains(moved, base[i]) && base[i] != REV018_CREATE_TASK) s[n++] = base[i];
         }
-        // rev025: createTask with explicit settlement terms.
-        s[n] = ITMPTerms.createTask.selector;
+        // rev025: createTask with explicit (version 1) settlement terms.
+        s[n] = REV025_CREATE_TASK;
     }
 
     function _contains(bytes4[] memory list, bytes4 sel) private pure returns (bool) {
@@ -196,7 +230,7 @@ library FacetSelectors {
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
         s[10] = REV018_CREATE_TASK;
-        s[11] = CoreFacet.claimTask.selector;
+        s[11] = ITMPDiamond.claimTask.selector;
         s[12] = CoreFacet.selectWorker.selector;
         s[13] = CoreFacet.submitPitch.selector;
         s[14] = CoreFacet.submitProof.selector;
@@ -295,6 +329,19 @@ library FacetSelectors {
     /// @dev rev025: the settlement terms surface plus the settlement calls moved off CoreFacet,
     ///      less normalizeTerms, which rev026 removed.
     function settlementFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = _concat(settlementFacetSelectorsThroughRev026(), settlementFacetSelectorsAddedRev027());
+    }
+
+    /// @dev rev027: decline and the reservation view.
+    function settlementFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = SettlementFacet.declineReservation.selector;
+        s[1] = SettlementFacet.getReservation.selector;
+    }
+
+    /// @dev The SettlementFacet selector set as it stood at rev026, Replaced by the rev026 and
+    ///      rev027 steps.
+    function settlementFacetSelectorsThroughRev026() internal pure returns (bytes4[] memory s) {
         bytes4[] memory added = settlementFacetSelectorsAdded();
         bytes4[] memory moved = settlementFacetSelectorsFromCore();
         s = new bytes4[](added.length - 1 + moved.length);
@@ -336,6 +383,17 @@ library FacetSelectors {
 
     /// @dev rev025: owner-configurable feedback values and the requester agent binding.
     function feedbackFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = _concat(feedbackFacetSelectorsThroughRev026(), feedbackFacetSelectorsAddedRev027());
+    }
+
+    /// @dev rev027: the worker agent binding view.
+    function feedbackFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = FeedbackFacet.workerAgentOf.selector;
+    }
+
+    /// @dev The FeedbackFacet selector set rev025 Added, Replaced by the rev027 step.
+    function feedbackFacetSelectorsThroughRev026() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = FeedbackFacet.setFeedbackValue.selector;
         s[1] = FeedbackFacet.feedbackValue.selector;

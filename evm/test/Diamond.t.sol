@@ -190,7 +190,7 @@ contract DiamondTest is DiamondTestHelper {
     function test_DiamondCut_OnlyOwner_NonOwnerReverts() public {
         CoreFacet newCore = new CoreFacet();
         bytes4[] memory sels = new bytes4[](1);
-        sels[0] = CoreFacet.claimTask.selector;
+        sels[0] = ITMPDiamond.claimTask.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut(address(newCore), IDiamondCut.FacetCutAction.Replace, sels);

@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
-import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_CLAIM } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTerms -- rev025 settlement terms: the single reader and validation
 /// @dev Every task created since rev025 records version 1 terms at creation, and every task live
@@ -22,7 +22,10 @@ library LibTerms {
         ) revert ITMPCore.TermsFrozen();
     }
 
-    uint8 internal constant TERMS_VERSION = 1;
+    /// @dev Rev027: version 2 adds acceptWindowSecs. A task created before rev027 keeps reading 1,
+    ///      with acceptWindowSecs zero, which is exactly what version 2 means for a task with no
+    ///      reserved worker.
+    uint8 internal constant TERMS_VERSION = 2;
 
     uint32 internal constant DEFAULT_REVIEW_WINDOW_SECS = 72 hours;
     uint32 internal constant DEFAULT_DECISION_WINDOW_SECS = 7 days;
@@ -37,6 +40,12 @@ library LibTerms {
     uint16 internal constant DEFAULT_MAX_REJECT_FEE_BPS = 5000;
     uint8 internal constant DEFAULT_MAX_MAX_REVISIONS = 5;
     uint16 internal constant MAX_STAKE_BPS = 5000;
+
+    // Rev027: a reserved worker's accept window. The default matches the other 72-hour window
+    // defaults above; the bounds are compiled in, not owner-set.
+    uint32 internal constant DEFAULT_ACCEPT_WINDOW_SECS = 72 hours;
+    uint32 internal constant MIN_ACCEPT_WINDOW_SECS = 1 hours;
+    uint32 internal constant MAX_ACCEPT_WINDOW_SECS = 30 days;
 
     /// @dev releaseGraceBps is stored as grace + 1, and grace may run to 100% of the claim span.
     uint16 internal constant MAX_STORED_RELEASE_GRACE_BPS = 10001;
@@ -88,8 +97,32 @@ library LibTerms {
         return (reward * terms.stakeBps + 9999) / 10000;
     }
 
+    /// @notice Rev027: the effective accept window of terms `t` on a task with a reserved worker.
+    function acceptWindow(ITMPCore.TaskTerms memory t) internal pure returns (uint256) {
+        return t.acceptWindowSecs == 0 ? DEFAULT_ACCEPT_WINDOW_SECS : t.acceptWindowSecs;
+    }
+
+    /// @notice Rev027: the accept-by time of a task with a reserved worker: its creation time plus
+    ///         its accept window. Zero for a task with no reserved worker.
+    function acceptBy(AppStorage storage s, bytes32 taskId) internal view returns (uint256) {
+        if (s.reservedWorkers[taskId] == address(0)) return 0;
+        return s.taskMetadata[taskId].createdAt + acceptWindow(s.taskTerms[taskId]);
+    }
+
     /// @notice Revert unless `t` is within the protocol's bounds for a task of `mode`.
-    function validate(AppStorage storage s, ITMPCore.TaskTerms memory t, bytes4 mode) internal view {
+    /// @dev Rev027: `reserved` is whether the task is being created with a reserved worker. Only a
+    ///      Claim task may have one; its accept window is 0 (the default) or within the bounds,
+    ///      and a rejected delivery refunds, so a Reopen reject outcome is refused. A task without
+    ///      a reserved worker must leave acceptWindowSecs at 0.
+    function validate(AppStorage storage s, ITMPCore.TaskTerms memory t, bytes4 mode, bool reserved) internal view {
+        if (reserved) {
+            if (mode != TMP_CLAIM) revert ITMPCore.InvalidMode();
+            uint32 w = t.acceptWindowSecs;
+            if (w != 0 && (w < MIN_ACCEPT_WINDOW_SECS || w > MAX_ACCEPT_WINDOW_SECS)) revert ITMPCore.InvalidTerms();
+            if (t.rejectOutcome == ITMPCore.RejectOutcome.Reopen) revert ITMPCore.InvalidTerms();
+        } else if (t.acceptWindowSecs != 0) {
+            revert ITMPCore.InvalidTerms();
+        }
         if (t.stakeBps > MAX_STAKE_BPS) revert ITMPCore.StakeBpsTooHigh();
         (uint32 minWindow, uint32 maxWindow, uint16 maxRejectFee, uint8 maxRevisions) = bounds(s);
         if (!_windowOk(t.reviewWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();

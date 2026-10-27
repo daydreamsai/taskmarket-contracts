@@ -99,6 +99,14 @@ struct AppStorage {
     // set": LibHooks._hookGasStipend substitutes HOOK_GAS_STIPEND, so a diamond upgraded into
     // rev026 keeps the stipend it had.
     uint256 hookGasStipend;
+    // Rev027: the reserved worker of a Claim task created with one (zero for every other task).
+    // Only that worker may claim or decline the task, until createdAt + acceptWindowSecs. Not a
+    // settlement term: it is who does the work, like task.worker. workerAgentIds is the ERC-8004
+    // agent ID reserved-task worker feedback goes to, bound like requesterAgentIds but only from
+    // the worker's own forwarder-relayed decline. Appended at the end per the storage-layout rule;
+    // both read as zero on a diamond upgraded into rev027.
+    mapping(bytes32 => address) reservedWorkers;
+    mapping(address => uint256) workerAgentIds;
 }
 
 library LibAppStorage {

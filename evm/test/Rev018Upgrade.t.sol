@@ -69,7 +69,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         // legacy selector has to be Added back as well as the new one Removed. It is pointed at
         // the CoreFacet the diamond already uses: no bytecode in this tree serves that signature
         // any more, and routing is the entire thing rev018's cut manipulates.
-        address coreFacet = IDiamondLoupe(diamond).facetAddress(CoreFacet.claimTask.selector);
+        address coreFacet = IDiamondLoupe(diamond).facetAddress(ITMPDiamond.claimTask.selector);
 
         bytes4[] memory newSel = new bytes4[](1);
         newSel[0] = FacetSelectors.REV018_CREATE_TASK;
@@ -115,7 +115,7 @@ contract Rev018UpgradeTest is Test, DiamondTestHelper {
         );
 
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(CoreFacet.claimTask.selector),
+            IDiamondLoupe(diamond).facetAddress(ITMPDiamond.claimTask.selector),
             newCoreFacet,
             "unchanged CoreFacet selectors must route to the same new facet"
         );

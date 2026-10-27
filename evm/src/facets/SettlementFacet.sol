@@ -113,6 +113,14 @@ contract SettlementFacet {
         if (task.status != ITMPCore.TaskStatus.Claimed) revert ITMPCore.TaskNotClaimed();
         if (task.deliverable != bytes32(0)) revert ITMPCore.DeliveryPending();
         if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
+        // Rev027: a task with a reserved worker never reopens. The forfeit ends it exactly as
+        // refundExpired would: the stake is forfeited and the reward refunded.
+        if (s.reservedWorkers[taskId] != address(0)) {
+            _refundExpiredNormal(taskId, task, s, 0);
+            LibEscrow.release(s, taskId, balanceBefore);
+            LibGuards._nonReentrantAfter(s);
+            return;
+        }
 
         uint256 forfeited = task.stakeAmount;
         address forfeiter = task.worker;
@@ -156,6 +164,19 @@ contract SettlementFacet {
         uint256 stake = task.stakeAmount;
         uint256 penalty = _releasePenalty(stake, s.taskMetadata[taskId].claimedAt, task.expiryTime, t.releaseGraceBps);
         uint256 returned = stake - penalty;
+
+        // Rev027: a task with a reserved worker never reopens. The hand-back settles the stake as
+        // for any claim, then ends the task and refunds the requester.
+        if (s.reservedWorkers[taskId] != address(0)) {
+            task.stakeAmount = 0;
+            if (penalty > 0) LibTerms.payWorkerPenalty(s, taskId, penalty);
+            if (returned > 0 && !s.usdcToken.transfer(worker, returned)) revert ITMPCore.StakeReturnFailed();
+            emit ITMPCore.ClaimReleased(taskId, worker, penalty, returned);
+            _endReserved(taskId, task, s);
+            LibEscrow.release(s, taskId, balanceBefore);
+            LibGuards._nonReentrantAfter(s);
+            return;
+        }
 
         task.status = ITMPCore.TaskStatus.Open;
         task.worker = address(0);
@@ -262,7 +283,9 @@ contract SettlementFacet {
         uint256 balanceBefore = LibEscrow.balance(s);
 
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
-        if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
+        // Rev027: an open task with a reserved worker can be refunded once its accept-by time has
+        // passed (a lapse), even before its expiry.
+        if (block.timestamp <= task.expiryTime && !_lapsed(taskId, task, s)) revert ITMPCore.TaskNotYetExpired();
         if (task.status == ITMPCore.TaskStatus.Accepted) revert ITMPCore.TaskAlreadyAccepted();
         if (task.status == ITMPCore.TaskStatus.Cancelled) revert ITMPCore.TaskIsCancelled();
         // Expired is a status this function sets itself, so it must be as terminal here as
@@ -298,6 +321,72 @@ contract SettlementFacet {
         }
         LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
+    }
+
+    // -------------------------------------------------------------------------
+    // Reserved worker (rev027)
+    // -------------------------------------------------------------------------
+
+    /// @notice The reserved worker declines the open task by its accept-by time. The worker is the
+    ///         authenticated actor (pgtrSender). The task is Cancelled and the reward, and any
+    ///         evaluator stake, goes back to the requester. Runs no check hook; onCancel runs as on
+    ///         cancelTask.
+    /// @param workerAgentId ERC-8004 agent ID of the worker (0 if unknown), bound for reservation
+    ///                      feedback.
+    function declineReservation(bytes32 taskId, uint256 workerAgentId) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        uint256 balanceBefore = LibEscrow.balance(s);
+
+        address worker = LibGuards._effectiveSender(s);
+        ITMPCore.Task storage task = s.tasks[taskId];
+        if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        address reserved = s.reservedWorkers[taskId];
+        if (reserved == address(0)) revert ITMPCore.NotReserved();
+        if (worker != reserved) revert ITMPCore.NotReservedWorker();
+        if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
+        if (block.timestamp > LibTerms.acceptBy(s, taskId)) revert ITMPCore.AcceptWindowClosed();
+
+        task.status = ITMPCore.TaskStatus.Cancelled;
+        uint256 refund = task.reward;
+        address requesterAddr = task.requester;
+        if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
+        _refundEvaluatorStake(taskId, requesterAddr, s);
+
+        emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
+        emit ITMPCore.ReservationDeclined(taskId, worker);
+        LibFeedback.bindWorker(s, worker, workerAgentId);
+        LibFeedback.reservedWorker(s, taskId, worker, LibFeedback.RESERVATION_DECLINED);
+        LibHooks._onCancelHooks(taskId, s);
+        LibEscrow.release(s, taskId, balanceBefore);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @notice A task's reserved worker and accept-by time; both zero for a task without one.
+    function getReservation(bytes32 taskId) external view returns (address worker, uint256 acceptBy) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        return (s.reservedWorkers[taskId], LibTerms.acceptBy(s, taskId));
+    }
+
+    /// @dev An open task with a reserved worker whose accept-by time has passed.
+    function _lapsed(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private view returns (bool) {
+        return task.status == ITMPCore.TaskStatus.Open && s.reservedWorkers[taskId] != address(0)
+            && block.timestamp > LibTerms.acceptBy(s, taskId);
+    }
+
+    /// @dev Ends a claimed task with a reserved worker after a hand-back: Expired, the reward and
+    ///      any evaluator stake back to the requester, then the onExpire after-hooks.
+    function _endReserved(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
+        task.status = ITMPCore.TaskStatus.Expired;
+        uint256 refund = task.reward;
+        task.reward = 0;
+        address requesterAddr = task.requester;
+        if (!s.usdcToken.transfer(requesterAddr, refund)) revert ITMPCore.RefundFailed();
+        _refundEvaluatorStake(taskId, requesterAddr, s);
+        emit ITMPCore.TaskExpired(taskId, requesterAddr, refund);
+        LibHooks._onExpireHooks(taskId, s);
     }
 
     // -------------------------------------------------------------------------
@@ -526,7 +615,10 @@ contract SettlementFacet {
     function _applyRejectOutcome(bytes32 taskId, ITMPCore.Task storage task, ITMPCore.TaskTerms storage t) private {
         AppStorage storage s = LibAppStorage.appStorage();
         ITMPCore.RejectOutcome outcome = t.rejectOutcome;
-        if (task.mode != AUCTION && outcome != ITMPCore.RejectOutcome.Refund) {
+        // Rev027: LibTerms.validate refuses Reopen on a task with a reserved worker, whose Default
+        // outcome is Refund.
+        if (task.mode != AUCTION && outcome != ITMPCore.RejectOutcome.Refund && s.reservedWorkers[taskId] == address(0))
+        {
             task.status = ITMPCore.TaskStatus.Open;
             LibTerms.extendOnReopen(s, taskId);
             emit ITMPCore.TaskReopened(taskId);
@@ -601,6 +693,11 @@ contract SettlementFacet {
         AppStorage storage s,
         uint256 requesterAgentId
     ) private {
+        // Rev027: a lapse ends a task no worker ever held, so the evaluator had nothing to do and
+        // its stake goes back to the requester who posted it, as on cancelTask.
+        address reserved = s.reservedWorkers[taskId];
+        bool lapse = reserved != address(0) && task.status == ITMPCore.TaskStatus.Open;
+        if (lapse) _refundEvaluatorStake(taskId, task.requester, s);
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
 
         task.status = ITMPCore.TaskStatus.Expired;
@@ -640,6 +737,15 @@ contract SettlementFacet {
         }
 
         emit ITMPCore.TaskExpired(taskId, task.requester, refundAmount);
+
+        // Rev027: reservation feedback to the worker. An unclaimed task lapsed; a claimed one with
+        // no delivery was accepted and never delivered.
+        if (lapse) {
+            emit ITMPCore.ReservationLapsed(taskId, reserved);
+            LibFeedback.reservedWorker(s, taskId, reserved, LibFeedback.RESERVATION_LAPSED);
+        } else if (reserved != address(0) && task.deliverable == bytes32(0)) {
+            LibFeedback.reservedWorker(s, taskId, task.worker, LibFeedback.RESERVATION_FORFEITED);
+        }
 
         // Emit requester reputation signal for bounty/benchmark expired tasks.
         if (task.mode == BOUNTY || task.mode == BENCHMARK) {

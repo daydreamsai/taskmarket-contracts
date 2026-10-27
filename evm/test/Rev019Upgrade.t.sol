@@ -103,7 +103,7 @@ contract Rev019UpgradeTest is Test, DiamondTestHelper {
         assertNotEq(newCoreFacet, oldCoreFacet, "CoreFacet must be replaced");
 
         assertEq(
-            IDiamondLoupe(diamond).facetAddress(CoreFacet.claimTask.selector),
+            IDiamondLoupe(diamond).facetAddress(ITMPDiamond.claimTask.selector),
             newCoreFacet,
             "unchanged CoreFacet selectors must route to the same new facet"
         );

@@ -110,7 +110,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         // The createTask this step Replaces is the rev018 one (rev026 later removed it), which
         // FacetSelectors names because no facet serves it any more.
         _assertRoutes(diamond, FacetSelectors.REV018_CREATE_TASK, newCore, "createTask");
-        _assertRoutes(diamond, CoreFacet.claimTask.selector, newCore, "claimTask");
+        _assertRoutes(diamond, ITMPDiamond.claimTask.selector, newCore, "claimTask");
         _assertRoutes(diamond, CoreFacet.submitWork.selector, newCore, "submitWork");
         _assertRoutes(diamond, ITMPDiamond.cancelTask.selector, newCore, "cancelTask");
         _assertRoutes(diamond, ITMPDiamond.forfeitAndReopen.selector, newCore, "forfeitAndReopen");

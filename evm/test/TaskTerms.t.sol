@@ -58,6 +58,9 @@ contract TermsProbeFacet {
         t.rejectOutcome = ITMPCore.RejectOutcome.Refund;
         t.rejectFeeBps = type(uint16).max;
         t.maxRevisions = type(uint8).max;
+        t.resolutionWindowSecs = type(uint32).max;
+        // rev027: acceptWindowSecs fills the slot's last four bytes.
+        t.acceptWindowSecs = type(uint32).max;
         assembly ("memory-safe") {
             first := sload(t.slot)
             second := sload(add(t.slot, 1))
@@ -192,8 +195,10 @@ contract TaskTermsTest is DiamondTestHelper {
     function test_TaskTerms_FitsOneSlot() public {
         (uint256 first, uint256 second) = probe.probeTermsSlots(keccak256("layout"));
         assertEq(second, 0, "TaskTerms must not spill into a second slot");
-        assertEq(first >> 192, 0, "TaskTerms uses exactly 24 of its 32 bytes");
         assertEq((first >> 184) & 0xff, 0xff, "maxRevisions is the 24th byte");
+        assertEq((first >> 192) & 0xffffffff, 0xffffffff, "resolutionWindowSecs is bytes 25 to 28");
+        // rev027: acceptWindowSecs takes the last four bytes, so the slot is full.
+        assertEq(first >> 224, 0xffffffff, "acceptWindowSecs is bytes 29 to 32");
     }
 
     function test_TaskClock_FitsOneSlot() public {
@@ -218,11 +223,12 @@ contract TaskTermsTest is DiamondTestHelper {
             rejectOutcome: ITMPCore.RejectOutcome.Refund,
             rejectFeeBps: 1,
             maxRevisions: 1,
-            resolutionWindowSecs: 0
+            resolutionWindowSecs: 0,
+            acceptWindowSecs: 0
         });
         bytes32 expectedId = keccak256(abi.encode(block.chainid, address(market), requester, uint256(0)));
         ITMPCore.TaskTerms memory stored = t;
-        stored.version = 1;
+        stored.version = 2;
         vm.expectEmit(true, false, false, true, address(market));
         emit ITMPCore.TaskTermsSet(expectedId, stored);
         bytes32 taskId = _createWithTerms(TMP_CLAIM, t);

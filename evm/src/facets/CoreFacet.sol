@@ -10,6 +10,7 @@ import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
+import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import {
     TMP_BOUNTY,
@@ -66,16 +67,62 @@ contract CoreFacet {
         ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
         ITMPCore.TaskTerms calldata terms
     ) external returns (bytes32) {
-        return _createTask(config, hookConfig, content, evaluatorConfig, terms);
+        return _createTask(config, hookConfig, content, evaluatorConfig, terms, address(0));
     }
 
-    // solhint-disable-next-line code-complexity
+    /// @notice Rev027: create a Claim task with a reserved worker. As createTask, and only that
+    ///         worker may claim (accept) or decline it, up to and including the accept-by time:
+    ///         creation plus terms.acceptWindowSecs (0 = 72 hours; otherwise 1 hour to 30 days).
+    ///         config.duration is the delivery period, counted from the claim, and must be at
+    ///         least the accept window. A rejected delivery refunds the requester, so
+    ///         terms.rejectOutcome may not be Reopen. reservedWorker zero creates an ordinary task.
+    function createTask(
+        ITMPCore.TaskConfig calldata config,
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
+        ITMPCore.TaskTerms calldata terms,
+        address reservedWorker
+    ) external returns (bytes32) {
+        return _createTask(config, hookConfig, content, evaluatorConfig, terms, reservedWorker);
+    }
+
+    /// @notice The rev025 createTask taking version 1 terms (no acceptWindowSecs), kept routed by
+    ///         rev027 so callers can move to the version 2 encoding after the cut. It creates a task
+    ///         with no reserved worker and records version 2 terms. A later revision removes it.
+    function createTask(
+        ITMPCore.TaskConfig calldata config,
+        ITMPCore.HookConfig calldata hookConfig,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
+        ITMPCore.TaskTermsV1 calldata terms
+    ) external returns (bytes32) {
+        ITMPCore.TaskTerms memory t = ITMPCore.TaskTerms({
+            version: terms.version,
+            stakeRequired: terms.stakeRequired,
+            stakeBps: terms.stakeBps,
+            penaltyTo: terms.penaltyTo,
+            reviewWindowSecs: terms.reviewWindowSecs,
+            decisionWindowSecs: terms.decisionWindowSecs,
+            reopenExtensionSecs: terms.reopenExtensionSecs,
+            releaseAllowed: terms.releaseAllowed,
+            releaseGraceBps: terms.releaseGraceBps,
+            rejectOutcome: terms.rejectOutcome,
+            rejectFeeBps: terms.rejectFeeBps,
+            maxRevisions: terms.maxRevisions,
+            resolutionWindowSecs: terms.resolutionWindowSecs,
+            acceptWindowSecs: 0
+        });
+        return _createTask(config, hookConfig, content, evaluatorConfig, t, address(0));
+    }
+
     function _createTask(
         ITMPCore.TaskConfig calldata config,
         ITMPCore.HookConfig calldata hookConfig,
         ITMPCore.TaskContent calldata content,
         ITMPCore.TaskEvaluatorConfig calldata evaluatorConfig,
-        ITMPCore.TaskTerms memory terms
+        ITMPCore.TaskTerms memory terms,
+        address reservedWorker
     ) private returns (bytes32 taskId) {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);
@@ -83,6 +130,35 @@ contract CoreFacet {
         LibGuards._nonReentrantBefore(s);
 
         address requester = LibGuards._effectiveSender(s);
+        taskId = _initTask(requester, config, content, terms, reservedWorker != address(0), s);
+        if (reservedWorker != address(0)) _reserve(taskId, requester, reservedWorker, config.duration, terms, s);
+
+        // Applied before the hooks so a checkFund hook observes a fully configured task rather
+        // than one that only becomes evaluator-gated a moment later.
+        _applyCreationEvaluatorConfig(taskId, requester, evaluatorConfig, s);
+
+        _buildAndCheckHooks(taskId, hookConfig, s);
+
+        ITMPCore.Task storage t = s.tasks[taskId];
+        emit ITMPCore.TaskCreated(taskId, requester, t.reward, t.mode, t.expiryTime, t.stakeRequired, t.stakeBps);
+        emit ITMPCore.TaskTermsSet(taskId, s.taskTerms[taskId]);
+        if (reservedWorker != address(0)) {
+            emit ITMPCore.TaskReserved(taskId, reservedWorker, LibTerms.acceptBy(s, taskId));
+        }
+        LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.Task, true);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @dev Validates the task and records it, its terms and its content.
+    // solhint-disable-next-line code-complexity
+    function _initTask(
+        address requester,
+        ITMPCore.TaskConfig calldata config,
+        ITMPCore.TaskContent calldata content,
+        ITMPCore.TaskTerms memory terms,
+        bool reserved,
+        AppStorage storage s
+    ) private returns (bytes32 taskId) {
         if (requester == address(0)) revert ITMPCore.InvalidRequester();
         if (config.reward == 0) revert ITMPCore.RewardMustBeGreaterThanZero();
         if (config.duration == 0) revert ITMPCore.DurationMustBeGreaterThanZero();
@@ -95,7 +171,7 @@ contract CoreFacet {
                         || config.auctionSubtype == AUCTION_REVERSE_DUTCH
                         || config.auctionSubtype == AUCTION_REVERSE_ENGLISH)) revert ITMPCore.InvalidAuctionSubtype();
         }
-        LibTerms.validate(s, terms, config.mode);
+        LibTerms.validate(s, terms, config.mode, reserved);
 
         taskId = keccak256(abi.encode(block.chainid, address(this), requester, s.requesterNonce[requester]++));
 
@@ -133,31 +209,40 @@ contract CoreFacet {
         if (content.tags.length > 0) {
             s.taskTags[taskId] = content.tags;
         }
+    }
 
-        // Applied before the hooks so a checkFund hook observes a fully configured task rather
-        // than one that only becomes evaluator-gated a moment later.
-        _applyCreationEvaluatorConfig(taskId, requester, evaluatorConfig, s);
-
-        _buildAndCheckHooks(taskId, hookConfig, s);
-
-        emit ITMPCore.TaskCreated(
-            taskId,
-            requester,
-            config.reward,
-            config.mode,
-            block.timestamp + config.duration,
-            terms.stakeRequired,
-            terms.stakeBps
-        );
-        emit ITMPCore.TaskTermsSet(taskId, terms);
-        LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.Task, true);
-        LibGuards._nonReentrantAfter(s);
+    /// @dev Rev027: records the reserved worker. The worker may not be the requester, and the
+    ///      delivery period may not be shorter than the accept window, so the task's expiry is
+    ///      never before its accept-by time and the worker always has the whole window.
+    function _reserve(
+        bytes32 taskId,
+        address requester,
+        address worker,
+        uint256 duration,
+        ITMPCore.TaskTerms memory terms,
+        AppStorage storage s
+    ) private {
+        if (worker == requester) revert ITMPCore.InvalidWorker();
+        if (duration < LibTerms.acceptWindow(terms)) revert ITMPCore.InvalidTerms();
+        s.reservedWorkers[taskId] = worker;
     }
 
     /// @notice Claim a Claim-mode task. The worker is the authenticated actor (pgtrSender).
     /// @param taskId      Task identifier
     /// @param stakeAmount USDC stake amount (0 = no stake required)
     function claimTask(bytes32 taskId, uint256 stakeAmount) external {
+        _claimTask(taskId, stakeAmount, 0);
+    }
+
+    /// @notice Rev027: claimTask that also binds the worker's ERC-8004 agent ID when it accepts a
+    ///         reservation, so a later forfeit's feedback reaches the worker. The ID is bound only
+    ///         when a trusted forwarder relays the worker's own call; 0 binds nothing.
+    /// @param workerAgentId ERC-8004 agent ID of the worker (0 if unknown)
+    function claimTask(bytes32 taskId, uint256 stakeAmount, uint256 workerAgentId) external {
+        _claimTask(taskId, stakeAmount, workerAgentId);
+    }
+
+    function _claimTask(bytes32 taskId, uint256 stakeAmount, uint256 workerAgentId) private {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
@@ -171,6 +256,10 @@ contract CoreFacet {
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
+        if (s.reservedWorkers[taskId] != address(0)) {
+            _acceptReservation(taskId, task, worker, s);
+            LibFeedback.bindWorker(s, worker, workerAgentId);
+        }
         LibGuards._requireStakePayment(stakeAmount);
         if (stakeAmount < LibTerms.minStake(s.taskTerms[taskId], task.reward)) {
             revert ITMPCore.StakePaymentMismatch();
@@ -186,6 +275,21 @@ contract CoreFacet {
         emit ITMPCore.TaskClaimed(taskId, worker, stakeAmount);
         LibEscrow.book(s, taskId, worker, ITMPEscrow.Component.WorkerStake, false);
         LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @dev Rev027: a task with a reserved worker is claimed only by that worker, by the accept-by
+    ///      time, and its delivery period (the span from creation to expiry) restarts at the claim,
+    ///      so time spent deciding never shortens it.
+    function _acceptReservation(bytes32 taskId, ITMPCore.Task storage task, address worker, AppStorage storage s)
+        private
+    {
+        if (worker != s.reservedWorkers[taskId]) revert ITMPCore.NotReservedWorker();
+        if (block.timestamp > LibTerms.acceptBy(s, taskId)) revert ITMPCore.AcceptWindowClosed();
+        uint256 newExpiry = block.timestamp + (task.expiryTime - s.taskMetadata[taskId].createdAt);
+        if (newExpiry != task.expiryTime) {
+            task.expiryTime = newExpiry;
+            emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
+        }
     }
 
     /// @notice Select a worker for Pitch mode. The requester is the authenticated actor (pgtrSender).
@@ -360,6 +464,11 @@ contract CoreFacet {
         LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (task.mode == AUCTION && s.taskBids[taskId].length != 0) revert ITMPCore.BidsExist();
+        // Rev027: a claimTask carries no expected terms, so a pending offer must not change under
+        // the worker's answer. The requester withdraws it (cancelTask) and makes a new one.
+        if (s.reservedWorkers[taskId] != address(0) && block.timestamp <= LibTerms.acceptBy(s, taskId)) {
+            revert ITMPCore.ReservationPending();
+        }
 
         uint256 originalReward = task.reward;
         uint256 originalExpiryTime = task.expiryTime;

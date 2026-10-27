@@ -189,6 +189,8 @@ interface ITMPDiamond {
     function setFeedbackValue(bytes32 eventKey, int128 value) external;
     function feedbackValue(bytes32 eventKey) external view returns (int128 value, bool isSet);
     function requesterAgentOf(address requester) external view returns (uint256);
+    // Rev027: the worker binding used by reservation feedback.
+    function workerAgentOf(address worker) external view returns (uint256);
 
     // -------------------------------------------------------------------------
     // SettlementFacet (Rev025)
@@ -207,6 +209,10 @@ interface ITMPDiamond {
     function requestRevision(bytes32 taskId) external;
     function settleLapsedReview(bytes32 taskId) external;
     function releaseClaim(bytes32 taskId) external;
+    // Rev027: a Claim task with a reserved worker. Creating one is the createTask overload declared
+    // on ITMPReservation, kept off this interface so `market.createTask` stays unambiguous.
+    function declineReservation(bytes32 taskId, uint256 workerAgentId) external;
+    function getReservation(bytes32 taskId) external view returns (address worker, uint256 acceptBy);
 
     // -------------------------------------------------------------------------
     // Escrow accounting (Rev026): views on RegistryFacet, the sweep on AdminFacet
