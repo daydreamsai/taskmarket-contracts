@@ -192,6 +192,26 @@ Unchanged: the same platform fee on payment; accepting is `claimTask`.
 `WorkerAgentBound`, view `workerAgentOf`. `ITMPReservation`: the new `createTask`, the
 three-argument `claimTask`, `declineReservation`, `getReservation`. `ITMPTermsV1`: the rev025 `createTask`.
 
+### CoreFacet split
+
+At rev026 `CoreFacet` deployed at about 24,000 bytes against the 24,576-byte limit, and rev027's
+additions left it with no room for the next change. Its task creation code was also private to it,
+so no other facet could create a task through the same path. rev027 splits it:
+
+- Task creation moves into a new library, `LibTaskCreation`. Its `create` function validates and
+  records the task, applies its evaluator terms, builds and checks its hooks, emits the creation
+  events and books its escrow, as `CoreFacet`'s private `_createTask` did. `CoreFacet`'s
+  `createTask` overloads hold the forwarder, pause and reentrancy guards and call it.
+- `claimTask` (both overloads), `selectWorker`, `submitPitch`, `submitProof` and `submitWork` move to
+  a new `WorkerFacet`, with their private helpers. They are the largest group in `CoreFacet` that no
+  other `CoreFacet` function calls.
+- `CoreFacet` keeps the mode constants, the `createTask` overloads and `updateTask`.
+
+Every moved function keeps its selector, signature and behaviour, and reads and writes the same
+`AppStorage`; only the facet that serves it changes. `LibTaskCreation`'s functions are internal, so
+a facet that calls it compiles its own copy: the library saves no bytecode by itself, but it lets a
+later facet create tasks through the one path.
+
 ## Rationale
 
 ### Why not a separate mode?
@@ -253,9 +273,10 @@ penalisable.
 
 ## Upgrade
 
-`Rev027Upgrade` sends one `diamondCut`: it Replaces CoreFacet and Adds the version 2 `createTask`,
-the reserved-worker `createTask` and the three-argument `claimTask` (the rev025 selector stays
-routed to CoreFacet), Replaces
+`Rev027Upgrade` sends one `diamondCut`: it Replaces the selectors that stay on CoreFacet and Adds
+the version 2 `createTask` and the reserved-worker `createTask` (the rev025 selector stays routed
+to CoreFacet); Replaces the moved selectors onto the new WorkerFacet and Adds the three-argument
+`claimTask` there; Replaces
 SettlementFacet and Adds `declineReservation` and `getReservation`, and Replaces FeedbackFacet and
 Adds `workerAgentOf`. Then it sets `diamondVersion` to 27. No other facet acts on the reserved
 worker, and the new terms field sits after every field they read. There is no backfill.

@@ -137,20 +137,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     }
 
     function _rev027Selectors() internal pure returns (bytes4[] memory s) {
-        bytes4[] memory core = FacetSelectors.coreFacetSelectorsAddedRev027();
-        bytes4[] memory settlement = FacetSelectors.settlementFacetSelectorsAddedRev027();
-        bytes4[] memory feedback = FacetSelectors.feedbackFacetSelectorsAddedRev027();
-        s = new bytes4[](core.length + settlement.length + feedback.length);
-        uint256 n;
-        for (uint256 i; i < core.length; ++i) {
-            s[n++] = core[i];
-        }
-        for (uint256 i; i < settlement.length; ++i) {
-            s[n++] = settlement[i];
-        }
-        for (uint256 i; i < feedback.length; ++i) {
-            s[n++] = feedback[i];
-        }
+        s = FacetSelectors.selectorsAddedRev027();
     }
 
     function _rev026Selectors() internal pure returns (bytes4[] memory s) {

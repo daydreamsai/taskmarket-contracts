@@ -5,6 +5,7 @@ import { DiamondCutFacet } from "../../src/facets/DiamondCutFacet.sol";
 import { DiamondLoupeFacet } from "../../src/facets/DiamondLoupeFacet.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
+import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { AuctionFacet } from "../../src/facets/AuctionFacet.sol";
 import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
@@ -170,16 +171,50 @@ library FacetSelectors {
     }
 
     function coreFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = _concat(coreFacetSelectorsThroughRev026(), coreFacetSelectorsAddedRev027());
+        s = _concat(coreFacetSelectorsKeptRev027(), coreFacetSelectorsAddedRev027());
     }
 
-    /// @dev rev027: createTask with version 2 terms, and createTask with a reserved worker. The
-    ///      version 1 overload keeps rev025's selector. claimTask with the worker's agent ID.
+    /// @dev rev027: the CoreFacet selectors through rev026 that stay on CoreFacet, Replaced by the
+    ///      rev027 step; the rest move to WorkerFacet.
+    function coreFacetSelectorsKeptRev027() internal pure returns (bytes4[] memory s) {
+        s = _without(coreFacetSelectorsThroughRev026(), workerFacetSelectorsFromCore());
+    }
+
+    /// @dev rev027: the CoreFacet selectors it Adds, without the one it Adds to WorkerFacet.
     function coreFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = ITMPTerms.createTask.selector;
         s[1] = ITMPReservation.createTask.selector;
-        s[2] = ITMPReservation.claimTask.selector;
+    }
+
+    /// @dev rev027: the claim, worker selection and submission entrypoints, on WorkerFacet.
+    function workerFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = _concat(workerFacetSelectorsFromCore(), workerFacetSelectorsAddedRev027());
+    }
+
+    /// @dev rev027: the selectors CoreFacet served through rev026 that rev027 Replaces onto
+    ///      WorkerFacet, with their signatures unchanged.
+    function workerFacetSelectorsFromCore() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = ITMPDiamond.claimTask.selector;
+        s[1] = WorkerFacet.selectWorker.selector;
+        s[2] = WorkerFacet.submitPitch.selector;
+        s[3] = WorkerFacet.submitProof.selector;
+        s[4] = WorkerFacet.submitWork.selector;
+    }
+
+    /// @dev Every selector rev027 Adds, on any facet.
+    function selectorsAddedRev027() internal pure returns (bytes4[] memory s) {
+        s = _concat(
+            _concat(coreFacetSelectorsAddedRev027(), workerFacetSelectorsAddedRev027()),
+            _concat(settlementFacetSelectorsAddedRev027(), feedbackFacetSelectorsAddedRev027())
+        );
+    }
+
+    /// @dev rev027: claimTask with the worker's agent ID.
+    function workerFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = ITMPReservation.claimTask.selector;
     }
 
     function _concat(bytes4[] memory a, bytes4[] memory b) private pure returns (bytes4[] memory s) {
@@ -189,6 +224,18 @@ library FacetSelectors {
         }
         for (uint256 i; i < b.length; ++i) {
             s[a.length + i] = b[i];
+        }
+    }
+
+    function _without(bytes4[] memory a, bytes4[] memory b) private pure returns (bytes4[] memory s) {
+        uint256 n;
+        for (uint256 i; i < a.length; ++i) {
+            if (!_contains(b, a[i])) ++n;
+        }
+        s = new bytes4[](n);
+        n = 0;
+        for (uint256 i; i < a.length; ++i) {
+            if (!_contains(b, a[i])) s[n++] = a[i];
         }
     }
 
@@ -231,10 +278,10 @@ library FacetSelectors {
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
         s[10] = REV018_CREATE_TASK;
         s[11] = ITMPDiamond.claimTask.selector;
-        s[12] = CoreFacet.selectWorker.selector;
-        s[13] = CoreFacet.submitPitch.selector;
-        s[14] = CoreFacet.submitProof.selector;
-        s[15] = CoreFacet.submitWork.selector;
+        s[12] = WorkerFacet.selectWorker.selector;
+        s[13] = WorkerFacet.submitPitch.selector;
+        s[14] = WorkerFacet.submitProof.selector;
+        s[15] = WorkerFacet.submitWork.selector;
         s[16] = ITMPDiamond.forfeitAndReopen.selector;
         s[17] = ITMPDiamond.cancelTask.selector;
         s[18] = CoreFacet.updateTask.selector;

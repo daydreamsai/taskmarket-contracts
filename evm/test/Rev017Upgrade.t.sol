@@ -6,6 +6,7 @@ import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
+import { WorkerFacet } from "../src/facets/WorkerFacet.sol";
 import { AuctionFacet } from "../src/facets/AuctionFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
@@ -111,7 +112,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         // FacetSelectors names because no facet serves it any more.
         _assertRoutes(diamond, FacetSelectors.REV018_CREATE_TASK, newCore, "createTask");
         _assertRoutes(diamond, ITMPDiamond.claimTask.selector, newCore, "claimTask");
-        _assertRoutes(diamond, CoreFacet.submitWork.selector, newCore, "submitWork");
+        _assertRoutes(diamond, WorkerFacet.submitWork.selector, newCore, "submitWork");
         _assertRoutes(diamond, ITMPDiamond.cancelTask.selector, newCore, "cancelTask");
         _assertRoutes(diamond, ITMPDiamond.forfeitAndReopen.selector, newCore, "forfeitAndReopen");
         _assertRoutes(diamond, AuctionFacet.selectLowestBidder.selector, newAuction, "selectLowestBidder");

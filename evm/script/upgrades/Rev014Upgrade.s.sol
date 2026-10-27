@@ -5,6 +5,7 @@ import { Script, console } from "forge-std/Script.sol";
 import { IDiamondCut } from "../../src/interfaces/IDiamondCut.sol";
 import { AdminFacet } from "../../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../../src/facets/CoreFacet.sol";
+import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 
@@ -84,10 +85,10 @@ contract Rev014Upgrade is Script {
         s[8] = bytes4(keccak256("AUCTION_REVERSE_ENGLISH()"));
         s[9] = bytes4(keccak256("MAX_BIDS_PER_TASK()"));
         s[10] = ITMPDiamond.claimTask.selector;
-        s[11] = CoreFacet.selectWorker.selector;
-        s[12] = CoreFacet.submitPitch.selector;
-        s[13] = CoreFacet.submitProof.selector;
-        s[14] = CoreFacet.submitWork.selector;
+        s[11] = WorkerFacet.selectWorker.selector;
+        s[12] = WorkerFacet.submitPitch.selector;
+        s[13] = WorkerFacet.submitProof.selector;
+        s[14] = WorkerFacet.submitWork.selector;
         s[15] = ITMPDiamond.forfeitAndReopen.selector;
         s[16] = ITMPDiamond.cancelTask.selector;
         s[17] = CoreFacet.updateTask.selector;

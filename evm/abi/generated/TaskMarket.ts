@@ -1323,47 +1323,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "claimTask",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "stakeAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "claimTask",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "stakeAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "workerAgentId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "createTask",
     "inputs": [
       {
@@ -1976,88 +1935,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "selectWorker",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "submitPitch",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "pitchHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "submitProof",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "proofHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "proofType",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "metricValue",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "submitWork",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "deliverable",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "updateTask",
     "inputs": [
       {
@@ -2185,93 +2062,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "PitchSubmitted",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "pitchHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProofSubmitted",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "proofHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "proofType",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "metricValue",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskClaimed",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "stakeAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TaskCreated",
     "inputs": [
       {
@@ -2321,25 +2111,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "TaskExpiryExtended",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "newExpiry",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TaskReserved",
     "inputs": [
       {
@@ -2359,31 +2130,6 @@ export const TaskMarketABI = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TaskSubmitted",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "deliverable",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -2506,25 +2252,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "TaskWorkerSelected",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "UnbookedFunding",
     "inputs": [
       {
@@ -2568,30 +2295,6 @@ export const TaskMarketABI = [
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "WorkerAgentBound",
-    "inputs": [
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "agentId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AcceptWindowClosed",
-    "inputs": []
-  },
-  {
     "type": "error",
     "name": "AppealWindowTooShort",
     "inputs": []
@@ -2613,27 +2316,12 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "DeliverableAlreadySet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "DisputeResolverCannotBeRequester",
     "inputs": []
   },
   {
     "type": "error",
     "name": "DurationMustBeGreaterThanZero",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EmptyPitchHash",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EmptyProofHash",
     "inputs": []
   },
   {
@@ -2761,27 +2449,7 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "NotABenchmarkTask",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotAClaimTask",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotAPitchTask",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotRequester",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotReservedWorker",
     "inputs": []
   },
   {
@@ -2801,11 +2469,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "PitchDeadlinePassed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReservationPending",
     "inputs": []
   },
@@ -2821,27 +2484,7 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "StakePaymentMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SubmissionAlreadyRejected",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "TaskDoesNotExist",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TaskIsExpired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TaskNotClaimed",
     "inputs": []
   },
   {
@@ -2862,16 +2505,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "USDCRefundFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "WorkerMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "WorkerNotSelected",
     "inputs": []
   },
   {
@@ -2974,6 +2607,25 @@ export const TaskMarketABI = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TaskWorkerSelected",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "BidDeadlineNotPassed",
     "inputs": []
@@ -3016,6 +2668,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "PriceExceedsMaxPrice",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskIsExpired",
     "inputs": []
   },
   {
@@ -3337,6 +2994,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "TaskNotClaimed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TooManyWinners",
     "inputs": []
   },
@@ -3348,6 +3010,16 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "WinnerNotSelected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorkerMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorkerNotSelected",
     "inputs": []
   },
   {
@@ -3682,6 +3354,25 @@ export const TaskMarketABI = [
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskExpiryExtended",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newExpiry",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -5432,8 +5123,37 @@ export const TaskMarketABI = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "WorkerAgentBound",
+    "inputs": [
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AcceptWindowClosed",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "DecisionWindowLapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DeliverableAlreadySet",
     "inputs": []
   },
   {
@@ -5443,7 +5163,17 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "NotAClaimTask",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotReserved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotReservedWorker",
     "inputs": []
   },
   {
@@ -5459,6 +5189,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "RevisionsExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SubmissionAlreadyRejected",
     "inputs": []
   },
   {
@@ -5595,5 +5330,270 @@ export const TaskMarketABI = [
         "internalType": "int128"
       }
     ]
+  },
+  {
+    "type": "function",
+    "name": "claimTask",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "stakeAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimTask",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "stakeAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "workerAgentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "selectWorker",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitPitch",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "pitchHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitProof",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proofHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proofType",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "metricValue",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitWork",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "deliverable",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "PitchSubmitted",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "pitchHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProofSubmitted",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "proofHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proofType",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "metricValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskClaimed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "stakeAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskSubmitted",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "deliverable",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "EmptyPitchHash",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EmptyProofHash",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotABenchmarkTask",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAPitchTask",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PitchDeadlinePassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StakePaymentMismatch",
+    "inputs": []
   }
 ] as const;

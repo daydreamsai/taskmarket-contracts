@@ -145,7 +145,9 @@ contract Rev026UpgradeTest is Test, DiamondTestHelper {
     }
 
     function _upgradeAndBackfill() internal {
+        address workerFacet = IDiamondLoupe(address(market)).facetAddress(ITMPDiamond.submitWork.selector);
         new Rev026Upgrade().run();
+        _restoreWorkerRouting(workerFacet);
         bytes32[] memory ids = new bytes32[](6);
         ids[0] = openTask;
         ids[1] = claimedTask;
@@ -157,6 +159,18 @@ contract Rev026UpgradeTest is Test, DiamondTestHelper {
         assertEq(market.backfillLiabilities(ids), 3, "books the three live tasks once each");
         vm.prank(owner);
         market.completeLiabilities();
+    }
+
+    /// @dev The rev026 step, run from this build, routes claimTask and the submit entrypoints to
+    ///      today's CoreFacet, which no longer serves them (rev027 moved them to WorkerFacet). On
+    ///      chain rev027 follows; here the moved selectors go back to the diamond's WorkerFacet.
+    function _restoreWorkerRouting(address workerFacet) internal {
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut(
+            workerFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.workerFacetSelectorsFromCore()
+        );
+        vm.prank(owner);
+        IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
     }
 
     function test_Upgrade_BumpsVersionWithoutPausing() public {

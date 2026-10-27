@@ -95,20 +95,7 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
     }
 
     function _rev027Added() internal pure returns (bytes4[] memory s) {
-        bytes4[] memory core = FacetSelectors.coreFacetSelectorsAddedRev027();
-        bytes4[] memory settlement = FacetSelectors.settlementFacetSelectorsAddedRev027();
-        bytes4[] memory feedback = FacetSelectors.feedbackFacetSelectorsAddedRev027();
-        s = new bytes4[](core.length + settlement.length + feedback.length);
-        uint256 n;
-        for (uint256 i; i < core.length; ++i) {
-            s[n++] = core[i];
-        }
-        for (uint256 i; i < settlement.length; ++i) {
-            s[n++] = settlement[i];
-        }
-        for (uint256 i; i < feedback.length; ++i) {
-            s[n++] = feedback[i];
-        }
+        s = FacetSelectors.selectorsAddedRev027();
     }
 
     /// @dev A rev026 diamond: no rev027 selector routed, version 26.
@@ -148,6 +135,12 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         address feedback = loupe.facetAddress(ITMPDiamond.feedbackValue.selector);
         assertNotEq(feedback, feedbackBefore, "FeedbackFacet replaced");
         assertEq(loupe.facetAddress(ITMPDiamond.workerAgentOf.selector), feedback);
+        address workerFacet = loupe.facetAddress(ITMPReservation.claimTask.selector);
+        assertNotEq(workerFacet, core, "claimTask with an agent ID on WorkerFacet");
+        bytes4[] memory moved = FacetSelectors.workerFacetSelectorsFromCore();
+        for (uint256 i; i < moved.length; ++i) {
+            assertEq(loupe.facetAddress(moved[i]), workerFacet, "moved selector on WorkerFacet");
+        }
     }
 
     function test_Upgrade_RefusesWrongVersion() public {

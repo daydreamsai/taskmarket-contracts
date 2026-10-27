@@ -16,6 +16,7 @@ import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
+import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { FacetSelectors } from "../../script/lib/FacetSelectors.sol";
@@ -39,7 +40,7 @@ abstract contract DiamondTestHelper is Test {
     /// @dev Deploys every facet and returns the full Add cut. Separate from deployDiamond so the
     ///      ten facet cuts do not share one stack frame with the deploy.
     function _facetCuts() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](11);
+        cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut(
             address(new DiamondCutFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors()
         );
@@ -72,6 +73,9 @@ abstract contract DiamondTestHelper is Test {
         );
         cuts[10] = IDiamondCut.FacetCut(
             address(new FeedbackFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.feedbackFacetSelectors()
+        );
+        cuts[11] = IDiamondCut.FacetCut(
+            address(new WorkerFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.workerFacetSelectors()
         );
     }
 

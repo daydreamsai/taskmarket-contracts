@@ -8,6 +8,7 @@ import { DiamondCutFacet } from "../src/facets/DiamondCutFacet.sol";
 import { DiamondLoupeFacet } from "../src/facets/DiamondLoupeFacet.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
+import { WorkerFacet } from "../src/facets/WorkerFacet.sol";
 import { AuctionFacet } from "../src/facets/AuctionFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
@@ -127,6 +128,7 @@ contract DiamondDeploy is Script {
         console.log("RegistryFacet:      ", address(regFacet));
         console.log("SettlementFacet:    ", cuts[9].facetAddress);
         console.log("FeedbackFacet:      ", cuts[10].facetAddress);
+        console.log("WorkerFacet:        ", cuts[11].facetAddress);
     }
 
     function _buildCuts(
@@ -140,7 +142,7 @@ contract DiamondDeploy is Script {
         address rating,
         address registry
     ) internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](11);
+        cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
         cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors());
         cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors());
@@ -155,12 +157,21 @@ contract DiamondDeploy is Script {
             address(new SettlementFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectors()
         );
         cuts[10] = _feedbackCut();
+        cuts[11] = _workerCut();
     }
 
     /// @dev Its own frame keeps _buildCuts under the stack limit.
     function _feedbackCut() internal returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut(
             address(new FeedbackFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.feedbackFacetSelectors()
+        );
+    }
+
+    /// @dev rev027: the claim, worker selection and submission entrypoints. Its own frame keeps
+    ///      _buildCuts under the stack limit.
+    function _workerCut() internal returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(
+            address(new WorkerFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.workerFacetSelectors()
         );
     }
 }
