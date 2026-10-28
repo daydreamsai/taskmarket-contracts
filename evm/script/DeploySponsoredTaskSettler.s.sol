@@ -38,6 +38,10 @@ contract DeploySponsoredTaskSettler is Script {
         address[] memory settlers = sortAddresses(vm.envAddress("FORGE_SPONSORED_TASK_SETTLER_ADDRESSES", ","));
         uint8 threshold = uint8(vm.envOr("FORGE_SPONSORED_TASK_SETTLER_THRESHOLD", uint256(1)));
 
+        IERC20 feeToken = IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS"));
+        uint256 creationFee = vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000));
+        address creationFeeRecipient = vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT");
+
         vm.startBroadcast(deployerKey);
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(deployer);
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(
@@ -51,9 +55,7 @@ contract DeploySponsoredTaskSettler is Script {
             address(feePolicy),
             registry,
             SponsoredTaskCreationFee.CreationFeeConfig({
-                token: IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS")),
-                amount: vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000)),
-                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT")
+                token: feeToken, amount: creationFee, recipient: creationFeeRecipient
             })
         );
         registry.setFactory(address(factory), true);
@@ -64,6 +66,9 @@ contract DeploySponsoredTaskSettler is Script {
         require(factory.controller() == address(settler), "Settler: factory controller is not the settler");
         require(feePolicy.owner() == admin, "Settler: fee policy owner is not the admin");
         require(registry.pendingOwner() == admin, "Settler: registry not pending to the admin");
+        require(factory.creationFee() == creationFee, "Settler: creation fee mismatch");
+        require(factory.creationFeeRecipient() == creationFeeRecipient, "Settler: creation fee recipient mismatch");
+        require(address(factory.feeToken()) == address(feeToken), "Settler: creation fee token mismatch");
 
         console.log("=== Sponsored Task settler mode deployment ===");
         console.log("Chain id:                 ", block.chainid);

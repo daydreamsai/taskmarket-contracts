@@ -56,8 +56,8 @@ Settle(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
        uint256 sponsoredTaskTotal,uint256 feeTotal,uint256 distributedGross)
 ```
 
-`Settle` is the field-for-field EVM form of the Solana settle authorization (program, vault, base
-chain id, base task id, nonce, root, totals). `Reserve` carries what `vault.reserveTask` needs plus
+`Settle` is the field-for-field EVM form of the Solana settle authorization (program, vault, task
+chain id, task id, nonce, root, totals). `Reserve` carries what `vault.reserveTask` needs plus
 the task and commitment nonce; `Release` carries only the identifiers.
 
 Every field is a static type, so the struct hash is `keccak256(abi.encode(TYPEHASH, request))`. The
@@ -70,7 +70,7 @@ digest against the chain.
 allocationId = keccak256(abi.encode(uint256 taskChainId, bytes32 taskId))
 ```
 
-`reserve` rejects any other value, and the vault's `taskId` for the allocation is `taskId`. One
+`reserve` rejects any other value, and stores the request's `taskId` as the allocation's task. One
 task therefore maps to one allocation per vault, as the Solana reservation account is derived
 from `(task_chain_id, task_id)`.
 

@@ -28,6 +28,8 @@ contract DeploySponsoredTaskVaultV2 is Script {
         SponsoredTaskFactory factoryV1 = SponsoredTaskFactory(vm.envAddress("FORGE_SPONSORED_TASK_FACTORY_ADDRESS"));
         require(address(factoryV1).code.length != 0, "Sponsored Task vault v2: missing v1 factory code");
         uint256 creationFee = vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000));
+        IERC20 feeToken = IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS"));
+        address creationFeeRecipient = vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT");
 
         SponsoredTaskRegistry registry = SponsoredTaskRegistry(address(factoryV1.registry()));
         address controller = factoryV1.controller();
@@ -39,9 +41,7 @@ contract DeploySponsoredTaskVaultV2 is Script {
             feePolicy,
             registry,
             SponsoredTaskCreationFee.CreationFeeConfig({
-                token: IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS")),
-                amount: creationFee,
-                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT")
+                token: feeToken, amount: creationFee, recipient: creationFeeRecipient
             })
         );
         bool authorized = registry.owner() == deployer;
@@ -52,6 +52,13 @@ contract DeploySponsoredTaskVaultV2 is Script {
         require(factoryV2.feePolicy() == feePolicy, "Sponsored Task vault v2: fee policy mismatch");
         require(address(factoryV2.registry()) == address(registry), "Sponsored Task vault v2: registry mismatch");
         require(factoryV2.creationFee() == creationFee, "Sponsored Task vault v2: creation fee mismatch");
+        require(
+            factoryV2.creationFeeRecipient() == creationFeeRecipient,
+            "Sponsored Task vault v2: creation fee recipient mismatch"
+        );
+        require(
+            address(factoryV2.feeToken()) == address(feeToken), "Sponsored Task vault v2: creation fee token mismatch"
+        );
 
         console.log("SponsoredTaskFactoryV2:          ", address(factoryV2));
         console.log("SponsoredTasksVaultV2 (impl):    ", factoryV2.implementation());

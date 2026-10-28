@@ -81,7 +81,11 @@ contract DeploySponsoredTask is Script {
         require(hook.owner() == admin, "Sponsored Task: hook owner is not the admin");
         require(feePolicy.owner() == admin, "Sponsored Task: fee policy owner is not the admin");
         require(factory.creationFee() == creationFee, "Sponsored Task: creation fee mismatch");
-        require(factory.creationFee() == creationFee, "Sponsored Task: creation fee mismatch");
+        require(
+            factory.creationFeeRecipient() == vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT"),
+            "Sponsored Task: creation fee recipient mismatch"
+        );
+        require(address(factory.feeToken()) == address(usdc), "Sponsored Task: creation fee token mismatch");
         require(registry.pendingOwner() == admin, "Sponsored Task: registry not pending to the admin");
 
         console.log("=== Sponsored Task deployment ===");
@@ -91,7 +95,7 @@ contract DeploySponsoredTask is Script {
         console.log("SponsoredTaskHook (proxy): ", address(hook));
         console.log("Hook is opt-in only -- not registered as a Diamond default hook");
         console.log("Vault creation fee (USDC base units):", creationFee);
-        console.log("Hook, fee policy and creation fee owner (admin):", admin);
+        console.log("Hook and fee policy owner (admin):", admin);
         console.log("Registry pending owner -- the admin must call acceptOwnership():", admin);
     }
 }

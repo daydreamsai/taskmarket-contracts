@@ -69,7 +69,7 @@ program only holds and pays the tokens.
 ### SponsoredTaskHook (task lifecycle)
 
 The hook runs on the chain where the task lives. Every hook event has no Solana counterpart
-because a Solana vault funds tasks; the Solana settler reads these Base events to build the
+because a Solana vault funds tasks; the Solana settler reads these task chain events to build the
 award list it signs.
 
 | EVM event | Projection kind | Notes |

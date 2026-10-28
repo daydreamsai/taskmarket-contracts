@@ -82,7 +82,7 @@ contract SponsoredTaskDeployScriptsTest is Test {
         }
     }
 
-    function test_DeploySponsoredTask_AdminOwnsHookFeePolicyCreationFeeAndRegistry() public {
+    function test_DeploySponsoredTask_AdminOwnsHookFeePolicyAndRegistry() public {
         (SponsoredTaskHook hook, SponsoredTaskRegistry registry, SponsoredTaskFeePolicy feePolicy) = _deploy();
 
         assertEq(hook.owner(), address(admin), "hook proxy must be owned by the admin");

@@ -37,7 +37,7 @@ standard.
 | `SponsoredTaskHook` | `ITMPHook` implementation; the only contract that talks to the Diamond. UUPS-upgradeable, single canonical deployment. |
 | `SponsoredTasksVault` | Per-vault escrow, deployed as an EIP-1167 clone; holds one vault's tokens and tracks available/reserved/claimable/paid/withdrawn balances. Immutable — never upgraded. |
 | `SponsoredTaskFactory` | Permissionless `createVault` — deploys a new vault clone, registers it, and takes a one-time creation fee from the creator. |
-| `SponsoredTaskCreationFee` | The factory's creation fee: amount and recipient set by a contract admin (Safe/timelock), never above an immutable ceiling, paid straight from the creator to the recipient and never refunded. |
+| `SponsoredTaskCreationFee` | The factory's creation fee: token, amount and recipient fixed when the factory is deployed (immutable, no owner), paid straight from the creator to the recipient and never refunded. A different fee takes a new factory. |
 | `SponsoredTaskRegistry` | Owner-gated allowlist of authorized factories; the canonical "is this a real vault" source of truth the hook checks against. |
 | `SponsoredTaskFeePolicy` | Owner-configurable project-token fee (bps + recipient), snapshotted per vault at reservation time. |
 | `SponsoredTaskSettlement` (library) | Computes the Merkle tree of per-worker net entitlements from a verdict's awards. |
@@ -203,8 +203,8 @@ be commissioned before any mainnet deployment moving non-trivial value.
 
 ## Deployment
 
-See `script/DeploySponsoredTask.s.sol` (initial deploy — the hook, the fee policy and the
-factory's creation fee are owned by a contract admin from the start) and
+See `script/DeploySponsoredTask.s.sol` (initial deploy — the hook and the fee policy are owned by a
+contract admin from the start; the factory's creation fee is fixed at deployment) and
 `script/UpgradeSponsoredTask.s.sol` (in-place UUPS upgrade for the hook only, mirroring
 `UpgradeRewardHook.s.sol`).
 

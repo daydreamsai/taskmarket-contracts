@@ -30,7 +30,7 @@ Accounts, all program-derived:
 | ------- | ----- | ----- |
 | `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient, claim delay |
 | `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
-| `Reservation` | `"task", vault, task_chain_id (u64 LE), task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time |
+| `Reservation` | `"task", vault, task_chain_id (u64 LE), task_id` | epoch, task chain commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time |
 | `ClaimReceipt` | `"claim", reservation, leaf_index (u32 LE)` | exists once the leaf is paid; the double-claim guard |
 | `PayoutBinding` | `"payout", task_chain_id (u64 LE), agent (20 bytes)` | the agent's Solana payout address and the binding's nonce |
 
