@@ -73,6 +73,7 @@ Every place that paid money to a task's requester now calls `LibProject.payReque
 - the auction refund of `maxPrice - price` on acceptance and on settlement;
 - the split remainder of `acceptSubmissions` and of an evaluator's multi-award verdict;
 - the refund on an evaluator's rejection;
+- the evaluator fee refunded when a dispute resolution overturns the verdict;
 - a worker-stake penalty when `penaltyTo` is the requester;
 - the refund when `updateTask` lowers a reward.
 
@@ -82,6 +83,10 @@ emitting `ProjectRefunded`; once the project is closed or past its end date it t
 project owner. The credit happens before the entrypoint's `LibEscrow.release`, which then releases
 the task's whole booking, so the money's booking moves from the task to the project and the
 solvency check holds throughout.
+
+`test/ProjectPayRequesterScan.t.sol` scans the facets and libraries and fails on any token
+transfer to a task's requester outside `payRequester`, and `test/ProjectRequesterPayouts.t.sol`
+checks each payout above lands in the project, not in an operator's wallet.
 
 ### End date
 

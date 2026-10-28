@@ -481,15 +481,19 @@ contract EvaluatorFacet {
     }
 
     /// @dev The fee stays in escrow from evaluate until the verdict is final. A verdict an appeal
-    ///      overturns earns nothing, so its fee goes back to the requester.
+    ///      overturns earns nothing, so its fee goes back to the requester through
+    ///      LibProject.payRequester: to the project's budget for a project task (rev027).
     function _payEvaluatorFee(bytes32 taskId, ITMPCore.Task storage task, bool toEvaluator, AppStorage storage s)
         private
     {
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
         uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         if (evalFee == 0) return;
-        address to = toEvaluator ? evalCfg.evaluator : task.requester;
-        if (!s.usdcToken.transfer(to, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
+        if (toEvaluator) {
+            if (!s.usdcToken.transfer(evalCfg.evaluator, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
+        } else if (!LibProject.payRequester(s, taskId, evalFee)) {
+            revert ITMPCore.EvaluatorPaymentFailed();
+        }
     }
 
     /// @dev Tallies awards, increments worker stats, commits fees, and validates escrow. No transfers.

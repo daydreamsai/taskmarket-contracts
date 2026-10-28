@@ -18,9 +18,12 @@ invariant = { runs = 64 }
 # DiamondSelectorParity.t.sol enumerates the upgrade-step scripts to assert the fresh-deploy
 # version seed matches the highest one, so it needs to read that directory listing.
 # RemoteSponsoredTaskHookFundingVector.t.sol replays the backend-built funding vectors.
+# ProjectPayRequesterScan.t.sol scans the facets and libraries for a direct payout to a requester.
 fs_permissions = [
     { access = "read", path = "./script/upgrades" },
     { access = "read", path = "../docs/specs/sponsored-tasks/vectors" },
+    { access = "read", path = "./src/facets" },
+    { access = "read", path = "./src/libraries" },
 ]
 # Emitted on every build so `forge inspect <c> storageLayout` works without a clean rebuild.
 # Without it the layout is absent from the artifact and `forge inspect` errors -- which reads
