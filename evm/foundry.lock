@@ -3,12 +3,15 @@
     "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
   },
   "lib/openzeppelin-contracts": {
-    "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
+    "tag": {
+      "name": "v5.7.0",
+      "rev": "cab19933c33c2ad1d4c7a84864a3601dddfd16f3"
+    }
   },
   "lib/openzeppelin-contracts-upgradeable": {
     "tag": {
-      "name": "v5.6.1",
-      "rev": "7bf4727aacdbfaa0f36cbd664654d0c9e1dc52bf"
+      "name": "v5.7.0",
+      "rev": "14f52c54d3a1eefbda3d4071efba24d3c1e07e8a"
     }
   }
 }

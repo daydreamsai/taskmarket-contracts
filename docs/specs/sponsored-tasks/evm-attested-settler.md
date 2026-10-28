@@ -42,7 +42,7 @@ can be released.
 
 ### Signed messages
 
-EIP-712 domain: `{ name: "Taskmarket Sponsored Task Settler", version: "1", chainId: <remote
+EIP-712 domain: `{ name: "Taskmarket Sponsored Settler", version: "1", chainId: <remote
 chain>, verifyingContract: <settler> }`.
 
 ```text

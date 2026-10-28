@@ -24,7 +24,7 @@ import { ISponsoredTaskSettlerAuthority } from "./interfaces/ISponsoredTaskSettl
 ///      `revokeSettlement` it. The vault is unchanged: it opens claims the moment
 ///      `installSettlement` runs, so the delay lives here.
 contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard {
-    string public constant DOMAIN_NAME = "Taskmarket Sponsored Task Settler";
+    string public constant DOMAIN_NAME = "Taskmarket Sponsored Settler";
     string public constant DOMAIN_VERSION = "1";
 
     uint64 public constant DEFAULT_CLAIM_DELAY_SECONDS = 3600;

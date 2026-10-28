@@ -205,7 +205,7 @@ contract SponsoredTaskSettlerTest is Test {
         bytes32 expected = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("Taskmarket Sponsored Task Settler"),
+                keccak256("Taskmarket Sponsored Settler"),
                 keccak256("1"),
                 REMOTE_CHAIN_ID,
                 address(settler)
