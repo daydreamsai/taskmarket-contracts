@@ -1,13 +1,14 @@
-# Rev028 -- Projects: one budget spent on ordinary tasks
+# Rev027 -- Projects: one budget spent on ordinary tasks
 
 ## Status
 
-Implemented; not deployed on any chain. Rev028 is cut only after rev027 is live on every chain.
-This document covers the project record, its budget and refunds, and operator grants.
+Implemented; not deployed on any chain. Projects ship in the rev027 cut, with the reserved worker
+(`rev027-reservation-mode.md`). This document covers the project record, its budget and refunds,
+and operator grants.
 
 ## Motivation
 
-Through rev027 every task is funded on its own from the requester's wallet. Someone with one goal
+Through rev026 every task is funded on its own from the requester's wallet. Someone with one goal
 and one budget, such as a website for 10 USDC, has to guess each piece's price up front and fund
 every task separately. Nothing groups the pieces or caps what the whole costs, and a cancelled or
 cheaper-than-expected task pays its money back to the wallet rather than to the work it was set
@@ -168,12 +169,13 @@ because the project ended would break those terms for the worker.
 
 ## Upgrade
 
-`script/upgrades/Rev028Upgrade.s.sol`, one diamond cut: Add `ProjectFacet`, and Replace
-`CoreFacet`, `AcceptanceFacet`, `EvaluatorFacet` and `SettlementFacet`, which now pay a requester
-through `payRequester`, check task funding through `_requireFunding` and check the requester
-through `_requireRequester`, and `RatingFacet` and `WorkerFacet`, which check the requester through
-it. `LibRevision` is 28. No
-initialisation: every new field reads as zero, and no existing task belongs to a project.
+Part of the one rev027 diamond cut, `script/upgrades/Rev027Upgrade.s.sol` (see
+`rev027-reservation-mode.md` for the rest of it). For projects the cut Adds `ProjectFacet`, and
+Replaces `CoreFacet`, `AcceptanceFacet`, `EvaluatorFacet` and `SettlementFacet`, which now pay a
+requester through `payRequester`, check task funding through `_requireFunding` and check the
+requester through `_requireRequester`, and `RatingFacet` and `WorkerFacet`, which check the
+requester through it. `LibRevision` is 27. No initialisation: every new field reads as zero, and no
+existing task belongs to a project.
 
 ## Trade-offs
 
@@ -203,7 +205,7 @@ requester entrypoint refuses a non-requester.
 - `src/libraries/LibAppStorage.sol`, `LibGuards.sol`, `LibTaskCreation.sol`, `LibTaskMarket.sol`,
   `LibTerms.sol`, `LibRevision.sol`
 - `src/facets/CoreFacet.sol`, `AcceptanceFacet.sol`, `EvaluatorFacet.sol`, `SettlementFacet.sol`
-- `script/upgrades/Rev028Upgrade.s.sol`, `script/lib/FacetSelectors.sol`,
+- `script/upgrades/Rev027Upgrade.s.sol`, `script/lib/FacetSelectors.sol`,
   `script/DiamondDeploy.s.sol`, `scripts/generate-abi.ts`
 - `test/Project.t.sol`, `test/ProjectGrants.t.sol`, `test/RequesterGuard.t.sol`,
   `test/DiamondSelectorParity.t.sol`, `test/Diamond.t.sol`,

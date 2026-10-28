@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
 
-/// @title LibProject -- rev028: where money owed to a task's requester goes
+/// @title LibProject -- rev027: where money owed to a task's requester goes
 /// @dev Every facet that pays a task's requester calls payRequester instead of transferring to
 ///      task.requester. For a project task the money stays in the diamond and is credited back to
 ///      the project's available budget while the project is open and before its end date, and is

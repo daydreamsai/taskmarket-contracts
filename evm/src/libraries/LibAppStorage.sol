@@ -108,7 +108,7 @@ struct AppStorage {
     // both read as zero on a diamond upgraded into rev027.
     mapping(bytes32 => address) reservedWorkers;
     mapping(address => uint256) workerAgentIds;
-    // Rev028: projects, kept by ProjectFacet and LibProject. IDs run from 1; a task's zero
+    // Rev027: projects, kept by ProjectFacet and LibProject. IDs run from 1; a task's zero
     // projectId means it belongs to no project. A project's available budget is counted in
     // totalLiabilities. projectPrepaid is nonzero only inside createProjectTask: it is what the
     // project paid for the task being created, so the creation payment checks expect that
@@ -119,7 +119,7 @@ struct AppStorage {
     mapping(bytes32 => uint256) taskProjects;
     mapping(bytes32 => address) taskCreators;
     uint256 projectPrepaid;
-    // Rev028: operator grants per project and operator, and the operator that created a project
+    // Rev027: operator grants per project and operator, and the operator that created a project
     // task (zero for an owner-created one).
     mapping(uint256 => mapping(address => ITMPProject.Grant)) projectGrants;
     mapping(bytes32 => address) taskOperators;

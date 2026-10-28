@@ -12,7 +12,7 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 
-/// @dev rev028: operators spend a project's budget under grant terms the owner states and the
+/// @dev rev027: operators spend a project's budget under grant terms the owner states and the
 ///      operator accepts. Covers each term, the rejections, the cap and its release by refunds, and
 ///      who may act on an operator's task under every override and revoke setting.
 contract ProjectGrantsTest is DiamondTestHelper {

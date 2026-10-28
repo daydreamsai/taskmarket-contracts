@@ -66,7 +66,7 @@ library LibTerms {
             s.totalFeesCollected += amount;
             ok = s.usdcToken.transfer(s.feeRecipient, amount);
         } else {
-            // Rev028: a project task's penalty goes to its project, like any other requester money.
+            // Rev027: a project task's penalty goes to its project, like any other requester money.
             ok = LibProject.payRequester(s, taskId, amount);
         }
         if (!ok) revert ITMPCore.ForfeitTransferFailed();

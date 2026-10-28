@@ -9,7 +9,7 @@ import { LibTaskCreation } from "../libraries/LibTaskCreation.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
 
-/// @title ProjectFacet -- rev028: projects, one budget spent on ordinary tasks
+/// @title ProjectFacet -- rev027: projects, one budget spent on ordinary tasks
 /// @notice See ITMPProject. A project's available budget is an escrow liability from the moment it
 ///         is paid in until it funds a task, comes back as a refund, or is returned on close.
 contract ProjectFacet {

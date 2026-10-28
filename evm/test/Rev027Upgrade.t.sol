@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
+import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
 import { ITMPReservation } from "../src/interfaces/ITMPReservation.sol";
 import { ITMPTermsV1 } from "../src/interfaces/ITMPTerms.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
@@ -21,7 +22,7 @@ import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 /// @title Rev027UpgradeTest
 /// @dev Builds a diamond holding a live claimed task, strips the rev027 selectors to stand in for a
 ///      rev026 diamond, runs the cut, and checks the routing, the version, the live task, the
-///      rev025 createTask selector and a task with a reserved worker end to end.
+///      rev025 createTask selector, a task with a reserved worker and a project end to end.
 contract Rev027UpgradeTest is Test, DiamondTestHelper {
     uint256 internal constant OWNER_KEY = 0xA11CE;
     uint256 internal constant REWARD = 100e6;
@@ -121,6 +122,8 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         address settlementBefore = loupe.facetAddress(ITMPDiamond.refundExpired.selector);
         address feedbackBefore = loupe.facetAddress(ITMPDiamond.feedbackValue.selector);
         address evaluatorBefore = loupe.facetAddress(ITMPDiamond.evaluatorTimeout.selector);
+        address acceptBefore = loupe.facetAddress(ITMPDiamond.acceptSubmission.selector);
+        address ratingBefore = loupe.facetAddress(ITMPDiamond.rateTask.selector);
 
         new Rev027Upgrade().run();
 
@@ -145,6 +148,54 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         for (uint256 i; i < moved.length; ++i) {
             assertEq(loupe.facetAddress(moved[i]), workerFacet, "moved selector on WorkerFacet");
         }
+        address projectFacet = loupe.facetAddress(ITMPProject.createProject.selector);
+        assertNotEq(projectFacet, address(0), "ProjectFacet routed");
+        bytes4[] memory projectSelectors = FacetSelectors.projectFacetSelectors();
+        for (uint256 i; i < projectSelectors.length; ++i) {
+            assertEq(loupe.facetAddress(projectSelectors[i]), projectFacet, "project selector on ProjectFacet");
+        }
+        assertNotEq(loupe.facetAddress(ITMPDiamond.acceptSubmission.selector), acceptBefore, "AcceptanceFacet replaced");
+        assertNotEq(loupe.facetAddress(ITMPDiamond.rateTask.selector), ratingBefore, "RatingFacet replaced");
+    }
+
+    function test_Upgrade_ProjectFundsATaskAndTakesBackItsRefund() public {
+        new Rev027Upgrade().run();
+
+        ITMPProject projects = ITMPProject(address(market));
+        uint256 id = abi.decode(
+            _relay(
+                requester,
+                REWARD,
+                abi.encodeCall(projects.createProject, (address(usdc), REWARD, uint64(block.timestamp + 30 days)))
+            ),
+            (uint256)
+        );
+        assertEq(projects.getProject(id).available, REWARD);
+
+        bytes32 taskId = abi.decode(
+            _relay(
+                requester,
+                0,
+                abi.encodeCall(
+                    projects.createProjectTask,
+                    (
+                        id,
+                        taskConfig(REWARD, 7 days, TMP_CLAIM),
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig(),
+                        stakeTerms(false, 0),
+                        address(0)
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        assertEq(projects.projectOf(taskId), id);
+        assertEq(projects.getProject(id).available, 0, "the reward left the budget");
+
+        _relay(requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+        assertEq(projects.getProject(id).available, REWARD, "the refund came back to the project");
     }
 
     function test_Upgrade_RefusesWrongVersion() public {

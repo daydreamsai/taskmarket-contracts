@@ -204,11 +204,14 @@ library FacetSelectors {
         s[4] = WorkerFacet.submitWork.selector;
     }
 
-    /// @dev Every selector rev027 Adds, on any facet.
+    /// @dev Every selector rev027 Adds, on any facet, projects included.
     function selectorsAddedRev027() internal pure returns (bytes4[] memory s) {
         s = _concat(
-            _concat(coreFacetSelectorsAddedRev027(), workerFacetSelectorsAddedRev027()),
-            _concat(settlementFacetSelectorsAddedRev027(), feedbackFacetSelectorsAddedRev027())
+            _concat(
+                _concat(coreFacetSelectorsAddedRev027(), workerFacetSelectorsAddedRev027()),
+                _concat(settlementFacetSelectorsAddedRev027(), feedbackFacetSelectorsAddedRev027())
+            ),
+            projectFacetSelectors()
         );
     }
 
@@ -449,7 +452,7 @@ library FacetSelectors {
         s[2] = FeedbackFacet.requesterAgentOf.selector;
     }
 
-    /// @dev rev028: projects. Every ProjectFacet selector is new in rev028.
+    /// @dev rev027: projects. Every ProjectFacet selector is new in rev027.
     function projectFacetSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](15);
         s[0] = ProjectFacet.createProject.selector;
@@ -467,10 +470,5 @@ library FacetSelectors {
         s[12] = ProjectFacet.revokeOperator.selector;
         s[13] = ProjectFacet.getGrant.selector;
         s[14] = ProjectFacet.taskOperator.selector;
-    }
-
-    /// @dev Every selector rev028 Adds, on any facet.
-    function selectorsAddedRev028() internal pure returns (bytes4[] memory s) {
-        s = projectFacetSelectors();
     }
 }

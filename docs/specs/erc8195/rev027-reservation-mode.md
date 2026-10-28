@@ -278,8 +278,10 @@ the version 2 `createTask` and the reserved-worker `createTask` (the rev025 sele
 to CoreFacet); Replaces the moved selectors onto the new WorkerFacet and Adds the three-argument
 `claimTask` there; Replaces
 SettlementFacet and Adds `declineReservation` and `getReservation`, and Replaces FeedbackFacet and
-Adds `workerAgentOf`. Then it sets `diamondVersion` to 27. No other facet acts on the reserved
-worker, and the new terms field sits after every field they read. There is no backfill.
+Adds `workerAgentOf`. The same cut ships projects: it Adds `ProjectFacet` and Replaces
+`AcceptanceFacet` and `RatingFacet` (`rev027-taskmarket-projects.md`). Then it sets
+`diamondVersion` to 27. No other facet acts on the reserved worker, and the new terms field sits
+after every field they read. There is no backfill.
 
 ## Trade-offs
 

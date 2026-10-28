@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import { ITMPCore } from "./ITMPCore.sol";
 
-/// @title ITMPProject -- rev028: a project, one budget spent on ordinary tasks
+/// @title ITMPProject -- rev027: a project, one budget spent on ordinary tasks
 /// @notice A project holds a budget in the task payment stablecoin, an end date and an owner. The
 ///         owner spends the budget by creating tasks of any mode from it: one transaction moves
 ///         the reward (and any evaluator stake) from the budget into the new task's escrow, with

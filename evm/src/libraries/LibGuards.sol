@@ -81,7 +81,7 @@ library LibGuards {
     }
 
     /// @notice The task-funding check: as _requireReportedPayment, except inside createProjectTask
-    ///         (rev028), where the project has already paid `projectPrepaid` from its budget, so
+    ///         (rev027), where the project has already paid `projectPrepaid` from its budget, so
     ///         the funding must equal that and the forwarder must report no payment.
     function _requireFunding(AppStorage storage s, uint256 expected) internal view {
         uint256 prepaid = s.projectPrepaid;

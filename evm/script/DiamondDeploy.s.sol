@@ -178,7 +178,7 @@ contract DiamondDeploy is Script {
         );
     }
 
-    /// @dev rev028: projects. Its own frame keeps _buildCuts under the stack limit.
+    /// @dev rev027: projects. Its own frame keeps _buildCuts under the stack limit.
     function _projectCut() internal returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut(
             address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()

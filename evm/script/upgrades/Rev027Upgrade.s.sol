@@ -10,10 +10,13 @@ import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
+import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
+import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
+import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
 
-/// @title Rev027Upgrade -- a Claim task with a reserved worker
+/// @title Rev027Upgrade -- a Claim task with a reserved worker, and projects
 /// @dev Appends reservedWorkers and workerAgentIds to AppStorage, and TaskTerms gains
 ///      acceptWindowSecs in the slot's four spare bytes (terms version 2). Replaces CoreFacet and
 ///      Adds the version 2 createTask and createTask with a reserved worker; the rev025 selector
@@ -24,13 +27,16 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      FeedbackFacet and Adds workerAgentOf; its views also report the default for the new
 ///      "requester_timeout" event key. Replaces EvaluatorFacet: evaluatorTimeout no longer
 ///      requires the forwarder, so anyone can call it directly.
-///      Every other facet is unchanged: none acts on the reserved worker, and the new terms
-///      field sits after every field they read.
+/// @dev Projects: appends the project fields to AppStorage and Adds ProjectFacet. Replaces
+///      AcceptanceFacet and RatingFacet as well: with CoreFacet, EvaluatorFacet, SettlementFacet
+///      and WorkerFacet above, they pay money owed to a project task's requester back into its
+///      project and follow an operator's grant terms in their requester checks.
+///      Every other facet is unchanged.
 /// @dev CoreFacet is also split: claimTask (both overloads), selectWorker, submitPitch, submitProof
 ///      and submitWork move to a new WorkerFacet with their selectors unchanged, and task creation
 ///      moves into LibTaskCreation, so CoreFacet keeps room under the contract size limit.
-/// @dev One diamondCut transaction: five facets and about forty selectors, well under the
-///      Tempo per-transaction gas cap that made rev026 split its cut.
+/// @dev One diamondCut transaction: eight facets and 67 selectors, which must stay under
+///      the Tempo per-transaction gas cap that made rev026 split its cut (simulate first).
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
 ///      FORGE_DIAMOND_ADDRESS_84532  -- Diamond proxy on Base Sepolia (chain 84532)
@@ -63,11 +69,14 @@ contract Rev027Upgrade is Script {
         console.log("SettlementFacet:", loupe.facetAddress(FacetSelectors.settlementFacetSelectors()[0]));
         console.log("FeedbackFacet:  ", loupe.facetAddress(FacetSelectors.feedbackFacetSelectors()[0]));
         console.log("EvaluatorFacet: ", loupe.facetAddress(FacetSelectors.evalFacetSelectors()[0]));
+        console.log("ProjectFacet:   ", loupe.facetAddress(FacetSelectors.projectFacetSelectors()[0]));
+        console.log("AcceptanceFacet:", loupe.facetAddress(FacetSelectors.acceptFacetSelectors()[0]));
+        console.log("RatingFacet:    ", loupe.facetAddress(FacetSelectors.ratingFacetSelectors()[0]));
         console.log("diamondVersion: ", TARGET_VERSION);
     }
 
     function _cut() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](9);
+        cuts = new IDiamondCut.FacetCut[](12);
         address core = address(new CoreFacet());
         address worker = address(new WorkerFacet());
         address settlement = address(new SettlementFacet());
@@ -98,5 +107,14 @@ contract Rev027Upgrade is Script {
         );
         cuts[8] =
             IDiamondCut.FacetCut(evaluator, IDiamondCut.FacetCutAction.Replace, FacetSelectors.evalFacetSelectors());
+        cuts[9] = IDiamondCut.FacetCut(
+            address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()
+        );
+        cuts[10] = IDiamondCut.FacetCut(
+            address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()
+        );
+        cuts[11] = IDiamondCut.FacetCut(
+            address(new RatingFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.ratingFacetSelectors()
+        );
     }
 }

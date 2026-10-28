@@ -12,7 +12,7 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 
-/// @dev rev028: projects. Every task outcome that pays the requester is routed back to the
+/// @dev rev027: projects. Every task outcome that pays the requester is routed back to the
 ///      project while it is open, and to the owner after; the unspent budget is always booked.
 contract ProjectTest is DiamondTestHelper {
     ITMPDiamond internal market;
