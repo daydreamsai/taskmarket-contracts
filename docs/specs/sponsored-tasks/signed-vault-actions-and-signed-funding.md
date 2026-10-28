@@ -108,6 +108,19 @@ Every token movement is authorized by the account whose tokens move and goes to 
 recipient that account signed for. No contract here holds funds for a relayer, and a relayer's
 balance is never part of a vault's accounting.
 
+## Redirecting recipients
+
+Every outgoing transfer checks the named recipient's balance, as in v1: claims, fee claims and
+signed withdrawals need it to rise by exactly the amount, and the emergency exit needs it to rise.
+A token whose receive policy delivers to another address than the one named (a Tempo TIP-20
+receive policy or a forwarding address) credits the named recipient nothing, so the call reverts
+with `TokenRecipientAmountMismatch` and nothing changes: no tokens leave the vault, no claim is
+marked, the claim nonce is not spent and a relayed owner signature is not used up. The same
+signature succeeds once the destination stops redirecting, or the signer signs again for another
+destination. The vault does not try to resolve the effective recipient, because it cannot tell a
+redirect from a fee and paying an address nobody signed for would break the signed-destination
+rule above.
+
 ## Existing vaults
 
 Vaults made by the v1 factory keep their v1 implementation and gain nothing. An owner whose wallet
@@ -135,4 +148,7 @@ Code only so far. On each chain:
 - funding accounting and events, with the funder recorded and never the relayer;
 - signed create addresses and events;
 - the creation fee: paid once by allowance or by an authorization tied to one signed create, refused without it, never refunded, and bounded by the ceiling;
-- the unchanged v1 entry points.
+- the unchanged v1 entry points;
+- a redirecting recipient on `claim`, `claimTo`, `claimFee`, `withdrawAvailableBySig` and
+  `emergencyExitVaultBySig`: each reverts, keeps its nonce and succeeds unchanged once the redirect
+  is removed.

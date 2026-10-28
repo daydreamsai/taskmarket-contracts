@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
@@ -15,6 +16,31 @@ import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksV
 import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 
 contract VaultV2ControllerStandIn { }
+
+/// @dev A token whose receive policy delivers a transfer to another address than the one named, as a
+///      Tempo TIP-20 receive policy or a forwarding address can.
+contract VaultV2RedirectingToken is ERC20 {
+    mapping(address => address) public redirectOf;
+
+    constructor() ERC20("Redirecting token", "RDR") { }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setRedirect(address from, address to) external {
+        redirectOf[from] = to;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        address target = redirectOf[to];
+        super._update(from, target == address(0) ? to : target, value);
+    }
+}
 
 /// @dev A contract wallet (a Safe stand-in) that accepts an ERC-1271 signature from its one key.
 contract VaultV2ContractWallet {
@@ -474,5 +500,129 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
         assertEq(vault.managerAccount(manager).cap, 10e6);
         assertEq(token.balanceOf(recipient), 5e6);
         assertEq(vault.ownerNonce(), 0);
+    }
+}
+
+/// @notice Vault v2 under a redirecting receive policy. Every outgoing path checks the named
+///         recipient's balance, so a redirect reverts the whole call: nothing leaves the vault, no
+///         claim is marked, and a relayed owner signature is not used up, so the same signature
+///         works once the destination stops redirecting.
+contract SponsoredTasksVaultV2RedirectTest is VaultV2Base {
+    uint16 internal constant FEE_BPS = 50;
+    bytes32 internal constant TERMS_HASH = keccak256("v2-redirect-terms");
+
+    VaultV2RedirectingToken internal rToken;
+    SponsoredTasksVaultV2 internal vault;
+    address internal elsewhere = makeAddr("redirectTarget");
+
+    function setUp() public override {
+        super.setUp();
+        rToken = new VaultV2RedirectingToken();
+        (address vaultAddress,) = factory.createVault(address(rToken), vaultOwner, keccak256("v2-redirect"));
+        vault = SponsoredTasksVaultV2(vaultAddress);
+        rToken.mint(address(this), 200e6);
+        rToken.approve(address(vault), 200e6);
+        vault.fund(200e6);
+    }
+
+    function _withdrawSig(address to, uint256 amount, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(vault.WITHDRAW_AVAILABLE_TYPEHASH(), vault.vaultId(), to, amount, nonce, deadline)
+        );
+        return _sign(ownerKey, vault.ownerActionDigest(structHash));
+    }
+
+    function _exitSig(address to, uint256 nonce, uint256 deadline) internal view returns (bytes memory) {
+        bytes32 structHash =
+            keccak256(abi.encode(vault.EMERGENCY_EXIT_TYPEHASH(), vault.vaultId(), to, nonce, deadline));
+        return _sign(ownerKey, vault.ownerActionDigest(structHash));
+    }
+
+    function test_RedirectedClaimClaimToAndClaimFeeRevertAndLeaveTheAwardClaimable() public {
+        vm.prank(vaultOwner);
+        vault.configureManager(manager, 200e6, true);
+
+        uint256 workerKey = 0xBEEF;
+        address worker = vm.addr(workerKey);
+        address destination = makeAddr("destination");
+        bytes32 allocationId = keccak256("v2-redirect-allocation");
+        bytes32 taskId = keccak256("v2-redirect-task");
+        uint256 feeTotal = 100e6 * uint256(FEE_BPS) / 10_000;
+        uint256 award = 100e6 - feeTotal;
+        vm.prank(controller);
+        vault.reserveTask(allocationId, taskId, manager, 100e6, 1, FEE_BPS, feeRecipient, TERMS_HASH);
+        bytes32 root = vault.claimLeaf(allocationId, taskId, 1, 0, worker, award);
+        vm.prank(controller);
+        vault.installSettlement(allocationId, taskId, root, 1, award, feeTotal, 100e6);
+        bytes32[] memory proof = new bytes32[](0);
+
+        rToken.setRedirect(worker, elsewhere);
+        vm.prank(worker);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, award, 0));
+        vault.claim(allocationId, 0, award, proof);
+
+        rToken.setRedirect(destination, elsewhere);
+        uint256 deadline = vm.getBlockTimestamp() + 1 days;
+        bytes memory signature =
+            _sign(workerKey, vault.claimDigest(allocationId, 0, worker, destination, award, 0, deadline));
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, award, 0));
+        vault.claimTo(allocationId, 0, worker, destination, award, 0, deadline, signature, proof);
+
+        vm.prank(feeRecipient);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, feeTotal, 0));
+        vault.claimFee(allocationId, destination);
+
+        assertEq(vault.claimNonces(worker), 0);
+        assertFalse(vault.isClaimed(allocationId, 0));
+        assertEq(rToken.balanceOf(elsewhere), 0);
+        assertEq(rToken.balanceOf(address(vault)), 200e6);
+
+        // The worker's claim signature was not used up: it pays once the destination stops redirecting.
+        rToken.setRedirect(destination, address(0));
+        vm.prank(relayer);
+        vault.claimTo(allocationId, 0, worker, destination, award, 0, deadline, signature, proof);
+        assertEq(rToken.balanceOf(destination), award);
+        assertTrue(vault.isClaimed(allocationId, 0));
+    }
+
+    function test_RedirectedWithdrawAvailableBySigRevertsWithoutUsingTheOwnersSignature() public {
+        uint256 deadline = vm.getBlockTimestamp() + 1 hours;
+        bytes memory sig = _withdrawSig(recipient, 40e6, 0, deadline);
+        rToken.setRedirect(recipient, elsewhere);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, 40e6, 0));
+        vault.withdrawAvailableBySig(recipient, 40e6, deadline, sig);
+        assertEq(vault.ownerNonce(), 0);
+        assertEq(vault.available(), 200e6);
+        assertEq(rToken.balanceOf(elsewhere), 0);
+
+        rToken.setRedirect(recipient, address(0));
+        vm.prank(relayer);
+        vault.withdrawAvailableBySig(recipient, 40e6, deadline, sig);
+        assertEq(vault.ownerNonce(), 1);
+        assertEq(rToken.balanceOf(recipient), 40e6);
+    }
+
+    function test_RedirectedEmergencyExitVaultBySigRevertsAndKeepsTheVaultActive() public {
+        uint256 deadline = vm.getBlockTimestamp() + 1 hours;
+        bytes memory sig = _exitSig(recipient, 0, deadline);
+        rToken.setRedirect(recipient, elsewhere);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, 200e6, 0));
+        vault.emergencyExitVaultBySig(recipient, deadline, sig);
+        assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));
+        assertEq(vault.ownerNonce(), 0);
+        assertEq(rToken.balanceOf(address(vault)), 200e6);
+
+        rToken.setRedirect(recipient, address(0));
+        vm.prank(relayer);
+        assertEq(vault.emergencyExitVaultBySig(recipient, deadline, sig), 200e6);
+        assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Exited));
+        assertEq(rToken.balanceOf(recipient), 200e6);
     }
 }
