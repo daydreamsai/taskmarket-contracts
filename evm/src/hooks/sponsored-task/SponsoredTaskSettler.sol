@@ -13,7 +13,7 @@ import { ISponsoredTaskSettlerAuthority } from "./interfaces/ISponsoredTaskSettl
 
 /// @title SponsoredTaskSettler
 /// @notice The controller of a settler-mode `SponsoredTaskFactory` on an EVM chain that does not
-///         run the Taskmarket Diamond. The task lives on Base; this contract reserves, releases and
+///         run the Taskmarket Diamond. The task lives on a task chain; this contract reserves, releases and
 ///         settles the task's allocation in the remote vault on the signed word of a settler set.
 /// @dev Specified in `docs/specs/sponsored-tasks/evm-attested-settler.md`.
 ///
@@ -32,13 +32,13 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     uint256 public constant MAX_SETTLERS = 16;
 
     bytes32 public constant RESERVE_TYPEHASH = keccak256(
-        "Reserve(address vault,bytes32 allocationId,uint256 baseChainId,bytes32 baseTaskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash)"
+        "Reserve(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash)"
     );
     bytes32 public constant RELEASE_TYPEHASH = keccak256(
-        "Release(address vault,bytes32 allocationId,uint256 baseChainId,bytes32 baseTaskId,uint64 commitmentNonce)"
+        "Release(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce)"
     );
     bytes32 public constant SETTLE_TYPEHASH = keccak256(
-        "Settle(address vault,bytes32 allocationId,uint256 baseChainId,bytes32 baseTaskId,uint64 commitmentNonce,uint64 epoch,bytes32 rewardsRoot,uint32 leafCount,uint256 sponsoredTaskTotal,uint256 feeTotal,uint256 distributedGross)"
+        "Settle(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,uint64 epoch,bytes32 rewardsRoot,uint32 leafCount,uint256 sponsoredTaskTotal,uint256 feeTotal,uint256 distributedGross)"
     );
 
     enum AllocationState {
@@ -54,8 +54,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     struct ReserveRequest {
         address vault;
         bytes32 allocationId;
-        uint256 baseChainId;
-        bytes32 baseTaskId;
+        uint256 taskChainId;
+        bytes32 taskId;
         uint64 commitmentNonce;
         address manager;
         uint256 grossAmount;
@@ -68,16 +68,16 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     struct ReleaseRequest {
         address vault;
         bytes32 allocationId;
-        uint256 baseChainId;
-        bytes32 baseTaskId;
+        uint256 taskChainId;
+        bytes32 taskId;
         uint64 commitmentNonce;
     }
 
     struct SettleRequest {
         address vault;
         bytes32 allocationId;
-        uint256 baseChainId;
-        bytes32 baseTaskId;
+        uint256 taskChainId;
+        bytes32 taskId;
         uint64 commitmentNonce;
         uint64 epoch;
         bytes32 rewardsRoot;
@@ -94,8 +94,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         uint16 feeBps;
         uint64 settledAt;
         uint32 leafCount;
-        uint256 baseChainId;
-        bytes32 baseTaskId;
+        uint256 taskChainId;
+        bytes32 taskId;
         uint256 grossAmount;
         bytes32 rewardsRoot;
         uint256 sponsoredTaskTotal;
@@ -132,7 +132,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     error SettlerThresholdNotMet(uint256 valid, uint8 threshold);
     error NotAuthorized();
     error InvalidAllocationId(bytes32 expected, bytes32 provided);
-    error InvalidBaseTask();
+    error InvalidTask();
     error VaultNotControlled(address vault);
     error AllocationWrongState(address vault, bytes32 allocationId, AllocationState state);
     error CommitmentMismatch(address vault, bytes32 allocationId);
@@ -150,8 +150,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     event TaskReservationAuthorized(
         address indexed vault,
         bytes32 indexed allocationId,
-        bytes32 indexed baseTaskId,
-        uint256 baseChainId,
+        bytes32 indexed taskId,
+        uint256 taskChainId,
         uint64 commitmentNonce,
         address manager,
         uint256 grossAmount,
@@ -160,15 +160,15 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     event TaskReleaseAuthorized(
         address indexed vault,
         bytes32 indexed allocationId,
-        bytes32 indexed baseTaskId,
-        uint256 baseChainId,
+        bytes32 indexed taskId,
+        uint256 taskChainId,
         uint64 commitmentNonce
     );
     event SettlementPending(
         address indexed vault,
         bytes32 indexed allocationId,
-        bytes32 indexed baseTaskId,
-        uint256 baseChainId,
+        bytes32 indexed taskId,
+        uint256 taskChainId,
         uint64 commitmentNonce,
         bytes32 rewardsRoot,
         uint32 leafCount,
@@ -178,12 +178,12 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         uint256 claimableAt
     );
     event SettlementFinalized(
-        address indexed vault, bytes32 indexed allocationId, bytes32 indexed baseTaskId, bytes32 rewardsRoot
+        address indexed vault, bytes32 indexed allocationId, bytes32 indexed taskId, bytes32 rewardsRoot
     );
     event SettlementRevoked(
         address indexed vault,
         bytes32 indexed allocationId,
-        bytes32 indexed baseTaskId,
+        bytes32 indexed taskId,
         bytes32 rewardsRoot,
         uint256 sponsoredTaskTotal
     );
@@ -214,10 +214,10 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     // Settler-authorized actions (anyone may relay)
     // ---------------------------------------------------------------------------------------------
 
-    /// @notice Reserves `grossAmount` in `vault` for a Base task. Blocked while paused.
+    /// @notice Reserves `grossAmount` in `vault` for a task. Blocked while paused.
     function reserve(ReserveRequest calldata request, bytes[] calldata signatures) external whenNotPaused nonReentrant {
         _authorize(keccak256(abi.encode(RESERVE_TYPEHASH, request)), signatures);
-        _requireAllocationId(request.allocationId, request.baseChainId, request.baseTaskId);
+        _requireAllocationId(request.allocationId, request.taskChainId, request.taskId);
         _requireControlledVault(request.vault);
 
         Allocation storage record = _allocations[request.vault][request.allocationId];
@@ -228,14 +228,14 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         record.commitmentNonce = request.commitmentNonce;
         record.epoch = request.epoch;
         record.feeBps = request.feeBps;
-        record.baseChainId = request.baseChainId;
-        record.baseTaskId = request.baseTaskId;
+        record.taskChainId = request.taskChainId;
+        record.taskId = request.taskId;
         record.grossAmount = request.grossAmount;
 
         ISponsoredTasksVault(request.vault)
             .reserveTask(
                 request.allocationId,
-                request.baseTaskId,
+                request.taskId,
                 request.manager,
                 request.grossAmount,
                 request.epoch,
@@ -246,8 +246,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         emit TaskReservationAuthorized(
             request.vault,
             request.allocationId,
-            request.baseTaskId,
-            request.baseChainId,
+            request.taskId,
+            request.taskChainId,
             request.commitmentNonce,
             request.manager,
             request.grossAmount,
@@ -261,7 +261,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     function release(ReleaseRequest calldata request, bytes[] calldata signatures) external nonReentrant {
         _authorize(keccak256(abi.encode(RELEASE_TYPEHASH, request)), signatures);
         Allocation storage record = _allocations[request.vault][request.allocationId];
-        _requireCommitment(record, request.vault, request.allocationId, request.baseChainId, request.baseTaskId);
+        _requireCommitment(record, request.vault, request.allocationId, request.taskChainId, request.taskId);
         if (record.commitmentNonce != request.commitmentNonce) {
             revert CommitmentMismatch(request.vault, request.allocationId);
         }
@@ -275,7 +275,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         // slither-disable-next-line unused-return
         ISponsoredTasksVault(request.vault).releaseTask(request.allocationId);
         emit TaskReleaseAuthorized(
-            request.vault, request.allocationId, request.baseTaskId, request.baseChainId, request.commitmentNonce
+            request.vault, request.allocationId, request.taskId, request.taskChainId, request.commitmentNonce
         );
     }
 
@@ -286,7 +286,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         if (settleDigestUsed[digest]) revert SettlementAlreadyUsed(digest);
 
         Allocation storage record = _allocations[request.vault][request.allocationId];
-        _requireCommitment(record, request.vault, request.allocationId, request.baseChainId, request.baseTaskId);
+        _requireCommitment(record, request.vault, request.allocationId, request.taskChainId, request.taskId);
         if (record.commitmentNonce != request.commitmentNonce) {
             revert CommitmentMismatch(request.vault, request.allocationId);
         }
@@ -308,8 +308,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         emit SettlementPending(
             request.vault,
             request.allocationId,
-            request.baseTaskId,
-            request.baseChainId,
+            request.taskId,
+            request.taskChainId,
             request.commitmentNonce,
             request.rewardsRoot,
             request.leafCount,
@@ -339,14 +339,14 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         ISponsoredTasksVault(vault)
             .installSettlement(
                 allocationId,
-                record.baseTaskId,
+                record.taskId,
                 record.rewardsRoot,
                 record.leafCount,
                 record.sponsoredTaskTotal,
                 record.feeTotal,
                 record.distributedGross
             );
-        emit SettlementFinalized(vault, allocationId, record.baseTaskId, record.rewardsRoot);
+        emit SettlementFinalized(vault, allocationId, record.taskId, record.rewardsRoot);
     }
 
     /// @notice Deletes a pending root so the settlers can sign a corrected one. Works whether or
@@ -363,7 +363,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         record.sponsoredTaskTotal = 0;
         record.feeTotal = 0;
         record.distributedGross = 0;
-        emit SettlementRevoked(vault, allocationId, record.baseTaskId, root, total);
+        emit SettlementRevoked(vault, allocationId, record.taskId, root, total);
     }
 
     function pause() external onlyOwner {
@@ -478,8 +478,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         return _domainSeparatorV4();
     }
 
-    function allocationIdFor(uint256 baseChainId, bytes32 baseTaskId) public pure returns (bytes32) {
-        return keccak256(abi.encode(baseChainId, baseTaskId));
+    function allocationIdFor(uint256 taskChainId, bytes32 taskId) public pure returns (bytes32) {
+        return keccak256(abi.encode(taskChainId, taskId));
     }
 
     function reserveDigest(ReserveRequest calldata request) external view returns (bytes32) {
@@ -499,8 +499,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         view
         returns (
             AllocationState state,
-            uint256 baseChainId,
-            bytes32 baseTaskId,
+            uint256 taskChainId,
+            bytes32 taskId,
             uint64 commitmentNonce,
             uint64 epoch,
             uint16 feeBps,
@@ -508,7 +508,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         )
     {
         Allocation storage r = _allocations[vault][allocationId];
-        return (r.state, r.baseChainId, r.baseTaskId, r.commitmentNonce, r.epoch, r.feeBps, r.grossAmount);
+        return (r.state, r.taskChainId, r.taskId, r.commitmentNonce, r.epoch, r.feeBps, r.grossAmount);
     }
 
     /// @dev `claimableAt` is zero unless the allocation holds a pending or finalized root.
@@ -557,9 +557,9 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         if (count < threshold) revert SettlerThresholdNotMet(count, threshold);
     }
 
-    function _requireAllocationId(bytes32 allocationId, uint256 baseChainId, bytes32 baseTaskId) private pure {
-        if (baseChainId == 0 || baseTaskId == bytes32(0)) revert InvalidBaseTask();
-        bytes32 expected = allocationIdFor(baseChainId, baseTaskId);
+    function _requireAllocationId(bytes32 allocationId, uint256 taskChainId, bytes32 taskId) private pure {
+        if (taskChainId == 0 || taskId == bytes32(0)) revert InvalidTask();
+        bytes32 expected = allocationIdFor(taskChainId, taskId);
         if (allocationId != expected) revert InvalidAllocationId(expected, allocationId);
     }
 
@@ -572,13 +572,13 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         Allocation storage record,
         address vault,
         bytes32 allocationId,
-        uint256 baseChainId,
-        bytes32 baseTaskId
+        uint256 taskChainId,
+        bytes32 taskId
     ) private view {
         if (record.state == AllocationState.None) {
             revert AllocationWrongState(vault, allocationId, record.state);
         }
-        if (record.baseChainId != baseChainId || record.baseTaskId != baseTaskId) {
+        if (record.taskChainId != taskChainId || record.taskId != taskId) {
             revert CommitmentMismatch(vault, allocationId);
         }
     }

@@ -99,10 +99,7 @@ fn claim_pays_each_bound_worker() {
     assert_eq!(events.len(), 1);
     let e = &events[0];
     assert_eq!((e.vault, e.reservation), (t.f.vault, t.r));
-    assert_eq!(
-        (e.base_chain_id, e.base_task_id),
-        (BASE_CHAIN_ID, task_id(1))
-    );
+    assert_eq!((e.task_chain_id, e.task_id), (TASK_CHAIN_ID, task_id(1)));
     assert_eq!((e.leaf_index, e.worker), (0, WORKER_A));
     assert_eq!((e.destination, e.amount), (t.payouts[0], 300));
 
@@ -325,10 +322,7 @@ fn claim_fee_pays_the_fee_recipient_once_even_while_paused() {
     assert_eq!(events.len(), 1);
     let e = &events[0];
     assert_eq!((e.vault, e.reservation), (t.f.vault, t.r));
-    assert_eq!(
-        (e.base_chain_id, e.base_task_id),
-        (BASE_CHAIN_ID, task_id(1))
-    );
+    assert_eq!((e.task_chain_id, e.task_id), (TASK_CHAIN_ID, task_id(1)));
     assert_eq!(
         (e.fee_recipient, e.destination, e.amount),
         (recipient.pubkey(), dest, FEE)
@@ -544,7 +538,7 @@ fn claim_pays_the_shared_test_vector() {
     let mint: Pubkey = text(&inputs["mint"]);
     let sponsor: Pubkey = text(&inputs["sponsor"]);
     let vault_id: u64 = text(&inputs["vaultIdU64"]);
-    let task: [u8; 32] = hex(&inputs["baseTaskId"]);
+    let task: [u8; 32] = hex(&inputs["taskId"]);
     let template = env.create_mint(&SPL_TOKEN);
     let mint_account = env.svm.get_account(&template).unwrap();
     env.svm.set_account(mint, mint_account).unwrap();

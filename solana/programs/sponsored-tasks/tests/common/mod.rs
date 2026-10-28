@@ -31,7 +31,7 @@ const PROGRAM_SO: &str = concat!(
 pub const SPL_TOKEN: Pubkey = spl_token_interface::ID;
 pub const TOKEN_2022: Pubkey = spl_token_2022_interface::ID;
 pub const DECIMALS: u8 = 6;
-pub const BASE_CHAIN_ID: u64 = 8453;
+pub const TASK_CHAIN_ID: u64 = 8453;
 pub const TEMPO_CHAIN_ID: u64 = 4217;
 pub const DEADLINE: i64 = 1_000_000;
 
@@ -54,7 +54,7 @@ pub fn assert_error(result: Result<(), FailedTransactionMetadata>, e: SponsoredT
 }
 
 pub fn manager(n: u8) -> ManagerKey {
-    manager_on(BASE_CHAIN_ID, n)
+    manager_on(TASK_CHAIN_ID, n)
 }
 
 pub fn manager_on(chain_id: u64, n: u8) -> ManagerKey {
@@ -90,7 +90,7 @@ pub fn reservation_pda(vault: &Pubkey, task_id: &[u8; 32]) -> Pubkey {
         &[
             RESERVATION_SEED,
             vault.as_ref(),
-            &BASE_CHAIN_ID.to_le_bytes(),
+            &TASK_CHAIN_ID.to_le_bytes(),
             task_id,
         ],
         &ID,
@@ -98,14 +98,14 @@ pub fn reservation_pda(vault: &Pubkey, task_id: &[u8; 32]) -> Pubkey {
     .0
 }
 
-pub fn payout_pda(base_chain_id: u64, agent: &[u8; 20]) -> Pubkey {
-    Pubkey::find_program_address(&[PAYOUT_SEED, &base_chain_id.to_le_bytes(), agent], &ID).0
+pub fn payout_pda(task_chain_id: u64, agent: &[u8; 20]) -> Pubkey {
+    Pubkey::find_program_address(&[PAYOUT_SEED, &task_chain_id.to_le_bytes(), agent], &ID).0
 }
 
 pub fn bind_payout_ix(
     payer: &Pubkey,
-    base_chain_id: u64,
-    base_agent: [u8; 20],
+    task_chain_id: u64,
+    agent: [u8; 20],
     payout: Pubkey,
     nonce: u64,
     signature: [u8; 65],
@@ -113,7 +113,7 @@ pub fn bind_payout_ix(
     Instruction {
         program_id: ID,
         accounts: accounts::BindPayout {
-            binding: payout_pda(base_chain_id, &base_agent),
+            binding: payout_pda(task_chain_id, &agent),
             payer: *payer,
             system_program: anchor_lang::system_program::ID,
             event_authority: event_authority(),
@@ -121,8 +121,8 @@ pub fn bind_payout_ix(
         }
         .to_account_metas(None),
         data: instruction::BindPayout {
-            base_chain_id,
-            base_agent,
+            task_chain_id,
+            agent,
             payout,
             nonce,
             signature,
@@ -450,14 +450,14 @@ impl Env {
     /// Binds `worker`'s awards on Base to `payout`.
     pub fn put_binding(&mut self, worker: [u8; 20], payout: Pubkey) {
         let binding = PayoutBinding {
-            base_chain_id: BASE_CHAIN_ID,
-            base_agent: worker,
+            task_chain_id: TASK_CHAIN_ID,
+            agent: worker,
             payout,
             nonce: 1,
             bump: 0,
         };
         self.put(
-            &payout_pda(BASE_CHAIN_ID, &worker),
+            &payout_pda(TASK_CHAIN_ID, &worker),
             &binding,
             8 + <PayoutBinding as anchor_lang::Space>::INIT_SPACE,
         );
@@ -607,8 +607,8 @@ impl VaultFixture {
             program_id: ID,
             accounts: metas,
             data: instruction::Reserve {
-                base_chain_id: BASE_CHAIN_ID,
-                base_task_id: task,
+                task_chain_id: TASK_CHAIN_ID,
+                task_id: task,
                 nonce: 1,
                 deadline,
                 amount,
@@ -683,7 +683,7 @@ impl VaultFixture {
                 mint: self.mint,
                 vault_token_account: self.vault_token,
                 reservation,
-                binding: payout_pda(BASE_CHAIN_ID, &worker),
+                binding: payout_pda(TASK_CHAIN_ID, &worker),
                 receipt: receipt_pda(&reservation, leaf_index),
                 destination_token_account: destination,
                 payer: *payer,

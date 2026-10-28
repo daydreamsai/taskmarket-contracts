@@ -2,7 +2,7 @@
 
 Status: Implemented by the Solana program's `settle`, `claim` and `claim_fee` instructions.
 
-The task, its verdict and its awards live on Base. The settlers read the Base award events,
+The task, its verdict and its awards live on the task chain (Base or Tempo). The settlers read the task chain award events,
 rebuild the award list with the Solana ids (see the award leaf in
 [`event-and-error-vocabulary.md`](event-and-error-vocabulary.md), section 4) and sign a `settle`
 that installs its Merkle root on the task's `Reservation`.
@@ -49,7 +49,7 @@ settled again after the pause lifts. It refuses a settlement with any paid leaf 
 ```text
 claim(leaf_index: u32, worker: [u8; 20], amount: u64, proof: Vec<[u8; 32]>)
 accounts: config, vault (mut), mint, vault token account (mut), reservation (mut, has_one vault),
-          binding (PayoutBinding PDA of reservation.base_chain_id and worker),
+          binding (PayoutBinding PDA of reservation.task_chain_id and worker),
           receipt (ClaimReceipt PDA, created), destination token account (mut), payer (mut, signer),
           token program, system program, event authority, program
 ```
@@ -59,7 +59,7 @@ current epoch (`EpochMismatch`), reservation `Settled` (`ReservationWrongState`)
 delay passed since `settled_at` (`ClaimDelayNotElapsed`),
 `leaf_index < leaf_count` (`ClaimIndexOutOfBounds`), `amount > 0` (`NothingToClaim`), no receipt
 for the leaf yet (`ClaimAlreadyPaid`), the proof of `award_leaf(vault, epoch, reservation,
-base_task_id, leaf_index, worker, amount)` against the root (`InvalidClaimProof`), the running
+task_id, leaf_index, worker, amount)` against the root (`InvalidClaimProof`), the running
 claimed total within `settled_total` (`InvalidSettlementTotals`), a binding for the worker
 (`PayoutNotBound`), and a destination owned by the bound payout address (Anchor
 `ConstraintTokenOwner`).
@@ -109,7 +109,7 @@ a settler message, with one authorization scheme for every settler-gated instruc
 may pay the fee; the settler signatures authorize.
 
 **Claim delay.** On Solana a root rests on the settler signature alone. The delay gives the root
-watcher, which rebuilds the expected root from the Base award events, time to flag a root that
+watcher, which rebuilds the expected root from the task chain award events, time to flag a root that
 does not match, and the admin time to revoke it, before any token leaves the vault. An
 honest award waits one delay. The delay is a `Config` setting rather than a constant so it can be
 tuned once watcher latency is measured, and it never drops to zero, so a watcher always has a
@@ -126,7 +126,7 @@ claim reaches the program and fails with the named `ClaimAlreadyPaid` instead of
 "account in use" error. Receipts outlive the claim; a root with receipts cannot be revoked, so a
 receipt always refers to the root it was paid against.
 
-**Payout.** The leaf names the worker by their Base address, so it matches the Base award. The
+**Payout.** The leaf names the worker by their EVM address, so it matches the task chain award. The
 program pays only the token account owned by the address in the worker's `PayoutBinding`, which
 the worker signed for (see [`payout-binding.md`](payout-binding.md)); the relayer cannot choose
 the destination.

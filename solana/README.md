@@ -30,9 +30,9 @@ Accounts, all program-derived:
 | ------- | ----- | ----- |
 | `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient, claim delay |
 | `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
-| `Reservation` | `"task", vault, base_chain_id (u64 LE), base_task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time |
+| `Reservation` | `"task", vault, task_chain_id (u64 LE), task_id` | epoch, Base commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time |
 | `ClaimReceipt` | `"claim", reservation, leaf_index (u32 LE)` | exists once the leaf is paid; the double-claim guard |
-| `PayoutBinding` | `"payout", base_chain_id (u64 LE), base_agent (20 bytes)` | the Base agent's Solana payout address and the binding's nonce |
+| `PayoutBinding` | `"payout", task_chain_id (u64 LE), agent (20 bytes)` | the agent's Solana payout address and the binding's nonce |
 
 The vault's tokens sit in the associated token account owned by the `Vault` PDA. A manager is a
 Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance.
@@ -54,7 +54,7 @@ Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance
 | `claim_fee` | config fee recipient | open | pays a settled reservation's fee to any token account of the mint, once |
 | `revoke_settlement` | admin | open | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance; touches only that reservation, so it needs no pause |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
-| `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the Base agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
+| `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
 
 Settler signatures are passed as signer accounts after the named accounts. Every state change
 emits an event through `emit_cpi!`. Settlement, claims and the award leaf format are in

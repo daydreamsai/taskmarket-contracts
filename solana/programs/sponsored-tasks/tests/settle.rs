@@ -45,10 +45,7 @@ fn settle_installs_root_carves_fee_and_releases_the_rest() {
     assert_eq!(events.len(), 1);
     let e = &events[0];
     assert_eq!((e.vault, e.reservation), (f.vault, r));
-    assert_eq!(
-        (e.base_chain_id, e.base_task_id),
-        (BASE_CHAIN_ID, task_id(1))
-    );
+    assert_eq!((e.task_chain_id, e.task_id), (TASK_CHAIN_ID, task_id(1)));
     assert_eq!((e.epoch, e.root, e.leaf_count), (1, ROOT, 3));
     assert_eq!(
         (
@@ -471,9 +468,9 @@ fn award_leaf_and_proof_match_the_shared_test_vector() {
     assert_eq!(vault, pubkey(&inputs["vault"]));
     assert_eq!(vault.to_bytes(), hex32(&v["packed"]["vaultId"]));
 
-    let base_chain_id: u64 = inputs["baseChainId"].as_str().unwrap().parse().unwrap();
-    assert_eq!(base_chain_id, BASE_CHAIN_ID);
-    let task = hex32(&inputs["baseTaskId"]);
+    let task_chain_id: u64 = inputs["taskChainId"].as_str().unwrap().parse().unwrap();
+    assert_eq!(task_chain_id, TASK_CHAIN_ID);
+    let task = hex32(&inputs["taskId"]);
     let reservation = reservation_pda(&vault, &task);
     assert_eq!(reservation, pubkey(&inputs["reservation"]));
     assert_eq!(reservation.to_bytes(), hex32(&v["packed"]["allocationId"]));

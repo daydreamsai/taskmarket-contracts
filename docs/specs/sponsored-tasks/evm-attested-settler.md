@@ -10,7 +10,7 @@ standalone contracts; it does not change the Diamond, `AppStorage`, `SponsoredTa
 ## Problem
 
 A Sponsored Task vault can live on an EVM chain that does not run the Taskmarket Diamond. The task,
-its verdict and its awards stay on Base; only the tokens are on the remote chain. The vault gates
+its verdict and its awards stay on the task chain (Base or Tempo); only the tokens are on the remote chain. The vault gates
 `reserveTask`, `releaseTask` and `installSettlement` on its controller, and claims open the moment
 `installSettlement` succeeds. Vaults are immutable clones, so the remote half has to be a new
 controller, and the protections the Solana program already has (a claim delay, admin revoke during
@@ -46,19 +46,19 @@ EIP-712 domain: `{ name: "Taskmarket Sponsored Settler", version: "1", chainId: 
 chain>, verifyingContract: <settler> }`.
 
 ```text
-Reserve(address vault,bytes32 allocationId,uint256 baseChainId,bytes32 baseTaskId,
+Reserve(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
         uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,
         address feeRecipient,bytes32 termsHash)
-Release(address vault,bytes32 allocationId,uint256 baseChainId,bytes32 baseTaskId,
+Release(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
         uint64 commitmentNonce)
-Settle(address vault,bytes32 allocationId,uint256 baseChainId,bytes32 baseTaskId,
+Settle(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
        uint64 commitmentNonce,uint64 epoch,bytes32 rewardsRoot,uint32 leafCount,
        uint256 sponsoredTaskTotal,uint256 feeTotal,uint256 distributedGross)
 ```
 
 `Settle` is the field-for-field EVM form of the Solana settle authorization (program, vault, base
 chain id, base task id, nonce, root, totals). `Reserve` carries what `vault.reserveTask` needs plus
-the Base task and commitment nonce; `Release` carries only the identifiers.
+the task and commitment nonce; `Release` carries only the identifiers.
 
 Every field is a static type, so the struct hash is `keccak256(abi.encode(TYPEHASH, request))`. The
 settler exposes `reserveDigest`, `releaseDigest` and `settleDigest` so a signer can check its
@@ -67,16 +67,16 @@ digest against the chain.
 ### Allocation id and award leaves
 
 ```text
-allocationId = keccak256(abi.encode(uint256 baseChainId, bytes32 baseTaskId))
+allocationId = keccak256(abi.encode(uint256 taskChainId, bytes32 taskId))
 ```
 
-`reserve` rejects any other value, and the vault's `taskId` for the allocation is `baseTaskId`. One
-Base task therefore maps to one allocation per vault, as the Solana reservation account is derived
-from `(base_chain_id, base_task_id)`.
+`reserve` rejects any other value, and the vault's `taskId` for the allocation is `taskId`. One
+task therefore maps to one allocation per vault, as the Solana reservation account is derived
+from `(task_chain_id, task_id)`.
 
 Award leaves use the shared EVM leaf format (`../sponsored-tasks/event-and-error-vocabulary.md`,
 section 4) with the remote vault's `vaultId`, the reservation `epoch`, this `allocationId`,
-`taskId = baseTaskId` and the Base award's worker address.
+the task's `taskId` and the task chain award's worker address.
 
 ### Authorization
 
@@ -109,7 +109,7 @@ commitmentNonce, epoch, feeBps, feeRecipient, taskTermsHash }`, checks the task 
   `SponsoredTaskEntitlement` per leaf and `SettlementPrepared`. That root is exactly the root the
   settlers sign and the remote vault verifies.
 - `reconcile` repairs a missed callback from Taskmarket's terminal state, as on the local hook.
-- `reservationReleaseAfter(taskId)` is the Base task's expiry plus `RESERVATION_RELEASE_GRACE`
+- `reservationReleaseAfter(taskId)` is the task's expiry plus `RESERVATION_RELEASE_GRACE`
   (7 days): the time after which the keeper releases a reservation that has no settlement.
 
 ## Reasoning
@@ -117,7 +117,7 @@ commitmentNonce, epoch, feeBps, feeRecipient, taskTermsHash }`, checks the task 
 **Claim delay in the controller.** The vault opens claims at `installSettlement` and cannot change.
 A root installed on a 1-of-1 key's word alone could be drained in the same block, so `settle` only
 records it and `finalize` installs it after the delay. During the delay the root watcher, which
-rebuilds the expected root from the Base entitlement events, can flag a mismatch and the owner can
+rebuilds the expected root from the task chain entitlement events, can flag a mismatch and the owner can
 revoke. The cost is a second relayed transaction per settlement, and the vault shows the allocation
 as reserved until `finalize`; readers use the settler's `allocationSettlement` to show "settling".
 The delay defaults to 3600 seconds and never drops to zero, so the watcher always has a window.
@@ -159,5 +159,5 @@ leaves it untouched.
 `script/DeploySponsoredTaskSettler.s.sol` deploys, on the remote chain, the registry, the fee
 policy, the settler and a factory whose controller is the settler, and hands every owner role to
 the admin contract, including the factory's creation fee.
-`script/DeployRemoteSponsoredTaskHook.s.sol` deploys, on Base, the remote hook behind an ERC-1967
+`script/DeployRemoteSponsoredTaskHook.s.sol` deploys, on each task chain, the remote hook behind an ERC-1967
 proxy owned by the admin contract. Neither script registers a Diamond default hook.

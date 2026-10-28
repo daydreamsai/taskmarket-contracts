@@ -32,7 +32,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     /// @dev Same gas-safety bound as `SponsoredTaskHook.MAX_AWARDS`: the completion commitment loops
     ///      over awards inside the Diamond's fixed hook gas stipend.
     uint32 public constant MAX_AWARDS = 8;
-    /// @notice How long after the Base task's expiry an unsettled reservation may be released.
+    /// @notice How long after the task's expiry an unsettled reservation may be released.
     uint256 public constant RESERVATION_RELEASE_GRACE = 7 days;
 
     enum HookStatus {
@@ -180,9 +180,9 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     // Views
     // ---------------------------------------------------------------------------------------------
 
-    /// @notice The remote allocation id for a Base task: one Base task maps to one allocation.
-    function allocationIdFor(uint256 baseChainId, bytes32 taskId) public pure returns (bytes32) {
-        return keccak256(abi.encode(baseChainId, taskId));
+    /// @notice The remote allocation id for a task: one task maps to one allocation.
+    function allocationIdFor(uint256 taskChainId, bytes32 taskId) public pure returns (bytes32) {
+        return keccak256(abi.encode(taskChainId, taskId));
     }
 
     function commitment(bytes32 taskId) external view returns (Commitment memory) {
@@ -202,7 +202,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     }
 
     /// @notice When the keeper may release a reservation that has no settlement: seven days after
-    ///         the Base task's expiry.
+    ///         the task's expiry.
     function reservationReleaseAfter(bytes32 taskId) external view returns (uint256) {
         _requireCommitment(taskId);
         return ITMPCore(diamond).getTask(taskId).expiryTime + RESERVATION_RELEASE_GRACE;

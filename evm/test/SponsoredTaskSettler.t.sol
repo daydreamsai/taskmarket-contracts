@@ -30,9 +30,9 @@ contract MockSettlerAuthority is ISponsoredTaskSettlerAuthority {
 }
 
 contract SponsoredTaskSettlerTest is Test {
-    uint256 private constant BASE_CHAIN_ID = 8453;
+    uint256 private constant TASK_CHAIN_ID = 8453;
     uint256 private constant REMOTE_CHAIN_ID = 46_630;
-    bytes32 private constant BASE_TASK_ID = keccak256("base-task");
+    bytes32 private constant TASK_ID = keccak256("base-task");
     bytes32 private constant TERMS_HASH = keccak256("terms");
     uint64 private constant NONCE = 7;
     uint256 private constant GROSS = 10_000;
@@ -71,7 +71,7 @@ contract SponsoredTaskSettlerTest is Test {
         token.mint(address(this), GROSS * 10);
         token.approve(address(vault), type(uint256).max);
         vault.fund(GROSS * 10);
-        allocationId = keccak256(abi.encode(BASE_CHAIN_ID, BASE_TASK_ID));
+        allocationId = keccak256(abi.encode(TASK_CHAIN_ID, TASK_ID));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -116,8 +116,8 @@ contract SponsoredTaskSettlerTest is Test {
         return SponsoredTaskSettler.ReserveRequest({
             vault: address(vault),
             allocationId: allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: BASE_TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: NONCE,
             manager: MANAGER,
             grossAmount: GROSS,
@@ -132,8 +132,8 @@ contract SponsoredTaskSettlerTest is Test {
         return SponsoredTaskSettler.ReleaseRequest({
             vault: address(vault),
             allocationId: allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: BASE_TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: NONCE
         });
     }
@@ -145,7 +145,7 @@ contract SponsoredTaskSettlerTest is Test {
     function _leaf(address worker, uint256 net) private view returns (bytes32) {
         return keccak256(
             bytes.concat(
-                keccak256(abi.encode(vault.vaultId(), uint64(1), allocationId, BASE_TASK_ID, uint256(0), worker, net))
+                keccak256(abi.encode(vault.vaultId(), uint64(1), allocationId, TASK_ID, uint256(0), worker, net))
             )
         );
     }
@@ -154,8 +154,8 @@ contract SponsoredTaskSettlerTest is Test {
         return SponsoredTaskSettler.SettleRequest({
             vault: address(vault),
             allocationId: allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: BASE_TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: NONCE,
             epoch: 1,
             rewardsRoot: root,
@@ -212,7 +212,7 @@ contract SponsoredTaskSettlerTest is Test {
             )
         );
         assertEq(settler.domainSeparator(), expected);
-        assertEq(settler.allocationIdFor(BASE_CHAIN_ID, BASE_TASK_ID), allocationId);
+        assertEq(settler.allocationIdFor(TASK_CHAIN_ID, TASK_ID), allocationId);
     }
 
     function testConstructorRejectsBadSettlerSets() public {
@@ -257,16 +257,16 @@ contract SponsoredTaskSettlerTest is Test {
         _reserve();
         (
             SponsoredTaskSettler.AllocationState state,
-            uint256 baseChainId,
-            bytes32 baseTaskId,
+            uint256 taskChainId,
+            bytes32 taskId,
             uint64 nonce,
             uint64 epoch,
             uint16 feeBps,
             uint256 gross
         ) = settler.allocationCommitment(address(vault), allocationId);
         assertEq(uint8(state), uint8(SponsoredTaskSettler.AllocationState.Reserved));
-        assertEq(baseChainId, BASE_CHAIN_ID);
-        assertEq(baseTaskId, BASE_TASK_ID);
+        assertEq(taskChainId, TASK_CHAIN_ID);
+        assertEq(taskId, TASK_ID);
         assertEq(nonce, NONCE);
         assertEq(epoch, 1);
         assertEq(feeBps, FEE_BPS);
@@ -274,7 +274,7 @@ contract SponsoredTaskSettlerTest is Test {
         assertEq(uint8(_vaultStatus()), uint8(SponsoredTaskTypes.AllocationStatus.Reserved));
         assertEq(vault.totalReserved(), GROSS);
         (bytes32 vaultTaskId,,,,,,,) = vault.allocationTerms(allocationId);
-        assertEq(vaultTaskId, BASE_TASK_ID);
+        assertEq(vaultTaskId, TASK_ID);
     }
 
     function testReserveReplayOnSameChainFails() public {
@@ -337,25 +337,25 @@ contract SponsoredTaskSettlerTest is Test {
 
     function testReserveRejectsWrongAllocationId() public {
         SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
-        r.allocationId = BASE_TASK_ID;
+        r.allocationId = TASK_ID;
         bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTaskSettler.InvalidAllocationId.selector, allocationId, BASE_TASK_ID)
+            abi.encodeWithSelector(SponsoredTaskSettler.InvalidAllocationId.selector, allocationId, TASK_ID)
         );
         settler.reserve(r, sigs);
     }
 
-    function testReserveRejectsMissingBaseTask() public {
+    function testReserveRejectsMissingTask() public {
         SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
-        r.baseTaskId = bytes32(0);
+        r.taskId = bytes32(0);
         bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
-        vm.expectRevert(SponsoredTaskSettler.InvalidBaseTask.selector);
+        vm.expectRevert(SponsoredTaskSettler.InvalidTask.selector);
         settler.reserve(r, sigs);
 
-        r.baseTaskId = BASE_TASK_ID;
-        r.baseChainId = 0;
+        r.taskId = TASK_ID;
+        r.taskChainId = 0;
         sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
-        vm.expectRevert(SponsoredTaskSettler.InvalidBaseTask.selector);
+        vm.expectRevert(SponsoredTaskSettler.InvalidTask.selector);
         settler.reserve(r, sigs);
     }
 
@@ -449,7 +449,7 @@ contract SponsoredTaskSettlerTest is Test {
         settler.release(r, sigs);
 
         r = _releaseRequest();
-        r.baseChainId = BASE_CHAIN_ID + 1;
+        r.taskChainId = TASK_CHAIN_ID + 1;
         sigs = _sign(settler.releaseDigest(r), _keys1(keyA));
         vm.expectRevert(
             abi.encodeWithSelector(SponsoredTaskSettler.CommitmentMismatch.selector, address(vault), allocationId)
@@ -543,7 +543,7 @@ contract SponsoredTaskSettlerTest is Test {
     function testSettleSignatureFromAnotherChainFails() public {
         _reserve();
         SponsoredTaskSettler.SettleRequest memory s = _settleRequest(_leaf(WORKER, _net()));
-        vm.chainId(BASE_CHAIN_ID);
+        vm.chainId(TASK_CHAIN_ID);
         bytes[] memory sigs = _sign(settler.settleDigest(s), _keys1(keyA));
         vm.chainId(REMOTE_CHAIN_ID);
         vm.expectPartialRevert(SponsoredTaskSettler.NotSettler.selector);
@@ -589,7 +589,7 @@ contract SponsoredTaskSettlerTest is Test {
         settler.settle(s, sigsX);
 
         s = _settleRequest(_leaf(WORKER, _net()));
-        s.baseTaskId = keccak256("other");
+        s.taskId = keccak256("other");
         sigsX = _sign(settler.settleDigest(s), _keys1(keyA));
         vm.expectRevert(
             abi.encodeWithSelector(SponsoredTaskSettler.CommitmentMismatch.selector, address(vault), allocationId)

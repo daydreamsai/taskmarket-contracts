@@ -5,7 +5,7 @@ instructions. Covers the EVM contracts under `evm/src/hooks/sponsored-task/` and
 program under `solana/programs/sponsored-tasks/src/` as they stand at this revision.
 
 The EVM vault and the Solana program implement one protocol: a sponsor funds a single-token vault,
-a manager reserves an amount for a Base task, the task's awards are installed as a Merkle root and
+a manager reserves an amount for a task, the task's awards are installed as a Merkle root and
 workers claim with a proof. This spec fixes the shared names so an indexer, the backend and
 clients can read one normalized row per event regardless of chain, and so a Solana award list
 hashes the same way as an EVM one.
@@ -42,8 +42,8 @@ Sections:
 
 ## 1. Event map
 
-"EVM-only" and "Solana-only" give the reason. Base-side task events remain on Base for a
-Solana-funded task too, because the task, its verdict and its awards live on Base; the Solana
+"EVM-only" and "Solana-only" give the reason. Task chain events remain on the task chain for a
+Solana-funded task too, because the task, its verdict and its awards live there (Base or Tempo); the Solana
 program only holds and pays the tokens.
 
 ### SponsoredTasksVault (EVM) and the Solana program
@@ -54,9 +54,9 @@ program only holds and pays the tokens.
 | `VaultFunded(funder, amount)` | `VaultFunded { vault, funder, amount }` | `vault_funded` | |
 | `AvailableWithdrawn(owner, recipient, amount)` | none | `available_withdrawn` | EVM-only. The Solana program has no partial withdrawal; a sponsor recovers funds with `emergency_exit`. |
 | `ManagerConfigured(manager, cap, reserved, spent, active)` | `ManagerConfigured { vault, manager, cap, reserved, spent, active }` | `manager_configured` | Solana `manager` is `ManagerKey { chain_id, evm_address }`; on EVM the manager chain is the vault's chain. |
-| `TaskReserved(allocationId, taskId, manager, epoch, grossAmount, feeBps, feeRecipient, termsHash)` | `TaskReserved { vault, reservation, base_chain_id, base_task_id, manager, epoch, nonce, deadline, amount }` | `task_reserved` | EVM fixes fee terms and a terms hash per allocation; Solana fee terms are global and read at settle, and Solana adds the settler `nonce` and `deadline`. |
-| `TaskBound(allocationId, taskId)` | none | `task_bound` | EVM-only. On EVM a cross-chain allocation is reserved before its task id exists. A Solana reservation is created for a known `(base_chain_id, base_task_id)`, which are in its seeds. |
-| `TaskReleased(allocationId, taskId, manager, amount)` | `TaskReleased { vault, reservation, base_chain_id, base_task_id, manager, amount }` | `task_released` | |
+| `TaskReserved(allocationId, taskId, manager, epoch, grossAmount, feeBps, feeRecipient, termsHash)` | `TaskReserved { vault, reservation, task_chain_id, task_id, manager, epoch, nonce, deadline, amount }` | `task_reserved` | EVM fixes fee terms and a terms hash per allocation; Solana fee terms are global and read at settle, and Solana adds the settler `nonce` and `deadline`. |
+| `TaskBound(allocationId, taskId)` | none | `task_bound` | EVM-only. On EVM a cross-chain allocation is reserved before its task id exists. A Solana reservation is created for a known `(task_chain_id, task_id)`, which are in its seeds. |
+| `TaskReleased(allocationId, taskId, manager, amount)` | `TaskReleased { vault, reservation, task_chain_id, task_id, manager, amount }` | `task_released` | |
 | `SettlementInstalled(allocationId, taskId, rewardsRoot, leafCount, distributedGross, sponsoredTaskTotal, feeTotal, releasedAmount)` | `SettlementInstalled` (section 5) | `settlement_installed` | Emitted by `settle`; see [`settlement.md`](settlement.md). |
 | none | `SettlementRevoked { vault, reservation, root, settled_total }` | `settlement_revoked` | Solana-only. A Solana root rests on settler signatures alone, so the admin can reset an unclaimed root, without pausing the program. An EVM root comes from same-chain award events and cannot be forged by a key. |
 | `SponsoredTaskClaimed(allocationId, taskId, index, worker, destination, amount)` | `SponsoredTaskClaimed` (section 5) | `reward_claimed` | Emitted by `claim`; see [`settlement.md`](settlement.md). |
@@ -66,15 +66,15 @@ program only holds and pays the tokens.
 | none | `ConfigInitialized`, `AdminChanged`, `SettlersChanged`, `PauseSet`, `ClaimDelaySet` | `program_config` | Solana-only. One global `Config` account holds admin, settler set, threshold, pause and fee terms. On EVM these live in separate contracts (Ownable ownership, the fee policy, the diamond's pause) whose events are outside this vocabulary. |
 | none | `PayoutBound` (section 5) | `payout_bound` | Solana-only. A Solana claim pays the worker's bound Solana address; an EVM claim pays the EVM worker or a signed `claimTo` destination. |
 
-### SponsoredTaskHook (Base task lifecycle)
+### SponsoredTaskHook (task lifecycle)
 
 The hook runs on the chain where the task lives. Every hook event has no Solana counterpart
-because a Solana vault funds Base tasks; the Solana settler reads these Base events to build the
+because a Solana vault funds tasks; the Solana settler reads these Base events to build the
 award list it signs.
 
 | EVM event | Projection kind | Notes |
 | --- | --- | --- |
-| `SponsoredTaskFunded(taskId, vaultId, allocationId, vault, manager, route, epoch, grossAmount, feeBps, feeRecipient, taskTermsHash)` | `task_funded` | Links the Base task to its vault and allocation. |
+| `SponsoredTaskFunded(taskId, vaultId, allocationId, vault, manager, route, epoch, grossAmount, feeBps, feeRecipient, taskTermsHash)` | `task_funded` | Links the task to its vault and allocation. |
 | `CompletionCommitted(taskId, allocationId, verdictType, awardsDigest, awardCount, nativePayoutPool)` | `completion_committed` | |
 | `TerminalReleaseCommitted(taskId, allocationId)` | `terminal_release_committed` | |
 | `ForfeitReservationRetained(taskId, allocationId, worker)` | `forfeit_retained` | |
@@ -111,7 +111,7 @@ enforced by an account constraint or seed derivation and surfaces as a framework
 | `ManagerNotActive(manager)` | `ManagerNotActive` | |
 | `ManagerAllowanceExceeded(manager, requested, remaining)` | `ManagerAllowanceExceeded` | |
 | `AllocationIdRequired` | none | EVM-only: the Solana reservation id is a PDA, never caller-supplied. |
-| `TaskIdRequired` | none | EVM-only: `base_task_id` is a required seed. |
+| `TaskIdRequired` | none | EVM-only: `task_id` is a required seed. |
 | `TermsHashRequired` | none | EVM-only: Solana reservations carry no terms hash; the settler message binds the task. |
 | `GrossAmountRequired` | `ZeroAmount` | |
 | `AllocationAlreadyExists(allocationId)` | Anchor (`init` on an existing reservation PDA) | |
@@ -145,8 +145,8 @@ enforced by an account constraint or seed derivation and surfaces as a framework
 `TaskTermsMismatch`, `TaskNotTerminal`, `VerdictNotIssued`, `VerdictCommitmentMismatch`,
 `AwardsRequired` and `SettlementMismatch` (hook), `FeeBpsTooHigh`, `InvalidAwardRecipient`,
 `TooManyAwards` and `ZeroPayoutPool` (`SponsoredTaskSettlement`) and `InvalidTaskContext`
-(`SponsoredTaskTerms`) are Base-only: they guard the task lifecycle and award calculation, which
-stay on Base for every vault chain.
+(`SponsoredTaskTerms`) are task-chain-only: they guard the task lifecycle and award calculation, which
+stay on the task chain for every vault chain.
 
 ### Factory, registry and fee policy (EVM-only)
 
@@ -172,7 +172,7 @@ and sponsor is the same PDA.
 | `Paused`, `NotPaused` | The program-wide pause, which also blocks claims; the EVM vault has no pause. No instruction returns `NotPaused` any more (`revoke_settlement` needs no pause); it keeps its code so later codes do not shift. |
 | `UnsupportedMintExtension` | Token-2022 extension checks at `create_vault`. |
 | `TooManyManagers` | Account size bound on the vault's manager list. |
-| `ManagerChainMismatch` | A Solana manager is keyed by EVM chain; the reservation's `base_chain_id` must match it. |
+| `ManagerChainMismatch` | A Solana manager is keyed by EVM chain; the reservation's `task_chain_id` must match it. |
 | `VaultCapExceeded` | Scheduled for removal with `VaultCapSet`. |
 | `DeadlineInPast` | The settler-signed reservation message carries a deadline. |
 | `SettlementHasClaims` | Guard on `revoke_settlement`. |
@@ -209,14 +209,14 @@ Rows that concern one reservation also carry:
 | Field | Type | EVM source | Solana source |
 | --- | --- | --- | --- |
 | `allocationId` | bytes32 hex | `allocationId` | reservation PDA bytes |
-| `taskId` | bytes32 hex | `taskId` | `base_task_id` |
-| `taskChain` | CAIP-2 string | the vault chain, or the reservation chain for a cross-chain allocation | `eip155:<base_chain_id>` |
-| `taskChainId` | number | as above | `base_chain_id` |
+| `taskId` | bytes32 hex | `taskId` | `task_id` |
+| `taskChain` | CAIP-2 string | the vault chain, or the reservation chain for a cross-chain allocation | `eip155:<task_chain_id>` |
+| `taskChainId` | number | as above | `task_chain_id` |
 | `epoch` | decimal string | allocation epoch | reservation epoch |
 
 `allocationId` is canonical for a reservation. A Solana reservation PDA is derived from
-`["task", vault, base_chain_id u64 LE, base_task_id]`, so it is one-to-one with
-`(vault, base_chain_id, base_task_id)`. `taskId` with `taskChainId` identifies the Base task and
+`["task", vault, task_chain_id u64 LE, task_id]`, so it is one-to-one with
+`(vault, task_chain_id, task_id)`. `taskId` with `taskChainId` identifies the task and
 joins to the task's hook rows.
 
 ### Kinds
@@ -271,19 +271,19 @@ Solana packing:
 | --- | --- |
 | `vaultId` | the 32 bytes of the vault PDA, `["vault", mint, sponsor, vault_id u64 LE]` |
 | `epoch` | `Reservation.epoch` (the vault epoch at reserve), as a big-endian `uint64` word |
-| `allocationId` | the 32 bytes of the reservation PDA, `["task", vault, base_chain_id u64 LE, base_task_id]` |
-| `taskId` | `base_task_id`, unchanged |
+| `allocationId` | the 32 bytes of the reservation PDA, `["task", vault, task_chain_id u64 LE, task_id]` |
+| `taskId` | `task_id`, unchanged |
 | `leafIndex` | the Base `SponsoredTaskEntitlement.leafIndex` |
-| `worker` | the Base agent's EVM address from the Base award, not a Solana address |
-| `netAmount` | the Base entitlement's `netAmount`, in the Solana mint's base units |
+| `worker` | the agent's EVM address from the task chain award, not a Solana address |
+| `netAmount` | the task chain entitlement's `netAmount`, in the Solana mint's base units |
 
 Reasoning: PDAs are already 32 bytes, unique program-wide and recomputable from the claim's
 accounts, so the program compares `vaultId` and `allocationId` with the accounts it was passed
-instead of trusting caller data. `base_chain_id` is not a separate leaf field because it is
-inside the reservation PDA. The worker stays the EVM address so the leaf matches the Base award;
+instead of trusting caller data. `task_chain_id` is not a separate leaf field because it is
+inside the reservation PDA. The worker stays the EVM address so the leaf matches the task chain award;
 `claim` maps it to a Solana destination through the worker's `PayoutBinding`. Because the ids
-differ from the EVM vault's, a Solana root never equals the Base root for the same task; a root
-watcher rebuilds the expected Solana root from Base entitlements and compares that.
+differ from the EVM vault's, a Solana root never equals the task chain root for the same task; a root
+watcher rebuilds the expected Solana root from the task chain entitlements and compares that.
 
 ### Test vector
 
@@ -299,8 +299,8 @@ tests and backend tests load it from this path.
 | `vault_id` | `7` |
 | vault PDA | `E9fYQatdmgJtd7wMVYDztDTkXgVH6J2KCcZm16u1LSYc` |
 | `epoch` | `1` |
-| `base_chain_id` | `8453` |
-| `base_task_id` | `keccak256("taskmarket.sponsored-task.vector.task")` |
+| `task_chain_id` | `8453` |
+| `task_id` | `keccak256("taskmarket.sponsored-task.vector.task")` |
 | reservation PDA | `9QcksedA3wPTVVLdrNwsVBxK99T1HTHpisdYkwFq3Pku` |
 
 Packed fields:
@@ -331,10 +331,10 @@ section 3.
 
 | Event | Fields | Projection kind | EVM counterpart |
 | --- | --- | --- | --- |
-| `SettlementInstalled` | `vault`, `reservation`, `base_chain_id`, `base_task_id`, `epoch`, `root: [u8; 32]`, `leaf_count: u32`, `distributed_gross: u64`, `settled_total: u64` (sum of leaf `netAmount`), `fee_total: u64`, `released_amount: u64` | `settlement_installed` (`settled_total` is `sponsoredTaskTotal`) | `SponsoredTasksVault.SettlementInstalled` |
-| `SponsoredTaskClaimed` | `vault`, `reservation`, `base_chain_id`, `base_task_id`, `leaf_index: u32`, `worker: [u8; 20]`, `destination: Pubkey`, `amount: u64` | `reward_claimed` | `SponsoredTasksVault.SponsoredTaskClaimed` |
-| `FeeClaimed` | `vault`, `reservation`, `base_chain_id`, `base_task_id`, `fee_recipient: Pubkey`, `destination: Pubkey`, `amount: u64` | `fee_claimed` | `SponsoredTasksVault.FeeClaimed` |
-| `PayoutBound` | `base_chain_id`, `base_agent: [u8; 20]`, `payout: Pubkey`, `nonce: u64` | `payout_bound` | none |
+| `SettlementInstalled` | `vault`, `reservation`, `task_chain_id`, `task_id`, `epoch`, `root: [u8; 32]`, `leaf_count: u32`, `distributed_gross: u64`, `settled_total: u64` (sum of leaf `netAmount`), `fee_total: u64`, `released_amount: u64` | `settlement_installed` (`settled_total` is `sponsoredTaskTotal`) | `SponsoredTasksVault.SettlementInstalled` |
+| `SponsoredTaskClaimed` | `vault`, `reservation`, `task_chain_id`, `task_id`, `leaf_index: u32`, `worker: [u8; 20]`, `destination: Pubkey`, `amount: u64` | `reward_claimed` | `SponsoredTasksVault.SponsoredTaskClaimed` |
+| `FeeClaimed` | `vault`, `reservation`, `task_chain_id`, `task_id`, `fee_recipient: Pubkey`, `destination: Pubkey`, `amount: u64` | `fee_claimed` | `SponsoredTasksVault.FeeClaimed` |
+| `PayoutBound` | `task_chain_id`, `agent: [u8; 20]`, `payout: Pubkey`, `nonce: u64` | `payout_bound` | none |
 
 `distributed_gross`, `fee_total` and `released_amount` keep the EVM meaning: the reserved amount
 covered by awards, the fee carved from it, and the reserved amount returned to the vault's

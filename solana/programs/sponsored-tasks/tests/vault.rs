@@ -589,8 +589,8 @@ fn reserve_records_reservation_and_totals() {
     let r = env.reservation(&key);
     assert_eq!(r.vault, f.vault);
     assert_eq!(r.epoch, 1);
-    assert_eq!(r.base_chain_id, BASE_CHAIN_ID);
-    assert_eq!(r.base_task_id, task_id(1));
+    assert_eq!(r.task_chain_id, TASK_CHAIN_ID);
+    assert_eq!(r.task_id, task_id(1));
     assert_eq!(r.nonce, 1);
     assert_eq!(r.deadline, DEADLINE);
     assert_eq!(r.manager, manager(1));

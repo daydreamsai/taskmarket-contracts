@@ -32,7 +32,7 @@ pub const REJECTED_MINT_EXTENSIONS: [ExtensionType; 5] = [
     ExtensionType::ConfidentialTransferMint,
 ];
 
-/// EIP-712 domain of the payout binding a Base agent signs. `chainId` is the agent's EVM chain and
+/// EIP-712 domain of the payout binding an agent signs. `chainId` is the agent's EVM chain and
 /// `salt` is this program's id, so a binding cannot be replayed on another chain or program.
 pub const PAYOUT_DOMAIN_NAME: &str = "Taskmarket Sponsored Tasks";
 pub const PAYOUT_DOMAIN_VERSION: &str = "1";
@@ -249,8 +249,8 @@ pub mod sponsored_tasks {
     #[allow(clippy::too_many_arguments)]
     pub fn reserve(
         ctx: Context<Reserve>,
-        base_chain_id: u64,
-        base_task_id: [u8; 32],
+        task_chain_id: u64,
+        task_id: [u8; 32],
         nonce: u64,
         deadline: i64,
         amount: u64,
@@ -261,7 +261,7 @@ pub mod sponsored_tasks {
         require!(!config.paused, SponsoredTasksError::Paused);
         require!(amount > 0, SponsoredTasksError::ZeroAmount);
         require!(
-            manager.chain_id == base_chain_id,
+            manager.chain_id == task_chain_id,
             SponsoredTasksError::ManagerChainMismatch
         );
         require!(
@@ -304,8 +304,8 @@ pub mod sponsored_tasks {
         let reservation = &mut ctx.accounts.reservation;
         reservation.vault = vault_key;
         reservation.epoch = epoch;
-        reservation.base_chain_id = base_chain_id;
-        reservation.base_task_id = base_task_id;
+        reservation.task_chain_id = task_chain_id;
+        reservation.task_id = task_id;
         reservation.nonce = nonce;
         reservation.deadline = deadline;
         reservation.manager = manager;
@@ -323,8 +323,8 @@ pub mod sponsored_tasks {
         emit_cpi!(TaskReserved {
             vault: vault_key,
             reservation: reservation.key(),
-            base_chain_id,
-            base_task_id,
+            task_chain_id,
+            task_id,
             manager,
             epoch,
             nonce,
@@ -369,8 +369,8 @@ pub mod sponsored_tasks {
         emit_cpi!(TaskReleased {
             vault: vault_key,
             reservation: reservation.key(),
-            base_chain_id: reservation.base_chain_id,
-            base_task_id: reservation.base_task_id,
+            task_chain_id: reservation.task_chain_id,
+            task_id: reservation.task_id,
             manager: reservation.manager,
             amount,
         });
@@ -458,8 +458,8 @@ pub mod sponsored_tasks {
         emit_cpi!(SettlementInstalled {
             vault: vault_key,
             reservation: reservation.key(),
-            base_chain_id: reservation.base_chain_id,
-            base_task_id: reservation.base_task_id,
+            task_chain_id: reservation.task_chain_id,
+            task_id: reservation.task_id,
             epoch: reservation.epoch,
             root,
             leaf_count,
@@ -514,7 +514,7 @@ pub mod sponsored_tasks {
             &vault_key,
             reservation.epoch,
             &reservation_key,
-            &reservation.base_task_id,
+            &reservation.task_id,
             leaf_index,
             &worker,
             amount,
@@ -570,8 +570,8 @@ pub mod sponsored_tasks {
         emit_cpi!(SponsoredTaskClaimed {
             vault: vault_key,
             reservation: reservation_key,
-            base_chain_id: reservation.base_chain_id,
-            base_task_id: reservation.base_task_id,
+            task_chain_id: reservation.task_chain_id,
+            task_id: reservation.task_id,
             leaf_index,
             worker,
             destination: destination_key,
@@ -625,8 +625,8 @@ pub mod sponsored_tasks {
         emit_cpi!(FeeClaimed {
             vault: vault_key,
             reservation: reservation_key,
-            base_chain_id: reservation.base_chain_id,
-            base_task_id: reservation.base_task_id,
+            task_chain_id: reservation.task_chain_id,
+            task_id: reservation.task_id,
             fee_recipient: ctx.accounts.fee_recipient.key(),
             destination: ctx.accounts.destination_token_account.key(),
             amount,
@@ -698,36 +698,36 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
-    /// Binds a Base agent's Solana payout address from the agent's EIP-712 signature over
+    /// Binds an agent's Solana payout address from the agent's EIP-712 signature over
     /// `PayoutBinding(agent, payout, nonce)`. Anyone may relay it: the signature, not the payer,
     /// authorizes. A newer binding replaces the old one only with a higher nonce. Open while
     /// paused, since it moves no funds.
     pub fn bind_payout(
         ctx: Context<BindPayout>,
-        base_chain_id: u64,
-        base_agent: [u8; 20],
+        task_chain_id: u64,
+        agent: [u8; 20],
         payout: Pubkey,
         nonce: u64,
         signature: [u8; 65],
     ) -> Result<()> {
-        let digest = payout_binding_digest(base_chain_id, &base_agent, &payout, nonce);
+        let digest = payout_binding_digest(task_chain_id, &agent, &payout, nonce);
         require!(
-            recover_evm_address(&digest, &signature)? == base_agent,
+            recover_evm_address(&digest, &signature)? == agent,
             SponsoredTasksError::InvalidPayoutSignature
         );
         let binding = &mut ctx.accounts.binding;
         // A fresh account is zeroed; the seeds tie an existing one to this agent.
-        if binding.base_agent == base_agent {
+        if binding.agent == agent {
             require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
         }
-        binding.base_chain_id = base_chain_id;
-        binding.base_agent = base_agent;
+        binding.task_chain_id = task_chain_id;
+        binding.agent = agent;
         binding.payout = payout;
         binding.nonce = nonce;
         binding.bump = ctx.bumps.binding;
         emit_cpi!(PayoutBound {
-            base_chain_id,
-            base_agent,
+            task_chain_id,
+            agent,
             payout,
             nonce,
         });
@@ -872,8 +872,8 @@ fn require_settlers(config: &Config, signers: &[AccountInfo]) -> Result<()> {
 
 /// The EIP-712 digest of a payout binding, as `eth_signTypedData_v4` builds it.
 pub fn payout_binding_digest(
-    base_chain_id: u64,
-    base_agent: &[u8; 20],
+    task_chain_id: u64,
+    agent: &[u8; 20],
     payout: &Pubkey,
     nonce: u64,
 ) -> [u8; 32] {
@@ -881,14 +881,14 @@ pub fn payout_binding_digest(
         keccak::hash(EIP712_DOMAIN_TYPE).as_ref(),
         keccak::hash(PAYOUT_DOMAIN_NAME.as_bytes()).as_ref(),
         keccak::hash(PAYOUT_DOMAIN_VERSION.as_bytes()).as_ref(),
-        &abi_word(base_chain_id),
+        &abi_word(task_chain_id),
         ID.as_ref(),
     ]);
-    let mut agent = [0u8; 32];
-    agent[12..].copy_from_slice(base_agent);
+    let mut agent_word = [0u8; 32];
+    agent_word[12..].copy_from_slice(agent);
     let message = keccak::hashv(&[
         keccak::hash(PAYOUT_BINDING_TYPE).as_ref(),
-        &agent,
+        &agent_word,
         payout.as_ref(),
         &abi_word(nonce),
     ]);
@@ -902,7 +902,7 @@ pub fn award_leaf(
     vault: &Pubkey,
     epoch: u64,
     reservation: &Pubkey,
-    base_task_id: &[u8; 32],
+    task_id: &[u8; 32],
     leaf_index: u32,
     worker: &[u8; 20],
     net_amount: u64,
@@ -913,7 +913,7 @@ pub fn award_leaf(
         vault.as_ref(),
         &abi_word(epoch),
         reservation.as_ref(),
-        base_task_id,
+        task_id,
         &abi_word(leaf_index as u64),
         &worker_word,
         &abi_word(net_amount),
@@ -1066,7 +1066,7 @@ pub struct SetManagers<'info> {
 
 #[event_cpi]
 #[derive(Accounts)]
-#[instruction(base_chain_id: u64, base_task_id: [u8; 32])]
+#[instruction(task_chain_id: u64, task_id: [u8; 32])]
 pub struct Reserve<'info> {
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, Config>,
@@ -1076,7 +1076,7 @@ pub struct Reserve<'info> {
         init,
         payer = payer,
         space = 8 + Reservation::INIT_SPACE,
-        seeds = [RESERVATION_SEED, vault.key().as_ref(), &base_chain_id.to_le_bytes(), &base_task_id],
+        seeds = [RESERVATION_SEED, vault.key().as_ref(), &task_chain_id.to_le_bytes(), &task_id],
         bump
     )]
     pub reservation: Account<'info, Reservation>,
@@ -1123,7 +1123,7 @@ pub struct Claim<'info> {
     /// CHECK: the worker's `PayoutBinding` PDA; `claim` fails with `PayoutNotBound` while it
     /// does not exist, and deserializes it otherwise.
     #[account(
-        seeds = [PAYOUT_SEED, &reservation.base_chain_id.to_le_bytes(), &worker],
+        seeds = [PAYOUT_SEED, &reservation.task_chain_id.to_le_bytes(), &worker],
         bump
     )]
     pub binding: UncheckedAccount<'info>,
@@ -1184,13 +1184,13 @@ pub struct RevokeSettlement<'info> {
 
 #[event_cpi]
 #[derive(Accounts)]
-#[instruction(base_chain_id: u64, base_agent: [u8; 20])]
+#[instruction(task_chain_id: u64, agent: [u8; 20])]
 pub struct BindPayout<'info> {
     #[account(
         init_if_needed,
         payer = payer,
         space = 8 + PayoutBinding::INIT_SPACE,
-        seeds = [PAYOUT_SEED, &base_chain_id.to_le_bytes(), &base_agent],
+        seeds = [PAYOUT_SEED, &task_chain_id.to_le_bytes(), &agent],
         bump
     )]
     pub binding: Account<'info, PayoutBinding>,

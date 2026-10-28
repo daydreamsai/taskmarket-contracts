@@ -111,9 +111,9 @@ fn digest_matches_viem_typed_data() {
     let agent: [u8; 20] = hex(VIEM_AGENT);
     let payout = Pubkey::new_from_array([0x44; 32]);
     let expected: [u8; 32] = hex(VIEM_DIGEST);
-    assert_eq!(digest(BASE_CHAIN_ID, &agent, &payout, 1), expected);
+    assert_eq!(digest(TASK_CHAIN_ID, &agent, &payout, 1), expected);
     assert_eq!(
-        payout_binding_digest(BASE_CHAIN_ID, &agent, &payout, 1),
+        payout_binding_digest(TASK_CHAIN_ID, &agent, &payout, 1),
         expected
     );
 }
@@ -125,7 +125,7 @@ fn bind_payout_accepts_a_viem_signature() {
     let payout = Pubkey::new_from_array([0x44; 32]);
     bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent,
         payout,
         1,
@@ -133,15 +133,15 @@ fn bind_payout_accepts_a_viem_signature() {
     )
     .unwrap();
 
-    let binding: PayoutBinding = env.account(&payout_pda(BASE_CHAIN_ID, &agent));
-    assert_eq!(binding.base_chain_id, BASE_CHAIN_ID);
-    assert_eq!(binding.base_agent, agent);
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent));
+    assert_eq!(binding.task_chain_id, TASK_CHAIN_ID);
+    assert_eq!(binding.agent, agent);
     assert_eq!(binding.payout, payout);
     assert_eq!(binding.nonce, 1);
     let events = env.events::<PayoutBound>();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].base_chain_id, BASE_CHAIN_ID);
-    assert_eq!(events[0].base_agent, agent);
+    assert_eq!(events[0].task_chain_id, TASK_CHAIN_ID);
+    assert_eq!(events[0].agent, agent);
     assert_eq!(events[0].payout, payout);
     assert_eq!(events[0].nonce, 1);
 }
@@ -151,10 +151,10 @@ fn bind_payout_accepts_v_as_zero_or_one() {
     let mut env = Env::new();
     let agent = Agent::new();
     let payout = Pubkey::new_unique();
-    let mut sig = agent.sign(BASE_CHAIN_ID, &payout, 0);
+    let mut sig = agent.sign(TASK_CHAIN_ID, &payout, 0);
     sig[64] -= 27;
-    bind(&mut env, BASE_CHAIN_ID, agent.address, payout, 0, sig).unwrap();
-    let binding: PayoutBinding = env.account(&payout_pda(BASE_CHAIN_ID, &agent.address));
+    bind(&mut env, TASK_CHAIN_ID, agent.address, payout, 0, sig).unwrap();
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
     assert_eq!(binding.payout, payout);
 }
 
@@ -166,24 +166,24 @@ fn rebind_with_a_higher_nonce_replaces_the_payout() {
     let second = Pubkey::new_unique();
     bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         first,
         1,
-        agent.sign(BASE_CHAIN_ID, &first, 1),
+        agent.sign(TASK_CHAIN_ID, &first, 1),
     )
     .unwrap();
     bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         second,
         5,
-        agent.sign(BASE_CHAIN_ID, &second, 5),
+        agent.sign(TASK_CHAIN_ID, &second, 5),
     )
     .unwrap();
 
-    let binding: PayoutBinding = env.account(&payout_pda(BASE_CHAIN_ID, &agent.address));
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
     assert_eq!(binding.payout, second);
     assert_eq!(binding.nonce, 5);
     assert_eq!(env.events::<PayoutBound>()[0].payout, second);
@@ -197,44 +197,44 @@ fn rebind_rejects_a_stale_nonce() {
     let other = Pubkey::new_unique();
     bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         bound,
         3,
-        agent.sign(BASE_CHAIN_ID, &bound, 3),
+        agent.sign(TASK_CHAIN_ID, &bound, 3),
     )
     .unwrap();
 
     // The same nonce: a replay of the current binding, or a second binding signed at that nonce.
     let replay = bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         bound,
         3,
-        agent.sign(BASE_CHAIN_ID, &bound, 3),
+        agent.sign(TASK_CHAIN_ID, &bound, 3),
     );
     assert_error(replay, E::StalePayoutNonce);
     let same = bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         other,
         3,
-        agent.sign(BASE_CHAIN_ID, &other, 3),
+        agent.sign(TASK_CHAIN_ID, &other, 3),
     );
     assert_error(same, E::StalePayoutNonce);
     let lower = bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         other,
         2,
-        agent.sign(BASE_CHAIN_ID, &other, 2),
+        agent.sign(TASK_CHAIN_ID, &other, 2),
     );
     assert_error(lower, E::StalePayoutNonce);
 
-    let binding: PayoutBinding = env.account(&payout_pda(BASE_CHAIN_ID, &agent.address));
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
     assert_eq!(binding.payout, bound);
     assert_eq!(binding.nonce, 3);
 }
@@ -247,16 +247,16 @@ fn bind_payout_rejects_a_signature_from_another_key() {
     let payout = Pubkey::new_unique();
     let forged = bind(
         &mut env,
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         payout,
         1,
-        attacker.sign(BASE_CHAIN_ID, &payout, 1),
+        attacker.sign(TASK_CHAIN_ID, &payout, 1),
     );
     assert_error(forged, E::InvalidPayoutSignature);
     assert!(env
         .svm
-        .get_account(&payout_pda(BASE_CHAIN_ID, &agent.address))
+        .get_account(&payout_pda(TASK_CHAIN_ID, &agent.address))
         .is_none());
 }
 
@@ -266,11 +266,11 @@ fn bind_payout_rejects_a_signature_over_other_fields() {
     let agent = Agent::new();
     let signed = Pubkey::new_unique();
     let other = Pubkey::new_unique();
-    let sig = agent.sign(BASE_CHAIN_ID, &signed, 1);
+    let sig = agent.sign(TASK_CHAIN_ID, &signed, 1);
 
-    let payout = bind(&mut env, BASE_CHAIN_ID, agent.address, other, 1, sig);
+    let payout = bind(&mut env, TASK_CHAIN_ID, agent.address, other, 1, sig);
     assert_error(payout, E::InvalidPayoutSignature);
-    let nonce = bind(&mut env, BASE_CHAIN_ID, agent.address, signed, 2, sig);
+    let nonce = bind(&mut env, TASK_CHAIN_ID, agent.address, signed, 2, sig);
     assert_error(nonce, E::InvalidPayoutSignature);
     // Signed for Base, submitted for Tempo: the domain's chainId differs.
     let chain = bind(&mut env, TEMPO_CHAIN_ID, agent.address, signed, 1, sig);
@@ -282,14 +282,14 @@ fn bind_payout_rejects_a_malformed_signature() {
     let mut env = Env::new();
     let agent = Agent::new();
     let payout = Pubkey::new_unique();
-    let mut bad_v = agent.sign(BASE_CHAIN_ID, &payout, 1);
+    let mut bad_v = agent.sign(TASK_CHAIN_ID, &payout, 1);
     bad_v[64] = 29;
     assert_error(
-        bind(&mut env, BASE_CHAIN_ID, agent.address, payout, 1, bad_v),
+        bind(&mut env, TASK_CHAIN_ID, agent.address, payout, 1, bad_v),
         E::InvalidPayoutSignature,
     );
     assert_error(
-        bind(&mut env, BASE_CHAIN_ID, agent.address, payout, 1, [0u8; 65]),
+        bind(&mut env, TASK_CHAIN_ID, agent.address, payout, 1, [0u8; 65]),
         E::InvalidPayoutSignature,
     );
 }
@@ -306,11 +306,11 @@ fn bindings_are_per_chain_and_relayed_by_anyone_while_paused() {
     env.svm.airdrop(&relayer.pubkey(), 1_000_000_000).unwrap();
     let ix = bind_payout_ix(
         &relayer.pubkey(),
-        BASE_CHAIN_ID,
+        TASK_CHAIN_ID,
         agent.address,
         on_base,
         1,
-        agent.sign(BASE_CHAIN_ID, &on_base, 1),
+        agent.sign(TASK_CHAIN_ID, &on_base, 1),
     );
     env.send(&[ix], &[&relayer]).unwrap();
     bind(
@@ -323,9 +323,9 @@ fn bindings_are_per_chain_and_relayed_by_anyone_while_paused() {
     )
     .unwrap();
 
-    let base: PayoutBinding = env.account(&payout_pda(BASE_CHAIN_ID, &agent.address));
+    let base: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
     let tempo: PayoutBinding = env.account(&payout_pda(TEMPO_CHAIN_ID, &agent.address));
     assert_eq!(base.payout, on_base);
     assert_eq!(tempo.payout, on_tempo);
-    assert_eq!(tempo.base_chain_id, TEMPO_CHAIN_ID);
+    assert_eq!(tempo.task_chain_id, TEMPO_CHAIN_ID);
 }

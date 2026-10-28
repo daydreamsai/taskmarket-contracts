@@ -59,8 +59,8 @@ pub struct ManagerConfigured {
 pub struct TaskReserved {
     pub vault: Pubkey,
     pub reservation: Pubkey,
-    pub base_chain_id: u64,
-    pub base_task_id: [u8; 32],
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
     pub manager: ManagerKey,
     pub epoch: u64,
     pub nonce: u64,
@@ -72,8 +72,8 @@ pub struct TaskReserved {
 pub struct TaskReleased {
     pub vault: Pubkey,
     pub reservation: Pubkey,
-    pub base_chain_id: u64,
-    pub base_task_id: [u8; 32],
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
     pub manager: ManagerKey,
     pub amount: u64,
 }
@@ -100,8 +100,8 @@ pub struct VaultEmergencyExited {
 
 #[event]
 pub struct PayoutBound {
-    pub base_chain_id: u64,
-    pub base_agent: [u8; 20],
+    pub task_chain_id: u64,
+    pub agent: [u8; 20],
     pub payout: Pubkey,
     pub nonce: u64,
 }
@@ -110,8 +110,8 @@ pub struct PayoutBound {
 pub struct SettlementInstalled {
     pub vault: Pubkey,
     pub reservation: Pubkey,
-    pub base_chain_id: u64,
-    pub base_task_id: [u8; 32],
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
     pub epoch: u64,
     pub root: [u8; 32],
     pub leaf_count: u32,
@@ -130,8 +130,8 @@ pub struct ClaimDelaySet {
 pub struct SponsoredTaskClaimed {
     pub vault: Pubkey,
     pub reservation: Pubkey,
-    pub base_chain_id: u64,
-    pub base_task_id: [u8; 32],
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
     pub leaf_index: u32,
     pub worker: [u8; 20],
     pub destination: Pubkey,
@@ -142,8 +142,8 @@ pub struct SponsoredTaskClaimed {
 pub struct FeeClaimed {
     pub vault: Pubkey,
     pub reservation: Pubkey,
-    pub base_chain_id: u64,
-    pub base_task_id: [u8; 32],
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
     pub fee_recipient: Pubkey,
     pub destination: Pubkey,
     pub amount: u64,

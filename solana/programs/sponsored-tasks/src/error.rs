@@ -49,7 +49,7 @@ pub enum SponsoredTasksError {
     SettlementHasClaims,
     #[msg("Arithmetic overflow")]
     Overflow,
-    #[msg("Payout binding signature is not from the Base agent")]
+    #[msg("Payout binding signature is not from the agent")]
     InvalidPayoutSignature,
     #[msg("Payout binding nonce is not above the current binding's")]
     StalePayoutNonce,

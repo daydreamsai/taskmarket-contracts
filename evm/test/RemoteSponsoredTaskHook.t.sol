@@ -18,7 +18,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
 contract RemoteSponsoredTaskHookTest is Test {
-    uint256 private constant BASE_CHAIN_ID = 8453;
+    uint256 private constant TASK_CHAIN_ID = 8453;
     uint256 private constant REMOTE_CHAIN_ID = 46_630;
     bytes32 private constant TASK_ID = keccak256("remote-task");
     uint256 private constant NATIVE_REWARD = 1_000_000;
@@ -70,7 +70,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         vault.fund(GROSS * 10);
 
         // Base: the remote hook behind its proxy.
-        vm.chainId(BASE_CHAIN_ID);
+        vm.chainId(TASK_CHAIN_ID);
         market = new MockTaskmarketForSponsoredTask();
         address implementation = address(new RemoteSponsoredTaskHook(address(market)));
         hook = RemoteSponsoredTaskHook(
@@ -155,8 +155,8 @@ contract RemoteSponsoredTaskHookTest is Test {
         assertEq(c.grossAmount, GROSS);
         assertEq(c.commitmentNonce, NONCE);
         assertEq(c.manager, MANAGER);
-        assertEq(c.allocationId, keccak256(abi.encode(BASE_CHAIN_ID, TASK_ID)));
-        assertEq(c.allocationId, hook.allocationIdFor(BASE_CHAIN_ID, TASK_ID));
+        assertEq(c.allocationId, keccak256(abi.encode(TASK_CHAIN_ID, TASK_ID)));
+        assertEq(c.allocationId, hook.allocationIdFor(TASK_CHAIN_ID, TASK_ID));
         assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.Committed));
         assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE), TASK_ID);
         assertEq(hook.reservationReleaseAfter(TASK_ID), block.timestamp + 3 days + 7 days);
@@ -164,7 +164,7 @@ contract RemoteSponsoredTaskHookTest is Test {
 
     function testFundingRejectsInvalidRequests() public {
         RemoteSponsoredTaskHook.FundingRequest memory r = _request();
-        r.remoteChainId = BASE_CHAIN_ID;
+        r.remoteChainId = TASK_CHAIN_ID;
         bytes memory data = hook.encodeHookData(r);
         vm.expectRevert(RemoteSponsoredTaskHook.InvalidFundingRequest.selector);
         market.callCheckFund(hook, TASK_ID, data);
@@ -253,8 +253,8 @@ contract RemoteSponsoredTaskHookTest is Test {
         SponsoredTaskSettler.ReserveRequest memory r = SponsoredTaskSettler.ReserveRequest({
             vault: c.vault,
             allocationId: c.allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: c.commitmentNonce,
             manager: c.manager,
             grossAmount: c.grossAmount,
@@ -266,7 +266,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         settler.reserve(r, _sign(settler.reserveDigest(r)));
         assertEq(vault.totalReserved(), GROSS);
 
-        vm.chainId(BASE_CHAIN_ID);
+        vm.chainId(TASK_CHAIN_ID);
         market.setStatus(TASK_ID, ITMPCore.TaskStatus.Cancelled);
         market.callOnCancel(hook, TASK_ID);
         assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.ReleaseCommitted));
@@ -275,8 +275,8 @@ contract RemoteSponsoredTaskHookTest is Test {
         SponsoredTaskSettler.ReleaseRequest memory rel = SponsoredTaskSettler.ReleaseRequest({
             vault: c.vault,
             allocationId: c.allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: c.commitmentNonce
         });
         settler.release(rel, _sign(settler.releaseDigest(rel)));
@@ -380,13 +380,13 @@ contract RemoteSponsoredTaskHookTest is Test {
         // Idempotent.
         assertEq(hook.finalizeSettlement(TASK_ID, awards), root);
 
-        // The settler service reads the Base commitment and outcome and drives the remote chain.
+        // The settler service reads the task chain commitment and outcome and drives the remote chain.
         vm.chainId(REMOTE_CHAIN_ID);
         SponsoredTaskSettler.ReserveRequest memory r = SponsoredTaskSettler.ReserveRequest({
             vault: c.vault,
             allocationId: c.allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: c.commitmentNonce,
             manager: c.manager,
             grossAmount: c.grossAmount,
@@ -400,8 +400,8 @@ contract RemoteSponsoredTaskHookTest is Test {
         SponsoredTaskSettler.SettleRequest memory s = SponsoredTaskSettler.SettleRequest({
             vault: c.vault,
             allocationId: c.allocationId,
-            baseChainId: BASE_CHAIN_ID,
-            baseTaskId: TASK_ID,
+            taskChainId: TASK_CHAIN_ID,
+            taskId: TASK_ID,
             commitmentNonce: c.commitmentNonce,
             epoch: c.epoch,
             rewardsRoot: o.rewardsRoot,

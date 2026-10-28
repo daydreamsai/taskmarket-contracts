@@ -10,7 +10,7 @@
     {
       "name": "bind_payout",
       "docs": [
-        "Binds a Base agent's Solana payout address from the agent's EIP-712 signature over",
+        "Binds an agent's Solana payout address from the agent's EIP-712 signature over",
         "`PayoutBinding(agent, payout, nonce)`. Anyone may relay it: the signature, not the payer,",
         "authorizes. A newer binding replaces the old one only with a higher nonce. Open while",
         "paused, since it moves no funds."
@@ -44,11 +44,11 @@
               },
               {
                 "kind": "arg",
-                "path": "base_chain_id"
+                "path": "task_chain_id"
               },
               {
                 "kind": "arg",
-                "path": "base_agent"
+                "path": "agent"
               }
             ]
           }
@@ -71,11 +71,11 @@
       ],
       "args": [
         {
-          "name": "base_chain_id",
+          "name": "task_chain_id",
           "type": "u64"
         },
         {
-          "name": "base_agent",
+          "name": "agent",
           "type": {
             "array": [
               "u8",
@@ -180,7 +180,7 @@
               },
               {
                 "kind": "account",
-                "path": "reservation.base_chain_id",
+                "path": "reservation.task_chain_id",
                 "account": "Reservation"
               },
               {
@@ -863,11 +863,11 @@
               },
               {
                 "kind": "arg",
-                "path": "base_chain_id"
+                "path": "task_chain_id"
               },
               {
                 "kind": "arg",
-                "path": "base_task_id"
+                "path": "task_id"
               }
             ]
           }
@@ -890,11 +890,11 @@
       ],
       "args": [
         {
-          "name": "base_chain_id",
+          "name": "task_chain_id",
           "type": "u64"
         },
         {
-          "name": "base_task_id",
+          "name": "task_id",
           "type": {
             "array": [
               "u8",
@@ -1685,7 +1685,7 @@
     {
       "code": 6023,
       "name": "InvalidPayoutSignature",
-      "msg": "Payout binding signature is not from the Base agent"
+      "msg": "Payout binding signature is not from the agent"
     },
     {
       "code": 6024,
@@ -1891,11 +1891,11 @@
             "type": "pubkey"
           },
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_task_id",
+            "name": "task_id",
             "type": {
               "array": [
                 "u8",
@@ -2052,18 +2052,18 @@
     {
       "name": "PayoutBinding",
       "docs": [
-        "Where a Base agent's Solana awards are paid. `bind_payout` creates or replaces it from an",
+        "Where an agent's Solana awards are paid. `bind_payout` creates or replaces it from an",
         "EIP-712 signature by the agent; a replacement must carry a higher nonce."
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_agent",
+            "name": "agent",
             "type": {
               "array": [
                 "u8",
@@ -2092,11 +2092,11 @@
         "kind": "struct",
         "fields": [
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_agent",
+            "name": "agent",
             "type": {
               "array": [
                 "u8",
@@ -2129,11 +2129,11 @@
             "type": "u64"
           },
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_task_id",
+            "name": "task_id",
             "type": {
               "array": [
                 "u8",
@@ -2273,11 +2273,11 @@
             "type": "pubkey"
           },
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_task_id",
+            "name": "task_id",
             "type": {
               "array": [
                 "u8",
@@ -2382,11 +2382,11 @@
             "type": "pubkey"
           },
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_task_id",
+            "name": "task_id",
             "type": {
               "array": [
                 "u8",
@@ -2432,11 +2432,11 @@
             "type": "pubkey"
           },
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_task_id",
+            "name": "task_id",
             "type": {
               "array": [
                 "u8",
@@ -2473,11 +2473,11 @@
             "type": "pubkey"
           },
           {
-            "name": "base_chain_id",
+            "name": "task_chain_id",
             "type": "u64"
           },
           {
-            "name": "base_task_id",
+            "name": "task_id",
             "type": {
               "array": [
                 "u8",

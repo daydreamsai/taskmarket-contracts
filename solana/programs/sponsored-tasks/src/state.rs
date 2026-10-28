@@ -124,8 +124,8 @@ pub enum ReservationState {
 pub struct Reservation {
     pub vault: Pubkey,
     pub epoch: u64,
-    pub base_chain_id: u64,
-    pub base_task_id: [u8; 32],
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
     pub nonce: u64,
     pub deadline: i64,
     pub manager: ManagerKey,
@@ -166,13 +166,13 @@ impl Reservation {
     }
 }
 
-/// Where a Base agent's Solana awards are paid. `bind_payout` creates or replaces it from an
+/// Where an agent's Solana awards are paid. `bind_payout` creates or replaces it from an
 /// EIP-712 signature by the agent; a replacement must carry a higher nonce.
 #[account]
 #[derive(InitSpace)]
 pub struct PayoutBinding {
-    pub base_chain_id: u64,
-    pub base_agent: [u8; 20],
+    pub task_chain_id: u64,
+    pub agent: [u8; 20],
     pub payout: Pubkey,
     pub nonce: u64,
     pub bump: u8,

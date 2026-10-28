@@ -3,7 +3,7 @@
 Status: Implemented by the Solana program's `bind_payout` instruction.
 
 A Solana award leaf names the worker by their Base (or other EVM) agent address, so the award
-matches the Base entitlement. Before a claim can pay out on Solana, the agent binds a Solana
+matches the task chain entitlement. Before a claim can pay out on Solana, the agent binds a Solana
 address once by signing EIP-712 typed data with its EVM key. Any relayer submits the signature
 to `bind_payout`, which recovers the signer with `secp256k1_recover` and stores the binding in a
 `PayoutBinding` account. Claims then pay the bound address with no further signature. A newer
@@ -30,15 +30,15 @@ from being replayed on another EVM chain or against another deployment of the pr
 
 ## Instruction
 
-`bind_payout(base_chain_id: u64, base_agent: [u8; 20], payout: Pubkey, nonce: u64,
+`bind_payout(task_chain_id: u64, agent: [u8; 20], payout: Pubkey, nonce: u64,
 signature: [u8; 65])`
 
 - `signature` is `r || s || v`; `v` may be 27/28 (as wallets return it) or 0/1.
-- The account is the PDA `["payout", base_chain_id (u64 LE), base_agent]`, created by the relayer
+- The account is the PDA `["payout", task_chain_id (u64 LE), agent]`, created by the relayer
   on first use. Bindings for the same agent on different EVM chains are separate accounts.
-- Errors: `InvalidPayoutSignature` when the recovered address is not `base_agent` or the
+- Errors: `InvalidPayoutSignature` when the recovered address is not `agent` or the
   signature is malformed; `StalePayoutNonce` when `nonce` is not above the stored one.
-- Event: `PayoutBound { base_chain_id, base_agent, payout, nonce }`.
+- Event: `PayoutBound { task_chain_id, agent, payout, nonce }`.
 - Open while the program is paused: it moves no funds.
 
 ## Test vector

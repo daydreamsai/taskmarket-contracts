@@ -28,15 +28,15 @@
       "vault_id u64 little-endian"
     ],
     "epoch": "1",
-    "baseChainId": "8453",
-    "baseTaskId": "0xcfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c92174",
-    "baseTaskIdPreimage": "keccak256(utf8(\"taskmarket.sponsored-task.vector.task\"))",
+    "taskChainId": "8453",
+    "taskId": "0xcfd0f7ac183c798e09e7265d44f73b3b0449a8a0ae881fe4db8a335d25c92174",
+    "taskIdPreimage": "keccak256(utf8(\"taskmarket.sponsored-task.vector.task\"))",
     "reservation": "9QcksedA3wPTVVLdrNwsVBxK99T1HTHpisdYkwFq3Pku",
     "reservationSeeds": [
       "\"task\"",
       "vault",
-      "base_chain_id u64 little-endian",
-      "base_task_id"
+      "task_chain_id u64 little-endian",
+      "task_id"
     ]
   },
   "packed": {

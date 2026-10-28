@@ -15,7 +15,7 @@ contract RemoteSponsoredTaskHookFundingVectorTest is Test {
     string private constant VECTOR = "../docs/specs/sponsored-tasks/vectors/remote-funding-hookdata-v1.json";
     uint256 private constant REWARD = 1_000_000;
 
-    function testBaseTaskFundedFromRobinhoodVault() public {
+    function testTaskFundedFromRobinhoodVault() public {
         _replay("baseFromRobinhood");
     }
 
@@ -23,7 +23,7 @@ contract RemoteSponsoredTaskHookFundingVectorTest is Test {
         _replay("tempoFromRobinhood");
     }
 
-    function testBaseTaskFundedFromSolanaVault() public {
+    function testTaskFundedFromSolanaVault() public {
         _replay("baseFromSolana");
     }
 
