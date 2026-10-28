@@ -34,11 +34,14 @@ interface ITMPProject {
     ///         caller states every term. Frozen when the operator calls acceptGrant.
     /// @dev cap is the most the operator's tasks may hold from the budget at once (net of what
     ///      their refunds return); zero means no cap beyond the project's available budget.
-    ///      requesterOfRecord is the address that is task.requester on the operator's tasks.
-    ///      ownerOverride lets the owner act on the operator's tasks when the owner is not the
-    ///      requester of record, or stops it when the owner is. revokeRemovesControl moves control
-    ///      of the operator's tasks to the owner when the grant is revoked; otherwise the operator
-    ///      finishes what it started.
+    ///      requesterOfRecord decides only who is task.requester on the operator's tasks (and so
+    ///      whom ratings and reputation follow); it does not decide who may act as requester.
+    ///      On an operator's task the operator may act unless its grant was revoked with
+    ///      revokeRemovesControl. ownerOverride lets the owner act too; when it is false, the
+    ///      owner may not act until a revoke removes the operator's control. revokeRemovesControl
+    ///      makes a revoke pass control of the operator's existing tasks to the owner, and the
+    ///      operator loses it; when it is false, the operator finishes what it started. Nobody
+    ///      else may act, whoever is task.requester.
     struct GrantTerms {
         uint256 cap;
         RequesterOfRecord requesterOfRecord;
