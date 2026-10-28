@@ -52,7 +52,7 @@ Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance
 | `settle` | settler threshold | blocked | installs the award root, net total and fee of a reserved task; the rest of the reservation returns to the vault; a second settle fails |
 | `claim` | anyone (relayer) | blocked | pays an award leaf, proven against the settled root, to the worker's `PayoutBinding` address; creates the leaf's `ClaimReceipt` |
 | `claim_fee` | config fee recipient | open | pays a settled reservation's fee to any token account of the mint, once |
-| `revoke_settlement` | admin | only while paused | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance |
+| `revoke_settlement` | admin | open | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance; touches only that reservation, so it needs no pause |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
 | `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the Base agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
 
