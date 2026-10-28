@@ -135,6 +135,35 @@ fn settle_enforces_settler_threshold() {
 }
 
 #[test]
+fn rotating_a_one_of_one_settler_moves_settle_to_the_new_key() {
+    // The launch shape: one backend-held settler, threshold 1. A reservation made by the old key
+    // is in flight when the admin rotates, as it would be during a key compromise.
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let admin = env.admin.insecure_clone();
+    let old = env.settlers[0].insecure_clone();
+    let new = env.settlers[1].insecure_clone();
+    env.send(
+        &[set_settlers_ix(&admin.pubkey(), vec![new.pubkey()], 1)],
+        &[&admin],
+    )
+    .unwrap();
+    let config = env.config();
+    assert_eq!(config.settlers, vec![new.pubkey()]);
+    assert_eq!(config.threshold, 1);
+    assert_eq!(env.events::<SettlersChanged>()[0].threshold, 1);
+
+    let terms = SettleTerms::awards(ROOT, 1, 400, 0);
+    assert_error(
+        env.send(&[f.settle_ix(&[&old], r, terms)], &[&old]),
+        E::SettlerThresholdNotMet,
+    );
+    env.send(&[f.settle_ix(&[&new], r, terms)], &[&new])
+        .unwrap();
+    assert_eq!(env.reservation(&r).state, ReservationState::Settled);
+}
+
+#[test]
 fn settle_rejects_replay_and_double_settle() {
     let mut env = Env::new();
     let (f, r) = env.reserved_vault(400);
