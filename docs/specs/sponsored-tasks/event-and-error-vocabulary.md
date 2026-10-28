@@ -151,9 +151,8 @@ stay on the task chain for every vault chain.
 ### Factory, registry and fee policy (EVM-only)
 
 `SponsoredTaskFactory` (`ZeroAddress`, `InvalidContract`, `VaultAlreadyExists`, and from
-`SponsoredTaskCreationFee` `FeeAdminMustBeContract`, `FeeTokenRequired`, `FeeCeilingExceeded`,
-`FeeRecipientRequired`, `FeeRecipientInvalid`, `FeeTransferAmountMismatch`,
-`OwnershipRenunciationDisabled`),
+`SponsoredTaskCreationFee` `FeeTokenRequired`, `FeeRecipientRequired`, `FeeRecipientInvalid`
+and `FeeTransferAmountMismatch`),
 `SponsoredTaskRegistry` (`ZeroAddress`, `InvalidContract`, `UnauthorizedFactory`,
 `VaultAlreadyRegistered`, `VaultIdentityMismatch`, `VaultNotActive`,
 `InvalidVaultConfiguration`) and `SponsoredTaskFeePolicy` (`FeeBpsTooHigh`,

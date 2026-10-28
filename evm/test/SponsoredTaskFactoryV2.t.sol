@@ -275,59 +275,45 @@ contract SponsoredTaskFactoryV2CreationFeeTest is VaultV2Base {
     }
 
     function test_ZeroFeeChargesNothing() public {
-        feeFactory.setCreationFee(0, address(0));
+        SponsoredTaskFactoryV2 freeFactory = new SponsoredTaskFactoryV2(
+            controller, address(policy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
+        );
+        registry.setFactory(address(freeFactory), true);
         vm.prank(vaultOwner);
-        feeFactory.createVault(address(token), vaultOwner, SALT);
+        freeFactory.createVault(address(token), vaultOwner, SALT);
         assertEq(usdc.balanceOf(vaultOwner), 10 * FEE);
     }
 
-    function test_AdminChangesTheFeeWithinTheCeiling() public {
-        address next = makeAddr("next");
-        feeFactory.setCreationFee(2 * FEE, next);
-        assertEq(feeFactory.creationFee(), 2 * FEE);
-        assertEq(feeFactory.creationFeeRecipient(), next);
+    /// The fee is fixed at deployment: the factory has no owner and no way to change it.
+    function test_FeeIsFixedAtDeployment() public {
+        assertEq(feeFactory.creationFee(), FEE);
+        assertEq(feeFactory.creationFeeRecipient(), creationFeeRecipient);
+        assertEq(address(feeFactory.feeToken()), address(usdc));
 
-        uint256 ceiling = feeFactory.feeCeiling();
-        vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTaskCreationFee.FeeCeilingExceeded.selector, ceiling + 1, ceiling)
-        );
-        feeFactory.setCreationFee(ceiling + 1, next);
-
-        vm.expectRevert(SponsoredTaskCreationFee.FeeRecipientRequired.selector);
-        feeFactory.setCreationFee(FEE, address(0));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTaskCreationFee.FeeRecipientInvalid.selector, address(feeFactory))
-        );
-        feeFactory.setCreationFee(FEE, address(feeFactory));
+        bytes[] memory calls = new bytes[](3);
+        calls[0] = abi.encodeWithSignature("setCreationFee(uint256,address)", 2 * FEE, relayer);
+        calls[1] = abi.encodeWithSignature("transferOwnership(address)", relayer);
+        calls[2] = abi.encodeWithSignature("owner()");
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool ok,) = address(feeFactory).call(calls[i]);
+            assertFalse(ok, "the factory exposes no fee admin");
+        }
+        assertEq(feeFactory.creationFee(), FEE);
+        assertEq(feeFactory.creationFeeRecipient(), creationFeeRecipient);
     }
 
-    function test_RevertWhen_StrangerChangesTheFee() public {
-        vm.prank(relayer);
-        vm.expectRevert();
-        feeFactory.setCreationFee(0, address(0));
-    }
-
-    function test_AdminMustStayAContract() public {
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskCreationFee.FeeAdminMustBeContract.selector, relayer));
-        feeFactory.transferOwnership(relayer);
-        vm.expectRevert(SponsoredTaskCreationFee.OwnershipRenunciationDisabled.selector);
-        feeFactory.renounceOwnership();
-    }
-
-    function test_RevertWhen_ConstructedWithAnEoaAdminOrAFeeAboveTheCeiling() public {
+    function test_RevertWhen_ConstructedWithAnInvalidFee() public {
         SponsoredTaskCreationFee.CreationFeeConfig memory config =
-            SponsoredTaskFeeConfig.charging(IERC20(address(usdc)), FEE, creationFeeRecipient);
-        config.admin = relayer;
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskCreationFee.FeeAdminMustBeContract.selector, relayer));
+            SponsoredTaskFeeConfig.charging(IERC20(address(usdc)), FEE, address(0));
+        vm.expectRevert(SponsoredTaskCreationFee.FeeRecipientRequired.selector);
         new SponsoredTaskFactoryV2(controller, address(policy), registry, config);
 
-        config.admin = address(this);
-        config.ceiling = FEE - 1;
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskCreationFee.FeeCeilingExceeded.selector, FEE, FEE - 1));
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        config.recipient = next;
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskCreationFee.FeeRecipientInvalid.selector, next));
         new SponsoredTaskFactoryV2(controller, address(policy), registry, config);
 
-        config.ceiling = FEE;
+        config.recipient = creationFeeRecipient;
         config.token = IERC20(address(0));
         vm.expectRevert(SponsoredTaskCreationFee.FeeTokenRequired.selector);
         new SponsoredTaskFactoryV2(controller, address(policy), registry, config);

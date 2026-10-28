@@ -22,11 +22,11 @@ import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 ///                                                  matching the platform's own USDC fee)
 ///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT   — where the project-token fee is paid
 ///   FORGE_SPONSORED_TASK_ADMIN                 — a deployed contract (Safe/timelock) that owns
-///                                                  the hook proxy, the fee policy, the factory's
-///                                                  creation fee and (once it accepts) the registry;
-///                                                  required, not optional
-///   FORGE_SPONSORED_TASK_FEE_CEILING_USDC      — the factory's immutable ceiling on any future
-///                                                  creation-fee change
+///                                                  the hook proxy, the fee policy and (once it
+///                                                  accepts) the registry; required, not optional
+///
+/// The factory's creation fee (token, amount and recipient) is fixed here, at deployment, and has
+/// no owner: a different fee or recipient takes a new factory.
 ///
 /// Vault creation is permissionless once this stack is live (SponsoredTaskFactory.createVault
 /// has no access control): any project can spin up its own vault against the deployed
@@ -34,8 +34,8 @@ import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 /// protocol-owned pieces -- the hook, the default fee policy, and the registry/factory pair that
 /// vaults register through.
 ///
-/// No protocol-owned piece stays owned by the deployer key. The hook, the fee policy and the
-/// factory's creation fee are created owned by the admin. The registry must stay deployer-owned long
+/// No protocol-owned piece stays owned by the deployer key. The hook and the fee policy are created
+/// owned by the admin. The registry must stay deployer-owned long
 /// enough to register the factory, so it is handed over with a two-step transfer the admin
 /// completes by calling `acceptOwnership()`; until then the deployer remains its owner.
 ///
@@ -69,11 +69,9 @@ contract DeploySponsoredTask is Script {
             address(feePolicy),
             registry,
             SponsoredTaskCreationFee.CreationFeeConfig({
-                admin: admin,
                 token: usdc,
                 amount: creationFee,
-                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT"),
-                ceiling: vm.envUint("FORGE_SPONSORED_TASK_FEE_CEILING_USDC")
+                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT")
             })
         );
         registry.setFactory(address(factory), true);
@@ -82,7 +80,7 @@ contract DeploySponsoredTask is Script {
 
         require(hook.owner() == admin, "Sponsored Task: hook owner is not the admin");
         require(feePolicy.owner() == admin, "Sponsored Task: fee policy owner is not the admin");
-        require(factory.owner() == admin, "Sponsored Task: factory fee owner is not the admin");
+        require(factory.creationFee() == creationFee, "Sponsored Task: creation fee mismatch");
         require(factory.creationFee() == creationFee, "Sponsored Task: creation fee mismatch");
         require(registry.pendingOwner() == admin, "Sponsored Task: registry not pending to the admin");
 

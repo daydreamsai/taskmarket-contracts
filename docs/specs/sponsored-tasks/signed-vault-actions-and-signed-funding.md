@@ -147,7 +147,7 @@ Code only so far. On each chain:
 - ERC-1271 owners and funders;
 - funding accounting and events, with the funder recorded and never the relayer;
 - signed create addresses and events;
-- the creation fee: paid once by allowance or by an authorization tied to one signed create, refused without it, never refunded, and bounded by the ceiling;
+- the creation fee: paid once by allowance or by an authorization tied to one signed create, refused without it, never refunded, and fixed when the factory is deployed;
 - the unchanged v1 entry points;
 - a redirecting recipient on `claim`, `claimTo`, `claimFee`, `withdrawAvailableBySig` and
   `emergencyExitVaultBySig`: each reverts, keeps its nonce and succeeds unchanged once the redirect

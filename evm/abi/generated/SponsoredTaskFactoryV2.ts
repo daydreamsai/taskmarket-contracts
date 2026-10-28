@@ -31,11 +31,6 @@ export const SponsoredTaskFactoryV2ABI = [
         "internalType": "struct SponsoredTaskCreationFee.CreationFeeConfig",
         "components": [
           {
-            "name": "admin",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "token",
             "type": "address",
             "internalType": "contract IERC20"
@@ -49,11 +44,6 @@ export const SponsoredTaskFactoryV2ABI = [
             "name": "recipient",
             "type": "address",
             "internalType": "address"
-          },
-          {
-            "name": "ceiling",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       }
@@ -85,13 +75,6 @@ export const SponsoredTaskFactoryV2ABI = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "acceptOwnership",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -403,19 +386,6 @@ export const SponsoredTaskFactoryV2ABI = [
   },
   {
     "type": "function",
-    "name": "feeCeiling",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "feePolicy",
     "inputs": [],
     "outputs": [
@@ -474,32 +444,6 @@ export const SponsoredTaskFactoryV2ABI = [
   },
   {
     "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pendingOwner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "predictVault",
     "inputs": [
       {
@@ -544,44 +488,6 @@ export const SponsoredTaskFactoryV2ABI = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "renounceOwnership",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setCreationFee",
-    "inputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "transferOwnership",
-    "inputs": [
-      {
-        "name": "newOwner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -711,44 +617,6 @@ export const SponsoredTaskFactoryV2ABI = [
   },
   {
     "type": "event",
-    "name": "OwnershipTransferStarted",
-    "inputs": [
-      {
-        "name": "previousOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OwnershipTransferred",
-    "inputs": [
-      {
-        "name": "previousOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "VaultCreated",
     "inputs": [
       {
@@ -817,33 +685,6 @@ export const SponsoredTaskFactoryV2ABI = [
     "type": "error",
     "name": "FailedDeployment",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FeeAdminMustBeContract",
-    "inputs": [
-      {
-        "name": "admin",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "FeeCeilingExceeded",
-    "inputs": [
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ceiling",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -917,33 +758,6 @@ export const SponsoredTaskFactoryV2ABI = [
   {
     "type": "error",
     "name": "InvalidShortString",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OwnableInvalidOwner",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OwnableUnauthorizedAccount",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OwnershipRenunciationDisabled",
     "inputs": []
   },
   {

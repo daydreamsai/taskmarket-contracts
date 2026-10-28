@@ -17,9 +17,8 @@ import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskS
 ///   FORGE_DEV_PRIVATE_KEY                    -- deployer key; owns nothing once the admin accepts
 ///                                               the registry
 ///   FORGE_SPONSORED_TASK_SETTLER_ADMIN       -- a deployed contract (Safe or timelock) that owns the
-///                                               settler, the fee policy and the factory's creation
-///                                               fee, and the registry once it calls
-///                                               `acceptOwnership()`
+///                                               settler and the fee policy, and the registry once it
+///                                               calls `acceptOwnership()`
 ///   FORGE_SPONSORED_TASK_SETTLER_ADDRESSES   -- comma-separated settler addresses, in any order
 ///   FORGE_SPONSORED_TASK_SETTLER_THRESHOLD   -- signatures required (default 1)
 ///   FORGE_SPONSORED_TASK_TOKEN_FEE_BPS       -- project-token fee (default 750 = 7.5%)
@@ -27,7 +26,8 @@ import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskS
 ///   FORGE_USDC_TOKEN_ADDRESS                 -- the token the vault creation fee is paid in
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_USDC   -- one-time vault creation fee (default 1_000_000 = $1)
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT -- where vault creation fees are paid
-///   FORGE_SPONSORED_TASK_FEE_CEILING_USDC    -- the factory's immutable ceiling on the creation fee
+///
+/// The factory's creation fee is fixed at deployment and has no owner.
 contract DeploySponsoredTaskSettler is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -51,11 +51,9 @@ contract DeploySponsoredTaskSettler is Script {
             address(feePolicy),
             registry,
             SponsoredTaskCreationFee.CreationFeeConfig({
-                admin: admin,
                 token: IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS")),
                 amount: vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000)),
-                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT"),
-                ceiling: vm.envUint("FORGE_SPONSORED_TASK_FEE_CEILING_USDC")
+                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT")
             })
         );
         registry.setFactory(address(factory), true);
@@ -65,7 +63,6 @@ contract DeploySponsoredTaskSettler is Script {
         require(settler.owner() == admin, "Settler: owner is not the admin");
         require(factory.controller() == address(settler), "Settler: factory controller is not the settler");
         require(feePolicy.owner() == admin, "Settler: fee policy owner is not the admin");
-        require(factory.owner() == admin, "Settler: factory fee owner is not the admin");
         require(registry.pendingOwner() == admin, "Settler: registry not pending to the admin");
 
         console.log("=== Sponsored Task settler mode deployment ===");

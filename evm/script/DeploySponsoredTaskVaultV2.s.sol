@@ -16,19 +16,17 @@ import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTask
 ///      registry (normally the admin Safe does), the script prints the call for the owner to
 ///      execute instead.
 ///
+///      The creation fee (token, amount and recipient) is fixed at deployment and has no owner.
+///
 ///      Env: FORGE_DEV_PRIVATE_KEY, FORGE_SPONSORED_TASK_FACTORY_ADDRESS (the v1 factory),
-///      FORGE_SPONSORED_TASK_ADMIN (a Safe or timelock that owns the creation fee),
-///      FORGE_USDC_TOKEN_ADDRESS, FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT,
-///      FORGE_SPONSORED_TASK_FEE_CEILING_USDC and optionally FORGE_SPONSORED_TASK_CREATION_FEE_USDC
-///      (default 1_000_000 = $1).
+///      FORGE_USDC_TOKEN_ADDRESS, FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT and optionally
+///      FORGE_SPONSORED_TASK_CREATION_FEE_USDC (default 1_000_000 = $1).
 contract DeploySponsoredTaskVaultV2 is Script {
     function run() external returns (SponsoredTaskFactoryV2 factoryV2) {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         SponsoredTaskFactory factoryV1 = SponsoredTaskFactory(vm.envAddress("FORGE_SPONSORED_TASK_FACTORY_ADDRESS"));
-        address admin = vm.envAddress("FORGE_SPONSORED_TASK_ADMIN");
         require(address(factoryV1).code.length != 0, "Sponsored Task vault v2: missing v1 factory code");
-        require(admin.code.length != 0, "Sponsored Task vault v2: admin must be a contract");
         uint256 creationFee = vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000));
 
         SponsoredTaskRegistry registry = SponsoredTaskRegistry(address(factoryV1.registry()));
@@ -41,11 +39,9 @@ contract DeploySponsoredTaskVaultV2 is Script {
             feePolicy,
             registry,
             SponsoredTaskCreationFee.CreationFeeConfig({
-                admin: admin,
                 token: IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS")),
                 amount: creationFee,
-                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT"),
-                ceiling: vm.envUint("FORGE_SPONSORED_TASK_FEE_CEILING_USDC")
+                recipient: vm.envAddress("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT")
             })
         );
         bool authorized = registry.owner() == deployer;
@@ -55,7 +51,6 @@ contract DeploySponsoredTaskVaultV2 is Script {
         require(factoryV2.controller() == controller, "Sponsored Task vault v2: controller mismatch");
         require(factoryV2.feePolicy() == feePolicy, "Sponsored Task vault v2: fee policy mismatch");
         require(address(factoryV2.registry()) == address(registry), "Sponsored Task vault v2: registry mismatch");
-        require(factoryV2.owner() == admin, "Sponsored Task vault v2: fee owner is not the admin");
         require(factoryV2.creationFee() == creationFee, "Sponsored Task vault v2: creation fee mismatch");
 
         console.log("SponsoredTaskFactoryV2:          ", address(factoryV2));

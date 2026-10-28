@@ -158,6 +158,6 @@ leaves it untouched.
 
 `script/DeploySponsoredTaskSettler.s.sol` deploys, on the remote chain, the registry, the fee
 policy, the settler and a factory whose controller is the settler, and hands every owner role to
-the admin contract, including the factory's creation fee.
+the admin contract. The factory's creation fee is fixed at deployment and has no owner.
 `script/DeployRemoteSponsoredTaskHook.s.sol` deploys, on each task chain, the remote hook behind an ERC-1967
 proxy owned by the admin contract. Neither script registers a Diamond default hook.

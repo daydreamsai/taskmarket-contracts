@@ -49,7 +49,6 @@ contract SponsoredTaskDeployScriptsTest is Test {
         vm.setEnv("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", "750");
         vm.setEnv("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", vm.toString(address(0xFEE)));
         vm.setEnv("FORGE_SPONSORED_TASK_ADMIN", vm.toString(address(admin)));
-        vm.setEnv("FORGE_SPONSORED_TASK_FEE_CEILING_USDC", "2000000");
     }
 
     function _deploy()
@@ -100,11 +99,9 @@ contract SponsoredTaskDeployScriptsTest is Test {
         new DeploySponsoredTask().run();
         SponsoredTaskFactory factory = _factoryOf(vm.getRecordedLogs());
 
-        assertEq(factory.owner(), address(admin), "creation fee must be owned by the admin");
         assertEq(address(factory.feeToken()), address(usdc));
         assertEq(factory.creationFee(), 1_000_000);
         assertEq(factory.creationFeeRecipient(), address(0xFEE));
-        assertEq(factory.feeCeiling(), 2_000_000);
     }
 
     function test_DeploySponsoredTask_DeployerCannotUpgradeTheHook() public {

@@ -24,7 +24,6 @@ contract SponsoredTaskSettlerDeployScriptsTest is Test {
         vm.setEnv("FORGE_USDC_TOKEN_ADDRESS", vm.toString(address(usdc)));
         vm.setEnv("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", "1000000");
         vm.setEnv("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT", vm.toString(address(0xFEE)));
-        vm.setEnv("FORGE_SPONSORED_TASK_FEE_CEILING_USDC", "5000000");
         vm.setEnv("FORGE_DEV_PRIVATE_KEY", vm.toString(DEPLOYER_KEY));
         vm.setEnv("FORGE_SPONSORED_TASK_SETTLER_ADMIN", vm.toString(admin));
         vm.setEnv("FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN", vm.toString(admin));
@@ -63,11 +62,9 @@ contract SponsoredTaskSettlerDeployScriptsTest is Test {
         assertEq(list[2], address(0xCCC));
         assertEq(factory.controller(), address(settler));
         assertEq(SponsoredTaskRegistry(address(factory.registry())).pendingOwner(), admin);
-        assertEq(factory.owner(), admin);
         assertEq(address(factory.feeToken()), address(usdc));
         assertEq(factory.creationFee(), 1_000_000);
         assertEq(factory.creationFeeRecipient(), address(0xFEE));
-        assertEq(factory.feeCeiling(), 5_000_000);
     }
 
     function test_DeploySettler_RejectsDeployerAsAdmin() public {
