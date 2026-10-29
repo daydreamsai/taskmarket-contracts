@@ -2062,6 +2062,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "PoolRefunded",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProjectRefunded",
     "inputs": [
       {
@@ -3266,6 +3285,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "PoolSpent",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StakeForfeited",
     "inputs": [
       {
@@ -3449,6 +3487,16 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "GrantNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GrantRevoked",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAwardRecipient",
     "inputs": []
   },
@@ -3489,7 +3537,59 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "NotProjectOperator",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotWorker",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OperatorCapExceeded",
+    "inputs": [
+      {
+        "name": "remaining",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PoolBalanceExceeded",
+    "inputs": [
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PoolNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PoolNotOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProjectNotOpen",
     "inputs": []
   },
   {
@@ -5910,6 +6010,29 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "drawTopUp",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getGrant",
     "inputs": [
       {
@@ -6106,6 +6229,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "projectPoolId",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "projectTaskCount",
     "inputs": [
       {
@@ -6209,24 +6351,6 @@ export const TaskMarketABI = [
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "topUpProject",
-    "inputs": [
-      {
-        "name": "projectId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "GrantAccepted",
     "inputs": [
@@ -6313,6 +6437,93 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "PoolClosed",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "pot",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PoolFunded",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "funder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "onBehalfOf",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PoolOpened",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "module",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "closesAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProjectClosed",
     "inputs": [
       {
@@ -6328,7 +6539,7 @@ export const TaskMarketABI = [
         "internalType": "address"
       },
       {
-        "name": "returned",
+        "name": "leftover",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -6399,32 +6610,8 @@ export const TaskMarketABI = [
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "ProjectToppedUp",
-    "inputs": [
-      {
-        "name": "projectId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "GrantAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "GrantNotAccepted",
     "inputs": []
   },
   {
@@ -6434,17 +6621,12 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "GrantRevoked",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidOperator",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NotProjectOperator",
+    "name": "NotDiamond",
     "inputs": []
   },
   {
@@ -6454,40 +6636,28 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "OperatorCapExceeded",
-    "inputs": [
-      {
-        "name": "remaining",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "needed",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "name": "PoolAlreadyClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PoolAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PoolAmountZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PoolSharesZero",
+    "inputs": []
   },
   {
     "type": "error",
     "name": "ProjectAlreadyClosed",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProjectBudgetExceeded",
-    "inputs": [
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "needed",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -6501,17 +6671,228 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ProjectEndTooFar",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ProjectNotFound",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "ProjectNotOpen",
+    "name": "ProjectTokenNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "function",
+    "name": "claim",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "backer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimable",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "backer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "fund",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "onBehalfOf",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getPool",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "info",
+        "type": "tuple",
+        "internalType": "struct ITMPFundingPool.PoolInfo",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "module",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "closesAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "closed",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "settled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "funded",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "available",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outstanding",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalShares",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "potIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "claimed",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sharesOf",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "backer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "PoolClaimed",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "backer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "NothingToClaim",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "ProjectTokenNotAllowed",
+    "name": "PoolInvalidBacker",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PoolTransferFailed",
     "inputs": []
   }
 ] as const;

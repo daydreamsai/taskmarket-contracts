@@ -60,6 +60,11 @@ contract EvaluatorFacet {
         LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
 
+        // Rev027: a project task draws the stake from its project's pool (LibProject.topUp), and
+        // projectPrepaid tells the funding check below to expect it with no forwarded payment.
+        bool drawn = LibProject.topUp(s, taskId, requester, stakeAmount) != stakeAmount;
+        if (drawn) s.projectPrepaid = stakeAmount;
+
         // Remaining validation, storage writes, stake pull and event live in LibTaskMarket so
         // this path and createTask's cannot drift apart. See _applyEvaluatorConfig.
         LibTaskMarket._applyEvaluatorConfig(
@@ -76,6 +81,7 @@ contract EvaluatorFacet {
             0,
             s
         );
+        if (drawn) s.projectPrepaid = 0;
 
         LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.EvaluatorStake, false);
         LibGuards._nonReentrantAfter(s);

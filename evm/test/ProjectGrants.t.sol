@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
@@ -18,6 +19,7 @@ import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 contract ProjectGrantsTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
+    ITMPFundingPool internal pools;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -40,6 +42,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
+        pools = ITMPFundingPool(address(market));
         usdc.mint(address(forwarder), 1_000e6);
         id = abi.decode(
             _relay(
@@ -248,6 +251,62 @@ contract ProjectGrantsTest is DiamondTestHelper {
         assertEq(projects.getProject(id).available, BUDGET - CAP);
     }
 
+    /// @dev A reward increase or an evaluator stake on an operator's task is drawn from the pool
+    ///      and counts toward the operator's cap, as creating the task did.
+    function test_Operator_TopUps_CountTowardItsCap() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        bytes32 taskId = _opTask(operator, 3e6);
+        _relay(operator, 0, abi.encodeCall(market.updateTask, (taskId, 4e6, 0, 0, 0)));
+        assertEq(projects.getGrant(id, operator).committed, 4e6);
+        assertEq(projects.getProject(id).available, BUDGET - 4e6, "the increase came out of the pool");
+
+        bytes memory raise = abi.encodeCall(market.updateTask, (taskId, 6e6, 0, 0, 0));
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.OperatorCapExceeded.selector, 1e6, 2e6));
+        _relay(operator, 0, raise);
+        bytes memory stake =
+            abi.encodeCall(market.assignEvaluator, (taskId, address(0xE0), 2e6, 0, 3 days, 2 days, address(0xD0)));
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.OperatorCapExceeded.selector, 1e6, 2e6));
+        _relay(operator, 0, stake);
+
+        _relay(
+            operator,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, address(0xE0), 1e6, 0, 3 days, 2 days, address(0xD0)))
+        );
+        assertEq(projects.getGrant(id, operator).committed, CAP);
+        assertEq(projects.getProject(id).available, BUDGET - CAP);
+
+        // Cancelling returns all of it to the pool and gives the cap back.
+        assertTrue(_cancel(operator, taskId));
+        assertEq(projects.getGrant(id, operator).committed, 0);
+        assertEq(projects.getProject(id).available, BUDGET);
+        assertEq(usdc.balanceOf(address(market)), market.totalLiabilities());
+    }
+
+    /// @dev The owner acting on an operator's task is not held to the operator's cap, but what it
+    ///      adds still counts toward the operator's committed, so the task's refunds give back
+    ///      exactly what was counted.
+    function test_Owner_TopsUpAnOperatorsTask() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        bytes32 taskId = _opTask(operator, 3e6);
+        _relay(owner, 0, abi.encodeCall(market.updateTask, (taskId, 6e6, 0, 0, 0)));
+        assertEq(projects.getGrant(id, operator).committed, 6e6);
+        assertTrue(_cancel(owner, taskId));
+        assertEq(projects.getGrant(id, operator).committed, 0);
+        assertEq(projects.getProject(id).available, BUDGET);
+    }
+
+    /// @dev A revoked operator that keeps control of its tasks may finish them but spends no more.
+    function test_RevertWhen_RevokedOperator_TopsUp() public {
+        _grantAndAccept(operator, _terms(0, ITMPProject.RequesterOfRecord.Owner, false, false));
+        bytes32 taskId = _opTask(operator, 3e6);
+        _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, operator)));
+        bytes memory raise = abi.encodeCall(market.updateTask, (taskId, 4e6, 0, 0, 0));
+        vm.expectRevert(ITMPProject.GrantRevoked.selector);
+        _relay(operator, 0, raise);
+        assertTrue(_cancel(operator, taskId), "the operator still finishes what it started");
+    }
+
     function test_Caps_AreSeparatePerOperator() public {
         _grantAndAccept(operator, _terms(3e6, ITMPProject.RequesterOfRecord.Owner, true, true));
         _grantAndAccept(otherOperator, _terms(3e6, ITMPProject.RequesterOfRecord.Owner, true, true));
@@ -259,7 +318,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
     function test_RevertWhen_Operator_OverTheProjectBudgetEvenWithoutACap() public {
         _grantAndAccept(operator, _wideOpen());
         bytes memory data = _taskCall(BUDGET + 1);
-        vm.expectRevert(abi.encodeWithSelector(ITMPProject.ProjectBudgetExceeded.selector, BUDGET, BUDGET + 1));
+        vm.expectRevert(abi.encodeWithSelector(ITMPFundingPool.PoolBalanceExceeded.selector, BUDGET, BUDGET + 1));
         _relay(operator, 0, data);
     }
 
@@ -275,10 +334,12 @@ contract ProjectGrantsTest is DiamondTestHelper {
     // Operators never reach the owner's functions
     // -------------------------------------------------------------------------
 
-    function test_RevertWhen_Operator_TopsUpOrClosesTheProject() public {
+    /// @dev An operator may back the project like anyone else, but closing it early stays the owner's.
+    function test_RevertWhen_Operator_ClosesTheProject() public {
         _grantAndAccept(operator, _wideOpen());
-        vm.expectRevert(ITMPProject.NotProjectOwner.selector);
-        _relay(operator, 1e6, abi.encodeCall(projects.topUpProject, (id, 1e6)));
+        _relay(operator, 1e6, abi.encodeCall(pools.fund, (projects.projectPoolId(id), 1e6, address(0))));
+        uint256 shares = pools.sharesOf(projects.projectPoolId(id), operator);
+        assertGt(shares, 0, "the operator backed the project");
         vm.prank(operator);
         vm.expectRevert(ITMPProject.NotProjectOwner.selector);
         projects.closeProject(id);

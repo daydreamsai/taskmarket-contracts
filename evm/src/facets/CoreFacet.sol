@@ -9,6 +9,7 @@ import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibTaskCreation } from "../libraries/LibTaskCreation.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
+import { ITMPProject } from "../interfaces/ITMPProject.sol";
 import {
     TMP_BOUNTY,
     TMP_CLAIM,
@@ -180,8 +181,15 @@ contract CoreFacet {
         uint256 refund = 0;
         // The forwarder must have moved exactly the increase into escrow, and nothing on an update
         // that raises no reward. LibEscrow.book below checks the increase is covered by the
-        // unbooked balance for a booked task.
-        LibGuards._requireReportedPayment(newReward > task.reward ? newReward - task.reward : 0);
+        // unbooked balance for a booked task. Rev027: a project task draws the increase from its
+        // project's pool instead, and the forwarder must report nothing. ProjectFacet draws it
+        // (drawTopUp, callable only by the diamond itself), which keeps CoreFacet's room.
+        uint256 increase = newReward > task.reward ? newReward - task.reward : 0;
+        if (increase != 0 && s.taskProjects[taskId] != 0) {
+            ITMPProject(address(this)).drawTopUp(taskId, requester, increase);
+            increase = 0;
+        }
+        LibGuards._requireReportedPayment(increase);
         if (newReward != 0 && newReward != task.reward) {
             if (newReward < task.reward) {
                 refund = task.reward - newReward;

@@ -154,6 +154,13 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         for (uint256 i; i < projectSelectors.length; ++i) {
             assertEq(loupe.facetAddress(projectSelectors[i]), projectFacet, "project selector on ProjectFacet");
         }
+        bytes4[] memory poolSelectors = FacetSelectors.fundingPoolFacetSelectors();
+        address poolFacet = loupe.facetAddress(poolSelectors[0]);
+        assertNotEq(poolFacet, address(0), "FundingPoolFacet routed");
+        assertNotEq(poolFacet, projectFacet, "FundingPoolFacet is its own facet");
+        for (uint256 i; i < poolSelectors.length; ++i) {
+            assertEq(loupe.facetAddress(poolSelectors[i]), poolFacet, "pool selector on FundingPoolFacet");
+        }
         assertNotEq(loupe.facetAddress(ITMPDiamond.acceptSubmission.selector), acceptBefore, "AcceptanceFacet replaced");
         assertNotEq(loupe.facetAddress(ITMPDiamond.rateTask.selector), ratingBefore, "RatingFacet replaced");
     }

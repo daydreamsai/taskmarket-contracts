@@ -11,6 +11,7 @@ import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { EvaluatorFacet } from "../../src/facets/EvaluatorFacet.sol";
 import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
+import { FundingPoolFacet } from "../../src/facets/FundingPoolFacet.sol";
 import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
@@ -27,7 +28,8 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      FeedbackFacet and Adds workerAgentOf; its views also report the default for the new
 ///      "requester_timeout" event key. Replaces EvaluatorFacet: evaluatorTimeout no longer
 ///      requires the forwarder, so anyone can call it directly.
-/// @dev Projects: appends the project fields to AppStorage and Adds ProjectFacet. Replaces
+/// @dev Projects: appends the project and funding pool fields to AppStorage and Adds ProjectFacet
+///      and FundingPoolFacet (a project's budget is a funding pool backers fund and claim from). Replaces
 ///      AcceptanceFacet and RatingFacet as well: with CoreFacet, EvaluatorFacet, SettlementFacet
 ///      and WorkerFacet above, they pay money owed to a project task's requester back into its
 ///      project and follow an operator's grant terms in their requester checks.
@@ -35,7 +37,7 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 /// @dev CoreFacet is also split: claimTask (both overloads), selectWorker, submitPitch, submitProof
 ///      and submitWork move to a new WorkerFacet with their selectors unchanged, and task creation
 ///      moves into LibTaskCreation, so CoreFacet keeps room under the contract size limit.
-/// @dev One diamondCut transaction: eight facets and 67 selectors, which must stay under
+/// @dev One diamondCut transaction: nine facets and 73 selectors, which must stay under
 ///      the Tempo per-transaction gas cap that made rev026 split its cut (simulate first).
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY          -- owner key (must match Diamond owner)
@@ -70,13 +72,14 @@ contract Rev027Upgrade is Script {
         console.log("FeedbackFacet:  ", loupe.facetAddress(FacetSelectors.feedbackFacetSelectors()[0]));
         console.log("EvaluatorFacet: ", loupe.facetAddress(FacetSelectors.evalFacetSelectors()[0]));
         console.log("ProjectFacet:   ", loupe.facetAddress(FacetSelectors.projectFacetSelectors()[0]));
+        console.log("FundingPoolFacet:", loupe.facetAddress(FacetSelectors.fundingPoolFacetSelectors()[0]));
         console.log("AcceptanceFacet:", loupe.facetAddress(FacetSelectors.acceptFacetSelectors()[0]));
         console.log("RatingFacet:    ", loupe.facetAddress(FacetSelectors.ratingFacetSelectors()[0]));
         console.log("diamondVersion: ", TARGET_VERSION);
     }
 
     function _cut() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](12);
+        cuts = new IDiamondCut.FacetCut[](13);
         address core = address(new CoreFacet());
         address worker = address(new WorkerFacet());
         address settlement = address(new SettlementFacet());
@@ -115,6 +118,9 @@ contract Rev027Upgrade is Script {
         );
         cuts[11] = IDiamondCut.FacetCut(
             address(new RatingFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.ratingFacetSelectors()
+        );
+        cuts[12] = IDiamondCut.FacetCut(
+            address(new FundingPoolFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.fundingPoolFacetSelectors()
         );
     }
 }

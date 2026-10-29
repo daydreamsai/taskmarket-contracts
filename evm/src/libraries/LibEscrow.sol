@@ -6,6 +6,7 @@ import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { TMP_CLAIM } from "../interfaces/ITMPModes.sol";
+import { LibProject } from "./LibProject.sol";
 
 /// @title LibEscrow -- rev026 escrow liabilities and the solvency check
 /// @dev A task's booked amount is re-derived from its state with `owed`, the escrow conservation
@@ -77,6 +78,8 @@ library LibEscrow {
         uint256 released = booked - o;
         if (paidOut > released) revert ITMPEscrow.EscrowOverdrawn(taskId, paidOut, released);
         rec.booked = SafeCast.toUint128(o);
+        // Rev027: what a project task no longer holds leaves its pool's outstanding.
+        LibProject.finishDraw(s, taskId, o);
         uint256 total = s.totalLiabilities - released;
         s.totalLiabilities = total;
         _requireSolvent(balanceAfter, total);

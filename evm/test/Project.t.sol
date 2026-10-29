@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_AUCTION, TMP_AUCTION_DUTCH, TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
@@ -13,10 +14,12 @@ import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 
 /// @dev rev027: projects. Every task outcome that pays the requester is routed back to the
-///      project while it is open, and to the owner after; the unspent budget is always booked.
+///      project while it is open, and to the backers' pot after; the unspent budget and the pot are
+///      always booked. ProjectCrowdfunding.t.sol covers backers, the pot and claims in depth.
 contract ProjectTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
+    ITMPFundingPool internal pools;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -41,6 +44,7 @@ contract ProjectTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
+        pools = ITMPFundingPool(address(market));
         usdc.mint(address(forwarder), 1_000_000e6);
     }
 
@@ -112,6 +116,8 @@ contract ProjectTest is DiamondTestHelper {
         assertEq(p.funded, BUDGET);
         assertEq(p.available, BUDGET);
         assertFalse(p.closed);
+        uint256 shares = pools.sharesOf(projects.projectPoolId(id), owner);
+        assertEq(shares, BUDGET * 1e12, "the opening budget buys the owner's shares");
         assertEq(market.totalLiabilities(), BUDGET);
         _assertBooked();
     }
@@ -146,36 +152,50 @@ contract ProjectTest is DiamondTestHelper {
         projects.createProject(address(usdc), BUDGET, uint64(block.timestamp + 1));
     }
 
-    function test_TopUp_AddsToTheBudget() public {
+    function test_Fund_AddsToTheBudget() public {
         uint256 id = _open();
-        _relay(owner, 5e6, abi.encodeCall(projects.topUpProject, (id, 5e6)));
+        _relay(owner, 5e6, abi.encodeCall(pools.fund, (projects.projectPoolId(id), 5e6, address(0))));
         ITMPProject.Project memory p = projects.getProject(id);
         assertEq(p.funded, BUDGET + 5e6);
         assertEq(p.available, BUDGET + 5e6);
         _assertBooked();
     }
 
-    function test_RevertWhen_TopUp_NotOwner() public {
+    function test_Fund_ByAnyoneRecordsTheBacker() public {
         uint256 id = _open();
-        vm.expectRevert(ITMPProject.NotProjectOwner.selector);
-        _relay(stranger, 1e6, abi.encodeCall(projects.topUpProject, (id, 1e6)));
+        bytes32 pool = projects.projectPoolId(id);
+        vm.expectEmit(address(market));
+        emit ITMPFundingPool.PoolFunded(pool, stranger, stranger, 1e6, 1e6 * 1e12);
+        _relay(stranger, 1e6, abi.encodeCall(pools.fund, (pool, 1e6, address(0))));
+        uint256 shares = pools.sharesOf(pool, stranger);
+        assertEq(shares, 1e6 * 1e12);
+        assertEq(projects.getProject(id).funded, BUDGET + 1e6);
+        _assertBooked();
     }
 
-    function test_RevertWhen_TopUp_PastEndDate() public {
+    function test_RevertWhen_Fund_PastEndDate() public {
         uint256 id = _open();
+        bytes memory data = abi.encodeCall(pools.fund, (projects.projectPoolId(id), 1e6, address(0)));
         vm.warp(block.timestamp + LIFETIME);
-        vm.expectRevert(ITMPProject.ProjectNotOpen.selector);
-        _relay(owner, 1e6, abi.encodeCall(projects.topUpProject, (id, 1e6)));
+        vm.expectRevert(ITMPFundingPool.PoolNotOpen.selector);
+        _relay(owner, 1e6, data);
     }
 
-    function test_Close_ReturnsTheUnspentBudgetToTheOwner() public {
+    function test_Close_MakesTheUnspentBudgetThePot() public {
         uint256 id = _open();
         _task(id, TMP_BOUNTY, REWARD);
+        vm.expectEmit(address(market));
+        emit ITMPProject.ProjectClosed(id, owner, BUDGET - REWARD);
         vm.prank(owner);
         projects.closeProject(id);
-        assertEq(usdc.balanceOf(owner), BUDGET - REWARD);
+        assertEq(usdc.balanceOf(owner), 0, "close pays nobody");
         assertTrue(projects.getProject(id).closed);
-        assertEq(_available(id), 0);
+        assertEq(_available(id), BUDGET - REWARD, "the unspent budget stays, now as the backers' pot");
+        assertEq(market.totalLiabilities(), BUDGET, "the pot and the open task stay booked");
+        _assertBooked();
+
+        pools.claim(projects.projectPoolId(id), owner);
+        assertEq(usdc.balanceOf(owner), BUDGET - REWARD, "the sole backer claims the whole pot");
         assertEq(market.totalLiabilities(), REWARD, "the open task stays booked");
         _assertBooked();
     }
@@ -192,7 +212,8 @@ contract ProjectTest is DiamondTestHelper {
         vm.warp(block.timestamp + LIFETIME);
         vm.prank(stranger);
         projects.closeProject(id);
-        assertEq(usdc.balanceOf(owner), BUDGET);
+        assertEq(usdc.balanceOf(owner), 0);
+        assertEq(_available(id), BUDGET);
         _assertBooked();
     }
 
@@ -231,7 +252,7 @@ contract ProjectTest is DiamondTestHelper {
     function test_RevertWhen_CreateProjectTask_OverBudget() public {
         uint256 id = _open();
         bytes memory data = _taskCall(id, taskConfig(BUDGET + 1, DURATION, TMP_BOUNTY), noEvaluatorConfig());
-        vm.expectRevert(abi.encodeWithSelector(ITMPProject.ProjectBudgetExceeded.selector, BUDGET, BUDGET + 1));
+        vm.expectRevert(abi.encodeWithSelector(ITMPFundingPool.PoolBalanceExceeded.selector, BUDGET, BUDGET + 1));
         _relay(owner, 0, data);
     }
 
@@ -356,23 +377,34 @@ contract ProjectTest is DiamondTestHelper {
         _assertBooked();
     }
 
-    function test_RefundAfterTheEndDate_GoesToTheOwner() public {
+    function test_RefundAfterTheEndDate_GoesToThePot() public {
         uint256 id = _open();
         bytes32 taskId = _task(id, TMP_BOUNTY, REWARD);
         // The end date stops new tasks, not this one: it runs to its own expiry.
         vm.warp(block.timestamp + LIFETIME + 1);
+        vm.expectEmit(address(market));
+        emit ITMPProject.ProjectRefunded(id, taskId, REWARD);
         _relay(owner, 0, abi.encodeCall(market.refundExpired, (taskId, 0)));
-        assertEq(usdc.balanceOf(owner), REWARD);
-        assertEq(_available(id), BUDGET - REWARD);
+        assertEq(usdc.balanceOf(owner), 0);
+        assertEq(_available(id), BUDGET, "the refund joined the unspent budget in the pot");
+        _assertBooked();
+        // Nobody closed it, but past its end date the pot is the backers' already.
+        pools.claim(projects.projectPoolId(id), owner);
+        assertEq(usdc.balanceOf(owner), BUDGET);
         _assertBooked();
     }
 
-    function test_RefundAfterClose_GoesToTheOwner() public {
+    function test_RefundAfterClose_GoesToThePot() public {
         uint256 id = _open();
         bytes32 taskId = _task(id, TMP_BOUNTY, REWARD);
         vm.prank(owner);
         projects.closeProject(id);
         _relay(owner, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+        assertEq(usdc.balanceOf(owner), 0);
+        assertEq(_available(id), BUDGET);
+        assertEq(market.totalLiabilities(), BUDGET, "the pot stays booked until claimed");
+        _assertBooked();
+        pools.claim(projects.projectPoolId(id), owner);
         assertEq(usdc.balanceOf(owner), BUDGET);
         assertEq(market.totalLiabilities(), 0);
         _assertBooked();

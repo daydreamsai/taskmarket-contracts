@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
@@ -15,8 +16,9 @@ import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 /// @dev rev027: every payout owed to a project task's requester goes through LibProject.payRequester.
 ///      The tasks here are created by an operator that is the requester of record, so a payout that
 ///      skipped payRequester would land in the operator's wallet. Each test asserts the money came
-///      back to the project's available budget while it is open (or to the owner once it is closed
-///      or past its end date), the operator's wallet is untouched and its committed cap is released.
+///      back to the project's available budget while it is open (or to the backers' pot once it is
+///      closed or past its end date), the operator's wallet is untouched and its committed cap is
+///      released.
 ///      Covers the payouts Project.t.sol and ProjectGrants.t.sol do not: the evaluator fee refunded
 ///      when a dispute overturns the verdict, the evaluator reject refund, the updateTask reward
 ///      decrease, the acceptSubmissions split remainder and a worker-stake penalty to the requester.
@@ -24,6 +26,7 @@ import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 contract ProjectRequesterPayoutsTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
+    ITMPFundingPool internal pools;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -55,6 +58,7 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
+        pools = ITMPFundingPool(address(market));
         usdc.mint(address(forwarder), 1_000_000e6);
 
         uint64 endsAt = uint64(block.timestamp) + LIFETIME;
@@ -188,22 +192,29 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
         _assertRouted();
     }
 
-    function test_DisputeOverturned_AfterClose_FeeGoesToTheOwner() public {
+    function test_DisputeOverturned_AfterClose_FeeGoesToThePot() public {
         bytes32 taskId = _disputed(ITMPCore.VerdictType.REJECT, 0);
         vm.prank(owner);
         projects.closeProject(id);
-        assertEq(usdc.balanceOf(owner), BUDGET - REWARD, "close returns the unspent budget");
+        assertEq(_available(), BUDGET - REWARD, "the unspent budget stays, now as the pot");
+        assertEq(usdc.balanceOf(owner), 0);
 
         uint256 award = REWARD - EVAL_FEE;
         vm.prank(resolver);
         market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, _award(award));
 
-        assertEq(usdc.balanceOf(owner), BUDGET - REWARD + EVAL_FEE, "the fee went to the owner");
+        assertEq(_available(), BUDGET - REWARD + EVAL_FEE, "the fee went to the pot");
+        assertEq(_committed(), award, "the operator's cap keeps only what was spent");
+        assertEq(market.totalLiabilities(), BUDGET - REWARD + EVAL_FEE, "the pot stays booked");
+        _assertRouted();
+
+        pools.claim(projects.projectPoolId(id), owner);
+        assertEq(usdc.balanceOf(owner), BUDGET - REWARD + EVAL_FEE, "the sole backer claims it all");
         assertEq(market.totalLiabilities(), 0);
         _assertRouted();
     }
 
-    function test_DisputeOverturned_AfterTheEndDate_FeeGoesToTheOwner() public {
+    function test_DisputeOverturned_AfterTheEndDate_FeeGoesToThePot() public {
         bytes32 taskId = _disputed(ITMPCore.VerdictType.REJECT, 0);
         vm.warp(projects.getProject(id).endsAt);
 
@@ -211,8 +222,8 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
         vm.prank(resolver);
         market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, _award(award));
 
-        assertEq(usdc.balanceOf(owner), EVAL_FEE, "the fee went to the owner");
-        assertEq(_available(), BUDGET - REWARD, "a project past its end date takes no refund");
+        assertEq(usdc.balanceOf(owner), 0);
+        assertEq(_available(), BUDGET - REWARD + EVAL_FEE, "the fee went to the pot");
         _assertRouted();
     }
 

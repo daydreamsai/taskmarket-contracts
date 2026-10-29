@@ -3,24 +3,38 @@ pragma solidity ^0.8.24;
 
 import { ITMPCore } from "./ITMPCore.sol";
 
-/// @title ITMPProject -- rev027: a project, one budget spent on ordinary tasks
+/// @title ITMPProject -- rev027: a crowdfunded project, one budget spent on ordinary tasks
 /// @notice A project holds a budget in the task payment stablecoin, an end date and an owner. The
-///         owner spends the budget by creating tasks of any mode from it: one transaction moves
-///         the reward (and any evaluator stake) from the budget into the new task's escrow, with
-///         no transfer. Any money a project task would pay its requester (a refund, an unspent
-///         auction or split remainder, a returned evaluator stake, a worker-stake penalty) is
-///         credited back to the budget while the project is open and before its end date, and is
-///         paid to the owner after that. The end date stops new tasks only: a task already funded
-///         runs to its end. The unspent budget is an escrow liability, so the surplus sweep can
-///         never take it.
+///         budget is the project's funding pool (ITMPFundingPool, projectPoolId), which closes at
+///         the end date: the owner's opening budget is the owner's contribution, and anyone may
+///         back the project by funding the pool while it is open, buying shares at the pool's
+///         current value. The owner spends the budget by creating tasks of any mode from it: one
+///         transaction moves the reward (and any evaluator stake) from the pool into the new
+///         task's escrow, with no transfer. A later reward increase or evaluator stake on a
+///         project task is drawn from the pool the same way. Any money
+///         a project task would pay its requester (a refund, an unspent auction or split
+///         remainder, a returned evaluator stake, a worker-stake penalty) is refunded to the
+///         pool. Once the project is closed or past its end date nothing can be spent from the
+///         pool: what it holds, plus every later refund, is the backers' pot, which each backer
+///         claims from the pool in proportion to its shares. The end date stops new tasks
+///         and funding only: a task already funded runs to its end.
 interface ITMPProject {
+    /// @notice What the diamond stores for a project; the budget lives in its pool.
+    struct ProjectRecord {
+        address owner;
+        uint64 endsAt;
+    }
+
+    /// @notice A project as getProject reports it, with its pool's budget fields.
     struct Project {
         address owner;
         uint64 endsAt;
+        // The pool is closed: the owner closed it, or anyone did after the end date.
         bool closed;
-        // Everything the owner has paid in: the opening budget plus every top-up.
+        // Every contribution to the pool: the owner's opening budget plus every backer's.
         uint256 funded;
-        // Unspent and uncommitted: what the next project task can draw on.
+        // While the project is open, what the next project task can draw on; once it is not,
+        // the backers' unclaimed pot.
         uint256 available;
     }
 
@@ -63,15 +77,16 @@ interface ITMPProject {
     // -------------------------------------------------------------------------
 
     event ProjectCreated(uint256 indexed projectId, address indexed owner, uint256 budget, uint64 endsAt);
-    event ProjectToppedUp(uint256 indexed projectId, uint256 amount);
     /// @notice amount is what left the budget: the task's reward plus any evaluator stake.
     event ProjectTaskCreated(
         uint256 indexed projectId, bytes32 indexed taskId, address indexed createdBy, uint256 amount
     );
-    /// @notice Money a project task paid its requester came back to the budget.
+    /// @notice Money a project task paid its requester came back to the project's pool: budget
+    ///         while the project is open, the backers' pot once it is not.
     event ProjectRefunded(uint256 indexed projectId, bytes32 indexed taskId, uint256 amount);
-    /// @notice returned is the unspent budget paid to the owner.
-    event ProjectClosed(uint256 indexed projectId, address indexed closedBy, uint256 returned);
+    /// @notice leftover is what the pool held at closing, from now on the backers' pot: the
+    ///         unspent budget, less anything already claimed if it closes after its end date.
+    event ProjectClosed(uint256 indexed projectId, address indexed closedBy, uint256 leftover);
 
     event OperatorGranted(uint256 indexed projectId, address indexed operator, GrantTerms terms);
     event GrantAccepted(uint256 indexed projectId, address indexed operator);
@@ -88,9 +103,10 @@ interface ITMPProject {
     error ProjectAlreadyClosed();
     error ProjectBudgetZero();
     error ProjectEndNotInFuture();
+    /// @notice endsAt is more than 365 days after the block's timestamp.
+    error ProjectEndTooFar();
     /// @notice Only the task payment stablecoin can fund a project.
     error ProjectTokenNotAllowed();
-    error ProjectBudgetExceeded(uint256 available, uint256 needed);
     /// @notice The caller is neither the owner nor an operator granted on this project.
     error NotProjectOperator();
     error InvalidOperator();
@@ -101,6 +117,8 @@ interface ITMPProject {
     error GrantRevoked();
     error GrantNotFound();
     error OperatorCapExceeded(uint256 remaining, uint256 needed);
+    /// @notice Only the diamond itself may call this function.
+    error NotDiamond();
 
     // -------------------------------------------------------------------------
     // Functions
@@ -108,22 +126,25 @@ interface ITMPProject {
 
     /// @notice Open a project funded with `budget` of `token`, which must be the task payment
     ///         stablecoin. The forwarder must have moved exactly `budget` into escrow. The caller
-    ///         is the owner.
+    ///         is the owner. `endsAt` must be in the future and at most 365 days away. Opens the
+    ///         project's pool, closing at `endsAt`, with `budget` as the owner's contribution.
     function createProject(address token, uint256 budget, uint64 endsAt) external returns (uint256 projectId);
 
-    /// @notice The owner adds `amount` to an open project. The forwarder must have moved exactly
-    ///         `amount` into escrow.
-    function topUpProject(uint256 projectId, uint256 amount) external;
-
-    /// @notice Close the project and pay its unspent budget to the owner. The owner may close it
-    ///         at any time, anyone once it is past its end date. Tasks already funded run on; what
-    ///         they later pay their requester goes to the owner.
+    /// @notice Close the project and its pool: the unspent budget becomes the backers' pot. The owner may close
+    ///         it at any time, anyone once it is past its end date. Tasks already funded run on;
+    ///         what they later pay their requester goes into the pot too. A project past its end
+    ///         date has a pot whether or not anyone closes it. Relayed, the forwarder must report
+    ///         no payment.
     function closeProject(uint256 projectId) external;
+
+    /// @notice The project's funding pool: fund it to back the project, claim from it once the
+    ///         project is closed or past its end date.
+    function projectPoolId(uint256 projectId) external view returns (bytes32);
 
     /// @notice The owner, or an operator with an accepted, unrevoked grant, creates a task funded
     ///         from the project, as createTask with a reserved worker (zero for an ordinary
     ///         task). The forwarder must report no payment: the reward and any evaluator stake
-    ///         come out of the project's available budget, and an operator's out of its cap too.
+    ///         come out of the project's pool, and an operator's out of its cap too.
     ///         task.requester is the owner, or the operator when the grant says so.
     function createProjectTask(
         uint256 projectId,
@@ -134,6 +155,11 @@ interface ITMPProject {
         ITMPCore.TaskTerms calldata terms,
         address reservedWorker
     ) external returns (bytes32 taskId);
+
+    /// @notice A reward increase of `amount` on project task `taskId`, made by `caller`, drawn from
+    ///         the project's pool under the same checks as creating a task. Callable only by the
+    ///         diamond itself: updateTask calls it, which keeps CoreFacet under its size budget.
+    function drawTopUp(bytes32 taskId, address caller, uint256 amount) external;
 
     /// @notice The owner grants `operator` the right to spend the project's budget under `terms`,
     ///         or replaces the terms of a grant the operator has not accepted. Owner only.
