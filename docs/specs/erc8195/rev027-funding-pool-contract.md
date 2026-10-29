@@ -94,13 +94,23 @@ contract, with no fee or hook. This is a build gate, not an assumption.
 
 ### The Diamond side
 
-- The Diamond stores the pool address once, at initialisation. There is no setter.
+- The Diamond stores the pool address once, through `initFundingPool(pool)` on `ProjectFacet` (owner
+  only, runs once, reverts `FundingPoolAlreadySet` on a second call). It reverts `FundingPoolInvalid` unless
+  the pool's `manager()` is the Diamond, and emits `FundingPoolSet(pool)`. `fundingPool()` returns it.
+  There is no setter. Project functions revert `FundingPoolNotSet` until it runs, and a failed token
+  transfer into or out of the pool reverts `FundingTransferFailed`. The test helper that deploys a Diamond
+  does not call it; the rev027 upgrade script calls it after the cut.
 - `FundingPoolFacet`, `LibFundingPool`, `AppStorage.fundingPools` and `AppStorage.poolBackings` are
   removed. `ProjectFacet` and `LibProject` call the pool.
-- A thin `fund(poolId, amount, onBehalfOf)` entry: when called by the trusted forwarder it checks the
-  reported payment, transfers it to the pool and calls the pool's `creditFunding`. A thin `claim(poolId,
+- A thin `fund(poolId, amount, onBehalfOf)` entry, callable by the trusted forwarder only: it checks the
+  reported payment, transfers it to the pool and calls the pool's `creditFunding`. A backer paying from its
+  own wallet calls `fund` on the pool directly; the Diamond has no direct `fund`. A thin `claim(poolId,
   backer)` entry forwards to the pool's `claim`, so the backend keeps one relay target and one gas
-  accounting path. Neither entry holds tokens after the call.
+  accounting path. Neither entry holds tokens after the call. The Diamond no longer routes `getPool`,
+  `sharesOf` or `claimable`; read them on the pool. Both entries live on `ProjectFacet` with the selectors
+  they had before the split, so callers do not change.
+- The Diamond's own pause stops these two relayed entries. It does not stop a `claim` called directly on the
+  pool, which only the pool's pause governs.
 - `createProject`: the budget arrives through the forwarder into the Diamond, which transfers it to the
   pool and calls `open` and `creditOpening` for the owner.
 - `payRequester` for a project task transfers the amount to the pool and calls `refund`; for any other
