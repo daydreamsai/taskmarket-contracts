@@ -239,4 +239,23 @@ contract SponsoredTaskFactoryTest is Test {
         assertEq(usdc.balanceOf(creator), 0);
         assertEq(usdc.balanceOf(address(charging)), 0);
     }
+
+    function test_CreationFeeRecipientCanCreateAVaultOnItsOwnFactory() public {
+        MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
+        SponsoredTaskFactory charging = new SponsoredTaskFactory(
+            controller,
+            address(policy),
+            registry,
+            SponsoredTaskFeeConfig.charging(IERC20(address(usdc)), 1_000_000, creator)
+        );
+        registry.setFactory(address(charging), true);
+        usdc.mint(creator, 1_000_000);
+
+        vm.prank(creator);
+        (address vault,) = charging.createVault(address(token), vaultOwner, USER_SALT);
+
+        assertTrue(charging.isVault(vault));
+        assertEq(usdc.balanceOf(creator), 1_000_000);
+        assertEq(usdc.balanceOf(address(charging)), 0);
+    }
 }

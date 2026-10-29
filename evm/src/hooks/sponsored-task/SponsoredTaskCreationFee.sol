@@ -55,14 +55,17 @@ abstract contract SponsoredTaskCreationFee {
     }
 
     /// @dev Pulls the fee from `payer`, which must have approved this contract, straight to the
-    ///      recipient.
+    ///      recipient. When the recipient creates the vault there is nothing to move: a transfer
+    ///      to itself leaves its balance unchanged, which the received-amount check would reject.
     function _collectCreationFee(address vault, address payer) internal {
         uint256 amount = creationFee;
         if (amount == 0) return;
         address recipient = creationFeeRecipient;
-        uint256 before = feeToken.balanceOf(recipient);
-        feeToken.safeTransferFrom(payer, recipient, amount);
-        _requireReceived(recipient, before, amount);
+        if (payer != recipient) {
+            uint256 before = feeToken.balanceOf(recipient);
+            feeToken.safeTransferFrom(payer, recipient, amount);
+            _requireReceived(recipient, before, amount);
+        }
         emit CreationFeePaid(vault, payer, recipient, amount);
     }
 
