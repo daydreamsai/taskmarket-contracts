@@ -65,6 +65,7 @@ const STANDALONE: Record<string, string> = {
   SponsoredTaskFactoryV2: 'SponsoredTaskFactoryV2.sol/SponsoredTaskFactoryV2.json',
   SponsoredTaskRegistry: 'SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json',
   SponsoredTaskFeePolicy: 'SponsoredTaskFeePolicy.sol/SponsoredTaskFeePolicy.json',
+  FundingPool: 'FundingPool.sol/FundingPool.json',
 };
 
 type AbiEntry = Record<string, unknown>;

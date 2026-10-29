@@ -23,3 +23,4 @@ export { SponsoredTaskRegistryABI } from './generated/SponsoredTaskRegistry';
 export { SponsoredTaskFeePolicyABI } from './generated/SponsoredTaskFeePolicy';
 export { SponsoredTasksVaultV2ABI } from './generated/SponsoredTasksVaultV2';
 export { SponsoredTaskFactoryV2ABI } from './generated/SponsoredTaskFactoryV2';
+export { FundingPoolABI } from './generated/FundingPool';

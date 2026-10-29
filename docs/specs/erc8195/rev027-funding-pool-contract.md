@@ -61,7 +61,7 @@ Manager only (the Diamond):
   Diamond has transferred `amount` to the pool, and books it. `finish` takes only the pool-funded part
   of a task's draw from `outstanding` (the Claim worker's stake is not pool money).
 - `spend`, `refund`, `finish`, `close` and `creditOpening` are never paused. `spend` and `refund` revert
-  only for an unknown pool, a caller that is not the manager, or `spend` above `available`.
+  only for an unknown pool, a caller that is not the manager, or, for `spend`, a settled pool or an amount above `available`.
 - `finish` never reverts on arithmetic: it takes `min(amount, outstanding)` from `outstanding` and, if
   `amount` was larger, emits `PoolLedgerMismatch(poolId, requested, applied)`. A drift between the
   Diamond's task draws and the pool's `outstanding` then shows up as an alert and cannot block a
@@ -118,7 +118,7 @@ contract, with no fee or hook. This is a build gate, not an assumption.
   its balance-delta check needs no special case.
 - Draws: `createProjectTask` and `drawTopUp` call `spend`, and the Diamond books the received tokens as
   the task's escrow in the same transaction. The Diamond emits `ProjectPoolDrawn(projectId, taskId,
-  amount)`, so the indexer needs no receipt read.
+amount)`, so the indexer needs no receipt read.
 - The pool trusts the Diamond completely, so the split limits the damage of a Diamond bug rather than
   removing it. What it keeps: `spend` sends tokens only to the Diamond and only up to a pool's
   `available`, and no manager function pays an arbitrary address. A bug that lets an attacker make the
@@ -163,6 +163,16 @@ address. Later pool upgrades go through the proxy and need no Diamond cut.
 - USDC can blacklist an address. If the pool address were blacklisted, claims and refunds into it would
   fail. The Diamond has the same exposure for its escrow today; the pool concentrates it. This is
   accepted, and the monitor checks the pool's token balance.
+- Tempo's payment token is a TIP-20 stablecoin. It takes no fee and runs no hook on `transfer` or
+  `transferFrom`, so the full amount moves into and out of a contract (the build gate holds). It does
+  carry a transfer policy: on Tempo mainnet a blacklist (policy 2) that makes a transfer from or to a
+  listed address revert, and the token's admin can change the policy or pause the token. If the policy
+  or the issuer refused transfers to or from the pool address, claims, refunds and spends would fail
+  until it was cleared. This is the same exposure as the USDC blacklist and it is accepted; the
+  monitor that checks the pool's token balance covers it. A backer that sets a Tempo receive policy
+  blocking the pool has its claim redirected to the receive-policy guard instead of paid: the claim
+  succeeds and is booked, and the pool has no function to recover it, so the loss is the backer's own
+  opt-in.
 - `SettlementFacet` grows by about 138 bytes (measured: 24,371 of 24,576, 205 free, against 343 free with
   the pool inside the Diamond). The split does not free facet bytes; any further `SettlementFacet` change
   needs a size check.
