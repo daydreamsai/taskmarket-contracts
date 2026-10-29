@@ -52,30 +52,46 @@ Backers and other contracts, callable by anyone:
 
 Manager only (the Diamond):
 
-- `open(poolId, token, module, closesAt)`, `credit(poolId, funder, backer, amount)` for the opening
-  budget and for funding relayed through the Diamond, `spend(poolId, amount)`, `refund(poolId, amount)`,
-  `finish(poolId, amount)` and `close(poolId)`.
+- `open(poolId, token, module, closesAt)`, `creditOpening(poolId, backer, amount)` for a project's
+  opening budget, `creditFunding(poolId, funder, backer, amount)` for funding relayed through the
+  Diamond, `spend(poolId, amount)`, `refund(poolId, amount)`, `finish(poolId, amount)` and
+  `close(poolId)`.
+- `creditOpening` is not stopped by the pool's pause (project creation is governed by the Diamond's own
+  pause). `creditFunding` is stopped by it, so relayed funding and direct `fund` pause together.
 - `spend` transfers `amount` of tokens from the pool to the Diamond. `refund` is called after the
   Diamond has transferred `amount` to the pool, and books it. `finish` takes only the pool-funded part
   of a task's draw from `outstanding` (the Claim worker's stake is not pool money).
-- `spend` and `refund` are never paused and revert only for an unknown pool, a caller that is not the
-  manager, or `spend` above `available`.
+- `spend`, `refund`, `finish`, `close` and `creditOpening` are never paused. `spend` and `refund` revert
+  only for an unknown pool, a caller that is not the manager, or `spend` above `available`.
+- `finish` never reverts on arithmetic: it takes `min(amount, outstanding)` from `outstanding` and, if
+  `amount` was larger, emits `PoolLedgerMismatch(poolId, requested, applied)`. A drift between the
+  Diamond's task draws and the pool's `outstanding` then shows up as an alert and cannot block a
+  payout.
 
 ### Ownership, pause and upgrade
 
 - The pool's owner is whoever owns the Diamond at that moment, read from the Diamond on each owner-only
   call. There is no separate owner to keep in sync.
-- The owner can pause and unpause. Pause stops `fund` and `claim`; it never stops `spend`, `refund`,
-  `finish`, `close` or `credit` called by the manager, so settlement cannot be blocked.
+- The owner can pause and unpause. Pause stops `fund`, `creditFunding` and `claim`; it never stops
+  `spend`, `refund`, `finish`, `close` or `creditOpening` called by the manager, so settlement cannot be
+  blocked.
+- Reading the owner from the Diamond has two edge cases. A Diamond cut that removes the `owner()`
+  selector breaks pool upgrades and pause until it is restored, and a Diamond whose ownership is
+  renounced leaves the pool permanently without an owner. Both are accepted.
 - The owner can upgrade the implementation (UUPS, owner-only upgrade function). The implementation
   disables its initializers in its constructor, keeps its state in namespaced storage, and a test
   upgrades it and checks the upgrade function and the stored state survive.
 - The manager is the Diamond, set at initialisation and not changeable.
+- The proxy is created with its initialiser in the same transaction (the proxy constructor's init
+  data), so no one can initialise it first with a different manager. The initialiser checks that the
+  Diamond's payment token equals the pool's token and runs once.
 
 ### Token
 
 The Diamond's payment token only, one per chain. No fee-on-transfer or rebasing tokens. `open` reverts
-for any other token.
+for any other token. Before the build, confirm that the payment token on each served chain, including
+Tempo's TIP-20 stablecoin, moves the full amount on `transferFrom` and `transfer` into and out of a
+contract, with no fee or hook. This is a build gate, not an assumption.
 
 ### The Diamond side
 
@@ -83,17 +99,23 @@ for any other token.
 - `FundingPoolFacet`, `LibFundingPool`, `AppStorage.fundingPools` and `AppStorage.poolBackings` are
   removed. `ProjectFacet` and `LibProject` call the pool.
 - A thin `fund(poolId, amount, onBehalfOf)` entry: when called by the trusted forwarder it checks the
-  reported payment, transfers it to the pool and calls the pool's `credit`. A thin `claim(poolId,
+  reported payment, transfers it to the pool and calls the pool's `creditFunding`. A thin `claim(poolId,
   backer)` entry forwards to the pool's `claim`, so the backend keeps one relay target and one gas
   accounting path. Neither entry holds tokens after the call.
 - `createProject`: the budget arrives through the forwarder into the Diamond, which transfers it to the
-  pool and calls `open` and `credit` for the owner.
+  pool and calls `open` and `creditOpening` for the owner.
 - `payRequester` for a project task transfers the amount to the pool and calls `refund`; for any other
   task it transfers to the requester as before. `LibEscrow` sees the transfer as an ordinary payout, so
   its balance-delta check needs no special case.
 - Draws: `createProjectTask` and `drawTopUp` call `spend`, and the Diamond books the received tokens as
   the task's escrow in the same transaction. The Diamond emits `ProjectPoolDrawn(projectId, taskId,
   amount)`, so the indexer needs no receipt read.
+- The pool trusts the Diamond completely, so the split limits the damage of a Diamond bug rather than
+  removing it. What it keeps: `spend` sends tokens only to the Diamond and only up to a pool's
+  `available`, and no manager function pays an arbitrary address. A bug that lets an attacker make the
+  Diamond call arbitrary targets could still `spend` from the pool into the Diamond.
+- Tokens sent straight to the pool address are not booked and stay there; the pool has no surplus sweep,
+  because a sweep would give the owner a power over the pool's money.
 - The Diamond's `taskPoolDraws` is the source of truth for what each task holds of the pool's money. The
   pool trusts its manager; an invariant test and a monitor check that the pool's `outstanding` equals the
   sum of `taskPoolDraws` over a project's tasks.
@@ -101,7 +123,8 @@ for any other token.
 ### Events
 
 The pool emits `PoolOpened`, `PoolFunded`, `PoolSpent`, `PoolRefunded`, `PoolClosed` and `PoolClaimed`
-with their current signatures. The Diamond keeps the project events and adds `ProjectPoolDrawn`.
+with their current signatures, and `PoolLedgerMismatch(poolId, requested, applied)` when `finish` is asked
+for more than a pool's `outstanding`. The Diamond keeps the project events and adds `ProjectPoolDrawn`.
 
 ## Rationale
 
@@ -142,7 +165,11 @@ address. Later pool upgrades go through the proxy and need no Diamond cut.
 - Fuzz of the `spend`, `refund`, `finish`, `fund` and `claim` sequence across several projects.
 - Manager checks: every manager-only function reverts for any other caller; `fund` reverts for the
   Diamond and the pool as backer.
-- Pause: `fund` and `claim` revert while paused; `spend`, `refund`, `finish` and `close` still work.
+- Pause: `fund`, `creditFunding` and `claim` revert while paused; `spend`, `refund`, `finish`, `close` and
+  `creditOpening` still work; relayed funding through the Diamond is paused with direct funding.
+- Ledger drift: `finish` with an amount above `outstanding` applies the smaller amount, emits
+  `PoolLedgerMismatch`, and the payout still succeeds.
+- Initialisation: an attempt to initialise the proxy a second time, or with a mismatched token, reverts.
 - Upgrade: the implementation upgrades, the stored state and the upgrade function survive, and the
   initializer cannot be called again.
 - Boundary: a refund from every `SettlementFacet` payout path of a project task reaches the pool; a
