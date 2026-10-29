@@ -173,9 +173,14 @@ address. Later pool upgrades go through the proxy and need no Diamond cut.
   blocking the pool has its claim redirected to the receive-policy guard instead of paid: the claim
   succeeds and is booked, and the pool has no function to recover it, so the loss is the backer's own
   opt-in.
-- `SettlementFacet` grows by about 138 bytes (measured: 24,371 of 24,576, 205 free, against 343 free with
-  the pool inside the Diamond). The split does not free facet bytes; any further `SettlementFacet` change
-  needs a size check.
+- `SettlementFacet` ends at 24,163 of 24,576 bytes (413 free) in the merged build, against 24,233 with the
+  pool inside the Diamond, and `CoreFacet` at 20,259 of a 20,480 guard. A first version of the boundary
+  grew both; they came back down by reading only the pool's `settled` word in `isOpen` and by moving the
+  refund of a project task's payout into one Diamond-only entry, `ProjectFacet.refundProjectTask`, that the
+  payout facets call. Any further `SettlementFacet` or `CoreFacet` change needs a size check.
+- `refundProjectTask(taskId, amount)` is callable by the Diamond itself only. It releases the grant, moves
+  the tokens to the pool, calls the pool's `refund` and emits `ProjectRefunded`. Its access check is the one
+  thing that stops an outside caller moving a task's refund, and it is a point the security review reads.
 
 ## Tests
 
