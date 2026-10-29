@@ -12,8 +12,7 @@ that document.
 
 The pool holds backers' money. Inside the Diamond it shares one token balance and one blast radius
 with every task's escrow, its fields stay in the append-only `AppStorage` for the life of the
-Diamond, and its refund path takes bytes from `SettlementFacet`, which has about 372 of 24,576 bytes
-free. Rev027 is not cut anywhere, so moving the pool costs a rebuild and a review but no migration.
+Diamond. Rev027 is not cut anywhere, so moving the pool costs a rebuild and a review but no migration.
 
 ## Problem 1 -- backers' money sits beside all task escrow
 
@@ -154,7 +153,9 @@ address. Later pool upgrades go through the proxy and need no Diamond cut.
 - USDC can blacklist an address. If the pool address were blacklisted, claims and refunds into it would
   fail. The Diamond has the same exposure for its escrow today; the pool concentrates it. This is
   accepted, and the monitor checks the pool's token balance.
-- `SettlementFacet` gains an estimated 200 to 600 bytes, not measured.
+- `SettlementFacet` grows by about 138 bytes (measured: 24,371 of 24,576, 205 free, against 343 free with
+  the pool inside the Diamond). The split does not free facet bytes; any further `SettlementFacet` change
+  needs a size check.
 
 ## Tests
 
