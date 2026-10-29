@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
+import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
 import { ITMPReservation } from "../src/interfaces/ITMPReservation.sol";
 import { ITMPTermsV1 } from "../src/interfaces/ITMPTerms.sol";
@@ -154,19 +155,21 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         for (uint256 i; i < projectSelectors.length; ++i) {
             assertEq(loupe.facetAddress(projectSelectors[i]), projectFacet, "project selector on ProjectFacet");
         }
-        bytes4[] memory poolSelectors = FacetSelectors.fundingPoolFacetSelectors();
-        address poolFacet = loupe.facetAddress(poolSelectors[0]);
-        assertNotEq(poolFacet, address(0), "FundingPoolFacet routed");
-        assertNotEq(poolFacet, projectFacet, "FundingPoolFacet is its own facet");
-        for (uint256 i; i < poolSelectors.length; ++i) {
-            assertEq(loupe.facetAddress(poolSelectors[i]), poolFacet, "pool selector on FundingPoolFacet");
-        }
+        // The pool is its own contract: the diamond routes only the relayed fund and claim, and
+        // none of the pool's views or the removed pool facet's selectors.
+        assertEq(loupe.facetAddress(ITMPProject.fund.selector), projectFacet, "relayed fund on ProjectFacet");
+        assertEq(loupe.facetAddress(ITMPProject.claim.selector), projectFacet, "relayed claim on ProjectFacet");
+        assertEq(loupe.facetAddress(ITMPFundingPool.getPool.selector), address(0), "getPool is not routed");
+        assertEq(loupe.facetAddress(ITMPFundingPool.sharesOf.selector), address(0), "sharesOf is not routed");
+        assertEq(loupe.facetAddress(ITMPFundingPool.claimable.selector), address(0), "claimable is not routed");
         assertNotEq(loupe.facetAddress(ITMPDiamond.acceptSubmission.selector), acceptBefore, "AcceptanceFacet replaced");
         assertNotEq(loupe.facetAddress(ITMPDiamond.rateTask.selector), ratingBefore, "RatingFacet replaced");
     }
 
     function test_Upgrade_ProjectFundsATaskAndTakesBackItsRefund() public {
         new Rev027Upgrade().run();
+        // The pool is set once after the cut, as the deploy runbook does.
+        initMockPool(address(market), owner);
 
         ITMPProject projects = ITMPProject(address(market));
         uint256 id = abi.decode(

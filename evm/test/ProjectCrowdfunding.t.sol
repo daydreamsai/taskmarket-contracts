@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { FundingPool } from "../src/FundingPool.sol";
 import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { LibGuards } from "../src/libraries/LibGuards.sol";
@@ -25,6 +26,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
     ITMPFundingPool internal pools;
+    FundingPool internal mockPool;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -60,7 +62,8 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
-        pools = ITMPFundingPool(address(market));
+        mockPool = initMockPool(address(market), admin);
+        pools = ITMPFundingPool(address(mockPool));
         usdc.mint(address(forwarder), 1e18);
         id = _open(BUDGET);
         pool = projects.projectPoolId(id);
@@ -147,8 +150,14 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
 
     /// @dev Nothing but project money ever enters the diamond in these tests, so it holds exactly
     ///      what it owes: every live task, every budget and every unclaimed pot.
+    /// @dev Everything booked, in the diamond (task escrow) and in the pool (budget and pot).
+    function _booked() internal view returns (uint256) {
+        return market.totalLiabilities() + mockPool.totalLiabilities();
+    }
+
     function _assertSolvent() internal view {
         assertEq(usdc.balanceOf(address(market)), market.totalLiabilities(), "balance equals liabilities");
+        assertEq(usdc.balanceOf(address(mockPool)), mockPool.totalLiabilities(), "pool balance equals its books");
     }
 
     // -------------------------------------------------------------------------
@@ -181,7 +190,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     // -------------------------------------------------------------------------
 
     function test_Backers_RecordTheirContributions() public {
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolFunded(pool, alice, alice, ALICE, ALICE * SCALE);
         _back(alice, ALICE);
         _back(bob, BOB);
@@ -194,11 +203,11 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_p().funded, FUNDED + 1e6, "funded is the sum of the contributions");
         assertEq(_p().available, FUNDED + 1e6);
         assertEq(projects.getProject(id).available, FUNDED + 1e6, "getProject reads the pool");
-        assertEq(market.totalLiabilities(), FUNDED + 1e6);
+        assertEq(_booked(), FUNDED + 1e6);
     }
 
     function test_Fund_OnBehalfOfSomeoneElse() public {
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolFunded(pool, alice, bob, 2e6, 2e6 * SCALE);
         _relay(alice, 2e6, abi.encodeCall(pools.fund, (pool, 2e6, bob)));
         _assertSolvent();
@@ -216,8 +225,8 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     function test_Fund_DirectlyPullsFromTheCaller() public {
         usdc.mint(router, 3e6);
         vm.startPrank(router);
-        usdc.approve(address(market), 3e6);
-        vm.expectEmit(address(market));
+        usdc.approve(address(mockPool), 3e6);
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolFunded(pool, router, alice, 3e6, 3e6 * SCALE);
         pools.fund(pool, 3e6, alice);
         vm.stopPrank();
@@ -241,7 +250,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         _close(owner);
         assertEq(_claim(owner), 15e6, "the owner's share counts its opening budget and its later funding");
         assertEq(_claim(alice), 5e6);
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     function test_RevertWhen_Fund_Closed() public {
@@ -306,7 +315,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         _spend(REWARD);
         uint256 leftover = FUNDED - REWARD; // 12
 
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolClosed(pool, leftover);
         vm.expectEmit(address(market));
         emit ITMPProject.ProjectClosed(id, owner, leftover);
@@ -315,11 +324,11 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertTrue(_p().settled);
         assertEq(_p().potIn, leftover);
         assertEq(_p().available, leftover, "close moves no money");
-        assertEq(market.totalLiabilities(), leftover, "the pot stays booked until claimed");
+        assertEq(_booked(), leftover, "the pot stays booked until claimed");
         assertEq(usdc.balanceOf(owner), 0, "close pays nobody");
 
         assertEq(pools.claimable(pool, owner), leftover * BUDGET / FUNDED);
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolClaimed(pool, owner, 6e6);
         assertEq(_claim(owner), 6e6);
         assertEq(_claim(alice), 3.6e6);
@@ -329,7 +338,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(usdc.balanceOf(bob), 2.4e6);
         assertEq(_p().claimed, leftover);
         assertEq(_p().potIn, leftover, "claims do not change the pot");
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     function test_CloseByAnyoneAfterEndDate_SettlesThePool() public {
@@ -343,7 +352,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_claim(owner), BUDGET);
         assertEq(_claim(alice), ALICE);
         assertEq(_claim(bob), BOB);
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     function test_RevertWhen_CloseByStrangerBeforeEndDate() public {
@@ -385,7 +394,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_claim(bob), BOB);
         assertEq(_claim(alice), 2e6 * ALICE / FUNDED);
         assertEq(usdc.balanceOf(alice), ALICE, "three claims add up to alice's whole share");
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     function test_RefundsPastEndDate_GoToThePotBeforeAndAfterClose() public {
@@ -409,7 +418,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_p().potIn, FUNDED);
         assertEq(_claim(owner), BUDGET);
         assertEq(_claim(alice), ALICE);
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     // -------------------------------------------------------------------------
@@ -466,7 +475,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         vm.prank(admin);
         market.pause();
         vm.expectRevert(LibGuards.EnforcedPause.selector);
-        pools.claim(pool, alice);
+        projects.claim(pool, alice);
         vm.prank(admin);
         market.unpause();
         assertEq(_claim(alice), ALICE);
@@ -478,7 +487,8 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         usdc.mint(address(market), 1e6);
         vm.prank(admin);
         market.sweepSurplus();
-        assertEq(usdc.balanceOf(address(market)), FUNDED, "only the surplus left");
+        assertEq(usdc.balanceOf(address(mockPool)), FUNDED, "the pot is in the pool, out of the sweep's reach");
+        assertEq(usdc.balanceOf(address(market)), 0, "only the surplus was in the diamond");
         _assertSolvent();
         assertEq(_claim(alice), ALICE);
     }
@@ -507,7 +517,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         uint256 dust = leftover - 3 * each;
         assertEq(dust, 1);
         assertEq(_p().claimed, 3 * each);
-        assertEq(market.totalLiabilities(), (3e6 + 1) + dust, "the live task and the dust stay booked");
+        assertEq(_booked(), (3e6 + 1) + dust, "the live task and the dust stay booked");
         vm.expectRevert(ITMPFundingPool.NothingToClaim.selector);
         pools.claim(pool, owner);
 
@@ -517,8 +527,8 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_claim(owner), total - each);
         assertEq(_claim(alice), total - each);
         assertEq(_claim(bob), total - each);
-        assertEq(market.totalLiabilities(), leftover - 3 * total, "dust is what rounding leaves of the whole pot");
-        assertLt(market.totalLiabilities(), 3, "under one base unit per backer");
+        assertEq(_booked(), leftover - 3 * total, "dust is what rounding leaves of the whole pot");
+        assertLt(_booked(), 3, "under one base unit per backer");
     }
 
     /// @dev Any contributions, any spend, refunds after the close, claims in between: the claims
@@ -553,7 +563,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertLe(paid, potIn, "claims never exceed the pot");
         assertLt(potIn - paid, 3, "dust is under one base unit per backer");
         // setUp's project still holds its budget; of this one only the dust stays booked.
-        assertEq(market.totalLiabilities(), BUDGET + potIn - paid, "only the dust stays booked");
+        assertEq(_booked(), BUDGET + potIn - paid, "only the dust stays booked");
     }
 
     // -------------------------------------------------------------------------
@@ -586,7 +596,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     }
 
     function test_Spend_MovesMoneyToOutstanding_UntilTheTaskFinishes() public {
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolSpent(pool, REWARD);
         bytes32 taskId = _task(REWARD);
         assertEq(_p().available, BUDGET - REWARD);
@@ -598,7 +608,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_p().available, BUDGET - REWARD);
 
         bytes32 second = _task(1e6);
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolRefunded(pool, 1e6);
         _cancel(second);
         assertEq(_p().outstanding, 0, "refunded: back in available");
@@ -618,7 +628,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertGe(a, BUDGET - 1, "alice gets all but a base unit back");
         assertLe(a, BUDGET);
         assertEq(pools.claimable(pool, owner), 0, "the owner's spent budget buys nothing of alice's money");
-        assertLe(market.totalLiabilities(), 1, "only rounding dust stays");
+        assertLe(_booked(), 1, "only rounding dust stays");
     }
 
     /// @dev Security review M1, partly spent: half the budget is gone when alice joins, so her 10
@@ -630,7 +640,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         _close(owner);
         assertEq(_claim(alice), BUDGET);
         assertEq(_claim(owner), BUDGET / 2);
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     /// @dev Front-run: the owner spends its whole budget on accepted work right before a large
@@ -658,7 +668,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertLe(a, 990e6, "alice gets no more than she paid in");
         assertGe(a, 990e6 - 1);
         assertGe(o, BUDGET + stake - 1, "the owner keeps the windfall");
-        assertLe(market.totalLiabilities(), 2);
+        assertLe(_booked(), 2);
     }
 
     /// @dev A first-depositor (inflation) attack: the owner opens with one base unit, then a
@@ -700,7 +710,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
         _relay(owner, 5e6, raise);
 
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolSpent(pool, 5e6);
         _relay(owner, 0, raise);
         _assertSolvent();
@@ -720,7 +730,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         _close(owner);
         assertEq(_claim(alice), BUDGET, "alice gets her own money, no part of a top-up");
         assertEq(_claim(owner), BUDGET);
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     /// @dev Security review L2: an evaluator stake added to a project task is drawn from the pool.
@@ -971,7 +981,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         _close(owner);
         assertApproxEqAbs(_claim(alice), 7.5e6, 1, "alice pays the value the pool had");
         assertApproxEqAbs(_claim(owner), 4.5e6, 1);
-        assertLe(market.totalLiabilities(), 2, "only rounding dust stays");
+        assertLe(_booked(), 2, "only rounding dust stays");
     }
 
     /// @dev Second security review M-1: an evaluator timeout sends the evaluator stake to the
@@ -1029,7 +1039,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         _backAll();
         _spend(FUNDED);
         assertEq(pools.sharesOf(pool, alice), ALICE * SCALE, "shares still read until a new generation");
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolSharesReset(pool, 1);
         _back(bob, 5e6);
         assertEq(pools.sharesOf(pool, owner), 0, "an old generation's shares count as zero");
@@ -1043,7 +1053,7 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         pools.claim(pool, owner);
         assertEq(_claim(alice), 5e6);
         assertEq(_claim(bob), 5e6);
-        assertEq(market.totalLiabilities(), 0);
+        assertEq(_booked(), 0);
     }
 
     /// @dev Second security review L-1: a pool worth nothing that nobody funds again keeps its
@@ -1246,6 +1256,6 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertEq(_p().claimed, paid);
         assertLe(paid, potIn, "claims never exceed the pot");
         assertLe(potIn - paid, n + 1, "dust is under one base unit per backer");
-        assertEq(market.totalLiabilities(), potIn - paid, "only the dust stays booked");
+        assertEq(_booked(), potIn - paid, "only the dust stays booked");
     }
 }

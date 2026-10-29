@@ -42,7 +42,6 @@ const DIAMOND_FACETS = [
   'FeedbackFacet.sol/FeedbackFacet.json',
   'WorkerFacet.sol/WorkerFacet.json',
   'ProjectFacet.sol/ProjectFacet.json',
-  'FundingPoolFacet.sol/FundingPoolFacet.json',
 ];
 
 // Standalone contracts deployed at their own addresses. The indexer polls each of

@@ -18,7 +18,9 @@ import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
-import { FundingPoolFacet } from "../../src/facets/FundingPoolFacet.sol";
+import { FundingPool } from "../../src/FundingPool.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import { ITMPProject } from "../../src/interfaces/ITMPProject.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { FacetSelectors } from "../../script/lib/FacetSelectors.sol";
@@ -39,10 +41,24 @@ abstract contract DiamondTestHelper is Test {
         return ITMPDiamond(address(diamond));
     }
 
+    /// @dev Deploys the real funding pool behind a proxy and sets it on `diamond` as `_owner`. Not part of
+    ///      deployDiamond: the rev027 upgrade script calls initFundingPool after its cut, and a
+    ///      second call would revert. Tests that open projects call this after deploying.
+    function initMockPool(address diamond, address _owner) internal returns (FundingPool pool) {
+        address token = ITMPDiamond(diamond).usdcToken();
+        pool = FundingPool(
+            address(
+                new ERC1967Proxy(address(new FundingPool()), abi.encodeCall(FundingPool.initialize, (diamond, token)))
+            )
+        );
+        vm.prank(_owner);
+        ITMPProject(diamond).initFundingPool(address(pool));
+    }
+
     /// @dev Deploys every facet and returns the full Add cut. Separate from deployDiamond so the
     ///      ten facet cuts do not share one stack frame with the deploy.
     function _facetCuts() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](14);
+        cuts = new IDiamondCut.FacetCut[](13);
         cuts[0] = IDiamondCut.FacetCut(
             address(new DiamondCutFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors()
         );
@@ -81,9 +97,6 @@ abstract contract DiamondTestHelper is Test {
         );
         cuts[12] = IDiamondCut.FacetCut(
             address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()
-        );
-        cuts[13] = IDiamondCut.FacetCut(
-            address(new FundingPoolFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.fundingPoolFacetSelectors()
         );
     }
 

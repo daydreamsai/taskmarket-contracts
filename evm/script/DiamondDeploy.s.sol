@@ -10,7 +10,6 @@ import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { CoreFacet } from "../src/facets/CoreFacet.sol";
 import { WorkerFacet } from "../src/facets/WorkerFacet.sol";
 import { ProjectFacet } from "../src/facets/ProjectFacet.sol";
-import { FundingPoolFacet } from "../src/facets/FundingPoolFacet.sol";
 import { AuctionFacet } from "../src/facets/AuctionFacet.sol";
 import { AcceptanceFacet } from "../src/facets/AcceptanceFacet.sol";
 import { EvaluatorFacet } from "../src/facets/EvaluatorFacet.sol";
@@ -145,7 +144,7 @@ contract DiamondDeploy is Script {
         address rating,
         address registry
     ) internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](14);
+        cuts = new IDiamondCut.FacetCut[](13);
         cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
         cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors());
         cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors());
@@ -162,7 +161,6 @@ contract DiamondDeploy is Script {
         cuts[10] = _feedbackCut();
         cuts[11] = _workerCut();
         cuts[12] = _projectCut();
-        cuts[13] = _fundingPoolCut();
     }
 
     /// @dev Its own frame keeps _buildCuts under the stack limit.
@@ -184,13 +182,6 @@ contract DiamondDeploy is Script {
     function _projectCut() internal returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut(
             address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()
-        );
-    }
-
-    /// @dev rev027: funding pools. Its own frame keeps _buildCuts under the stack limit.
-    function _fundingPoolCut() internal returns (IDiamondCut.FacetCut memory) {
-        return IDiamondCut.FacetCut(
-            address(new FundingPoolFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.fundingPoolFacetSelectors()
         );
     }
 }

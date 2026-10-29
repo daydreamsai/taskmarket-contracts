@@ -5,6 +5,8 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
+import { FundingPool } from "../src/FundingPool.sol";
 import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_AUCTION, TMP_AUCTION_DUTCH, TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
@@ -20,6 +22,7 @@ contract ProjectTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
     ITMPFundingPool internal pools;
+    FundingPool internal mockPool;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -44,7 +47,8 @@ contract ProjectTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
-        pools = ITMPFundingPool(address(market));
+        mockPool = initMockPool(address(market), admin);
+        pools = ITMPFundingPool(address(mockPool));
         usdc.mint(address(forwarder), 1_000_000e6);
     }
 
@@ -102,6 +106,7 @@ contract ProjectTest is DiamondTestHelper {
     /// @dev The diamond holds exactly what it owes: the projects' budgets and the live tasks.
     function _assertBooked() internal view {
         assertEq(usdc.balanceOf(address(market)), market.totalLiabilities(), "balance equals liabilities");
+        assertEq(usdc.balanceOf(address(mockPool)), mockPool.totalLiabilities(), "pool balance equals its books");
     }
 
     // -------------------------------------------------------------------------
@@ -119,8 +124,17 @@ contract ProjectTest is DiamondTestHelper {
         assertFalse(p.closed);
         uint256 shares = pools.sharesOf(projects.projectPoolId(id), owner);
         assertEq(shares, BUDGET * 1e12, "the opening budget buys the owner's shares");
-        assertEq(market.totalLiabilities(), BUDGET);
+        assertEq(market.totalLiabilities(), 0, "the diamond keeps none of the budget");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET, "the budget is in the pool");
         _assertBooked();
+    }
+
+    function test_CreateProject_ForwardsTheBudgetToThePool() public {
+        uint256 diamondBefore = usdc.balanceOf(address(market));
+        uint256 id = _open();
+        assertEq(usdc.balanceOf(address(market)), diamondBefore, "the diamond holds nothing after createProject");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET);
+        assertEq(pools.getPool(projects.projectPoolId(id)).funded, BUDGET);
     }
 
     function test_RevertWhen_CreateProject_TokenNotAllowed() public {
@@ -168,7 +182,7 @@ contract ProjectTest is DiamondTestHelper {
     function test_Fund_ByAnyoneRecordsTheBacker() public {
         uint256 id = _open();
         bytes32 pool = projects.projectPoolId(id);
-        vm.expectEmit(address(market));
+        vm.expectEmit(address(mockPool));
         emit ITMPFundingPool.PoolFunded(pool, stranger, stranger, 1e6, 1e6 * 1e12);
         _relay(stranger, 1e6, abi.encodeCall(pools.fund, (pool, 1e6, address(0))));
         uint256 shares = pools.sharesOf(pool, stranger);
@@ -195,7 +209,8 @@ contract ProjectTest is DiamondTestHelper {
         assertEq(usdc.balanceOf(owner), 0, "close pays nobody");
         assertTrue(projects.getProject(id).closed);
         assertEq(_available(id), BUDGET - REWARD, "the unspent budget stays, now as the backers' pot");
-        assertEq(market.totalLiabilities(), BUDGET, "the pot and the open task stay booked");
+        assertEq(market.totalLiabilities(), REWARD, "the open task stays booked");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET - REWARD, "the pot is in the pool");
         _assertBooked();
 
         pools.claim(projects.projectPoolId(id), owner);
@@ -249,7 +264,8 @@ contract ProjectTest is DiamondTestHelper {
         assertEq(market.getTask(taskId).reward, REWARD);
         assertEq(projects.projectTaskCount(id), 1);
         assertEq(projects.projectTasks(id, 0, 10)[0], taskId);
-        assertEq(market.totalLiabilities(), BUDGET, "the booking moved from project to task");
+        assertEq(market.totalLiabilities(), REWARD, "the task escrow is booked in the diamond");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET - REWARD, "the rest stays in the pool");
         _assertBooked();
     }
 
@@ -322,8 +338,58 @@ contract ProjectTest is DiamondTestHelper {
         _relay(owner, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, WORK, 0)));
         assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
         assertEq(_available(id), BUDGET - REWARD);
-        assertEq(market.totalLiabilities(), BUDGET - REWARD);
+        assertEq(market.totalLiabilities(), 0);
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET - REWARD);
         _assertBooked();
+    }
+
+    function test_CreateProjectTask_EmitsPoolDrawn() public {
+        uint256 id = _open();
+        vm.expectEmit(true, false, false, true, address(market));
+        emit ITMPProject.ProjectPoolDrawn(id, bytes32(0), REWARD);
+        _task(id, TMP_BOUNTY, REWARD);
+    }
+
+    function test_Fund_RelayedHoldsNothingAndCreditsTheBacker() public {
+        uint256 id = _open();
+        bytes32 pool = projects.projectPoolId(id);
+        uint256 diamondBefore = usdc.balanceOf(address(market));
+        _relay(stranger, 3e6, abi.encodeCall(projects.fund, (pool, 3e6, stranger)));
+        assertEq(usdc.balanceOf(address(market)), diamondBefore, "the diamond holds nothing after fund");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET + 3e6);
+        assertEq(pools.sharesOf(pool, stranger), 3e6 * 1e12);
+    }
+
+    function test_RevertWhen_Fund_NotThroughForwarder() public {
+        bytes32 pool = projects.projectPoolId(_open());
+        vm.expectRevert();
+        projects.fund(pool, 1e6, address(0));
+    }
+
+    function test_Claim_RelayedPaysTheBacker() public {
+        uint256 id = _open();
+        vm.prank(owner);
+        projects.closeProject(id);
+        _relay(stranger, 0, abi.encodeCall(projects.claim, (projects.projectPoolId(id), owner)));
+        assertEq(usdc.balanceOf(owner), BUDGET, "the pool pays the backer, not the diamond");
+        assertEq(usdc.balanceOf(address(market)), 0);
+    }
+
+    function test_InitFundingPool_OnlyOnceAndOnlyByOwner() public {
+        assertEq(projects.fundingPool(), address(mockPool));
+        vm.prank(admin);
+        vm.expectRevert(ITMPProject.FundingPoolAlreadySet.selector);
+        projects.initFundingPool(address(mockPool));
+        vm.prank(stranger);
+        vm.expectRevert();
+        projects.initFundingPool(address(mockPool));
+    }
+
+    function test_RemovedPoolSelectorsAreGone() public view {
+        IDiamondLoupe loupe = IDiamondLoupe(address(market));
+        assertEq(loupe.facetAddress(ITMPFundingPool.getPool.selector), address(0));
+        assertEq(loupe.facetAddress(ITMPFundingPool.sharesOf.selector), address(0));
+        assertEq(loupe.facetAddress(ITMPFundingPool.claimable.selector), address(0));
     }
 
     function test_Cancelled_RefundsTheProject() public {
@@ -406,7 +472,8 @@ contract ProjectTest is DiamondTestHelper {
         _relay(owner, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
         assertEq(usdc.balanceOf(owner), 0);
         assertEq(_available(id), BUDGET);
-        assertEq(market.totalLiabilities(), BUDGET, "the pot stays booked until claimed");
+        assertEq(market.totalLiabilities(), 0, "the pot is in the pool");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET);
         _assertBooked();
         pools.claim(projects.projectPoolId(id), owner);
         assertEq(usdc.balanceOf(owner), BUDGET);
@@ -431,7 +498,8 @@ contract ProjectTest is DiamondTestHelper {
         usdc.mint(address(market), 1e6);
         vm.prank(admin);
         market.sweepSurplus();
-        assertEq(usdc.balanceOf(address(market)), BUDGET);
+        assertEq(usdc.balanceOf(address(market)), REWARD, "only the task escrow is in the diamond");
+        assertEq(usdc.balanceOf(address(mockPool)), BUDGET - REWARD, "the budget is in the pool");
         _assertBooked();
     }
 

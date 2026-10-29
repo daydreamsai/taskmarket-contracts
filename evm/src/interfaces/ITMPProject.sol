@@ -90,11 +90,16 @@ interface ITMPProject {
     );
     /// @notice Money a project task paid its requester came back to the project's pool: budget
     ///         while the project is open, the backers' pot once it is not.
+    /// @notice The project's pool paid `amount` out to the diamond for a task: at creation, or a
+    ///         later reward increase or evaluator stake. The pool contract's PoolSpent carries no
+    ///         task, so this is what ties the draw to it.
+    event ProjectPoolDrawn(uint256 indexed projectId, bytes32 indexed taskId, uint256 amount);
     event ProjectRefunded(uint256 indexed projectId, bytes32 indexed taskId, uint256 amount);
     /// @notice leftover is what the pool held at closing, from now on the backers' pot: the
     ///         unspent budget, less anything already claimed if it closes after its end date.
     event ProjectClosed(uint256 indexed projectId, address indexed closedBy, uint256 leftover);
 
+    event FundingPoolSet(address indexed pool);
     event OperatorGranted(uint256 indexed projectId, address indexed operator, GrantTerms terms);
     event GrantAccepted(uint256 indexed projectId, address indexed operator);
     event OperatorRevoked(uint256 indexed projectId, address indexed operator);
@@ -131,6 +136,14 @@ interface ITMPProject {
     error OperatorCapExceeded(uint256 remaining, uint256 needed);
     /// @notice Only the diamond itself may call this function.
     error NotDiamond();
+    /// @notice The diamond has no funding pool contract yet: initFundingPool has not run.
+    error FundingPoolNotSet();
+    /// @notice initFundingPool has already run; the pool address is set once.
+    error FundingPoolAlreadySet();
+    /// @notice The address given to initFundingPool is not a pool that names this diamond manager.
+    error FundingPoolInvalid();
+    /// @notice The token transfer into the pool failed.
+    error FundingTransferFailed();
 
     // -------------------------------------------------------------------------
     // Functions
@@ -158,6 +171,23 @@ interface ITMPProject {
     ///         project is closed or past its end date.
     function projectPoolId(uint256 projectId) external view returns (bytes32);
 
+    /// @notice Sets the funding pool contract the diamond calls. Owner only, and only once: there
+    ///         is no setter. The pool must name this diamond as its manager.
+    function initFundingPool(address pool) external;
+
+    /// @notice The funding pool contract; zero before initFundingPool.
+    function fundingPool() external view returns (address);
+
+    /// @notice Pays `amount` into `poolId` for `onBehalfOf` (the funder when zero), relayed by a
+    ///         trusted forwarder that moved the payment into the diamond and reports it. The
+    ///         diamond forwards it to the pool and holds nothing after the call. Backers who pay
+    ///         from their own wallet call the pool's fund directly.
+    function fund(bytes32 poolId, uint256 amount, address onBehalfOf) external;
+
+    /// @notice Pays `backer` its share of a settled pool, forwarded to the pool's claim.
+    ///         Permissionless; a forwarder must report no payment.
+    function claim(bytes32 poolId, address backer) external returns (uint256 amount);
+
     /// @notice The owner, or an operator with an accepted, unrevoked grant, creates a task funded
     ///         from the project, as createTask with a reserved worker (zero for an ordinary
     ///         task). The forwarder must report no payment: the reward and any evaluator stake
@@ -177,6 +207,12 @@ interface ITMPProject {
     ///         the project's pool under the same checks as creating a task. Callable only by the
     ///         diamond itself: updateTask calls it, which keeps CoreFacet under its size budget.
     function drawTopUp(bytes32 taskId, address caller, uint256 amount) external;
+
+    /// @notice Pays `amount` owed to a project task's requester back to its project's pool.
+    ///         Called by the diamond's own payout paths through the diamond, inside their pause
+    ///         and reentrancy checks, so it takes neither itself. Reverts NotDiamond for any
+    ///         other caller.
+    function refundProjectTask(bytes32 taskId, uint256 amount) external;
 
     /// @notice The owner grants `operator` the right to spend the project's budget under `terms`,
     ///         or replaces the terms of a grant the operator has not accepted. Owner only.

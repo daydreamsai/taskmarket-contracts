@@ -45,21 +45,29 @@ Appended to `AppStorage`:
 - `taskCreators`: `taskId => address`, who created a project task.
 - `projectPrepaid`: nonzero only inside `createProjectTask` (see Create a task).
 - `projectGrants`, `taskOperators`: operator grants (see Operator grants).
-- `fundingPools`: `poolId => Pool { token, closesAt, closed, module, funded, available,
-outstanding, totalShares, claimed, generation }`.
-- `poolBackings`: `poolId => backer => Backing { shares, claimed, generation }`.
+- `fundingPool`: the address of the funding pool contract, set once by `initFundingPool` and never
+  changed. The pool's records (`Pool`, `Backing`) live in that contract, not in `AppStorage`.
 - `taskPoolDraws`: `taskId => uint256`, what a project task still holds of what its pool spent on
   it (see Outstanding).
 
 Every field is new in rev027, after the last rev026 field, and rev027 is not deployed anywhere, so
 the rev027 fields themselves could still be reshaped: `projects` now holds only the owner and the
-end date, and the budget fields live in the pool.
+end date, and the budget fields live in the pool contract.
 
 ### Funding pools
 
+The funding pool is its own contract, specified in `rev027-funding-pool-contract.md`; the diamond
+calls it as its only manager and holds none of its money. Everything this section says about a
+pool's records, share pricing, settlement and claims describes that contract's behaviour, and the
+diamond's side of it is in Create and close a project, Create a task, Top-ups and Where a task's
+money goes. The diamond stores the pool's address once (`initFundingPool(pool)`, owner only,
+reverts `FundingPoolAlreadySet` on a second call; there is no setter) and reports it with
+`fundingPool()`. It keeps only thin relayed `fund` and `claim` entries (below). No pool balance is
+counted in the diamond's `totalLiabilities`, which covers task escrow only.
+
 A funding pool collects money from any number of backers for one purpose, which one module of the
-diamond spends while the pool is open. A project is the first module; the pool is generic, and
-`LibFundingPool` and `FundingPoolFacet` know nothing about projects.
+diamond spends while the pool is open. A project is the first module; the pool is generic and knows
+nothing about projects.
 
 The pool record:
 
@@ -84,11 +92,11 @@ Pool IDs are derived, never chosen by a caller: `poolIdOf(module, key) =
 keccak256(abi.encode(module, key))`, so two modules can never collide. A project's pool is
 `poolIdOf(keccak256("taskmarket.project"), projectId)`, which `projectPoolId(projectId)` returns.
 
-The module side is internal (`LibFundingPool`), reachable only from the module's own code:
+The module side is the pool contract's manager interface (`IFundingPoolManager`), callable only by the diamond:
 
 - `open(poolId, token, module, closesAt)` creates the record; it reverts `PoolAlreadyExists` for a
   taken ID.
-- `credit(poolId, funder, backer, amount)` adds money to an open pool, mints the backer's shares
+- `creditOpening` and `creditFunding` (`credit` below) add money to an open pool, mints the backer's shares
   (see Shares) and books it; the module uses it for the opening contribution.
 - `spend(poolId, amount)` takes money out of an open pool for the module, adds it to
   `outstanding`, releases its booking (the module books it again where it puts it) and emits
@@ -101,7 +109,7 @@ The module side is internal (`LibFundingPool`), reachable only from the module's
 - `close(poolId)` settles the pool now and emits `PoolClosed(poolId, pot)`; it reverts
   `PoolAlreadyClosed` on a second close. No money moves.
 
-The backers' side is public (`FundingPoolFacet`):
+The backers' side is public on the pool contract. The diamond relays `fund` and `claim` for a trusted forwarder with the same selectors (`ProjectFacet.fund` and `ProjectFacet.claim`): relayed `fund` checks the reported payment, transfers it to the pool and calls `creditFunding`; relayed `claim` forwards to the pool's `claim` and requires the forwarder to report no payment. Neither holds tokens after the call, and both respect the diamond's pause. A backer paying from its own wallet calls the pool directly.
 
 - `fund(poolId, amount, onBehalfOf)`: anyone, while the pool is open. `amount` buys shares for
   `onBehalfOf`, or for the funder when `onBehalfOf` is zero; `onBehalfOf` may not be the diamond
@@ -122,8 +130,7 @@ available, outstanding, totalShares, potIn, claimed, generation }`; `sharesOf(po
   zero for a backing from an earlier share generation;
   `claimable(poolId, backer)`, zero while the pool is open. Each reverts `PoolNotFound` for an unknown pool.
 
-Both entrypoints respect the pause and the reentrancy guard, book or release the money in
-`totalLiabilities`, and end with the solvency check. There is no public way to open, spend from,
+Both entrypoints respect the pause and end with the pool's own solvency check. There is no public way to open, spend from,
 refund to or close a pool: only modules do that.
 
 ### Outstanding
@@ -239,18 +246,17 @@ claimed.
 **Rounding dust.** Each entitlement rounds down, so the entitlements sum to at most `potIn`: claims
 can never exceed the pot and `available` can never underflow. What rounding leaves is `potIn` minus
 the sum of the entitlements, under one base unit per backer at any time; because the formula is
-applied to the cumulative pot, the dust does not grow with each refund. It stays in the escrow, in
-`available` and booked in `totalLiabilities`, and is never paid out, so it can only over-cover the
-liabilities: the diamond can never become insolvent through it, and the surplus sweep can never take
-it. With a 6-decimal stablecoin this is under a millionth of a unit per backer.
+applied to the cumulative pot, the dust does not grow with each refund. It stays in the pool, in
+`available` and booked in its `totalLiabilities`, and is never paid out, so it can only over-cover the
+pool's liabilities. The diamond's surplus sweep cannot reach it: it is not in the diamond's balance. With a 6-decimal stablecoin this is under a millionth of a unit per backer.
 
 ### Create and close a project
 
 - `createProject(token, budget, endsAt, taskGraceSecs)`: through a trusted forwarder that reports
   a payment of exactly `budget`. `token` must be the task payment stablecoin, `budget` nonzero and
-  `endsAt` in the future. The caller is the owner. It opens the project's pool with
-  `closesAt = endsAt` and credits `budget` as the owner's contribution (`PoolOpened`,
-  `PoolFunded`), then emits `ProjectCreated`. `endsAt` may be at most 365 days after the block's
+  `endsAt` in the future. The caller is the owner. The budget arrives in the diamond, which transfers it to the pool and calls `open` with
+  `closesAt = endsAt` and `creditOpening` for the owner (`PoolOpened`,
+  `PoolFunded`, emitted by the pool), then emits `ProjectCreated`. `endsAt` may be at most 365 days after the block's
   timestamp (`ProjectEndTooFar`), so backers' money cannot be held in an open pool indefinitely; an
   owner that needs longer creates a new project. `taskGraceSecs`, from 0 to 90 days
   (`ProjectGraceTooLong`), is the project's task grace period (see Task grace period).
@@ -270,9 +276,9 @@ A project is open while its pool is.
 `createProjectTask(projectId, config, hookConfig, content, evaluatorConfig, terms, reservedWorker)`
 creates a task exactly as `createTask` with a reserved worker does, with the owner as requester,
 except for funding. The owner of an open project calls it through a trusted forwarder that reports
-no payment. The reward plus any evaluator stake is spent from the pool and its booking moves from
-the pool to the task: `totalLiabilities` falls by that amount, and the task's own creation booking
-raises it by the same. No tokens move.
+no payment. The reward plus any evaluator stake is spent from the pool: the pool's `spend` transfers it to
+the diamond, which books it as the task's escrow in the same transaction. The diamond emits
+`ProjectPoolDrawn(projectId, taskId, amount)` for every draw, creation or top-up.
 
 `projectPrepaid` carries the amount into task creation, whose funding check (`_requireFunding`)
 then expects the creation to cost exactly that amount and the forwarder to report no payment. It is
@@ -310,12 +316,11 @@ Every place that paid money to a task's requester now calls `LibProject.payReque
 - the refund when `updateTask` lowers a reward.
 
 For a task in no project it transfers to `task.requester` as before. For a project task it refunds
-the amount to the project's pool, booked in `totalLiabilities`, and emits
-`ProjectRefunded(projectId, taskId, amount)`; no tokens move. While the project is open that is
+the amount: it calls the diamond itself (`ProjectFacet.refundProjectTask`, diamond-only), which transfers it to the pool, calls the pool's `refund` and emits
+`ProjectRefunded(projectId, taskId, amount)`. The self-call keeps the transfer, the pool call and the event out of every payout facet, which have no bytes to spare. While the project is open that is
 budget the next task can draw on; once it is closed or past its end date it is the backers' pot. The
-refund happens before the entrypoint's `LibEscrow.release`, which then releases the task's whole
-booking, so the money's booking moves from the task to the pool and the solvency check holds
-throughout.
+refund happens before the entrypoint's `LibEscrow.release`, which sees the transfer to the pool as
+an ordinary payout and releases the task's booking, so its balance-delta check needs no special case.
 
 `payRequester` is called at every requester payout site, and `SettlementFacet` sits close to the
 24,576-byte contract size limit, so the refund has one path with no branch on whether the pool is
@@ -495,13 +500,14 @@ because the project ended would break those terms for the worker.
 ## Upgrade
 
 Part of the one rev027 diamond cut, `script/upgrades/Rev027Upgrade.s.sol` (see
-`rev027-reservation-mode.md` for the rest of it). For projects the cut Adds `ProjectFacet` and
-`FundingPoolFacet`, and Replaces `CoreFacet`, `AcceptanceFacet`, `EvaluatorFacet` and
+`rev027-reservation-mode.md` for the rest of it). For projects the cut Adds `ProjectFacet` (which also carries the relayed `fund` and `claim` and `initFundingPool`), and Replaces `CoreFacet`, `AcceptanceFacet`, `EvaluatorFacet` and
 `SettlementFacet`, which now pay a requester through `payRequester`, check task funding through
 `_requireFunding` and check the requester through `_requireRequester`, and `RatingFacet` and
-`WorkerFacet`, which check the requester through it. The whole cut is nine facets and 73
-selectors in one transaction. `LibRevision` is 27. No initialisation: every new field reads as
-zero, and no existing task belongs to a project.
+`WorkerFacet`, which check the requester through it. The whole cut is eight facets in one
+transaction. `LibRevision` is 27. After the cut the owner calls `initFundingPool(pool)` once, with
+the pool contract deployed beforehand with the diamond as its manager
+(`rev027-funding-pool-contract.md`); until then `createProject` and every pool call revert
+`FundingPoolNotSet`. Every other new field reads as zero, and no existing task belongs to a project.
 
 ## Trade-offs
 
@@ -595,14 +601,14 @@ cap released by a refund; top-ups counting toward the cap, the owner's top-up of
 operator's task, and a revoked operator refused a top-up; operators refused at the owner-only functions; and who may act on an
 operator's task under every `requesterOfRecord`, `ownerOverride` and `revokeRemovesControl`
 setting, before and after a revoke. `test/RequesterGuard.t.sol`: every requester entrypoint refuses
-a non-requester. `test/Rev027Upgrade.t.sol`: every rev027 selector routed, the pool selectors on
-their own facet.
+a non-requester. `test/Rev027Upgrade.t.sol`: every rev027 selector routed, the pool facet's
+selectors (`getPool`, `sharesOf`, `claimable`) not routed.
 
 ## Affected Files
 
 - `src/interfaces/ITMPProject.sol`, `src/interfaces/ITMPFundingPool.sol`,
-  `src/facets/ProjectFacet.sol`, `src/facets/FundingPoolFacet.sol`, `src/libraries/LibProject.sol`,
-  `src/libraries/LibFundingPool.sol` (new)
+  `src/facets/ProjectFacet.sol`, `src/libraries/LibProject.sol`,
+  `src/interfaces/IFundingPoolManager.sol` (new), `src/FundingPool.sol` (new, see the pool spec)
 - `src/facets/RatingFacet.sol`, `WorkerFacet.sol`
 - `src/libraries/LibAppStorage.sol`, `LibGuards.sol`, `LibTaskCreation.sol`, `LibTaskMarket.sol`,
   `LibTerms.sol`, `LibRevision.sol`

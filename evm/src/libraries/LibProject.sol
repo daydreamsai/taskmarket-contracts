@@ -3,23 +3,26 @@ pragma solidity ^0.8.24;
 
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
-import { LibFundingPool } from "./LibFundingPool.sol";
+import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
+import { IFundingPoolManager } from "../interfaces/IFundingPoolManager.sol";
 
 /// @title LibProject -- rev027: what a project task draws from its pool and where its money goes
-/// @dev Every facet that pays a task's requester calls payRequester instead of transferring to
-///      task.requester. For a project task the money stays in the diamond and is refunded to the
-///      project's funding pool: budget the next task can draw on while the project is open, the
-///      backers' pot once it is closed or past its end date. Either way it is the same single
-///      write, booked in totalLiabilities before the calling entrypoint's LibEscrow.release, which
-///      then releases the task's whole liability: the booking moves from the task to the pool and
-///      the solvency check still holds.
+/// @dev A project's budget lives in the funding pool contract (IFundingPoolManager), which the
+///      diamond calls as its only manager; the diamond stores the pool's address once
+///      (AppStorage.fundingPool). Every facet that pays a task's requester calls payRequester
+///      instead of transferring to task.requester. For a project task the diamond transfers the
+///      amount to the pool and calls refund: budget the next task can draw on while the project is
+///      open, the backers' pot once it is closed or past its end date. The transfer is an ordinary
+///      payout to LibEscrow.release, which releases the task's whole liability, so the escrow
+///      bookkeeping needs no special case and the diamond's balance no longer carries any pool money.
 ///
 ///      What the pool spends on a task (its reward and evaluator stake at creation, and any later
-///      reward increase or evaluator stake) is recorded in taskPoolDraws and counted in the pool's
-///      outstanding. LibEscrow.release calls finishDraw after every payout, which lowers the record
-///      to the pool money the task still holds (what it owes, less a Claim worker's stake) and
-///      takes the difference out of outstanding; a terminal task owes nothing, so its whole draw
-///      leaves outstanding then.
+///      reward increase or evaluator stake) arrives in the diamond with the pool's spend call and is
+///      booked as the task's escrow in the same transaction. It is recorded in taskPoolDraws and
+///      counted in the pool's outstanding. LibEscrow.release calls finishDraw after every payout,
+///      which lowers the record to the pool money the task still holds (what it owes, less a Claim
+///      worker's stake) and passes the pool the difference only; a terminal task owes nothing, so
+///      its whole draw leaves outstanding then. taskPoolDraws is the source of truth for this.
 library LibProject {
     /// @notice The module ID projects open their funding pools under.
     bytes32 internal constant PROJECT_MODULE = keccak256("taskmarket.project");
@@ -45,7 +48,7 @@ library LibProject {
     function requireExtensionAllowed(AppStorage storage s, bytes32 taskId, uint256 newExpiry) internal view {
         uint256 projectId = s.taskProjects[taskId];
         if (projectId == 0) return;
-        if (newExpiry > latestExpiry(s, projectId) || !LibFundingPool.isOpen(s.fundingPools[poolOf(projectId)])) {
+        if (newExpiry > latestExpiry(s, projectId) || !isOpen(s, poolOf(projectId))) {
             revert ITMPProject.ProjectTaskPastGrace();
         }
     }
@@ -55,33 +58,76 @@ library LibProject {
     function payRequester(AppStorage storage s, bytes32 taskId, uint256 amount) internal returns (bool) {
         uint256 projectId = s.taskProjects[taskId];
         if (projectId == 0) return s.usdcToken.transfer(s.tasks[taskId].requester, amount);
-        _credit(s, projectId, taskId, amount);
+        return _refund(taskId, amount);
+    }
+
+    /// @dev The call into the diamond, kept out of payRequester so the optimizer does not inline
+    ///      it at every payout site.
+    function _refund(bytes32 taskId, uint256 amount) private returns (bool) {
+        ITMPProject(address(this)).refundProjectTask(taskId, amount);
         return true;
     }
 
-    /// @notice A project's funding pool.
+    /// @notice A project's funding pool ID: the pool contract's derivation, keccak256 of the
+    ///         module and the key.
     function poolOf(uint256 projectId) internal pure returns (bytes32) {
-        return LibFundingPool.poolIdOf(PROJECT_MODULE, projectId);
+        return poolIdOf(PROJECT_MODULE, projectId);
     }
 
-    /// @dev Refunds a project task's payout to its project's pool. Kept out of payRequester so
-    ///      the optimizer does not inline it at every payout site, which costs SettlementFacet
-    ///      bytes it does not have.
-    function _credit(AppStorage storage s, uint256 projectId, bytes32 taskId, uint256 amount) private {
+    function poolIdOf(bytes32 module, uint256 key) internal pure returns (bytes32) {
+        return keccak256(abi.encode(module, key));
+    }
+
+    /// @notice The funding pool contract as its manager.
+    function pool(AppStorage storage s) internal view returns (IFundingPoolManager) {
+        return IFundingPoolManager(s.fundingPool);
+    }
+
+    /// @notice Whether `poolId` is open: not closed and before its end date. Reads only the
+    ///         `settled` word of the pool's getPool result (PoolInfo is a static struct, `settled`
+    ///         its fifth word), because decoding the whole struct at every call site costs
+    ///         CoreFacet and SettlementFacet bytes they do not have. The pool's revert, such as
+    ///         PoolNotFound, bubbles up.
+    function isOpen(AppStorage storage s, bytes32 poolId) internal view returns (bool open) {
+        address fundingPool = s.fundingPool;
+        bytes4 selector = ITMPFundingPool.getPool.selector;
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, selector)
+            mstore(add(m, 4), poolId)
+            if iszero(staticcall(gas(), fundingPool, m, 36, 0, 0)) {
+                returndatacopy(m, 0, returndatasize())
+                revert(m, returndatasize())
+            }
+            if lt(returndatasize(), 0x180) { revert(0, 0) }
+            returndatacopy(m, 128, 32)
+            open := iszero(mload(m))
+        }
+    }
+
+    /// @notice Refunds a project task's payout to its project's pool: the transfer, then the
+    ///         pool's refund. Runs inside ProjectFacet.refundProjectTask, which payRequester
+    ///         reaches by a call to the diamond itself, so the transfer, the pool call and the
+    ///         event cost CoreFacet and SettlementFacet one call instead of being compiled into
+    ///         each.
+    function refund(AppStorage storage s, bytes32 taskId, uint256 amount) internal {
+        uint256 projectId = s.taskProjects[taskId];
         _release(s, projectId, taskId, amount);
         if (amount == 0) return;
-        LibFundingPool.refund(s, poolOf(projectId), amount);
+        address fundingPool = s.fundingPool;
+        if (!s.usdcToken.transfer(fundingPool, amount)) revert ITMPProject.FundingTransferFailed();
+        IFundingPoolManager(fundingPool).refund(poolOf(projectId), amount);
         emit ITMPProject.ProjectRefunded(projectId, taskId, amount);
     }
 
-    /// @notice Spends `amount` of the project's open pool on a task that `caller` creates or tops
+    /// @notice Spends `amount` of the project's open pool on a task (the pool pays it to the diamond) that `caller` creates or tops
     ///         up. `operator` is the task's operator, zero for the owner's task. When the operator
     ///         is the caller it needs an accepted, unrevoked grant and stays within its cap; the
     ///         amount counts toward the operator's committed whoever spends it, so the task's
     ///         refunds give back what was counted.
     function draw(AppStorage storage s, uint256 projectId, address caller, address operator, uint256 amount) internal {
         bytes32 poolId = poolOf(projectId);
-        if (!LibFundingPool.isOpen(s.fundingPools[poolId])) revert ITMPProject.ProjectNotOpen();
+        if (!isOpen(s, poolId)) revert ITMPProject.ProjectNotOpen();
         if (operator != address(0)) {
             ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
             uint256 committed = g.committed;
@@ -96,7 +142,7 @@ library LibProject {
             }
             g.committed = committed + amount;
         }
-        LibFundingPool.spend(s, poolId, amount);
+        pool(s).spend(poolId, amount);
     }
 
     /// @notice A reward increase or an evaluator stake added to a live task by `caller`. A project
@@ -114,8 +160,10 @@ library LibProject {
     /// @notice Draws `amount` for project task `taskId` from its project's pool, made by `caller`,
     ///         and books it as held by the task.
     function drawForTask(AppStorage storage s, bytes32 taskId, address caller, uint256 amount) internal {
-        draw(s, s.taskProjects[taskId], caller, s.taskOperators[taskId], amount);
+        uint256 projectId = s.taskProjects[taskId];
+        draw(s, projectId, caller, s.taskOperators[taskId], amount);
         s.taskPoolDraws[taskId] += amount;
+        emit ITMPProject.ProjectPoolDrawn(projectId, taskId, amount);
     }
 
     /// @notice Lowers a project task's draw to `heldNow`, the pool money it still holds after a
@@ -136,7 +184,7 @@ library LibProject {
     ///      LibEscrow.release.
     function _finish(AppStorage storage s, bytes32 taskId, uint256 amount, uint256 heldNow) private {
         s.taskPoolDraws[taskId] = heldNow;
-        LibFundingPool.finish(s, poolOf(s.taskProjects[taskId]), amount);
+        pool(s).finish(poolOf(s.taskProjects[taskId]), amount);
     }
 
     /// @dev Gives back to the operator's cap what a refund returns. An amount that was not drawn

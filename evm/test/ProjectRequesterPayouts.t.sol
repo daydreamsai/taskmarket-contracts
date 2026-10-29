@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { FundingPool } from "../src/FundingPool.sol";
 import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
@@ -27,6 +28,7 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
     ITMPFundingPool internal pools;
+    FundingPool internal mockPool;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -58,7 +60,8 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
-        pools = ITMPFundingPool(address(market));
+        mockPool = initMockPool(address(market), admin);
+        pools = ITMPFundingPool(address(mockPool));
         usdc.mint(address(forwarder), 1_000_000e6);
 
         uint64 endsAt = uint64(block.timestamp) + LIFETIME;
@@ -147,6 +150,7 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
     function _assertRouted() internal view {
         assertEq(usdc.balanceOf(operator), 0, "nothing reached the operator's wallet");
         assertEq(usdc.balanceOf(address(market)), market.totalLiabilities(), "balance equals liabilities");
+        assertEq(usdc.balanceOf(address(mockPool)), mockPool.totalLiabilities(), "the refund reached the pool");
     }
 
     // -------------------------------------------------------------------------
@@ -206,7 +210,7 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
 
         assertEq(_available(), BUDGET - REWARD + EVAL_FEE, "the fee went to the pot");
         assertEq(_committed(), award, "the operator's cap keeps only what was spent");
-        assertEq(market.totalLiabilities(), BUDGET - REWARD + EVAL_FEE, "the pot stays booked");
+        assertEq(mockPool.totalLiabilities(), BUDGET - REWARD + EVAL_FEE, "the pot stays booked in the pool");
         _assertRouted();
 
         pools.claim(projects.projectPoolId(id), owner);

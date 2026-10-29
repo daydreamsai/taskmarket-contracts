@@ -14,7 +14,6 @@ import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
-import { FundingPoolFacet } from "../../src/facets/FundingPoolFacet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { ITMPReservation } from "../../src/interfaces/ITMPReservation.sol";
@@ -212,7 +211,7 @@ library FacetSelectors {
                 _concat(coreFacetSelectorsAddedRev027(), workerFacetSelectorsAddedRev027()),
                 _concat(settlementFacetSelectorsAddedRev027(), feedbackFacetSelectorsAddedRev027())
             ),
-            _concat(projectFacetSelectors(), fundingPoolFacetSelectors())
+            projectFacetSelectors()
         );
     }
 
@@ -453,9 +452,10 @@ library FacetSelectors {
         s[2] = FeedbackFacet.requesterAgentOf.selector;
     }
 
-    /// @dev rev027: projects. Every ProjectFacet selector is new in rev027.
+    /// @dev rev027: projects, with the relayed fund and claim entries of the funding pool contract.
+    ///      Every ProjectFacet selector is new in rev027.
     function projectFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](21);
         s[0] = ProjectFacet.createProject.selector;
         s[1] = ProjectFacet.projectPoolId.selector;
         s[2] = ProjectFacet.closeProject.selector;
@@ -472,16 +472,10 @@ library FacetSelectors {
         s[13] = ProjectFacet.getGrant.selector;
         s[14] = ProjectFacet.taskOperator.selector;
         s[15] = ProjectFacet.drawTopUp.selector;
-    }
-
-    /// @dev rev027: funding pools, the backers' side of a project's budget. Every
-    ///      FundingPoolFacet selector is new in rev027.
-    function fundingPoolFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = FundingPoolFacet.fund.selector;
-        s[1] = FundingPoolFacet.claim.selector;
-        s[2] = FundingPoolFacet.getPool.selector;
-        s[3] = FundingPoolFacet.sharesOf.selector;
-        s[4] = FundingPoolFacet.claimable.selector;
+        s[16] = ProjectFacet.initFundingPool.selector;
+        s[17] = ProjectFacet.fundingPool.selector;
+        s[18] = ProjectFacet.fund.selector;
+        s[19] = ProjectFacet.claim.selector;
+        s[20] = ProjectFacet.refundProjectTask.selector;
     }
 }

@@ -6,7 +6,6 @@ import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFeedback } from "../interfaces/ITMPFeedback.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
-import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
 
 /// @notice Unified application storage for all TaskMarket Diamond facets.
 ///         Stored at a fixed keccak256 slot; new fields must only be appended.
@@ -110,7 +109,7 @@ struct AppStorage {
     mapping(bytes32 => address) reservedWorkers;
     mapping(address => uint256) workerAgentIds;
     // Rev027: projects, kept by ProjectFacet and LibProject. IDs run from 1; a task's zero
-    // projectId means it belongs to no project. A project's budget is its funding pool, below.
+    // projectId means it belongs to no project. A project's budget is its pool in the funding pool contract (fundingPool, below).
     // projectPrepaid is nonzero only inside createProjectTask: it is what the project paid for
     // the task being created, so the creation payment checks expect that amount and no forwarded
     // payment. Appended at the end per the storage-layout rule.
@@ -124,16 +123,14 @@ struct AppStorage {
     // task (zero for an owner-created one).
     mapping(uint256 => mapping(address => ITMPProject.Grant)) projectGrants;
     mapping(bytes32 => address) taskOperators;
-    // Rev027: funding pools, kept by LibFundingPool and FundingPoolFacet, and each backer's
-    // shares of a pool and what it has claimed from it. A project's budget is its pool
-    // (LibProject.poolOf). Every pool's available balance is counted in totalLiabilities.
-    mapping(bytes32 => ITMPFundingPool.Pool) fundingPools;
-    mapping(bytes32 => mapping(address => ITMPFundingPool.Backing)) poolBackings;
     // Rev027: what a project task still holds of what its pool spent on it (the reward and
     // evaluator stake it was created or topped up with), kept by LibProject. It falls with the
     // task's escrow and is zero once the task is terminal; the sum over a pool's tasks is the
     // pool's outstanding.
     mapping(bytes32 => uint256) taskPoolDraws;
+    // Rev027: the funding pool contract a project's budget lives in, set once by
+    // ProjectFacet.initFundingPool and never changed. Zero until then.
+    address fundingPool;
 }
 
 library LibAppStorage {

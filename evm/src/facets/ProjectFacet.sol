@@ -2,19 +2,22 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibDiamond } from "../libraries/LibDiamond.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibProject } from "../libraries/LibProject.sol";
-import { LibFundingPool } from "../libraries/LibFundingPool.sol";
+import { IFundingPoolManager } from "../interfaces/IFundingPoolManager.sol";
 import { LibTaskCreation } from "../libraries/LibTaskCreation.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
 import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
 
 /// @title ProjectFacet -- rev027: crowdfunded projects, one budget spent on ordinary tasks
-/// @notice See ITMPProject. A project's budget is its funding pool (LibFundingPool), opened with
-///         the project and closing at its end date. Backers fund and claim through
-///         FundingPoolFacet; this facet spends the pool on tasks and closes it.
+/// @notice See ITMPProject. A project's budget is its pool in the funding pool contract, opened
+///         with the project and closing at its end date. Backers fund and claim on the pool
+///         directly; the diamond's fund and claim here are the relayed entries for a trusted
+///         forwarder, which pay into or call the pool and hold nothing after the call. This facet
+///         spends the pool on tasks and closes it.
 contract ProjectFacet {
     /// @notice See ITMPProject.
     function createProject(address token, uint256 budget, uint64 endsAt, uint32 taskGraceSecs)
@@ -38,9 +41,12 @@ contract ProjectFacet {
         s.projects[projectId] =
             ITMPProject.ProjectRecord({ owner: owner, endsAt: endsAt, taskGraceSecs: taskGraceSecs });
         bytes32 poolId = LibProject.poolOf(projectId);
-        LibFundingPool.open(s, poolId, token, LibProject.PROJECT_MODULE, endsAt);
-        LibFundingPool.credit(s, poolId, owner, owner, budget);
-        // The forwarder moved the budget in before the call, so the unbooked surplus must cover it.
+        address fundingPool = _fundingPool(s);
+        // The forwarder moved the budget into the diamond before the call; it goes on to the pool,
+        // so the diamond keeps none of it and the solvency check proves the forwarder's report.
+        if (!s.usdcToken.transfer(fundingPool, budget)) revert ITMPProject.FundingTransferFailed();
+        IFundingPoolManager(fundingPool).open(poolId, token, LibProject.PROJECT_MODULE, endsAt);
+        IFundingPoolManager(fundingPool).creditOpening(poolId, owner, budget);
         LibEscrow.requireSolvent(s);
         emit ITMPProject.ProjectCreated(projectId, owner, budget, endsAt, taskGraceSecs);
         LibGuards._nonReentrantAfter(s);
@@ -56,14 +62,14 @@ contract ProjectFacet {
         if (s.trustedForwarders[msg.sender]) LibGuards._requireReportedPayment(0);
         ITMPProject.ProjectRecord storage p = _project(s, projectId);
         bytes32 poolId = LibProject.poolOf(projectId);
-        if (s.fundingPools[poolId].closed) revert ITMPProject.ProjectAlreadyClosed();
+        ITMPFundingPool.PoolInfo memory info = ITMPFundingPool(_fundingPool(s)).getPool(poolId);
+        if (info.closed) revert ITMPProject.ProjectAlreadyClosed();
         address caller = LibGuards._effectiveSender(s);
         if (caller != p.owner && block.timestamp < p.endsAt) revert ITMPProject.NotProjectOwner();
 
-        // Closing moves no money: what the pool holds stays booked and is now the backers' pot.
-        LibFundingPool.close(s, poolId);
-        LibEscrow.requireSolvent(s);
-        emit ITMPProject.ProjectClosed(projectId, caller, s.fundingPools[poolId].available);
+        // Closing moves no money: what the pool holds is now the backers' pot.
+        LibProject.pool(s).close(poolId);
+        emit ITMPProject.ProjectClosed(projectId, caller, info.available);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -71,6 +77,52 @@ contract ProjectFacet {
     function projectPoolId(uint256 projectId) external view returns (bytes32) {
         _project(LibAppStorage.appStorage(), projectId);
         return LibProject.poolOf(projectId);
+    }
+
+    /// @notice See ITMPProject. Owner only and once; the pool must name this diamond its manager
+    ///         and hold the diamond's payment token.
+    function initFundingPool(address pool) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibDiamond.enforceIsContractOwner();
+        if (s.fundingPool != address(0)) revert ITMPProject.FundingPoolAlreadySet();
+        if (pool == address(0) || IFundingPoolManager(pool).manager() != address(this)) {
+            revert ITMPProject.FundingPoolInvalid();
+        }
+        s.fundingPool = pool;
+        emit ITMPProject.FundingPoolSet(pool);
+    }
+
+    /// @notice See ITMPProject.
+    function fundingPool() external view returns (address) {
+        return LibAppStorage.appStorage().fundingPool;
+    }
+
+    /// @notice See ITMPProject. Relayed only: the forwarder moved `amount` into the diamond, which
+    ///         moves it on to the pool before crediting it.
+    function fund(bytes32 poolId, uint256 amount, address onBehalfOf) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarder(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        address funder = LibGuards._effectiveSender(s);
+        LibGuards._requireReportedPayment(amount);
+        address fundingPool = _fundingPool(s);
+        if (!s.usdcToken.transfer(fundingPool, amount)) revert ITMPProject.FundingTransferFailed();
+        IFundingPoolManager(fundingPool)
+            .creditFunding(poolId, funder, onBehalfOf == address(0) ? funder : onBehalfOf, amount);
+        LibEscrow.requireSolvent(s);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @notice See ITMPProject. Permissionless: the pool pays `backer`, so the backend or anyone
+    ///         else can sweep for backers who never send a transaction.
+    function claim(bytes32 poolId, address backer) external returns (uint256 amount) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        if (s.trustedForwarders[msg.sender]) LibGuards._requireReportedPayment(0);
+        amount = ITMPFundingPool(_fundingPool(s)).claim(poolId, backer);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice See ITMPProject.
@@ -104,6 +156,12 @@ contract ProjectFacet {
     function drawTopUp(bytes32 taskId, address caller, uint256 amount) external {
         if (msg.sender != address(this)) revert ITMPProject.NotDiamond();
         LibProject.drawForTask(LibAppStorage.appStorage(), taskId, caller, amount);
+    }
+
+    /// @notice See ITMPProject.
+    function refundProjectTask(bytes32 taskId, uint256 amount) external {
+        if (msg.sender != address(this)) revert ITMPProject.NotDiamond();
+        LibProject.refund(LibAppStorage.appStorage(), taskId, amount);
     }
 
     /// @notice See ITMPProject.
@@ -162,7 +220,7 @@ contract ProjectFacet {
     function getProject(uint256 projectId) external view returns (ITMPProject.Project memory) {
         AppStorage storage s = LibAppStorage.appStorage();
         ITMPProject.ProjectRecord storage p = _project(s, projectId);
-        ITMPFundingPool.Pool storage pool = s.fundingPools[LibProject.poolOf(projectId)];
+        ITMPFundingPool.PoolInfo memory pool = ITMPFundingPool(_fundingPool(s)).getPool(LibProject.poolOf(projectId));
         return ITMPProject.Project({
             owner: p.owner,
             endsAt: p.endsAt,
@@ -241,6 +299,12 @@ contract ProjectFacet {
         if (creator != s.projects[projectId].owner) s.taskOperators[taskId] = creator;
         s.projectTaskIds[projectId].push(taskId);
         emit ITMPProject.ProjectTaskCreated(projectId, taskId, creator, amount);
+        emit ITMPProject.ProjectPoolDrawn(projectId, taskId, amount);
+    }
+
+    function _fundingPool(AppStorage storage s) private view returns (address pool) {
+        pool = s.fundingPool;
+        if (pool == address(0)) revert ITMPProject.FundingPoolNotSet();
     }
 
     function _project(AppStorage storage s, uint256 projectId)

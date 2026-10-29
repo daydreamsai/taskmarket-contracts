@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { FundingPool } from "../src/FundingPool.sol";
 import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
@@ -20,6 +21,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPProject internal projects;
     ITMPFundingPool internal pools;
+    FundingPool internal mockPool;
     MockUSDC internal usdc;
     MockPGTRForwarder internal forwarder;
 
@@ -42,7 +44,8 @@ contract ProjectGrantsTest is DiamondTestHelper {
         market.addForwarder(address(forwarder));
         vm.stopPrank();
         projects = ITMPProject(address(market));
-        pools = ITMPFundingPool(address(market));
+        mockPool = initMockPool(address(market), admin);
+        pools = ITMPFundingPool(address(mockPool));
         usdc.mint(address(forwarder), 1_000e6);
         id = abi.decode(
             _relay(
