@@ -79,13 +79,16 @@ contract ProjectFacet {
         return LibProject.poolOf(projectId);
     }
 
-    /// @notice See ITMPProject. Owner only and once; the pool must name this diamond its manager
-    ///         and hold the diamond's payment token.
+    /// @notice See ITMPProject. Owner only and once; the pool must be a contract that names this diamond
+    ///         its manager and holds the diamond's payment token.
     function initFundingPool(address pool) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibDiamond.enforceIsContractOwner();
         if (s.fundingPool != address(0)) revert ITMPProject.FundingPoolAlreadySet();
-        if (pool == address(0) || IFundingPoolManager(pool).manager() != address(this)) {
+        if (
+            pool == address(0) || pool.code.length == 0 || IFundingPoolManager(pool).manager() != address(this)
+                || IFundingPoolManager(pool).token() != address(s.usdcToken)
+        ) {
             revert ITMPProject.FundingPoolInvalid();
         }
         s.fundingPool = pool;

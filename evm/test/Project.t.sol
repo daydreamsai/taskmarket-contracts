@@ -375,6 +375,24 @@ contract ProjectTest is DiamondTestHelper {
         assertEq(usdc.balanceOf(address(market)), 0);
     }
 
+    function test_InitFundingPool_RejectsAPoolThatIsNotThisDiamondsOwn() public {
+        // A diamond with no pool yet: nothing here has called initFundingPool.
+        ITMPProject fresh = ITMPProject(address(deployDiamond(admin, address(usdc), feeRecipient, 500)));
+        vm.startPrank(admin);
+        // No code at the address.
+        vm.expectRevert(ITMPProject.FundingPoolInvalid.selector);
+        fresh.initFundingPool(address(0xBEEF));
+        // A pool whose manager is another diamond (the one this test file already wired).
+        vm.expectRevert(ITMPProject.FundingPoolInvalid.selector);
+        fresh.initFundingPool(address(mockPool));
+        // A pool that names this diamond its manager but holds another token.
+        address wrongToken = address(new WrongTokenPool(address(fresh)));
+        vm.expectRevert(ITMPProject.FundingPoolInvalid.selector);
+        fresh.initFundingPool(wrongToken);
+        vm.stopPrank();
+        assertEq(fresh.fundingPool(), address(0), "nothing was set");
+    }
+
     function test_InitFundingPool_OnlyOnceAndOnlyByOwner() public {
         assertEq(projects.fundingPool(), address(mockPool));
         vm.prank(admin);
@@ -523,5 +541,23 @@ contract ProjectTest is DiamondTestHelper {
 
     function _v2Terms() internal pure returns (ITMPCore.TaskTerms memory t) {
         t.version = 2;
+    }
+}
+
+/// @dev Answers manager() and token() like a pool for the diamond it names, but holds a token that is
+///      not the diamond's payment token.
+contract WrongTokenPool {
+    address private immutable _manager;
+
+    constructor(address manager_) {
+        _manager = manager_;
+    }
+
+    function manager() external view returns (address) {
+        return _manager;
+    }
+
+    function token() external pure returns (address) {
+        return address(0xDEAD);
     }
 }

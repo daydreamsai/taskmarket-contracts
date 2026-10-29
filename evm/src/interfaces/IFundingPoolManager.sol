@@ -23,6 +23,9 @@ interface IFundingPoolManager {
     /// @notice The only address that may call the manager functions: the diamond.
     function manager() external view returns (address);
 
+    /// @notice The token every pool in this contract holds: the diamond's payment token.
+    function token() external view returns (address);
+
     /// @notice Opens a pool of `token`, the diamond's payment token, for `module`. Reverts
     ///         PoolAlreadyExists when the id is taken.
     function open(bytes32 poolId, address token, bytes32 module, uint64 closesAt) external;
