@@ -173,7 +173,9 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
             _relay(
                 requester,
                 REWARD,
-                abi.encodeCall(projects.createProject, (address(usdc), REWARD, uint64(block.timestamp + 30 days)))
+                abi.encodeCall(
+                    projects.createProject, (address(usdc), REWARD, uint64(block.timestamp + 30 days), 30 days)
+                )
             ),
             (uint256)
         );

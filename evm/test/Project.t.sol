@@ -63,7 +63,8 @@ contract ProjectTest is DiamondTestHelper {
     function _openWith(uint256 budget) internal returns (uint256) {
         uint64 endsAt = uint64(block.timestamp) + LIFETIME;
         return abi.decode(
-            _relay(owner, budget, abi.encodeCall(projects.createProject, (address(usdc), budget, endsAt))), (uint256)
+            _relay(owner, budget, abi.encodeCall(projects.createProject, (address(usdc), budget, endsAt, 30 days))),
+            (uint256)
         );
     }
 
@@ -124,24 +125,27 @@ contract ProjectTest is DiamondTestHelper {
 
     function test_RevertWhen_CreateProject_TokenNotAllowed() public {
         bytes memory data =
-            abi.encodeCall(projects.createProject, (address(0xDEAD), BUDGET, uint64(block.timestamp + 1)));
+            abi.encodeCall(projects.createProject, (address(0xDEAD), BUDGET, uint64(block.timestamp + 1), 30 days));
         vm.expectRevert(ITMPProject.ProjectTokenNotAllowed.selector);
         _relay(owner, BUDGET, data);
     }
 
     function test_RevertWhen_CreateProject_PaymentMismatch() public {
-        bytes memory data =
-            abi.encodeCall(projects.createProject, (address(usdc), BUDGET, uint64(block.timestamp + LIFETIME)));
+        bytes memory data = abi.encodeCall(
+            projects.createProject, (address(usdc), BUDGET, uint64(block.timestamp + LIFETIME), 30 days)
+        );
         vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
         _relay(owner, BUDGET - 1, data);
     }
 
     function test_RevertWhen_CreateProject_ZeroBudgetOrPastEnd() public {
-        bytes memory zero = abi.encodeCall(projects.createProject, (address(usdc), 0, uint64(block.timestamp + 1)));
+        bytes memory zero =
+            abi.encodeCall(projects.createProject, (address(usdc), 0, uint64(block.timestamp + 1), 30 days));
         vm.expectRevert(ITMPProject.ProjectBudgetZero.selector);
         _relay(owner, 0, zero);
 
-        bytes memory past = abi.encodeCall(projects.createProject, (address(usdc), BUDGET, uint64(block.timestamp)));
+        bytes memory past =
+            abi.encodeCall(projects.createProject, (address(usdc), BUDGET, uint64(block.timestamp), 30 days));
         vm.expectRevert(ITMPProject.ProjectEndNotInFuture.selector);
         _relay(owner, BUDGET, past);
     }
@@ -149,7 +153,7 @@ contract ProjectTest is DiamondTestHelper {
     function test_RevertWhen_CreateProject_NotThroughForwarder() public {
         vm.prank(owner);
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
-        projects.createProject(address(usdc), BUDGET, uint64(block.timestamp + 1));
+        projects.createProject(address(usdc), BUDGET, uint64(block.timestamp + 1), 30 days);
     }
 
     function test_Fund_AddsToTheBudget() public {

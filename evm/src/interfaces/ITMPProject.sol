@@ -23,12 +23,17 @@ interface ITMPProject {
     struct ProjectRecord {
         address owner;
         uint64 endsAt;
+        // How long after endsAt a project task's expiry may run, chosen at creation (at most
+        // 90 days) and fixed. A backer's money is held at most until endsAt plus this.
+        uint32 taskGraceSecs;
     }
 
     /// @notice A project as getProject reports it, with its pool's budget fields.
     struct Project {
         address owner;
         uint64 endsAt;
+        // How long after endsAt a project task's expiry may run; fixed at creation.
+        uint32 taskGraceSecs;
         // The pool is closed: the owner closed it, or anyone did after the end date.
         bool closed;
         // Every contribution to the pool: the owner's opening budget plus every backer's.
@@ -76,7 +81,9 @@ interface ITMPProject {
     // Events
     // -------------------------------------------------------------------------
 
-    event ProjectCreated(uint256 indexed projectId, address indexed owner, uint256 budget, uint64 endsAt);
+    event ProjectCreated(
+        uint256 indexed projectId, address indexed owner, uint256 budget, uint64 endsAt, uint32 taskGraceSecs
+    );
     /// @notice amount is what left the budget: the task's reward plus any evaluator stake.
     event ProjectTaskCreated(
         uint256 indexed projectId, bytes32 indexed taskId, address indexed createdBy, uint256 amount
@@ -105,6 +112,11 @@ interface ITMPProject {
     error ProjectEndNotInFuture();
     /// @notice endsAt is more than 365 days after the block's timestamp.
     error ProjectEndTooFar();
+    /// @notice taskGraceSecs is more than 90 days.
+    error ProjectGraceTooLong();
+    /// @notice A project task's expiry would run past the project's endsAt plus its task grace
+    ///         period, or would be extended once the project's pool has settled.
+    error ProjectTaskPastGrace();
     /// @notice Only the task payment stablecoin can fund a project.
     error ProjectTokenNotAllowed();
     /// @notice The caller is neither the owner nor an operator granted on this project.
@@ -128,7 +140,12 @@ interface ITMPProject {
     ///         stablecoin. The forwarder must have moved exactly `budget` into escrow. The caller
     ///         is the owner. `endsAt` must be in the future and at most 365 days away. Opens the
     ///         project's pool, closing at `endsAt`, with `budget` as the owner's contribution.
-    function createProject(address token, uint256 budget, uint64 endsAt) external returns (uint256 projectId);
+    ///         `taskGraceSecs`, at most 90 days and fixed from now on, is how long after `endsAt`
+    ///         a project task's expiry may run: every project task must expire by
+    ///         endsAt + taskGraceSecs, so a backer's money is held at most that long.
+    function createProject(address token, uint256 budget, uint64 endsAt, uint32 taskGraceSecs)
+        external
+        returns (uint256 projectId);
 
     /// @notice Close the project and its pool: the unspent budget becomes the backers' pot. The owner may close
     ///         it at any time, anyone once it is past its end date. Tasks already funded run on;

@@ -38,15 +38,16 @@ want to chip in have no way to add to the budget and no claim on what is not spe
 Appended to `AppStorage`:
 
 - `projectCount`: projects created so far. IDs run from 1; zero means no project.
-- `projects`: `projectId => ProjectRecord { owner, endsAt }`. The budget is the project's pool.
+- `projects`: `projectId => ProjectRecord { owner, endsAt, taskGraceSecs }`. The budget is the
+  project's pool; `taskGraceSecs` is the project's task grace period (see Task grace period).
 - `projectTaskIds`: `projectId => bytes32[]`, the project's tasks in creation order.
 - `taskProjects`: `taskId => projectId`.
 - `taskCreators`: `taskId => address`, who created a project task.
 - `projectPrepaid`: nonzero only inside `createProjectTask` (see Create a task).
 - `projectGrants`, `taskOperators`: operator grants (see Operator grants).
 - `fundingPools`: `poolId => Pool { token, closesAt, closed, module, funded, available,
-  outstanding, totalShares, claimed }`.
-- `poolBackings`: `poolId => backer => Backing { shares, claimed }`.
+outstanding, totalShares, claimed, generation }`.
+- `poolBackings`: `poolId => backer => Backing { shares, claimed, generation }`.
 - `taskPoolDraws`: `taskId => uint256`, what a project task still holds of what its pool spent on
   it (see Outstanding).
 
@@ -62,17 +63,18 @@ diamond spends while the pool is open. A project is the first module; the pool i
 
 The pool record:
 
-| Field | Meaning |
-| --- | --- |
-| `token` | The token held: always the task payment stablecoin, the only token the escrow ledger books. |
-| `module` | The module that opened the pool and alone spends from it. Projects use `keccak256("taskmarket.project")`. |
-| `closesAt` | When the pool settles on its own. Zero means only an explicit close settles it. |
-| `closed` | The module closed the pool explicitly. |
-| `funded` | Every amount paid in, the module's opening one included. Fixed once settled. |
-| `available` | While open, what the module can spend; once settled, the backers' unclaimed pot. |
-| `outstanding` | What the module has spent on work that has not finished. |
-| `totalShares` | Every backer's shares. Fixed once settled. |
-| `claimed` | Everything paid out of the pot so far. |
+| Field         | Meaning                                                                                                   |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| `token`       | The token held: always the task payment stablecoin, the only token the escrow ledger books.               |
+| `module`      | The module that opened the pool and alone spends from it. Projects use `keccak256("taskmarket.project")`. |
+| `closesAt`    | When the pool settles on its own. Zero means only an explicit close settles it.                           |
+| `closed`      | The module closed the pool explicitly.                                                                    |
+| `funded`      | Every amount paid in, the module's opening one included. Fixed once settled.                              |
+| `available`   | While open, what the module can spend; once settled, the backers' unclaimed pot.                          |
+| `outstanding` | What the module has spent on work that has not finished.                                                  |
+| `totalShares` | Every backer's shares. Fixed once settled.                                                                |
+| `claimed`     | Everything paid out of the pot so far.                                                                    |
+| `generation`  | The share generation (see A pool worth nothing).                                                          |
 
 A pool is **open** while it is not closed and either `closesAt` is zero or
 `block.timestamp < closesAt`. Otherwise it is **settled**, and it never opens again. Settlement at
@@ -109,13 +111,15 @@ The backers' side is public (`FundingPoolFacet`):
   the caller with `transferFrom`, so a router or another contract can fund for a user it names. It
   emits `PoolFunded(poolId, funder, onBehalfOf, amount, shares)` and reverts `PoolNotFound`,
   `PoolAmountZero`, `PoolNotOpen`, `PoolInvalidBacker`, `PoolSharesZero`,
-  `ForwardedPaymentMismatch`, or the token's own error for a missing allowance.
+  `ForwardedPaymentMismatch`, or the token's own error for a missing allowance. A credit that starts
+  a new share generation emits `PoolSharesReset(poolId, generation)` before its `PoolFunded`.
 - `claim(poolId, backer)`: anyone, directly or relayed (the forwarder must report no payment). Pays `backer` its share of a settled pool's
   pot and emits `PoolClaimed(poolId, backer, amount)`; the money always goes to `backer`, so the
   backend can sweep for backers who never send a transaction. It reverts `NothingToClaim` when the
   share is zero: a pool still open, a non-backer, or a backer that has claimed everything so far.
 - Views: `getPool(poolId)` returns `PoolInfo { token, module, closesAt, closed, settled, funded,
-  available, outstanding, totalShares, potIn, claimed }`; `sharesOf(poolId, backer)`;
+available, outstanding, totalShares, potIn, claimed, generation }`; `sharesOf(poolId, backer)`,
+  zero for a backing from an earlier share generation;
   `claimable(poolId, backer)`, zero while the pool is open. Each reverts `PoolNotFound` for an unknown pool.
 
 Both entrypoints respect the pause and the reentrancy guard, book or release the money in
@@ -128,14 +132,30 @@ While a pool is open its value is `available + outstanding`: what it holds plus 
 work that has not finished. A project task's draw (its reward and evaluator stake at creation, and
 any later top-up) is recorded in `taskPoolDraws` and added to `outstanding` by `spend`. After every
 payout, `LibEscrow.release` calls `LibProject.finishDraw(taskId, owed)`, which lowers the task's
-draw to what the task still owes in escrow and takes the difference out of `outstanding`:
+draw to the pool money the task still holds and takes the difference out of `outstanding`. That is
+what the task owes in escrow less a Claim worker's stake, floored at zero: the stake is the
+worker's money, not the pool's.
 
 - a refund to the pool has already added the money to `available`, so it moves from `outstanding`
   back to `available` and the value is unchanged;
 - money paid to a worker or an evaluator leaves the value;
 - a terminal task owes nothing, so whatever is left of its draw leaves `outstanding` then;
-- a worker's stake can make the task owe more than its draw; the draw does not grow, so a forfeited
-  stake refunded to the pool is a windfall that raises the value.
+- the draw never grows, so a forfeited worker stake refunded to the pool is a windfall that raises
+  the value.
+
+**Why the worker's stake is left out (second security review, M-1).** Counting the whole escrow
+let a Claim worker's stake stand in for pool money that had left. When `evaluate` paid the
+evaluator stake back to the evaluator, the task, now Appealing, still owed its reward plus the
+worker's stake; with a stake at least as large as the evaluator stake, nothing left `outstanding`.
+`evaluatorTimeout`, which sends the evaluator stake to the protocol, did the same. The pool's value
+then read the evaluator stake too high until the task ended, and a backer who joined in between
+overpaid: in the review's test a backer who should claim 7.5 claimed 6.0. `LibEscrow.owedParts`
+splits what a task owes into the part the requester's side funded (reward plus evaluator stake) and
+a Claim worker's stake; `owed` is their sum, and `release` passes the first to `finishDraw`. So the
+split costs no extra storage read. `release`'s body sits in a private function that each facet
+carries once rather than at every call site: with the split inlined at SettlementFacet's ten
+release sites the facet went 35 bytes over the 24,576-byte limit, and out of line it measures
+24,233 bytes.
 
 Hooking the one `release` every payout entrypoint already calls covers every mode's terminal
 transition without a write at each one.
@@ -145,18 +165,32 @@ transition without a write at each one.
 Funding buys shares at the pool's value at that moment:
 
 ```
-first credit (the owner's opening budget):  shares = amount * 10^12
-every later credit while open:              shares = amount * totalShares / value
-                                            value  = available + outstanding
+first credit of a generation:   shares = amount * 10^12
+every later credit while open:  shares = amount * totalShares / value
+                                value  = available + outstanding
 ```
 
 Shares round down. A backer that joins after money was spent pays only for what is left, and one
 that joins after a windfall pays for it, so neither earlier spending nor an earlier windfall moves
 between backers. `PoolFunded` carries the shares minted, so an indexer need not recompute them.
 
-**A pool worth nothing.** When the value is zero while shares exist (everything spent and paid
-out), the old shares are worth nothing. The value is then taken as one base unit, so the new backer
-receives `amount / (amount + 1)` of the pool: all of its money back but under one base unit.
+**A pool worth nothing.** When a credit finds the value zero while shares exist, every share is
+worth nothing: nothing is available and nothing is outstanding, so every draw has finished, and an
+open pool has paid no claims. The credit then starts the next share generation: `generation` goes
+up by one (`PoolSharesReset`), `totalShares` restarts from zero, and the credit mints at the first
+price, so the new backer holds the whole pool. A backing records the generation it was last
+credited in; one from an earlier generation counts as no shares in `sharesOf`, `claimable` and
+`claim`, and is reset to the pool's generation when it is next credited (its `claimed` is zero
+then, since claims need a settled pool). So no claim of an old generation's backer can take
+anything from the new one, and the new generation's entitlements still sum to at most the pot. A
+pool worth nothing that nobody funds again keeps its generation, and its backers claim whatever
+reaches the pot later, which is nothing unless a windfall arrives.
+
+An earlier version priced such a pool at one base unit instead, giving the new backer
+`amount / (amount + 1)` of it. Each drain and refill then multiplied the share supply by the
+funded amount, and the second security review (L-1) showed `fund` reverting for good from the
+seventh cycle of 1,000 USDC. With generations it never does
+(`test_DrainAndRefill_NeverBricksFunding`).
 
 **Why 10^12 shares per base unit.** Rounding a credit's shares down can cost the backer up to one
 share's value. The value is internal bookkeeping, never the token balance, so tokens sent straight
@@ -165,11 +199,15 @@ owner opening with one base unit and forfeiting a large stake of its own worker 
 each share worth a great deal, and at one share per base unit a later backer of 1,500 USDC would
 lose 250 USDC to rounding (`test_InflationAttack_DoesNotDiluteALaterBacker` fails that way with one
 share per base unit). Starting a share at 10^-12 of a base unit keeps that loss under one base unit
-for any windfall that can exist. This is the usual share-offset defence against first-depositor
+for any realistic windfall. This is the usual share-offset defence against first-depositor
 inflation and rounding attacks on share-priced vaults. In the test the owner opens with 1 base unit
 and forfeits a 1,000 USDC stake into the pool; a backer then funds 1,500 USDC plus 7 base units. At
 one share per base unit it buys a single share and claims back 1,250 USDC; at 10^12 it claims back
-all but under one base unit. The developer approved 10^12 over one share per base unit on
+all but under one base unit. Precisely, a share is then worth at most
+`(opening + windfall) / (opening * 10^12)` base units, so the loss stays under one base unit for a
+windfall under `opening * (10^12 - 1)` base units: for any windfall under 10^12 base units (a
+million units of a 6-decimal stablecoin) whatever the opening, and for larger ones as the opening
+grows. The developer approved 10^12 over one share per base unit on
 2026-10-29, after the security review. Multiplication goes through a 512-bit `mulDiv`, so large share
 counts do not overflow; a credit that would buy no share reverts `PoolSharesZero`.
 
@@ -208,13 +246,14 @@ it. With a 6-decimal stablecoin this is under a millionth of a unit per backer.
 
 ### Create and close a project
 
-- `createProject(token, budget, endsAt)`: through a trusted forwarder that reports a payment of
-  exactly `budget`. `token` must be the task payment stablecoin, `budget` nonzero and `endsAt` in
-  the future. The caller is the owner. It opens the project's pool with `closesAt = endsAt` and
-  credits `budget` as the owner's contribution (`PoolOpened`, `PoolFunded`), then emits
-  `ProjectCreated`. `endsAt` may be at most 365 days after the block's timestamp
-  (`ProjectEndTooFar`), so backers' money cannot be held in an open pool indefinitely; an owner
-  that needs longer creates a new project.
+- `createProject(token, budget, endsAt, taskGraceSecs)`: through a trusted forwarder that reports
+  a payment of exactly `budget`. `token` must be the task payment stablecoin, `budget` nonzero and
+  `endsAt` in the future. The caller is the owner. It opens the project's pool with
+  `closesAt = endsAt` and credits `budget` as the owner's contribution (`PoolOpened`,
+  `PoolFunded`), then emits `ProjectCreated`. `endsAt` may be at most 365 days after the block's
+  timestamp (`ProjectEndTooFar`), so backers' money cannot be held in an open pool indefinitely; an
+  owner that needs longer creates a new project. `taskGraceSecs`, from 0 to 90 days
+  (`ProjectGraceTooLong`), is the project's task grace period (see Task grace period).
 - Anyone backs the project by funding its pool with `fund(projectPoolId(projectId), ...)`. An
   operator may back a project like anyone else.
 - `closeProject(projectId)`: the owner at any time, anyone once `block.timestamp >= endsAt`. Closes
@@ -291,24 +330,53 @@ checks each payout above lands in the project, not in an operator's wallet.
 ### End date
 
 The end date stops new tasks and funding. A task already funded runs to its own end, and anything
-it pays its requester after the end date goes into the backers' pot. Applications warn when a
-task's deadline falls after the project's end date; the contract does not cap it.
+it pays its requester after the end date goes into the backers' pot.
+
+### Task grace period
+
+How long after its end date a project's tasks may run is a setting the project's creator chooses at
+creation, `taskGraceSecs`, from 0 to 90 days. It is fixed from then on, reported by `getProject` and
+emitted in `ProjectCreated`. The contract takes the explicit value; the Taskmarket API, the CLI
+(`project create --task-grace`) and the web create form default to 30 days.
+
+- `createProjectTask` refuses a task whose expiry is after `endsAt + taskGraceSecs`
+  (`ProjectTaskPastGrace`). The check runs in `ProjectFacet`, after the task is created, on the
+  stored `expiryTime`.
+- `updateTask` refuses an extension of a project task's expiry past `endsAt + taskGraceSecs`, and
+  any extension at all once the project's pool has settled (`ProjectTaskPastGrace`). Shortening is
+  always allowed. The check is `LibProject.requireExtensionAllowed`, called from `CoreFacet` only
+  when the new expiry is later than the old one.
+
+With the 365-day cap on `endsAt`, a backer's money is held at most 365 + 90 days after the project
+is created: until the last task can end, after which every refund has reached the pot.
+
+**Why (second security review, L-2).** Without the setting a project task's duration was unbounded
+at creation, and `updateTask` could extend an Open project task's expiry with no project check,
+even after settlement, so a task's money could stay outstanding for years and the 365-day cap did
+not bound how long backers wait. The developer chose a creator-chosen setting over a fixed
+constant, so that each project picks what suits its work and backers see the exact latest date
+before they back.
+
+Applications warn when a task's deadline falls after the end date but within the grace period, and
+refuse one past it before payment.
 
 ### Errors, events, views
 
-Projects. Events: `ProjectCreated(projectId, owner, budget, endsAt)`, `ProjectTaskCreated`,
+Projects. Events: `ProjectCreated(projectId, owner, budget, endsAt, taskGraceSecs)`, `ProjectTaskCreated`,
 `ProjectRefunded(projectId, taskId, amount)`, `ProjectClosed(projectId, closedBy, leftover)`.
 Errors: `ProjectNotFound`, `NotProjectOwner`, `ProjectNotOpen`, `ProjectAlreadyClosed`,
-`ProjectBudgetZero`, `ProjectEndNotInFuture`, `ProjectEndTooFar`, `ProjectTokenNotAllowed`, `NotProjectOperator`,
+`ProjectBudgetZero`, `ProjectEndNotInFuture`, `ProjectEndTooFar`, `ProjectGraceTooLong`,
+`ProjectTaskPastGrace`, `ProjectTokenNotAllowed`, `NotProjectOperator`,
 `InvalidOperator`, `GrantNotAccepted`, `GrantAlreadyAccepted`, `GrantRevoked`, `GrantNotFound`,
 `OperatorCapExceeded(remaining, needed)`. Grant events: `OperatorGranted`, `GrantAccepted`,
-`OperatorRevoked`. Views: `getProject` (owner and end date, with `closed`, `funded` and `available`
-read from the pool), `projectPoolId`, `projectOf`, `taskCreatedBy`, `taskOperator`, `getGrant`,
+`OperatorRevoked`. Views: `getProject` (owner, end date and task grace period, with `closed`,
+`funded` and `available` read from the pool), `projectPoolId`, `projectOf`, `taskCreatedBy`, `taskOperator`, `getGrant`,
 `projectTaskCount`, `projectTasks(projectId, offset, limit)`, `projectCount`.
 
 Funding pools. Events: `PoolOpened(poolId, module, token, closesAt)`, `PoolFunded(poolId, funder,
 onBehalfOf, amount, shares)`, `PoolSpent(poolId, amount)`, `PoolRefunded(poolId, amount)`,
-`PoolClosed(poolId, pot)`, `PoolClaimed(poolId, backer, amount)`. Errors: `PoolNotFound`,
+`PoolClosed(poolId, pot)`, `PoolClaimed(poolId, backer, amount)`,
+`PoolSharesReset(poolId, generation)`. Errors: `PoolNotFound`,
 `PoolAlreadyExists`, `PoolNotOpen`, `PoolAlreadyClosed`, `PoolAmountZero`,
 `PoolBalanceExceeded(available, needed)`, `PoolTransferFailed`, `PoolSharesZero`,
 `PoolInvalidBacker`, `NothingToClaim`. Views: `getPool`, `sharesOf`, `claimable`.
@@ -331,11 +399,11 @@ grant, stored per project and operator:
 
 The terms are stated in full by the caller; the contract stores no project-level defaults:
 
-| Term | Meaning |
-| --- | --- |
-| `cap` | The most the operator's tasks may hold from the budget at once, net of what their refunds return. Zero means no cap beyond the project's available budget. |
-| `requesterOfRecord` | `Owner` or `Operator`: who is `task.requester` on the operator's tasks, and so who ratings and reputation follow. |
-| `ownerOverride` | The owner may act on the operator's tasks. When it is false, only the operator may. |
+| Term                   | Meaning                                                                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cap`                  | The most the operator's tasks may hold from the budget at once, net of what their refunds return. Zero means no cap beyond the project's available budget. |
+| `requesterOfRecord`    | `Owner` or `Operator`: who is `task.requester` on the operator's tasks, and so who ratings and reputation follow.                                          |
+| `ownerOverride`        | The owner may act on the operator's tasks. When it is false, only the operator may.                                                                        |
 | `revokeRemovesControl` | After a revoke, control of the operator's existing tasks passes to the owner and the operator loses it. When false, the operator finishes what it started. |
 
 `createProjectTask` is callable by the owner or by an operator with an accepted, unrevoked grant.
@@ -443,9 +511,10 @@ zero, and no existing task belongs to a project.
   backer buy into a pool whose money sits in tasks about to be refunded and take part of the refund.
 - Shares start at 10^12 per base unit, not one per unit, so share counts are large numbers; clients
   show a backer's fraction of `totalShares` rather than the raw count.
-- A pool that reaches zero value gives a new backer all but one base unit of it; the old shares
-  keep that dust's worth.
-- A project lasts at most 365 days.
+- A pool that reaches zero value and is funded again starts a new share generation; the old
+  shares are worth nothing, as they were already.
+- A project lasts at most 365 days, and its tasks at most its task grace period (0 to 90 days)
+  longer, so a backer's money is held at most 365 + 90 days.
 - Every payout entrypoint reads `taskPoolDraws` in `LibEscrow.release`, one storage read for a task
   in no project.
 
@@ -458,6 +527,36 @@ zero, and no existing task belongs to a project.
 - A pool only holds the task payment stablecoin, the one token the escrow ledger books.
 - Pool and project budgets are booked like tasks, so an accounting fault in pool code is caught by
   the same solvency check rather than by a separate one.
+
+## Known limitations
+
+From the second security review of the rev027 funding pool, documented rather than changed:
+
+- **A backer can capture a pending forfeit windfall just in time (L-3).** A forfeited worker stake
+  is a windfall that raises the pool's value only when it is refunded to the pool. A backer who
+  sees the forfeit coming (a Claim task past its deadline, or a verdict that will reject the work)
+  can fund just before it lands, buy at the value without it, and take its share of the windfall
+  from the earlier backers. The amount is bounded by the stake and shared by every backer in the
+  pool at the time; valuing pending forfeits would mean predicting a task's outcome.
+- **A pool drained to dust can still brick its own funding.** A share generation starts only when
+  the value is exactly zero. An owner or operator that spends all but one base unit, again and
+  again, multiplies the share supply as before, until `fund` reverts. Only that project's funding
+  is affected: backers' money and claims are not, and nobody but the project's own spenders can
+  cause it.
+- **Protocol windows can run past the grace period.** `evaluate` moves a task's expiry to the end
+  of its appeal window when that is later, and an appeal extends the task's terms. Those windows
+  are bounded (the terms' maximum window), so they can delay the last refund past
+  `endsAt + taskGraceSecs` by at most their own length.
+- **Operator cap headroom from windfalls.** `LibProject._release` lowers an operator's `committed`
+  by what a refund returns, floored at zero. A refund that includes a forfeited worker stake, which
+  was never drawn, lowers `committed` by more than the task drew, so the operator gains that much
+  headroom under its cap. The money is in the pool, so this never lets an operator spend more than
+  the pool holds.
+- **Read settlement from the pool.** A project is settled once its pool is closed or past its end
+  date, without a transaction. `getProject().closed` reports only an explicit close; clients that
+  decide whether backers can claim read `getPool().settled`.
+- **`Pool.token` is informational.** A pool records its token, always the task payment stablecoin,
+  but every transfer uses the diamond's `usdcToken`, the one token the escrow ledger books.
 
 ## Tests
 
@@ -474,7 +573,13 @@ a later backer; `outstanding` following spends, payouts and refunds); top-ups dr
 (a reward increase and an evaluator stake, refused with a forwarded payment, when the project is
 not open or over budget); the 365-day lifetime cap; claim and close refusing a relayed payment;
 funding on behalf of the diamond refused; a many-backers fuzz test interleaving funding, spends,
-payouts, refunds and claims; the project's pool and its ID derivation;
+payouts, refunds and claims, with Claim tasks that hold a worker stake and an evaluator stake
+through approvals, rejections, evaluator timeouts, appeals and dispute resolutions; the second
+review's regressions (outstanding dropping when the evaluator is paid or timed out while a worker
+stake is held, and on an appealed verdict; drain-and-refill never bricking funding; an old share
+generation taking nothing; a zero-value pool keeping its generation); the task grace period (its
+bounds, a task at and past the grace, a grace of zero, and `updateTask` extending past the grace or
+after settlement); the project's pool and its ID derivation;
 several backers with different amounts and their recorded contributions; funding on behalf of
 someone else, relayed and directly through `transferFrom`, and without an allowance; the owner as a
 backer; funding refused when closed, past `closesAt`, zero, with a payment mismatch or while paused;

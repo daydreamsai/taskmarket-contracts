@@ -17,7 +17,10 @@ import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
 ///         FundingPoolFacet; this facet spends the pool on tasks and closes it.
 contract ProjectFacet {
     /// @notice See ITMPProject.
-    function createProject(address token, uint256 budget, uint64 endsAt) external returns (uint256 projectId) {
+    function createProject(address token, uint256 budget, uint64 endsAt, uint32 taskGraceSecs)
+        external
+        returns (uint256 projectId)
+    {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
@@ -27,17 +30,19 @@ contract ProjectFacet {
         if (budget == 0) revert ITMPProject.ProjectBudgetZero();
         if (endsAt <= block.timestamp) revert ITMPProject.ProjectEndNotInFuture();
         if (endsAt > block.timestamp + LibProject.MAX_LIFETIME) revert ITMPProject.ProjectEndTooFar();
+        if (taskGraceSecs > LibProject.MAX_TASK_GRACE) revert ITMPProject.ProjectGraceTooLong();
         LibGuards._requireReportedPayment(budget);
 
         address owner = LibGuards._effectiveSender(s);
         projectId = ++s.projectCount;
-        s.projects[projectId] = ITMPProject.ProjectRecord({ owner: owner, endsAt: endsAt });
+        s.projects[projectId] =
+            ITMPProject.ProjectRecord({ owner: owner, endsAt: endsAt, taskGraceSecs: taskGraceSecs });
         bytes32 poolId = LibProject.poolOf(projectId);
         LibFundingPool.open(s, poolId, token, LibProject.PROJECT_MODULE, endsAt);
         LibFundingPool.credit(s, poolId, owner, owner, budget);
         // The forwarder moved the budget in before the call, so the unbooked surplus must cover it.
         LibEscrow.requireSolvent(s);
-        emit ITMPProject.ProjectCreated(projectId, owner, budget, endsAt);
+        emit ITMPProject.ProjectCreated(projectId, owner, budget, endsAt, taskGraceSecs);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -87,6 +92,10 @@ contract ProjectFacet {
         taskId =
             LibTaskCreation.create(s, requester, config, hookConfig, content, evaluatorConfig, terms, reservedWorker);
         _link(s, projectId, taskId);
+        // A project task runs at most until the project's end date plus its task grace period.
+        if (s.tasks[taskId].expiryTime > LibProject.latestExpiry(s, projectId)) {
+            revert ITMPProject.ProjectTaskPastGrace();
+        }
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -155,7 +164,12 @@ contract ProjectFacet {
         ITMPProject.ProjectRecord storage p = _project(s, projectId);
         ITMPFundingPool.Pool storage pool = s.fundingPools[LibProject.poolOf(projectId)];
         return ITMPProject.Project({
-            owner: p.owner, endsAt: p.endsAt, closed: pool.closed, funded: pool.funded, available: pool.available
+            owner: p.owner,
+            endsAt: p.endsAt,
+            taskGraceSecs: p.taskGraceSecs,
+            closed: pool.closed,
+            funded: pool.funded,
+            available: pool.available
         });
     }
 

@@ -34,6 +34,10 @@ interface ITMPFundingPool {
         uint256 totalShares;
         // Everything paid out of the pot to backers so far.
         uint256 claimed;
+        // The share generation. A credit to a pool worth nothing while shares exist starts the
+        // next one: every older share is worth nothing then, so totalShares restarts from zero
+        // and a backing from an older generation counts as no shares.
+        uint256 generation;
     }
 
     /// @notice A pool as getPool reports it.
@@ -51,12 +55,16 @@ interface ITMPFundingPool {
         uint256 totalShares;
         uint256 potIn;
         uint256 claimed;
+        uint256 generation;
     }
 
-    /// @notice One backer's stake in a pool: its shares and what it has claimed.
+    /// @notice One backer's stake in a pool: its shares and what it has claimed, in the share
+    ///         generation it last funded in. A backing from an older generation than the pool's
+    ///         holds no shares.
     struct Backing {
         uint256 shares;
         uint256 claimed;
+        uint256 generation;
     }
 
     // -------------------------------------------------------------------------
@@ -78,6 +86,11 @@ interface ITMPFundingPool {
     /// @notice The pool was closed explicitly; pot is what it held then, now the backers' pot.
     event PoolClosed(bytes32 indexed poolId, uint256 pot);
     event PoolClaimed(bytes32 indexed poolId, address indexed backer, uint256 amount);
+    /// @notice A credit found the open pool worth nothing while shares existed, so every share
+    ///         was worth nothing: share generation `generation` starts, totalShares restarts from
+    ///         zero and every backing from an earlier generation now holds no shares. Emitted
+    ///         before the PoolFunded of the credit that started it.
+    event PoolSharesReset(bytes32 indexed poolId, uint256 generation);
 
     // -------------------------------------------------------------------------
     // Errors
@@ -107,9 +120,10 @@ interface ITMPFundingPool {
     ///         zero; never the diamond). The first credit, a module's opening contribution, mints
     ///         10^12 shares per base unit; every later one mints
     ///         amount * totalShares / (available + outstanding), so a backer pays the pool's value
-    ///         now and shares neither what was spent nor what was won before it joined. A pool
-    ///         whose value is zero prices it as one base unit, so the new backer holds all but a
-    ///         base unit's worth of it. Reverts PoolSharesZero when the amount buys no share. Through a
+    ///         now and shares neither what was spent nor what was won before it joined. A credit
+    ///         to a pool worth nothing while shares exist starts a new share generation
+    ///         (PoolSharesReset): the old shares are worth nothing, totalShares restarts and the
+    ///         credit mints at the first price. Reverts PoolSharesZero when the amount buys no share. Through a
     ///         trusted forwarder the funder is the relayed sender and the forwarder must have moved
     ///         exactly `amount` into escrow. Called directly, the diamond pulls `amount` from the
     ///         caller with transferFrom, so a router or another contract can fund for a user.
@@ -123,6 +137,8 @@ interface ITMPFundingPool {
 
     function getPool(bytes32 poolId) external view returns (PoolInfo memory);
 
+    /// @notice The backer's shares in the pool's current generation; zero for a backing from
+    ///         an earlier one.
     function sharesOf(bytes32 poolId, address backer) external view returns (uint256);
 
     /// @notice What claim would pay `backer` now; zero while the pool is open.

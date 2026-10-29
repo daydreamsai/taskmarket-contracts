@@ -26,10 +26,12 @@ import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
 ///      single write whether the pool is open or settled. Settlement at closesAt needs no
 ///      transaction.
 library LibFundingPool {
-    /// @notice Shares the first credit mints per base unit. Later credits mint at the pool's
-    ///         value, rounding down, so a backer can lose up to one share's value to rounding;
-    ///         starting each share at 10^-12 of a base unit keeps that negligible, and keeps it so
-    ///         however much a windfall (a forfeited worker stake, say) raises a share's value.
+    /// @notice Shares the first credit of a share generation mints per base unit. Later credits
+    ///         mint at the pool's value, rounding down, so a backer can lose up to one share's
+    ///         value to rounding. Starting each share at 10^-12 of a base unit keeps that loss
+    ///         under one base unit for any windfall (a forfeited worker stake, say) smaller than
+    ///         10^12 base units, a million units of a 6-decimal stablecoin: a share is then worth
+    ///         at most (opening + windfall) / (opening * 10^12) base units, which is under one.
     uint256 internal constant SHARE_SCALE = 1e12;
 
     /// @notice The pool ID of `key` under `module`: one derivation for every module, so two
@@ -51,27 +53,41 @@ library LibFundingPool {
     /// @notice Credits `amount` paid in by `funder` to `backer` as shares at the pool's value, and
     ///         books it. The pool must be open; the caller checks the money arrived
     ///         (requireSolvent).
-    /// @dev The first credit mints SHARE_SCALE shares per base unit. A later one mints
-    ///      amount * totalShares / value, rounded down. When the value is zero while shares exist,
-    ///      the old shares are worth nothing, and pricing the pool at one base unit gives the new
-    ///      backer amount / (amount + 1) of it: all of its money back but under one base unit.
+    /// @dev The first credit of a share generation mints SHARE_SCALE shares per base unit; a later
+    ///      one mints amount * totalShares / value, rounded down. When the value is zero while
+    ///      shares exist, every share is worth nothing: nothing is available and nothing is
+    ///      outstanding, so every draw has finished, and an open pool has paid no claims. Pricing
+    ///      the pool at one base unit instead would multiply the share supply by the amount each
+    ///      time the pool is drained and refilled, until a credit overflows and funding reverts
+    ///      for good. So the credit starts the next generation: totalShares restarts from zero,
+    ///      the credit mints at the first price, and a backing from an earlier generation counts
+    ///      as no shares (sharesOf), which cannot take anything from the new one. A backing is
+    ///      moved to the pool's generation when it is next credited; its claimed is zero then,
+    ///      since claims need a settled pool.
     function credit(AppStorage storage s, bytes32 poolId, address funder, address backer, uint256 amount) internal {
         ITMPFundingPool.Pool storage p = get(s, poolId);
         if (amount == 0) revert ITMPFundingPool.PoolAmountZero();
         if (!isOpen(p)) revert ITMPFundingPool.PoolNotOpen();
         uint256 supply = p.totalShares;
-        uint256 shares;
-        if (supply == 0) {
-            shares = amount * SHARE_SCALE;
-        } else {
-            uint256 value = p.available + p.outstanding;
-            shares = Math.mulDiv(amount, supply, value == 0 ? 1 : value);
+        uint256 value = p.available + p.outstanding;
+        uint256 generation = p.generation;
+        if (supply != 0 && value == 0) {
+            supply = 0;
+            p.generation = ++generation;
+            emit ITMPFundingPool.PoolSharesReset(poolId, generation);
         }
+        uint256 shares = supply == 0 ? amount * SHARE_SCALE : Math.mulDiv(amount, supply, value);
         if (shares == 0) revert ITMPFundingPool.PoolSharesZero();
         p.totalShares = supply + shares;
         p.funded += amount;
         p.available += amount;
-        s.poolBackings[poolId][backer].shares += shares;
+        ITMPFundingPool.Backing storage b = s.poolBackings[poolId][backer];
+        if (b.generation != generation) {
+            b.generation = generation;
+            b.shares = 0;
+            b.claimed = 0;
+        }
+        b.shares += shares;
         s.totalLiabilities += amount;
         emit ITMPFundingPool.PoolFunded(poolId, funder, backer, amount, shares);
     }
@@ -137,9 +153,14 @@ library LibFundingPool {
         if (p.token == address(0)) revert ITMPFundingPool.PoolNotFound();
     }
 
-    /// @notice Reverts PoolNotFound for an unknown pool; for views that only check it exists.
-    function requireExists(AppStorage storage s, bytes32 poolId) internal view {
-        if (s.fundingPools[poolId].token == address(0)) revert ITMPFundingPool.PoolNotFound();
+    /// @notice A backing's shares in the pool's current generation: zero for one from an
+    ///         earlier generation, whose shares were worth nothing when the generation ended.
+    function sharesOf(ITMPFundingPool.Pool storage p, ITMPFundingPool.Backing storage b)
+        internal
+        view
+        returns (uint256)
+    {
+        return b.generation == p.generation ? b.shares : 0;
     }
 
     /// @notice A backer's share of the pot so far, less what it claimed; zero while the pool is
@@ -160,6 +181,8 @@ library LibFundingPool {
     {
         uint256 supply = p.totalShares;
         if (isOpen(p) || supply == 0) return 0;
-        return Math.mulDiv(p.available + p.claimed, b.shares, supply) - b.claimed;
+        uint256 shares = sharesOf(p, b);
+        if (shares == 0) return 0;
+        return Math.mulDiv(p.available + p.claimed, shares, supply) - b.claimed;
     }
 }

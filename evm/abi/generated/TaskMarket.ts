@@ -2513,6 +2513,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ProjectTaskPastGrace",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReservationPending",
     "inputs": []
   },
@@ -5783,6 +5788,11 @@ export const TaskMarketABI = [
         "name": "endsAt",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "taskGraceSecs",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -6129,6 +6139,11 @@ export const TaskMarketABI = [
             "name": "endsAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "taskGraceSecs",
+            "type": "uint32",
+            "internalType": "uint32"
           },
           {
             "name": "closed",
@@ -6524,6 +6539,25 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "PoolSharesReset",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "generation",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProjectClosed",
     "inputs": [
       {
@@ -6574,6 +6608,12 @@ export const TaskMarketABI = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "taskGraceSecs",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -6672,6 +6712,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "ProjectEndTooFar",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProjectGraceTooLong",
     "inputs": []
   },
   {
@@ -6823,6 +6868,11 @@ export const TaskMarketABI = [
           },
           {
             "name": "claimed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "generation",
             "type": "uint256",
             "internalType": "uint256"
           }

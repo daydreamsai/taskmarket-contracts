@@ -70,15 +70,15 @@ contract FundingPoolFacet {
             outstanding: p.outstanding,
             totalShares: p.totalShares,
             potIn: settled ? p.available + p.claimed : 0,
-            claimed: p.claimed
+            claimed: p.claimed,
+            generation: p.generation
         });
     }
 
     /// @notice See ITMPFundingPool.
     function sharesOf(bytes32 poolId, address backer) external view returns (uint256) {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibFundingPool.requireExists(s, poolId);
-        return s.poolBackings[poolId][backer].shares;
+        return LibFundingPool.sharesOf(LibFundingPool.get(s, poolId), s.poolBackings[poolId][backer]);
     }
 
     /// @notice See ITMPFundingPool.

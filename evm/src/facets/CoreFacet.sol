@@ -199,6 +199,9 @@ contract CoreFacet {
         }
         if (newExpiryTime != 0) {
             if (newExpiryTime <= block.timestamp) revert ITMPCore.ExpiryMustBeInFuture();
+            // Rev027: a project task's expiry may not be extended past the project's end date
+            // plus its task grace period, nor at all once the project's pool has settled.
+            if (newExpiryTime > originalExpiryTime) LibProject.requireExtensionAllowed(s, taskId, newExpiryTime);
             task.expiryTime = newExpiryTime;
         }
         if (newBidDeadline != 0 && task.mode == AUCTION) {

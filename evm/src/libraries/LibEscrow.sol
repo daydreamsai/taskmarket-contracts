@@ -20,15 +20,22 @@ library LibEscrow {
     ///         the deferred evaluator fee and is reduced by a paid reject fee), plus a Claim
     ///         worker's stake and the evaluator stake. An auction's stakeAmount is its accepted
     ///         price, part of the reward.
-    function owed(AppStorage storage s, bytes32 taskId) internal view returns (uint256 amount) {
+    function owed(AppStorage storage s, bytes32 taskId) internal view returns (uint256) {
+        (uint256 funded, uint256 stake) = owedParts(s, taskId);
+        return funded + stake;
+    }
+
+    /// @notice owed, split into what the requester's side funded (the reward and the evaluator
+    ///         stake: for a project task, its pool's money) and a Claim worker's stake.
+    function owedParts(AppStorage storage s, bytes32 taskId) internal view returns (uint256 funded, uint256 stake) {
         ITMPCore.Task storage t = s.tasks[taskId];
         ITMPCore.TaskStatus st = t.status;
         if (
             st == ITMPCore.TaskStatus.Accepted || st == ITMPCore.TaskStatus.Expired
                 || st == ITMPCore.TaskStatus.Cancelled
-        ) return 0;
-        amount = t.reward + s.taskEvaluatorConfigs[taskId].evaluatorStake;
-        if (t.mode == TMP_CLAIM) amount += t.stakeAmount;
+        ) return (0, 0);
+        funded = t.reward + s.taskEvaluatorConfigs[taskId].evaluatorStake;
+        if (t.mode == TMP_CLAIM) stake = t.stakeAmount;
     }
 
     function balance(AppStorage storage s) internal view returns (uint256) {
@@ -64,6 +71,11 @@ library LibEscrow {
     ///         released. A pre-rev026 task the initialisation missed releases nothing and only
     ///         reports what it paid out, so a migration gap never strands its funds.
     function release(AppStorage storage s, bytes32 taskId, uint256 balanceBefore) internal {
+        _release(s, taskId, balanceBefore);
+    }
+
+    /// @dev release's body, out of line so the facets that release at many sites carry it once.
+    function _release(AppStorage storage s, bytes32 taskId, uint256 balanceBefore) private {
         uint256 balanceAfter = balance(s);
         uint256 paidOut = balanceBefore > balanceAfter ? balanceBefore - balanceAfter : 0;
         ITMPEscrow.EscrowRecord storage rec = s.escrowRecords[taskId];
@@ -72,14 +84,16 @@ library LibEscrow {
             _requireSolvent(balanceAfter, s.totalLiabilities);
             return;
         }
-        uint256 o = owed(s, taskId);
+        (uint256 funded, uint256 stake) = owedParts(s, taskId);
+        uint256 o = funded + stake;
         uint256 booked = rec.booked;
         if (o > booked) revert ITMPEscrow.EscrowMismatch(taskId, o, booked);
         uint256 released = booked - o;
         if (paidOut > released) revert ITMPEscrow.EscrowOverdrawn(taskId, paidOut, released);
         rec.booked = SafeCast.toUint128(o);
-        // Rev027: what a project task no longer holds leaves its pool's outstanding.
-        LibProject.finishDraw(s, taskId, o);
+        // Rev027: the pool money a project task no longer holds leaves its pool's outstanding;
+        // a Claim worker's stake is not pool money.
+        LibProject.finishDraw(s, taskId, funded);
         uint256 total = s.totalLiabilities - released;
         s.totalLiabilities = total;
         _requireSolvent(balanceAfter, total);

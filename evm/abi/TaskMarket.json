@@ -2505,6 +2505,11 @@
   },
   {
     "type": "error",
+    "name": "ProjectTaskPastGrace",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReservationPending",
     "inputs": []
   },
@@ -5775,6 +5780,11 @@
         "name": "endsAt",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "taskGraceSecs",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -6121,6 +6131,11 @@
             "name": "endsAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "taskGraceSecs",
+            "type": "uint32",
+            "internalType": "uint32"
           },
           {
             "name": "closed",
@@ -6516,6 +6531,25 @@
   },
   {
     "type": "event",
+    "name": "PoolSharesReset",
+    "inputs": [
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "generation",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProjectClosed",
     "inputs": [
       {
@@ -6566,6 +6600,12 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "taskGraceSecs",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -6664,6 +6704,11 @@
   {
     "type": "error",
     "name": "ProjectEndTooFar",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProjectGraceTooLong",
     "inputs": []
   },
   {
@@ -6815,6 +6860,11 @@
           },
           {
             "name": "claimed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "generation",
             "type": "uint256",
             "internalType": "uint256"
           }

@@ -77,7 +77,8 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     function _open(uint256 budget) internal returns (uint256) {
         uint64 endsAt = uint64(block.timestamp) + LIFETIME;
         return abi.decode(
-            _relay(owner, budget, abi.encodeCall(projects.createProject, (address(usdc), budget, endsAt))), (uint256)
+            _relay(owner, budget, abi.encodeCall(projects.createProject, (address(usdc), budget, endsAt, 30 days))),
+            (uint256)
         );
     }
 
@@ -771,13 +772,109 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     /// @dev Security review L3: a project ends at most 365 days after it is created.
     function test_RevertWhen_CreateProject_PastTheLifetimeCap() public {
         uint64 latest = uint64(block.timestamp + 365 days);
-        bytes memory tooFar = abi.encodeCall(projects.createProject, (address(usdc), BUDGET, latest + 1));
+        bytes memory tooFar = abi.encodeCall(projects.createProject, (address(usdc), BUDGET, latest + 1, 30 days));
         vm.expectRevert(ITMPProject.ProjectEndTooFar.selector);
         _relay(owner, BUDGET, tooFar);
         uint256 ok = abi.decode(
-            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, latest))), (uint256)
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, latest, 30 days))),
+            (uint256)
         );
         assertEq(projects.getProject(ok).endsAt, latest, "exactly 365 days is allowed");
+    }
+
+    // -------------------------------------------------------------------------
+    // Task grace period (second security review L-2)
+    // -------------------------------------------------------------------------
+
+    uint32 internal constant GRACE = 30 days;
+
+    function _taskCallFor(uint256 projectId, uint256 reward, uint256 duration) internal pure returns (bytes memory) {
+        ITMPCore.TaskTerms memory t;
+        t.version = 2;
+        return abi.encodeCall(
+            ITMPProject.createProjectTask,
+            (
+                projectId,
+                taskConfig(reward, duration, TMP_BOUNTY),
+                ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                t,
+                address(0)
+            )
+        );
+    }
+
+    function _openWithGrace(uint32 grace) internal returns (uint256) {
+        uint64 endsAt = uint64(block.timestamp) + LIFETIME;
+        return abi.decode(
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, grace))),
+            (uint256)
+        );
+    }
+
+    /// @dev The grace period is the creator's choice, 0 to 90 days, fixed at creation, reported
+    ///      by getProject and in ProjectCreated.
+    function test_CreateProject_TaskGraceBounds() public {
+        uint64 endsAt = uint64(block.timestamp) + LIFETIME;
+        bytes memory tooLong =
+            abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, uint32(90 days + 1)));
+        vm.expectRevert(ITMPProject.ProjectGraceTooLong.selector);
+        _relay(owner, BUDGET, tooLong);
+
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPProject.ProjectCreated(id + 1, owner, BUDGET, endsAt, 90 days);
+        uint256 longest = _openWithGrace(90 days);
+        assertEq(projects.getProject(longest).taskGraceSecs, 90 days);
+        uint256 none = _openWithGrace(0);
+        assertEq(projects.getProject(none).taskGraceSecs, 0);
+        assertEq(projects.getProject(id).taskGraceSecs, GRACE);
+    }
+
+    /// @dev A project task may expire at most at the end date plus the grace period.
+    function test_ProjectTask_ExpiryAtMostEndPlusGrace() public {
+        uint256 longest = LIFETIME + GRACE;
+        vm.expectRevert(ITMPProject.ProjectTaskPastGrace.selector);
+        _relay(owner, 0, _taskCallFor(id, 1e6, longest + 1));
+        bytes32 taskId = abi.decode(_relay(owner, 0, _taskCallFor(id, 1e6, longest)), (bytes32));
+        assertEq(market.getTask(taskId).expiryTime, projects.getProject(id).endsAt + GRACE);
+        _assertSolvent();
+    }
+
+    /// @dev With no grace period every project task ends by the project's end date.
+    function test_ProjectTask_ZeroGraceEndsByTheEndDate() public {
+        id = _openWithGrace(0);
+        vm.expectRevert(ITMPProject.ProjectTaskPastGrace.selector);
+        _relay(owner, 0, _taskCallFor(id, 1e6, LIFETIME + 1));
+        _relay(owner, 0, _taskCallFor(id, 1e6, LIFETIME));
+        _assertSolvent();
+    }
+
+    /// @dev updateTask may not extend a project task's expiry past the end date plus the grace
+    ///      period; shortening it and extending within it are fine.
+    function test_RevertWhen_UpdateTask_ExtendsPastGrace() public {
+        bytes32 taskId = _task(1e6);
+        uint256 latest = projects.getProject(id).endsAt + GRACE;
+        bytes memory tooFar = abi.encodeCall(market.updateTask, (taskId, 0, latest + 1, 0, 0));
+        vm.expectRevert(ITMPProject.ProjectTaskPastGrace.selector);
+        _relay(owner, 0, tooFar);
+        _relay(owner, 0, abi.encodeCall(market.updateTask, (taskId, 0, latest, 0, 0)));
+        assertEq(market.getTask(taskId).expiryTime, latest);
+        _relay(owner, 0, abi.encodeCall(market.updateTask, (taskId, 0, block.timestamp + 1 days, 0, 0)));
+        assertEq(market.getTask(taskId).expiryTime, block.timestamp + 1 days);
+    }
+
+    /// @dev Once the pool has settled no project task's expiry may be extended at all, even
+    ///      within the grace period; shortening it still is allowed.
+    function test_RevertWhen_UpdateTask_ExtendsAfterSettlement() public {
+        bytes32 taskId = _task(1e6);
+        uint256 expiry = market.getTask(taskId).expiryTime;
+        _close(owner);
+        bytes memory extend = abi.encodeCall(market.updateTask, (taskId, 0, expiry + 1, 0, 0));
+        vm.expectRevert(ITMPProject.ProjectTaskPastGrace.selector);
+        _relay(owner, 0, extend);
+        _relay(owner, 0, abi.encodeCall(market.updateTask, (taskId, 0, expiry - 1, 0, 0)));
+        assertEq(market.getTask(taskId).expiryTime, expiry - 1);
     }
 
     /// @dev Security review I1: claim and closeProject refuse a relayed payment, which would
@@ -803,18 +900,284 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
+    // Second security review: outstanding while a worker stake is held, share generations
+    // -------------------------------------------------------------------------
+
+    address internal constant EVALUATOR = address(0xE0);
+    address internal constant RESOLVER = address(0xD0);
+
+    function _claimTaskCall(uint256 reward) internal view returns (bytes memory) {
+        ITMPCore.TaskTerms memory t;
+        t.version = 2;
+        t.penaltyTo = ITMPCore.PenaltyTo.Requester;
+        return abi.encodeCall(
+            projects.createProjectTask,
+            (
+                id,
+                taskConfig(reward, DURATION, TMP_CLAIM),
+                ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                t,
+                address(0)
+            )
+        );
+    }
+
+    /// @dev A Claim project task with an evaluator staking `evalStake` from the pool, claimed by
+    ///      the worker with `stake` and submitted, so it is in Review.
+    function _claimTaskInReview(uint256 reward, uint256 evalStake, uint256 stake) internal returns (bytes32 taskId) {
+        taskId = abi.decode(_relay(owner, 0, _claimTaskCall(reward)), (bytes32));
+        _relay(
+            owner,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, EVALUATOR, evalStake, 0, 3 days, 2 days, RESOLVER))
+        );
+        _relay(worker, stake, abi.encodeCall(market.claimTask, (taskId, stake)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        _assertSolvent();
+    }
+
+    function _awardTo(uint256 amount) internal view returns (ITMPCore.Award[] memory a) {
+        a = new ITMPCore.Award[](1);
+        a[0] = ITMPCore.Award({ worker: worker, amount: amount, rank: 1 });
+    }
+
+    function _verdict(bytes32 taskId, ITMPCore.VerdictType v, ITMPCore.Award[] memory awards) internal {
+        _relay(EVALUATOR, 0, abi.encodeCall(market.evaluate, (taskId, v, 10000, 10000, bytes32(0), awards)));
+        _assertSolvent();
+    }
+
+    /// @dev Second security review M-1: the evaluator's verdict pays its stake back while the
+    ///      task, Appealing, still holds the worker's stake. The worker's stake must not stand in
+    ///      for the evaluator stake in outstanding, or a later backer buys at a value the pool
+    ///      does not have. Fair split: the pool is worth 6 when alice pays 10, so she owns 10/16
+    ///      of the 12 left after the worker is paid. Before the fix she claimed 6.
+    function test_Outstanding_DropsWhenTheEvaluatorIsPaidWhileAWorkerStakeIsHeld() public {
+        uint256 r = 4e6;
+        uint256 e = 4e6;
+        bytes32 taskId = _claimTaskInReview(r, e, 4e6);
+        assertEq(_p().outstanding, r + e);
+        _verdict(taskId, ITMPCore.VerdictType.APPROVE, _awardTo(r));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Appealing));
+        assertEq(_p().outstanding, r, "only the reward is still pool money in the task");
+        assertEq(_p().available + _p().outstanding, BUDGET - e, "the value lost the evaluator stake");
+
+        _back(alice, BUDGET);
+        vm.warp(block.timestamp + 3 days);
+        market.finalizeVerdict(taskId);
+        _assertSolvent();
+        assertEq(_p().outstanding, 0);
+        _close(owner);
+        assertApproxEqAbs(_claim(alice), 7.5e6, 1, "alice pays the value the pool had");
+        assertApproxEqAbs(_claim(owner), 4.5e6, 1);
+        assertLe(market.totalLiabilities(), 2, "only rounding dust stays");
+    }
+
+    /// @dev Second security review M-1: an evaluator timeout sends the evaluator stake to the
+    ///      protocol while the worker's stake is held; it leaves outstanding too.
+    function test_Outstanding_DropsOnEvaluatorTimeoutWhileAWorkerStakeIsHeld() public {
+        uint256 r = 4e6;
+        uint256 e = 3e6;
+        bytes32 taskId = _claimTaskInReview(r, e, 5e6);
+        vm.warp(block.timestamp + 4 days);
+        market.evaluatorTimeout(taskId);
+        _assertSolvent();
+        assertEq(_p().outstanding, r, "the forfeited evaluator stake left the value");
+        assertEq(_p().available, BUDGET - r - e);
+        _back(alice, 3e6);
+        assertEq(pools.sharesOf(pool, alice), 3e6 * BUDGET * SCALE / (BUDGET - e), "3 buys at the value 7");
+    }
+
+    /// @dev Second security review M-1: on an appealed verdict the evaluator stake leaves
+    ///      outstanding at the verdict, the appeal moves nothing, and the resolution pays the
+    ///      reward out.
+    function test_Outstanding_FollowsAnAppealedVerdict() public {
+        uint256 r = 4e6;
+        uint256 e = 2e6;
+        bytes32 taskId = _claimTaskInReview(r, e, 1e6);
+        _verdict(taskId, ITMPCore.VerdictType.REJECT, new ITMPCore.Award[](0));
+        assertEq(_p().outstanding, r);
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+        assertEq(_p().outstanding, r, "an appeal moves no money");
+        vm.prank(RESOLVER);
+        market.resolveDispute(taskId, ITMPCore.VerdictType.APPROVE, _awardTo(r));
+        _assertSolvent();
+        assertEq(_p().outstanding, 0);
+        assertEq(_p().available, BUDGET - r - e);
+    }
+
+    /// @dev Second security review L-1: draining the pool to nothing and refilling it used to
+    ///      multiply the share supply by the funded amount each cycle, until a credit overflowed
+    ///      and funding reverted for good (from the seventh cycle of 1,000 USDC). A pool worth
+    ///      nothing now starts a new share generation, so funding never bricks.
+    function test_DrainAndRefill_NeverBricksFunding() public {
+        _spend(BUDGET);
+        for (uint256 i; i < 20; ++i) {
+            uint256 amount = 1000e6;
+            _back(alice, amount);
+            assertEq(_p().totalShares, amount * SCALE, "a new generation mints at the first price");
+            assertEq(pools.sharesOf(pool, alice), amount * SCALE);
+            _spend(amount);
+        }
+        assertEq(_p().generation, 20);
+    }
+
+    /// @dev Second security review L-1: the old generation's backers hold nothing of the new
+    ///      generation's money, and the new backers get all of it back.
+    function test_NewGeneration_OldBackersTakeNothing() public {
+        _backAll();
+        _spend(FUNDED);
+        assertEq(pools.sharesOf(pool, alice), ALICE * SCALE, "shares still read until a new generation");
+        vm.expectEmit(address(market));
+        emit ITMPFundingPool.PoolSharesReset(pool, 1);
+        _back(bob, 5e6);
+        assertEq(pools.sharesOf(pool, owner), 0, "an old generation's shares count as zero");
+        assertEq(pools.sharesOf(pool, alice), 0);
+        assertEq(pools.sharesOf(pool, bob), 5e6 * SCALE, "bob's old shares were replaced");
+        _back(alice, 5e6);
+        assertEq(pools.sharesOf(pool, alice), 5e6 * SCALE);
+        _close(owner);
+        assertEq(pools.claimable(pool, owner), 0);
+        vm.expectRevert(ITMPFundingPool.NothingToClaim.selector);
+        pools.claim(pool, owner);
+        assertEq(_claim(alice), 5e6);
+        assertEq(_claim(bob), 5e6);
+        assertEq(market.totalLiabilities(), 0);
+    }
+
+    /// @dev Second security review L-1: a pool worth nothing that nobody funds again keeps its
+    ///      generation and its backers' shares; there is nothing in the pot for them to claim.
+    function test_ZeroValuePool_KeepsItsGenerationUntilFunded() public {
+        _back(alice, BUDGET);
+        _spend(2 * BUDGET);
+        _close(owner);
+        assertEq(_p().generation, 0);
+        assertEq(pools.sharesOf(pool, alice), BUDGET * SCALE);
+        assertEq(pools.claimable(pool, alice), 0);
+        vm.expectRevert(ITMPFundingPool.NothingToClaim.selector);
+        pools.claim(pool, alice);
+    }
+
+    // -------------------------------------------------------------------------
     // Many backers, interleaved
     // -------------------------------------------------------------------------
+
+    /// @dev A Claim task of the many-backers fuzz test: its worker, the pool money it holds,
+    ///      where it is in review and the deadline of that stage.
+    struct ClaimCase {
+        bytes32 id;
+        address worker;
+        uint256 reward;
+        uint256 held;
+        uint8 stage; // 0 Review, 1 Appealing, 2 delivered after an evaluator timeout, 3 Disputed
+        bool rejected;
+        uint256 deadline;
+    }
+
+    ClaimCase[] internal claimCases;
+
+    /// @dev Creates a Claim task with an evaluator staking from the pool and a worker staking its
+    ///      own money, through to Review. Windows are an hour, so the fuzz test can step past them.
+    function _fuzzClaimTask(uint256 r, uint256 k) internal returns (uint256 drawn) {
+        uint256 avail = _p().available;
+        uint256 reward = bound(r >> 16, 1, avail);
+        uint256 evalStake = bound(r >> 80, 0, avail - reward);
+        uint256 stake = bound(r >> 144, 1, 1e13);
+        address w = address(uint160(0x20000 + k));
+        bytes32 taskId = abi.decode(_relay(owner, 0, _claimTaskCall(reward)), (bytes32));
+        _relay(
+            owner,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, EVALUATOR, evalStake, 0, 1 hours, 1 hours, RESOLVER))
+        );
+        _relay(w, stake, abi.encodeCall(market.claimTask, (taskId, stake)));
+        _relay(w, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        drawn = reward + evalStake;
+        claimCases.push(ClaimCase(taskId, w, reward, drawn, 0, false, block.timestamp + 1 hours));
+    }
+
+    function _awardFor(address w, uint256 amount) internal pure returns (ITMPCore.Award[] memory a) {
+        a = new ITMPCore.Award[](1);
+        a[0] = ITMPCore.Award({ worker: w, amount: amount, rank: 1 });
+    }
+
+    /// @dev Moves Claim task `j` one step on: a verdict (approve or reject) or an evaluator
+    ///      timeout from Review; an appeal or the verdict's finalisation from Appealing; the
+    ///      resolution of a dispute; the requester's acceptance after a timeout. Returns how much
+    ///      pool money the task stopped holding; a finished task is removed.
+    function _fuzzClaimStep(uint256 j, uint256 r) internal returns (uint256 released) {
+        ClaimCase storage c = claimCases[j];
+        released = c.held;
+        uint256 choice = r % 3;
+        bool done;
+        if (c.stage == 0) {
+            if (choice == 2 || block.timestamp > c.deadline) {
+                if (block.timestamp <= c.deadline) vm.warp(c.deadline + 1);
+                market.evaluatorTimeout(c.id);
+                c.stage = 2;
+            } else {
+                c.rejected = choice == 1;
+                _relay(
+                    EVALUATOR,
+                    0,
+                    abi.encodeCall(
+                        market.evaluate,
+                        (
+                            c.id,
+                            c.rejected ? ITMPCore.VerdictType.REJECT : ITMPCore.VerdictType.APPROVE,
+                            10000,
+                            10000,
+                            bytes32(0),
+                            c.rejected ? new ITMPCore.Award[](0) : _awardFor(c.worker, c.reward)
+                        )
+                    )
+                );
+                c.stage = 1;
+                c.deadline = block.timestamp + 1 hours;
+            }
+            c.held = c.reward;
+            released -= c.reward;
+        } else if (c.stage == 1) {
+            if (choice == 0 && block.timestamp < c.deadline) {
+                _relay(c.worker, 0, abi.encodeCall(market.appeal, (c.id)));
+                c.stage = 3;
+                released = 0;
+            } else {
+                if (block.timestamp < c.deadline) vm.warp(c.deadline);
+                market.finalizeVerdict(c.id);
+                done = true;
+            }
+        } else if (c.stage == 3) {
+            vm.prank(RESOLVER);
+            market.resolveDispute(c.id, ITMPCore.VerdictType.APPROVE, _awardFor(c.worker, c.reward));
+            done = true;
+        } else {
+            _relay(owner, 0, abi.encodeCall(market.acceptSubmission, (c.id, c.worker, WORK, 0)));
+            done = true;
+        }
+        if (done) {
+            claimCases[j] = claimCases[claimCases.length - 1];
+            claimCases.pop();
+        }
+    }
 
     /// @dev Any number of backers funding between spends, payouts and refunds, then claims
     ///      interleaved with refunds after the close: the diamond always holds exactly what it
     ///      owes, outstanding is what the live tasks hold, claims never exceed the pot and what
-    ///      stays unclaimed is under one base unit per backer.
+    ///      stays unclaimed is under one base unit per backer. Besides Bounty tasks, Claim tasks
+    ///      with a worker stake and an evaluator stake go through approvals, rejections, evaluator
+    ///      timeouts, appeals and dispute resolutions, so the worker's stake is held while the
+    ///      evaluator stake leaves (second security review M-1) and forfeited stakes come back to
+    ///      the pool as windfalls. A pool spent to nothing and funded again starts a new share
+    ///      generation (L-1).
     function testFuzz_ManyBackers_InterleavedSpendsRefundsFundingAndClaims(uint256 seed, uint8 nB, uint8 nSteps)
         public
     {
+        vm.prank(admin);
+        market.setMinEvaluationWindowSecs(1 hours);
         uint256 n = bound(nB, 1, 12);
-        uint256 steps = bound(nSteps, 1, 24);
+        uint256 steps = bound(nSteps, 1, 32);
         address[] memory backers = new address[](n + 1);
         backers[0] = owner;
         for (uint256 i = 1; i <= n; ++i) {
@@ -823,17 +1186,17 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         bytes32[] memory live = new bytes32[](steps);
         uint256[] memory rewards = new uint256[](steps);
         uint256 nLive;
-        uint256 held; // what the live tasks hold
+        uint256 held; // the pool money the live tasks hold
 
         for (uint256 k; k < steps; ++k) {
             uint256 r = uint256(keccak256(abi.encode(seed, k)));
-            uint256 action = r % 4;
+            uint256 action = r % 6;
             if (action == 1 && _p().available > 0) {
                 uint256 reward = bound(r >> 16, 1, _p().available);
                 live[nLive] = _task(reward);
                 rewards[nLive++] = reward;
                 held += reward;
-            } else if (action >= 2 && nLive > 0) {
+            } else if ((action == 2 || action == 3) && nLive > 0) {
                 uint256 j = (r >> 8) % nLive;
                 bytes32 taskId = live[j];
                 held -= rewards[j];
@@ -845,10 +1208,14 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
                 }
                 live[j] = live[--nLive];
                 rewards[j] = rewards[nLive];
+            } else if (action == 4 && _p().available > 0) {
+                held += _fuzzClaimTask(r, k);
+            } else if (action == 5 && claimCases.length > 0) {
+                held -= _fuzzClaimStep((r >> 8) % claimCases.length, r >> 200);
             } else {
                 _back(backers[(r >> 8) % (n + 1)], bound(r >> 16, 1, 1e13));
             }
-            assertEq(_p().outstanding, held, "outstanding is what the live tasks hold");
+            assertEq(_p().outstanding, held, "outstanding is the pool money the live tasks hold");
             _assertSolvent();
         }
 
@@ -862,6 +1229,16 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
             }
             _cancel(live[j]);
         }
+        // Settle every Claim task; refunds and forfeited stakes reach the pot between claims.
+        for (uint256 guard; claimCases.length > 0 && guard < 8 * steps; ++guard) {
+            uint256 r = uint256(keccak256(abi.encode(seed, "settle", guard)));
+            _fuzzClaimStep(r % claimCases.length, r >> 8);
+            _assertSolvent();
+            uint256 i = (r >> 128) % (n + 1);
+            if (pools.claimable(pool, backers[i]) > 0) paid += _claim(backers[i]);
+        }
+        assertEq(claimCases.length, 0, "every Claim task settled");
+        assertEq(_p().outstanding, 0);
         for (uint256 i; i <= n; ++i) {
             if (pools.claimable(pool, backers[i]) > 0) paid += _claim(backers[i]);
         }

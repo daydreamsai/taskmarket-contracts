@@ -48,7 +48,9 @@ contract ProjectGrantsTest is DiamondTestHelper {
             _relay(
                 owner,
                 BUDGET,
-                abi.encodeCall(projects.createProject, (address(usdc), BUDGET, uint64(block.timestamp + 30 days)))
+                abi.encodeCall(
+                    projects.createProject, (address(usdc), BUDGET, uint64(block.timestamp + 30 days), 30 days)
+                )
             ),
             (uint256)
         );

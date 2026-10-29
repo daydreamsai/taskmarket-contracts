@@ -63,7 +63,8 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
 
         uint64 endsAt = uint64(block.timestamp) + LIFETIME;
         id = abi.decode(
-            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt))), (uint256)
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, 30 days))),
+            (uint256)
         );
         ITMPProject.GrantTerms memory terms = ITMPProject.GrantTerms({
             cap: 0,

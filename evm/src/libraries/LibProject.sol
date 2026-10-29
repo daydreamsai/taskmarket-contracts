@@ -17,14 +17,38 @@ import { LibFundingPool } from "./LibFundingPool.sol";
 ///      What the pool spends on a task (its reward and evaluator stake at creation, and any later
 ///      reward increase or evaluator stake) is recorded in taskPoolDraws and counted in the pool's
 ///      outstanding. LibEscrow.release calls finishDraw after every payout, which lowers the record
-///      to what the task still owes and takes the difference out of outstanding; a terminal task
-///      owes nothing, so its whole draw leaves outstanding then.
+///      to the pool money the task still holds (what it owes, less a Claim worker's stake) and
+///      takes the difference out of outstanding; a terminal task owes nothing, so its whole draw
+///      leaves outstanding then.
 library LibProject {
     /// @notice The module ID projects open their funding pools under.
     bytes32 internal constant PROJECT_MODULE = keccak256("taskmarket.project");
 
     /// @notice The latest end date createProject accepts, from the block's timestamp.
     uint256 internal constant MAX_LIFETIME = 365 days;
+
+    /// @notice The longest task grace period createProject accepts: how long after its end date
+    ///         a project's tasks may run. A backer's money is held at most
+    ///         MAX_LIFETIME + MAX_TASK_GRACE after the project is created.
+    uint32 internal constant MAX_TASK_GRACE = 90 days;
+
+    /// @notice The latest expiry a task of `projectId` may have: its end date plus its task
+    ///         grace period.
+    function latestExpiry(AppStorage storage s, uint256 projectId) internal view returns (uint256) {
+        ITMPProject.ProjectRecord storage p = s.projects[projectId];
+        return uint256(p.endsAt) + p.taskGraceSecs;
+    }
+
+    /// @notice Refuses updateTask's extension of a project task's expiry to `newExpiry` past the
+    ///         project's end date plus its task grace period, or at all once the project's pool
+    ///         has settled. Nothing for a task in no project.
+    function requireExtensionAllowed(AppStorage storage s, bytes32 taskId, uint256 newExpiry) internal view {
+        uint256 projectId = s.taskProjects[taskId];
+        if (projectId == 0) return;
+        if (newExpiry > latestExpiry(s, projectId) || !LibFundingPool.isOpen(s.fundingPools[poolOf(projectId)])) {
+            revert ITMPProject.ProjectTaskPastGrace();
+        }
+    }
 
     /// @notice Pays `amount` owed to the task's requester, or refunds it to the task's project.
     ///         Returns the token transfer's result, true for a refund to the project.
@@ -94,19 +118,24 @@ library LibProject {
         s.taskPoolDraws[taskId] += amount;
     }
 
-    /// @notice Lowers a project task's draw to `owedNow`, what the task holds after a payout, and
-    ///         takes the difference out of its pool's outstanding: spent if a worker or an
-    ///         evaluator was paid, back in available if it was refunded. A worker's stake can make
-    ///         owedNow exceed the draw; nothing changes then. Called by LibEscrow.release.
-    function finishDraw(AppStorage storage s, bytes32 taskId, uint256 owedNow) internal {
+    /// @notice Lowers a project task's draw to `heldNow`, the pool money it still holds after a
+    ///         payout, and takes the difference out of its pool's outstanding: spent if a worker
+    ///         or an evaluator was paid, back in available if it was refunded. Called by
+    ///         LibEscrow.release with what the task owes in escrow less a Claim worker's stake
+    ///         (LibEscrow.owedParts). The stake is the worker's money, not the pool's: counting it
+    ///         would leave the evaluator stake in outstanding after evaluate pays it to the
+    ///         evaluator or evaluatorTimeout to the protocol while the worker's stake is still
+    ///         held, and a backer would then buy shares at a value the pool does not have. The
+    ///         draw never grows, so a forfeited stake refunded to the pool is still a windfall.
+    function finishDraw(AppStorage storage s, bytes32 taskId, uint256 heldNow) internal {
         uint256 drawn = s.taskPoolDraws[taskId];
-        if (drawn > owedNow) _finish(s, taskId, drawn - owedNow, owedNow);
+        if (drawn > heldNow) _finish(s, taskId, drawn - heldNow, heldNow);
     }
 
     /// @dev Kept out of finishDraw so the optimizer does not inline it into every facet's
     ///      LibEscrow.release.
-    function _finish(AppStorage storage s, bytes32 taskId, uint256 amount, uint256 owedNow) private {
-        s.taskPoolDraws[taskId] = owedNow;
+    function _finish(AppStorage storage s, bytes32 taskId, uint256 amount, uint256 heldNow) private {
+        s.taskPoolDraws[taskId] = heldNow;
         LibFundingPool.finish(s, poolOf(s.taskProjects[taskId]), amount);
     }
 
