@@ -12,6 +12,7 @@ import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
 import { AdminFacet } from "../src/facets/AdminFacet.sol";
 import { TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
+import { IFundingPoolManager } from "../src/interfaces/IFundingPoolManager.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { FacetSelectors } from "../script/lib/FacetSelectors.sol";
 import { Rev027Upgrade } from "../script/upgrades/Rev027Upgrade.s.sol";
@@ -24,7 +25,13 @@ import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 /// @dev Builds a diamond holding a live claimed task, strips the rev027 selectors to stand in for a
 ///      rev026 diamond, runs the cut, and checks the routing, the version, the live task, the
 ///      rev025 createTask selector, a task with a reserved worker and a project end to end.
+interface IOwnable {
+    function owner() external view returns (address);
+}
+
 contract Rev027UpgradeTest is Test, DiamondTestHelper {
+    bytes32 internal constant ERC1967_IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     uint256 internal constant OWNER_KEY = 0xA11CE;
     uint256 internal constant REWARD = 100e6;
     uint256 internal constant STAKE = 10e6;
@@ -162,14 +169,30 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         assertEq(loupe.facetAddress(ITMPFundingPool.getPool.selector), address(0), "getPool is not routed");
         assertEq(loupe.facetAddress(ITMPFundingPool.sharesOf.selector), address(0), "sharesOf is not routed");
         assertEq(loupe.facetAddress(ITMPFundingPool.claimable.selector), address(0), "claimable is not routed");
+        _assertPoolDeployedAndInitialised();
         assertNotEq(loupe.facetAddress(ITMPDiamond.acceptSubmission.selector), acceptBefore, "AcceptanceFacet replaced");
         assertNotEq(loupe.facetAddress(ITMPDiamond.rateTask.selector), ratingBefore, "RatingFacet replaced");
     }
 
+    /// @dev The script deployed the pool behind an ERC1967Proxy initialised with the diamond as
+    ///      manager and the payment token, and ran initFundingPool on the diamond.
+    function _assertPoolDeployedAndInitialised() internal view {
+        address pool = ITMPProject(address(market)).fundingPool();
+        assertNotEq(pool, address(0), "initFundingPool ran: the diamond holds the pool");
+        assertGt(pool.code.length, 0, "pool proxy has code");
+        address impl = address(uint160(uint256(vm.load(pool, ERC1967_IMPLEMENTATION_SLOT))));
+        assertGt(impl.code.length, 0, "proxy points at a deployed implementation");
+        assertNotEq(impl, pool, "implementation is not the proxy");
+        assertEq(IFundingPoolManager(pool).manager(), address(market), "manager is the diamond");
+        assertEq(IOwnable(pool).owner(), owner, "pool owner is the diamond owner");
+    }
+
     function test_Upgrade_ProjectFundsATaskAndTakesBackItsRefund() public {
         new Rev027Upgrade().run();
-        // The pool is set once after the cut, as the deploy runbook does.
-        initMockPool(address(market), owner);
+        // The script deployed the pool and ran initFundingPool; a second init reverts.
+        vm.prank(owner);
+        vm.expectRevert();
+        ITMPProject(address(market)).initFundingPool(address(0xBEEF));
 
         ITMPProject projects = ITMPProject(address(market));
         uint256 id = abi.decode(

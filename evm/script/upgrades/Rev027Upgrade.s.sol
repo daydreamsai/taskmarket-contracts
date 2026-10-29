@@ -15,6 +15,9 @@ import { AcceptanceFacet } from "../../src/facets/AcceptanceFacet.sol";
 import { RatingFacet } from "../../src/facets/RatingFacet.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
+import { DeployFundingPool } from "../lib/DeployFundingPool.sol";
+import { ITMPProject } from "../../src/interfaces/ITMPProject.sol";
+import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 
 /// @title Rev027Upgrade -- a Claim task with a reserved worker, and projects
 /// @dev Appends reservedWorkers and workerAgentIds to AppStorage, and TaskTerms gains
@@ -58,8 +61,13 @@ contract Rev027Upgrade is Script {
         uint256 currentVersion = AdminFacet(diamond).diamondVersion();
         require(currentVersion == EXPECTED_PRE_VERSION, "Rev027Upgrade: diamond is not at rev026");
 
+        address paymentToken = ITMPDiamond(diamond).usdcToken();
+
         vm.startBroadcast(ownerKey);
+        // Order: pool implementation, proxy (manager = the diamond), cut, init.
+        (address poolImpl, address pool) = DeployFundingPool.deploy(diamond, paymentToken);
         IDiamondCut(diamond).diamondCut(_cut(), address(0), "");
+        ITMPProject(diamond).initFundingPool(pool);
         AdminFacet(diamond).setDiamondVersion(TARGET_VERSION);
         vm.stopBroadcast();
 
@@ -73,6 +81,8 @@ contract Rev027Upgrade is Script {
         console.log("ProjectFacet:   ", loupe.facetAddress(FacetSelectors.projectFacetSelectors()[0]));
         console.log("AcceptanceFacet:", loupe.facetAddress(FacetSelectors.acceptFacetSelectors()[0]));
         console.log("RatingFacet:    ", loupe.facetAddress(FacetSelectors.ratingFacetSelectors()[0]));
+        console.log("FundingPool implementation:", poolImpl);
+        console.log("FundingPool proxy:         ", pool);
         console.log("diamondVersion: ", TARGET_VERSION);
     }
 

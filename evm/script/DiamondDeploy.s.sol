@@ -19,6 +19,8 @@ import { SettlementFacet } from "../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../src/facets/FeedbackFacet.sol";
 import { DeployTarget } from "./lib/DeployTarget.sol";
 import { FacetSelectors } from "./lib/FacetSelectors.sol";
+import { DeployFundingPool } from "./lib/DeployFundingPool.sol";
+import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
 
 /// @title DiamondDeploy — deploy TaskMarket Diamond proxy + all facets
 /// @dev Required env vars:
@@ -88,6 +90,11 @@ contract DiamondDeploy is Script {
                 .diamondCut(step, isAdmin ? address(adminFacet) : address(0), isAdmin ? initData : bytes(""));
         }
 
+        // 4b. Funding pool: implementation, then a proxy initialised in its constructor with the
+        // diamond as manager (the diamond exists now), then the one-time init on the diamond.
+        (address poolImpl, address pool) = DeployFundingPool.deploy(address(diamond), usdc);
+        ITMPProject(address(diamond)).initFundingPool(pool);
+
         // 5. Register optional PGTR forwarder and reputation registry
         address forwarder = vm.envOr("FORGE_PGTR_FORWARDER", address(0));
         if (forwarder != address(0)) {
@@ -131,6 +138,8 @@ contract DiamondDeploy is Script {
         console.log("FeedbackFacet:      ", cuts[10].facetAddress);
         console.log("WorkerFacet:        ", cuts[11].facetAddress);
         console.log("ProjectFacet:       ", cuts[12].facetAddress);
+        console.log("FundingPool implementation:", poolImpl);
+        console.log("FundingPool proxy:         ", pool);
     }
 
     function _buildCuts(
