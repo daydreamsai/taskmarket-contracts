@@ -18,9 +18,10 @@ import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_USDC     — one-time vault creation fee, USDC base units
 ///                                                  (default 1_000_000 = $1)
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT — where vault creation fees are paid
-///   FORGE_SPONSORED_TASK_TOKEN_FEE_BPS         — default project-token fee (default 750 = 7.5%,
+///   FORGE_SPONSORED_TASK_TOKEN_FEE_BPS         — default project-token fee (default 0, no fee,
 ///                                                  matching the platform's own USDC fee)
-///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT   — where the project-token fee is paid
+///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT   — where the project-token fee is paid; required
+///                                                  only when the fee is not zero
 ///   FORGE_SPONSORED_TASK_ADMIN                 — a deployed contract (Safe/timelock) that owns
 ///                                                  the hook proxy, the fee policy and (once it
 ///                                                  accepts) the registry; required, not optional
@@ -61,8 +62,8 @@ contract DeploySponsoredTask is Script {
 
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(
             admin,
-            uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(750))),
-            vm.envAddress("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT")
+            uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0))),
+            vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", address(0))
         );
         SponsoredTaskFactory factory = new SponsoredTaskFactory(
             address(hook),

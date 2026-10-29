@@ -21,8 +21,9 @@ import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskS
 ///                                               calls `acceptOwnership()`
 ///   FORGE_SPONSORED_TASK_SETTLER_ADDRESSES   -- comma-separated settler addresses, in any order
 ///   FORGE_SPONSORED_TASK_SETTLER_THRESHOLD   -- signatures required (default 1)
-///   FORGE_SPONSORED_TASK_TOKEN_FEE_BPS       -- project-token fee (default 750 = 7.5%)
-///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT -- where the project-token fee is paid
+///   FORGE_SPONSORED_TASK_TOKEN_FEE_BPS       -- project-token fee (default 0, no fee)
+///   FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT -- where the project-token fee is paid; required only
+///                                               when the fee is not zero
 ///   FORGE_USDC_TOKEN_ADDRESS                 -- the token the vault creation fee is paid in
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_USDC   -- one-time vault creation fee (default 1_000_000 = $1)
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT -- where vault creation fees are paid
@@ -46,8 +47,8 @@ contract DeploySponsoredTaskSettler is Script {
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(deployer);
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(
             admin,
-            uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(750))),
-            vm.envAddress("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT")
+            uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0))),
+            vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", address(0))
         );
         SponsoredTaskSettler settler = new SponsoredTaskSettler(admin, settlers, threshold);
         SponsoredTaskFactory factory = new SponsoredTaskFactory(
