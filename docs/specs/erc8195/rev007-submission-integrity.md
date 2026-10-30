@@ -220,7 +220,7 @@ permissionless.
 | `src/facets/CoreFacet.sol` | Push deliverable to `taskSubmissionHashes` in `submitWork`; add `requesterAgentId` to `cancelTask` and `refundExpired`; emit `RequesterReputation` from both |
 | `src/facets/AcceptanceFacet.sol` | Verify deliverable in `_validateAcceptSubmission`; remove `deliverables[]` from `acceptSubmissions`; emit `SelfAward` and `RequesterReputation` |
 | `src/facets/RegistryFacet.sol` | Add `taskSubmissionHashes` getter |
-| `packages/contracts/abi/TaskMarket.json` | Rebuilt after signature changes |
+| `packages/contracts/evm/abi/TaskMarket.json` | Rebuilt after signature changes |
 | `apps/backend/src/routers/acceptance.router.ts` | Enforce DB submission record exists before contract call; derive deliverable hash from DB record |
 | `apps/backend/src/routers/tasks.router.ts` | Add `requester.stats` query; index `RequesterReputation` events |
 | `apps/backend/src/db/schema.ts` | Add `selfAward boolean` to tasks; add `requester_reputation_events` table |

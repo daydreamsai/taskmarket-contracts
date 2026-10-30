@@ -199,11 +199,11 @@ after settlement must read the `TaskCreated`/`TaskExpired` events or the indexed
 
 | File | Change |
 |---|---|
-| `packages/contracts/src/facets/CoreFacet.sol` | `refundExpired` rejects `Expired`; both refund paths zero `task.reward` before transferring; `updateTask` reverts `NoRewardChange` on a named-but-unchanged reward |
-| `packages/contracts/src/interfaces/ITMPCore.sol` | Add `error TaskAlreadyRefunded()` and `error NoRewardChange()` |
-| `packages/contracts/script/upgrades/Rev016Upgrade.s.sol` | New: pure `Replace` of `coreFacetSelectors()`; `diamondVersion` 15 → 16 |
-| `packages/contracts/test/Rev016Upgrade.t.sol` | New: advances a helper-baseline diamond to rev015, applies the step, asserts the version bump and that every CoreFacet selector still routes |
-| `packages/contracts/test/TaskMarket.t.sol` | Repeat-refund rejection on both the normal and auction-claimed paths, reward zeroing, the cross-task escrow-drain proof, the duplicate reward-increase relay, and a solvency invariant across a full transition sequence |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | `refundExpired` rejects `Expired`; both refund paths zero `task.reward` before transferring; `updateTask` reverts `NoRewardChange` on a named-but-unchanged reward |
+| `packages/contracts/evm/src/interfaces/ITMPCore.sol` | Add `error TaskAlreadyRefunded()` and `error NoRewardChange()` |
+| `packages/contracts/evm/script/upgrades/Rev016Upgrade.s.sol` | New: pure `Replace` of `coreFacetSelectors()`; `diamondVersion` 15 → 16 |
+| `packages/contracts/evm/test/Rev016Upgrade.t.sol` | New: advances a helper-baseline diamond to rev015, applies the step, asserts the version bump and that every CoreFacet selector still routes |
+| `packages/contracts/evm/test/TaskMarket.t.sol` | Repeat-refund rejection on both the normal and auction-claimed paths, reward zeroing, the cross-task escrow-drain proof, the duplicate reward-increase relay, and a solvency invariant across a full transition sequence |
 | `packages/contracts/.gas-snapshot` | Regenerated |
 
 ## References

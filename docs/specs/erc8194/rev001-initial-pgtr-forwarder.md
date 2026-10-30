@@ -146,7 +146,7 @@ standard authentication-agnostic, leaving PGTR as one supported mechanism.
 
 | File | Change |
 |------|--------|
-| `packages/contracts/src/interfaces/IPGTRForwarder.sol` | Renamed from `ITMPForwarder.sol` |
+| `packages/contracts/evm/src/interfaces/IPGTRForwarder.sol` | Renamed from `ITMPForwarder.sol` |
 | `packages/contracts/src/TaskMarketForwarder.sol` | New reference forwarder |
 | `packages/contracts/test/TaskMarketForwarder.t.sol` | New forwarder tests |
 | `packages/contracts/docs/specs/erc8194/erc-8194.md` | Renamed from the PGTR draft |

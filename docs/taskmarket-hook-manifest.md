@@ -2,7 +2,7 @@
 
 `taskmarket-hook.json` is a portable declaration for an external ERC-8195 /
 Taskmarket hook. Validate version 1 manifests against
-[`schemas/taskmarket-hook.schema.json`](../schemas/taskmarket-hook.schema.json), served
+[`evm/schemas/taskmarket-hook.schema.json`](../evm/schemas/taskmarket-hook.schema.json), served
 after release at
 `https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json`, and with:
 
@@ -10,7 +10,8 @@ after release at
 pnpm validate:hook-manifest -- path/to/taskmarket-hook.json
 ```
 
-Run commands from this package root (`packages/contracts` in the official monorepo).
+Run commands from the EVM package root (`packages/contracts/evm` in the official monorepo,
+`evm/` in the public mirror).
 The official monorepo byte-for-byte checks its hosted web asset against this canonical
 source so the URL cannot drift from the published schema.
 

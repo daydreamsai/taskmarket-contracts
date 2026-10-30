@@ -160,6 +160,6 @@ contract call succeeds, before returning the transaction hash.
 
 | File | Change |
 |---|---|
-| `packages/contracts/src/facets/CoreFacet.sol` | `rejectSubmission`: decrement by worker's submission hash count |
-| `packages/contracts/test/TaskMarket.t.sol` | Two new tests: single worker multi-submit and mixed worker multi-submit |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | `rejectSubmission`: decrement by worker's submission hash count |
+| `packages/contracts/evm/test/TaskMarket.t.sol` | Two new tests: single worker multi-submit and mixed worker multi-submit |
 | `apps/backend/src/routers/tasks.router.ts` | `refundExpired`: filter to active submissions only; `rejectSubmission`: set `rejected_at` inline |

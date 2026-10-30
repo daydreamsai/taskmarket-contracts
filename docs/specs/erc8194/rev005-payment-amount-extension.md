@@ -199,11 +199,11 @@ the relay server funds claim stakes through the relayer, then v2 is deployed and
 
 | File | Change |
 |------|--------|
-| `packages/contracts/src/interfaces/IPGTRPaymentForwarder.sol` | New extension interface |
-| `packages/contracts/src/TaskMarketForwarderV2.sol` | New forwarder reporting `pgtrPaymentAmount()` |
-| `packages/contracts/script/DeployForwarderV2.s.sol` | New deployment script |
-| `packages/contracts/src/libraries/LibGuards.sol` | `_forwardedPayment`, `_requireReportedPayment`, `_requireStakePayment` |
-| `packages/contracts/src/facets/CoreFacet.sol` | Payment checks in `claimTask`, `createTask`, `updateTask` |
-| `packages/contracts/src/libraries/LibTaskMarket.sol` | Evaluator-stake payment check shared by `createTask` and `assignEvaluator` |
-| `packages/contracts/test/TaskMarketForwarderV2.t.sol` | New forwarder and interface-id tests |
-| `packages/contracts/test/mocks/MockPGTRForwarder.sol` | Mock reports a payment amount |
+| `packages/contracts/evm/src/interfaces/IPGTRPaymentForwarder.sol` | New extension interface |
+| `packages/contracts/evm/src/TaskMarketForwarderV2.sol` | New forwarder reporting `pgtrPaymentAmount()` |
+| `packages/contracts/evm/script/DeployForwarderV2.s.sol` | New deployment script |
+| `packages/contracts/evm/src/libraries/LibGuards.sol` | `_forwardedPayment`, `_requireReportedPayment`, `_requireStakePayment` |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | Payment checks in `claimTask`, `createTask`, `updateTask` |
+| `packages/contracts/evm/src/libraries/LibTaskMarket.sol` | Evaluator-stake payment check shared by `createTask` and `assignEvaluator` |
+| `packages/contracts/evm/test/TaskMarketForwarderV2.t.sol` | New forwarder and interface-id tests |
+| `packages/contracts/evm/test/mocks/MockPGTRForwarder.sol` | Mock reports a payment amount |

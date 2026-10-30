@@ -365,28 +365,28 @@ does not match any other flow in the codebase.
 
 | File | Change |
 |------|--------|
-| `packages/contracts/src/libraries/LibAppStorage.sol` | Append `defaultHooks` and `taskHooks` fields to `AppStorage` |
-| `packages/contracts/src/libraries/LibTaskMarket.sol` | Add `_resolveHooks`, `_dispatchAfterHooks`, `_dispatchCheckHooks`, `_onCompleteHooks`, `_onCancelHooks`, `_onExpireHooks`, `_onForfeitHooks` |
-| `packages/contracts/src/facets/CoreFacet.sol` | Replace `address hookContract` with `HookConfig`; call `_buildAndCheckHooks` at task creation |
-| `packages/contracts/src/facets/AcceptanceFacet.sol` | Replace single-hook dispatch with `_resolveHooks` + `_dispatchCheckHooks` / `_dispatchAfterHooks` |
-| `packages/contracts/src/facets/AuctionFacet.sol` | Replace single-hook dispatch with multi-hook helpers |
-| `packages/contracts/src/facets/EvaluatorFacet.sol` | Replace single-hook dispatch with multi-hook helpers; `finalizeVerdict` REJECT branch now sets `Cancelled` (not `Open`), emits `TaskCancelled`, dispatches `_onCancelHooks` |
-| `packages/contracts/src/facets/AdminFacet.sol` | Add `setDefaultHooks`, `getDefaultHooks` |
-| `packages/contracts/src/facets/RegistryFacet.sol` | Add `getTaskHooks` getter |
-| `packages/contracts/src/interfaces/ITMPCore.sol` | Add `HookConfig`, `TaskContent` structs; add `HookCheckCompleteRejected` error |
-| `packages/contracts/src/hooks/TaskTokenRewardHook.sol` | New: USD-denominated DREAMS token reward hook implementing `ITMPHook`; independent `bonusBps` (USD bonus intensity) and `dreamsPerUsdc` (exchange rate) knobs, no on-chain oracle; `_reserveForWorker` releases any stale reservation before reserving fresh |
-| `packages/contracts/src/hooks/RewardVault.sol` | New: holds DREAMS tokens; only the hook can reserve/release/pay |
-| `packages/contracts/src/hooks/EpochBudget.sol` | New: per-epoch USD emission caps (USDC base units) with epoch-indexed rollover; consumed against `usdBonusValue`, not raw task reward |
-| `packages/contracts/src/interfaces/IRewardVault.sol` | New: vault interface used by the reward hook |
-| `packages/contracts/script/DeployRewardHook.s.sol` | New: deploy script for hook + vault + budget; `FORGE_BONUS_BPS` env var |
-| `packages/contracts/script/DeployRewardHookTestnet.s.sol` | New: testnet deploy script with mock DREAMS token; `FORGE_BONUS_BPS` defaults to 750 |
-| `packages/contracts/test/TaskTokenRewardHook.t.sol` | New: reward hook test suite, incl. `bonusBps` two-step math, vault-exhaustion partial-fill round-trip, bounty multi-winner shortfall isolation, evaluator-reject reservation release |
-| `packages/contracts/test/EpochBudget.t.sol` | New: epoch budget unit tests |
-| `packages/contracts/test/RewardVault.t.sol` | New: vault unit tests |
-| `packages/contracts/test/TaskMarket.t.sol` | Update all `createTask` and acceptance calls to new signatures; evaluator-reject tests updated for `Cancelled` terminal status |
+| `packages/contracts/evm/src/libraries/LibAppStorage.sol` | Append `defaultHooks` and `taskHooks` fields to `AppStorage` |
+| `packages/contracts/evm/src/libraries/LibTaskMarket.sol` | Add `_resolveHooks`, `_dispatchAfterHooks`, `_dispatchCheckHooks`, `_onCompleteHooks`, `_onCancelHooks`, `_onExpireHooks`, `_onForfeitHooks` |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | Replace `address hookContract` with `HookConfig`; call `_buildAndCheckHooks` at task creation |
+| `packages/contracts/evm/src/facets/AcceptanceFacet.sol` | Replace single-hook dispatch with `_resolveHooks` + `_dispatchCheckHooks` / `_dispatchAfterHooks` |
+| `packages/contracts/evm/src/facets/AuctionFacet.sol` | Replace single-hook dispatch with multi-hook helpers |
+| `packages/contracts/evm/src/facets/EvaluatorFacet.sol` | Replace single-hook dispatch with multi-hook helpers; `finalizeVerdict` REJECT branch now sets `Cancelled` (not `Open`), emits `TaskCancelled`, dispatches `_onCancelHooks` |
+| `packages/contracts/evm/src/facets/AdminFacet.sol` | Add `setDefaultHooks`, `getDefaultHooks` |
+| `packages/contracts/evm/src/facets/RegistryFacet.sol` | Add `getTaskHooks` getter |
+| `packages/contracts/evm/src/interfaces/ITMPCore.sol` | Add `HookConfig`, `TaskContent` structs; add `HookCheckCompleteRejected` error |
+| `packages/contracts/evm/src/hooks/TaskTokenRewardHook.sol` | New: USD-denominated DREAMS token reward hook implementing `ITMPHook`; independent `bonusBps` (USD bonus intensity) and `dreamsPerUsdc` (exchange rate) knobs, no on-chain oracle; `_reserveForWorker` releases any stale reservation before reserving fresh |
+| `packages/contracts/evm/src/hooks/RewardVault.sol` | New: holds DREAMS tokens; only the hook can reserve/release/pay |
+| `packages/contracts/evm/src/hooks/EpochBudget.sol` | New: per-epoch USD emission caps (USDC base units) with epoch-indexed rollover; consumed against `usdBonusValue`, not raw task reward |
+| `packages/contracts/evm/src/interfaces/IRewardVault.sol` | New: vault interface used by the reward hook |
+| `packages/contracts/evm/script/DeployRewardHook.s.sol` | New: deploy script for hook + vault + budget; `FORGE_BONUS_BPS` env var |
+| `packages/contracts/evm/script/DeployRewardHookTestnet.s.sol` | New: testnet deploy script with mock DREAMS token; `FORGE_BONUS_BPS` defaults to 750 |
+| `packages/contracts/evm/test/TaskTokenRewardHook.t.sol` | New: reward hook test suite, incl. `bonusBps` two-step math, vault-exhaustion partial-fill round-trip, bounty multi-winner shortfall isolation, evaluator-reject reservation release |
+| `packages/contracts/evm/test/EpochBudget.t.sol` | New: epoch budget unit tests |
+| `packages/contracts/evm/test/RewardVault.t.sol` | New: vault unit tests |
+| `packages/contracts/evm/test/TaskMarket.t.sol` | Update all `createTask` and acceptance calls to new signatures; evaluator-reject tests updated for `Cancelled` terminal status |
 | `packages/contracts/test/TaskMarketForwarder.t.sol` | Update `createTask` calls to new signatures |
-| `packages/contracts/test/ITMP.t.sol` | Update interface compliance tests |
-| `packages/contracts/test/helpers/DiamondTestHelper.sol` | Add `setDefaultHooks` helper |
+| `packages/contracts/evm/test/ITMP.t.sol` | Update interface compliance tests |
+| `packages/contracts/evm/test/helpers/DiamondTestHelper.sol` | Add `setDefaultHooks` helper |
 | `packages/contracts/test/helpers/ITaskMarketFull.sol` | Add `setDefaultHooks`, `getDefaultHooks`, `getTaskHooks` to interface |
 | `apps/backend/src/services/contract.ts` | Add `contractGetDreamsBonusBps` |
 | `apps/backend/src/routers/wallet.router.ts` | `exchangeRate` returns `bonusBps`; `withdrawDreams` requires nonce + expiry, checked against `dreams_withdraw_nonces` |

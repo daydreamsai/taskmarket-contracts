@@ -227,15 +227,15 @@ A fresh deploy's `diamondVersion()` now reads 20 instead of 11. Live diamonds ar
 | File | Change |
 | ---- | ------ |
 | `packages/contracts/script/DiamondFullUpgrade.s.sol` | Deleted |
-| `packages/contracts/script/upgrade.sh` | Bootstrap branch replaced with a hard failure; header rewritten |
-| `packages/contracts/src/libraries/LibRevision.sol` | New — `CURRENT_REVISION` |
-| `packages/contracts/src/facets/AdminFacet.sol` | `initialize()` seeds `LibRevision.CURRENT_REVISION` |
-| `packages/contracts/src/libraries/LibAppStorage.sol` | `diamondVersion` comment no longer refers to the bootstrap |
-| `packages/contracts/script/upgrades/Rev020Upgrade.s.sol` | New — pure `Replace` of `AdminFacet`, sets version 20 |
-| `packages/contracts/test/DiamondSelectorParity.t.sol` | Rebuilt around the sequence and seed invariants |
-| `packages/contracts/test/helpers/DiamondTestHelper.sol` | `placeAtVersion` / `deployDiamondAtVersion` |
-| `packages/contracts/test/Rev012Upgrade.t.sol` … `Rev019Upgrade.t.sol` | Start from an explicitly placed revision; rev011 seed assertion removed |
-| `packages/contracts/test/Rev020Upgrade.t.sol` | New |
-| `packages/contracts/foundry.toml` | `fs_permissions` read entry; note on single-threaded test runs |
-| `packages/contracts/package.json` | `forge test -j 1` |
+| `packages/contracts/evm/script/upgrade.sh` | Bootstrap branch replaced with a hard failure; header rewritten |
+| `packages/contracts/evm/src/libraries/LibRevision.sol` | New — `CURRENT_REVISION` |
+| `packages/contracts/evm/src/facets/AdminFacet.sol` | `initialize()` seeds `LibRevision.CURRENT_REVISION` |
+| `packages/contracts/evm/src/libraries/LibAppStorage.sol` | `diamondVersion` comment no longer refers to the bootstrap |
+| `packages/contracts/evm/script/upgrades/Rev020Upgrade.s.sol` | New — pure `Replace` of `AdminFacet`, sets version 20 |
+| `packages/contracts/evm/test/DiamondSelectorParity.t.sol` | Rebuilt around the sequence and seed invariants |
+| `packages/contracts/evm/test/helpers/DiamondTestHelper.sol` | `placeAtVersion` / `deployDiamondAtVersion` |
+| `packages/contracts/evm/test/Rev012Upgrade.t.sol` … `Rev019Upgrade.t.sol` | Start from an explicitly placed revision; rev011 seed assertion removed |
+| `packages/contracts/evm/test/Rev020Upgrade.t.sol` | New |
+| `packages/contracts/evm/foundry.toml` | `fs_permissions` read entry; note on single-threaded test runs |
+| `packages/contracts/evm/package.json` | `forge test -j 1` |
 | `docs/guides/CONTRACTS_GUIDE.md` | Upgrade section no longer describes the bootstrap |

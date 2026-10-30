@@ -312,20 +312,20 @@ misconfigured escrow that cannot be corrected once a worker has claimed.
 
 | File | Change |
 | --- | --- |
-| `packages/contracts/src/facets/CoreFacet.sol` | `createTask` takes `TaskConfig` and `TaskEvaluatorConfig`; deprecated nine-parameter overload added; shared body extracted to private `_createTask`; `_applyCreationEvaluatorConfig` added |
-| `packages/contracts/src/facets/EvaluatorFacet.sol` | `assignEvaluator` delegates term validation, writes, stake pull and event to `LibTaskMarket._applyEvaluatorConfig` |
-| `packages/contracts/src/libraries/LibTaskMarket.sol` | `_applyEvaluatorConfig` added, shared by both entry points |
-| `packages/contracts/src/interfaces/ITMPCore.sol` | `TaskConfig` struct added; `createTask` declaration takes `config` and `evaluatorConfig` |
-| `packages/contracts/src/interfaces/ITMPDiamond.sol` | `createTask` declaration takes `config` and `evaluatorConfig` |
-| `packages/contracts/script/lib/FacetSelectors.sol` | `CREATE_TASK`/`LEGACY_CREATE_TASK` constants; `coreFacetSelectors()` grows to 22 |
-| `packages/contracts/script/upgrades/Rev018Upgrade.s.sol` | New: rev017 to rev018 step (Replace + Add, no Remove) |
-| `packages/contracts/script/upgrades/Rev014Upgrade.s.sol` | Uses `FacetSelectors.LEGACY_CREATE_TASK` for the selector it historically added |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | `createTask` takes `TaskConfig` and `TaskEvaluatorConfig`; deprecated nine-parameter overload added; shared body extracted to private `_createTask`; `_applyCreationEvaluatorConfig` added |
+| `packages/contracts/evm/src/facets/EvaluatorFacet.sol` | `assignEvaluator` delegates term validation, writes, stake pull and event to `LibTaskMarket._applyEvaluatorConfig` |
+| `packages/contracts/evm/src/libraries/LibTaskMarket.sol` | `_applyEvaluatorConfig` added, shared by both entry points |
+| `packages/contracts/evm/src/interfaces/ITMPCore.sol` | `TaskConfig` struct added; `createTask` declaration takes `config` and `evaluatorConfig` |
+| `packages/contracts/evm/src/interfaces/ITMPDiamond.sol` | `createTask` declaration takes `config` and `evaluatorConfig` |
+| `packages/contracts/evm/script/lib/FacetSelectors.sol` | `CREATE_TASK`/`LEGACY_CREATE_TASK` constants; `coreFacetSelectors()` grows to 22 |
+| `packages/contracts/evm/script/upgrades/Rev018Upgrade.s.sol` | New: rev017 to rev018 step (Replace + Add, no Remove) |
+| `packages/contracts/evm/script/upgrades/Rev014Upgrade.s.sol` | Uses `FacetSelectors.LEGACY_CREATE_TASK` for the selector it historically added |
 | `packages/contracts/script/DiamondFullUpgrade.s.sol` | Path C splits CoreFacet into Replace + Add; Paths A/B add both createTask selectors |
 | `packages/contracts/script/DiamondUpgrade.s.sol` | CoreFacet selector list carries both overloads |
 | `packages/contracts/docs/specs/erc8195/erc-8195.md` | Note on atomic evaluator configuration |
-| `packages/contracts/test/Rev018Upgrade.t.sol` | New: version bump, both selectors route, both selectors execute |
-| `packages/contracts/test/TaskMarket.t.sol` | Creation-with-evaluator tests, entry-point validation parity tests, legacy-overload tests |
-| `packages/contracts/test/DiamondSelectorParity.t.sol` | Pre-rev018 CoreFacet selector set for the old-state diamond |
-| `packages/contracts/test/helpers/EvaluatorConfigHelper.sol` | New: `noEvaluatorConfig()` for the many call sites that use no evaluator |
-| `packages/contracts/test/helpers/TaskConfigHelper.sol` | New: `taskConfig(...)` builders so call sites do not repeat a six-field literal |
-| `packages/contracts/test/ITMP.t.sol`, `TaskMarketForwarder.t.sol`, `TaskTokenRewardHook.t.sol`, `Rev012Upgrade.t.sol`, `Rev013Upgrade.t.sol`, `Diamond.t.sol` | Updated for the new `createTask` signature and the now-overloaded selector expression |
+| `packages/contracts/evm/test/Rev018Upgrade.t.sol` | New: version bump, both selectors route, both selectors execute |
+| `packages/contracts/evm/test/TaskMarket.t.sol` | Creation-with-evaluator tests, entry-point validation parity tests, legacy-overload tests |
+| `packages/contracts/evm/test/DiamondSelectorParity.t.sol` | Pre-rev018 CoreFacet selector set for the old-state diamond |
+| `packages/contracts/evm/test/helpers/EvaluatorConfigHelper.sol` | New: `noEvaluatorConfig()` for the many call sites that use no evaluator |
+| `packages/contracts/evm/test/helpers/TaskConfigHelper.sol` | New: `taskConfig(...)` builders so call sites do not repeat a six-field literal |
+| `packages/contracts/evm/test/ITMP.t.sol`, `TaskMarketForwarder.t.sol`, `TaskTokenRewardHook.t.sol`, `Rev012Upgrade.t.sol`, `Rev013Upgrade.t.sol`, `Diamond.t.sol` | Updated for the new `createTask` signature and the now-overloaded selector expression |

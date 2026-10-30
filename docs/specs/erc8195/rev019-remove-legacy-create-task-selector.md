@@ -311,15 +311,15 @@ the shim is gone rather than merely unreachable through one path.
 
 | File | Change |
 | --- | --- |
-| `packages/contracts/src/facets/CoreFacet.sol` | Deprecated nine-parameter `createTask` overload deleted; shared `_createTask` body folded back into the single external, `evaluatorConfig` back to `calldata` |
-| `packages/contracts/script/lib/FacetSelectors.sol` | `coreFacetSelectors()` back to 21 entries using `CoreFacet.createTask.selector`; `CREATE_TASK` constant removed; `LEGACY_CREATE_TASK` retained for the historical upgrade paths |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | Deprecated nine-parameter `createTask` overload deleted; shared `_createTask` body folded back into the single external, `evaluatorConfig` back to `calldata` |
+| `packages/contracts/evm/script/lib/FacetSelectors.sol` | `coreFacetSelectors()` back to 21 entries using `CoreFacet.createTask.selector`; `CREATE_TASK` constant removed; `LEGACY_CREATE_TASK` retained for the historical upgrade paths |
 | `packages/contracts/script/DiamondFullUpgrade.s.sol` | Path C `Remove`s the legacy selector via the running-index idiom; Paths A and B no longer `Add` it; `_legacyCreateTaskSelector()` added |
 | `packages/contracts/script/DiamondUpgrade.s.sol` | CoreFacet selector list back to its pre-rev018 shape; unused `FacetSelectors` import dropped |
-| `packages/contracts/script/upgrades/Rev019Upgrade.s.sol` | New: guards `diamondVersion == 18`, `Replace` + `Remove`, bumps to 19 |
-| `packages/contracts/script/upgrades/Rev018Upgrade.s.sol` | `CoreFacet.createTask.selector` restored in place of the removed `CREATE_TASK` constant |
-| `packages/contracts/test/Rev019Upgrade.t.sol` | New: version bump, facet replacement, legacy selector unrouted and rejected by the fallback, new selector still executes, pre-version guard |
-| `packages/contracts/test/Rev018Upgrade.t.sol` | Fixture `Add`s the legacy selector back; the legacy half of the "both selectors execute" assertion removed as unrestorable |
-| `packages/contracts/test/DiamondSelectorParity.t.sol` | Pre-rev018 fixture substitutes the legacy selector for the new one |
-| `packages/contracts/test/TaskMarket.t.sol` | Rev018's four legacy-shim behaviour tests replaced by two asserting the selector is unrouted and rejected by the fallback |
-| `packages/contracts/test/Diamond.t.sol`, `Rev012Upgrade.t.sol`, `Rev013Upgrade.t.sol` | `CoreFacet.createTask.selector` restored |
+| `packages/contracts/evm/script/upgrades/Rev019Upgrade.s.sol` | New: guards `diamondVersion == 18`, `Replace` + `Remove`, bumps to 19 |
+| `packages/contracts/evm/script/upgrades/Rev018Upgrade.s.sol` | `CoreFacet.createTask.selector` restored in place of the removed `CREATE_TASK` constant |
+| `packages/contracts/evm/test/Rev019Upgrade.t.sol` | New: version bump, facet replacement, legacy selector unrouted and rejected by the fallback, new selector still executes, pre-version guard |
+| `packages/contracts/evm/test/Rev018Upgrade.t.sol` | Fixture `Add`s the legacy selector back; the legacy half of the "both selectors execute" assertion removed as unrestorable |
+| `packages/contracts/evm/test/DiamondSelectorParity.t.sol` | Pre-rev018 fixture substitutes the legacy selector for the new one |
+| `packages/contracts/evm/test/TaskMarket.t.sol` | Rev018's four legacy-shim behaviour tests replaced by two asserting the selector is unrouted and rejected by the fallback |
+| `packages/contracts/evm/test/Diamond.t.sol`, `Rev012Upgrade.t.sol`, `Rev013Upgrade.t.sol` | `CoreFacet.createTask.selector` restored |
 | `packages/contracts/.gas-snapshot` | Regenerated |

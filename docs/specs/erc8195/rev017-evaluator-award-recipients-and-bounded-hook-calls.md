@@ -428,18 +428,18 @@ integrators in `apps/docs/src/pages/developer/hooks.md`.
 
 | File | Change |
 |------|--------|
-| `packages/contracts/src/facets/EvaluatorFacet.sol` | `assignEvaluator` self-assignment and appeal-window guards; `_validateAwardRecipients` helper called from `evaluate` and `resolveDispute` |
-| `packages/contracts/src/facets/AdminFacet.sol` | Add `minAppealWindowSecs()` getter and owner-guarded `setMinAppealWindowSecs(uint32)` setter |
-| `packages/contracts/src/libraries/LibAppStorage.sol` | Append `uint32 minAppealWindowSecs` to the end of `AppStorage` |
-| `packages/contracts/src/interfaces/ITMPCore.sol` | Add errors `EvaluatorCannotBeRequester`, `DisputeResolverCannotBeRequester`, `AppealWindowTooShort`, `InvalidMinAppealWindow`; add event `MinAppealWindowUpdated` |
-| `packages/contracts/src/interfaces/ITMPDiamond.sol` | Add the two new `AdminFacet` functions to the aggregate interface |
-| `packages/contracts/src/libraries/LibTaskMarket.sol` | Add `HOOK_MAX_RETURN_BYTES`, `HOOK_GAS_STIPEND`, `_safeHookCall`; route `_dispatchCheckHooks`, `_dispatchAfterHooks`, `_checkFundHooks` through it; add `DEFAULT_MIN_APPEAL_WINDOW_SECS` and the lazy-init `_minAppealWindowSecs` accessor |
-| `packages/contracts/script/lib/FacetSelectors.sol` | `adminFacetSelectors()` gains `minAppealWindowSecs()` and `setMinAppealWindowSecs(uint32)` |
+| `packages/contracts/evm/src/facets/EvaluatorFacet.sol` | `assignEvaluator` self-assignment and appeal-window guards; `_validateAwardRecipients` helper called from `evaluate` and `resolveDispute` |
+| `packages/contracts/evm/src/facets/AdminFacet.sol` | Add `minAppealWindowSecs()` getter and owner-guarded `setMinAppealWindowSecs(uint32)` setter |
+| `packages/contracts/evm/src/libraries/LibAppStorage.sol` | Append `uint32 minAppealWindowSecs` to the end of `AppStorage` |
+| `packages/contracts/evm/src/interfaces/ITMPCore.sol` | Add errors `EvaluatorCannotBeRequester`, `DisputeResolverCannotBeRequester`, `AppealWindowTooShort`, `InvalidMinAppealWindow`; add event `MinAppealWindowUpdated` |
+| `packages/contracts/evm/src/interfaces/ITMPDiamond.sol` | Add the two new `AdminFacet` functions to the aggregate interface |
+| `packages/contracts/evm/src/libraries/LibTaskMarket.sol` | Add `HOOK_MAX_RETURN_BYTES`, `HOOK_GAS_STIPEND`, `_safeHookCall`; route `_dispatchCheckHooks`, `_dispatchAfterHooks`, `_checkFundHooks` through it; add `DEFAULT_MIN_APPEAL_WINDOW_SECS` and the lazy-init `_minAppealWindowSecs` accessor |
+| `packages/contracts/evm/script/lib/FacetSelectors.sol` | `adminFacetSelectors()` gains `minAppealWindowSecs()` and `setMinAppealWindowSecs(uint32)` |
 | `packages/contracts/script/DiamondFullUpgrade.s.sol` | Path C gains an `Add` cut for the two new `AdminFacet` selectors, keeping it in parity with a fresh deploy |
-| `packages/contracts/script/upgrades/Rev017Upgrade.s.sol` | New upgrade step -- Replace `CoreFacet`/`AuctionFacet`/`AcceptanceFacet`/`EvaluatorFacet`, Replace+Add `AdminFacet`, bump `diamondVersion` to 17 |
-| `packages/contracts/test/Rev017Upgrade.t.sol` | New -- asserts the version bump, all five facet replacements, unbroken routing of every pre-existing selector, both added selectors, and that the getter answers with the default rather than a raw zero immediately after the cut |
-| `packages/contracts/test/TaskMarket.t.sol` | Regression coverage for Problem 1 (exploit chain, award mismatch in both mode families, dispute-resolver mismatch, both self-assignment guards, appeal-window floor) and Problem 2 (return-bomb through `_dispatchAfterHooks` and `_dispatchCheckHooks`); existing Bounty `_payAwards` tests now submit work first, since awards must go to a real submitter |
-| `packages/contracts/test/mocks/MockReturnBombHook.sol` | New -- hook returning a configurable oversized blob from selected `check*`/`on*` entry points |
+| `packages/contracts/evm/script/upgrades/Rev017Upgrade.s.sol` | New upgrade step -- Replace `CoreFacet`/`AuctionFacet`/`AcceptanceFacet`/`EvaluatorFacet`, Replace+Add `AdminFacet`, bump `diamondVersion` to 17 |
+| `packages/contracts/evm/test/Rev017Upgrade.t.sol` | New -- asserts the version bump, all five facet replacements, unbroken routing of every pre-existing selector, both added selectors, and that the getter answers with the default rather than a raw zero immediately after the cut |
+| `packages/contracts/evm/test/TaskMarket.t.sol` | Regression coverage for Problem 1 (exploit chain, award mismatch in both mode families, dispute-resolver mismatch, both self-assignment guards, appeal-window floor) and Problem 2 (return-bomb through `_dispatchAfterHooks` and `_dispatchCheckHooks`); existing Bounty `_payAwards` tests now submit work first, since awards must go to a real submitter |
+| `packages/contracts/evm/test/mocks/MockReturnBombHook.sol` | New -- hook returning a configurable oversized blob from selected `check*`/`on*` entry points |
 | `packages/contracts/.gas-snapshot` | Regenerated |
 | `apps/backend/src/scripts/smoke-evaluator.ts` | Require a distinct `EVALUATOR_PRIVATE_KEY`; appeal windows raised to the new floor |
 | `apps/backend/src/scripts/smoke-evaluator-timeout.ts` | Require a distinct `EVALUATOR_PRIVATE_KEY` |

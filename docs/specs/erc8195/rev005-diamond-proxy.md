@@ -225,23 +225,23 @@ aggregate logic surface because each facet is independently sized and deployed.
 
 | File | Change |
 |------|--------|
-| `packages/contracts/src/Diamond.sol` | New Diamond proxy contract; `fallback()` delegates by selector |
-| `packages/contracts/src/libraries/LibDiamond.sol` | Diamond storage, selector registry, `enforceIsContractOwner`, two-step ownership transfer |
-| `packages/contracts/src/libraries/LibAppStorage.sol` | New: defines `AppStorage` struct at `keccak256("taskmarket.appstorage.v1")` slot; replaces per-contract `storage` declarations |
-| `packages/contracts/src/libraries/LibTaskMarket.sol` | New: shared helpers extracted from monolith (`_requireForwarder`, `_nonReentrant*`, `_buildContext`, hook dispatch) |
-| `packages/contracts/src/facets/DiamondCutFacet.sol` | New: implements `diamondCut`; gated by `enforceIsContractOwner` |
-| `packages/contracts/src/facets/DiamondLoupeFacet.sol` | New: `facets()`, `facetFunctionSelectors()`, `supportsInterface()` |
-| `packages/contracts/src/facets/AdminFacet.sol` | New: pause, fee config, forwarder management, `transferOwnership`, `acceptOwnership`, `initialize` |
-| `packages/contracts/src/facets/CoreFacet.sol` | New: task lifecycle — create, claim, select, submit, cancel, update, forfeit, refund |
-| `packages/contracts/src/facets/AuctionFacet.sol` | New: `submitBid`, `selectLowestBidder`, `acceptAuction` |
-| `packages/contracts/src/facets/AcceptanceFacet.sol` | New: `acceptSubmission`, `acceptSubmissions` (ranked payouts) |
-| `packages/contracts/src/facets/EvaluatorFacet.sol` | New: assign, evaluate, appeal, finalizeVerdict, resolveDispute, evaluatorTimeout |
-| `packages/contracts/src/facets/RatingFacet.sol` | New: `rateTask`, `IReputationRegistry` call, `WorkerStats` updates |
-| `packages/contracts/src/facets/RegistryFacet.sol` | New: all view/getter functions |
+| `packages/contracts/evm/src/Diamond.sol` | New Diamond proxy contract; `fallback()` delegates by selector |
+| `packages/contracts/evm/src/libraries/LibDiamond.sol` | Diamond storage, selector registry, `enforceIsContractOwner`, two-step ownership transfer |
+| `packages/contracts/evm/src/libraries/LibAppStorage.sol` | New: defines `AppStorage` struct at `keccak256("taskmarket.appstorage.v1")` slot; replaces per-contract `storage` declarations |
+| `packages/contracts/evm/src/libraries/LibTaskMarket.sol` | New: shared helpers extracted from monolith (`_requireForwarder`, `_nonReentrant*`, `_buildContext`, hook dispatch) |
+| `packages/contracts/evm/src/facets/DiamondCutFacet.sol` | New: implements `diamondCut`; gated by `enforceIsContractOwner` |
+| `packages/contracts/evm/src/facets/DiamondLoupeFacet.sol` | New: `facets()`, `facetFunctionSelectors()`, `supportsInterface()` |
+| `packages/contracts/evm/src/facets/AdminFacet.sol` | New: pause, fee config, forwarder management, `transferOwnership`, `acceptOwnership`, `initialize` |
+| `packages/contracts/evm/src/facets/CoreFacet.sol` | New: task lifecycle — create, claim, select, submit, cancel, update, forfeit, refund |
+| `packages/contracts/evm/src/facets/AuctionFacet.sol` | New: `submitBid`, `selectLowestBidder`, `acceptAuction` |
+| `packages/contracts/evm/src/facets/AcceptanceFacet.sol` | New: `acceptSubmission`, `acceptSubmissions` (ranked payouts) |
+| `packages/contracts/evm/src/facets/EvaluatorFacet.sol` | New: assign, evaluate, appeal, finalizeVerdict, resolveDispute, evaluatorTimeout |
+| `packages/contracts/evm/src/facets/RatingFacet.sol` | New: `rateTask`, `IReputationRegistry` call, `WorkerStats` updates |
+| `packages/contracts/evm/src/facets/RegistryFacet.sol` | New: all view/getter functions |
 | `packages/contracts/src/TaskMarket.sol` | Deleted (replaced by Diamond + facets) |
-| `packages/contracts/script/DiamondDeploy.s.sol` | New deploy script; replaces `Deploy.s.sol` / `DeployTestnet.s.sol` |
+| `packages/contracts/evm/script/DiamondDeploy.s.sol` | New deploy script; replaces `Deploy.s.sol` / `DeployTestnet.s.sol` |
 | `packages/contracts/script/DiamondUpgrade.s.sol` | New upgrade script; replaces `Upgrade.s.sol` |
-| `packages/contracts/abi/TaskMarket.json` | Rebuilt: 207 entries merged from all 9 facets (75 functions, 33 events, 99 errors) |
+| `packages/contracts/evm/abi/TaskMarket.json` | Rebuilt: 207 entries merged from all 9 facets (75 functions, 33 events, 99 errors) |
 | `apps/backend/src/services/contract.ts` | Updated to target Diamond ABI and proxy address |
 | `test/TaskMarket.t.sol` | Updated for Diamond deploy fixture; all 234 core tests updated |
 | `test/DiamondTest.t.sol` | New: 26 Diamond-specific tests (cut, loupe, ownership) |
