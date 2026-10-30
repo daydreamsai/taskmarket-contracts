@@ -11,8 +11,8 @@ import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol"
 /// @title SponsoredTaskFactoryV2
 /// @notice Permissionless deterministic deployment of `SponsoredTasksVaultV2` clones,
 ///         with a relayable create the vault owner authorizes by signature.
-/// @dev Deployed beside the v1 factory, which keeps serving the vaults it made. The
-///      implementation, controller, and fee policy are fixed for this factory version. Creating a
+/// @dev The implementation, controller, and fee policy are fixed for this factory version. A new
+///      factory is deployed for a future implementation rather than changing existing vaults. Creating a
 ///      vault pays the one-time creation fee (`SponsoredTaskCreationFee`) from the creator: by
 ///      allowance for `createVault` and `createVaultBySig`, or by an EIP-3009 authorization bound to
 ///      the signed create for `createVaultBySigWithFeeAuthorization`.

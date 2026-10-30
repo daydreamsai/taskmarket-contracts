@@ -6,7 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SponsoredTaskCreationFee } from "../src/hooks/sponsored-task/SponsoredTaskCreationFee.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskSettler.sol";
 
 /// @notice Deploys settler mode on a remote EVM chain that has no Taskmarket Diamond: a registry,
@@ -51,7 +51,7 @@ contract DeploySponsoredTaskSettler is Script {
             vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", address(0))
         );
         SponsoredTaskSettler settler = new SponsoredTaskSettler(admin, settlers, threshold);
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(settler),
             address(feePolicy),
             registry,

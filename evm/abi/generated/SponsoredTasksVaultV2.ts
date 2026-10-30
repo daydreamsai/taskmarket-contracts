@@ -8,6 +8,11 @@
 // the same entries for non-TypeScript tooling.
 export const SponsoredTasksVaultV2ABI = [
   {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "function",
     "name": "CLAIM_TO_TYPEHASH",
     "inputs": [],

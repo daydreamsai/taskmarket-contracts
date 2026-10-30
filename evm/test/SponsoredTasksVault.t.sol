@@ -8,7 +8,7 @@ import { ERC1271WalletMock } from "@openzeppelin/contracts/mocks/ERC1271WalletMo
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 
 contract FeeOnTransferToken is ERC20 {
     constructor() ERC20("Fee token", "FEE") { }
@@ -71,11 +71,11 @@ contract RedirectingReceiveToken is ERC20 {
 
 // allocationSettlement/allocationTerms return tuples, not the Allocation struct -- the
 // whole-struct external getter tripped forge coverage --ir-minimum's stack-too-deep limit on its
-// own ABI encoding (see SponsoredTasksVault.allocationSettlement's own doc comment). Reconstructs
+// own ABI encoding (see SponsoredTasksVaultV2.allocationSettlement's own doc comment). Reconstructs
 // the full struct so every existing field-access call site stays unchanged. A free function, not
 // a contract member, since every contract in this file (the test, the invariant handler, and the
 // invariant test itself) needs it and none of them inherit from one another.
-function _vaultAllocation(SponsoredTasksVault v, bytes32 allocationId)
+function _vaultAllocation(SponsoredTasksVaultV2 v, bytes32 allocationId)
     view
     returns (SponsoredTaskTypes.Allocation memory a)
 {
@@ -111,14 +111,14 @@ contract SponsoredTasksVaultTest is Test {
 
     MockERC20 internal token;
     SponsoredTaskFeePolicy internal policy;
-    SponsoredTasksVault internal implementation;
-    SponsoredTasksVault internal vault;
+    SponsoredTasksVaultV2 internal implementation;
+    SponsoredTasksVaultV2 internal vault;
 
     function setUp() public {
         token = new MockERC20("Project", "PROJECT", 18, address(this));
         policy = new SponsoredTaskFeePolicy(policyOwner, FEE_BPS, feeRecipient);
-        implementation = new SponsoredTasksVault();
-        vault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        implementation = new SponsoredTasksVaultV2();
+        vault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         vault.initialize(VAULT_ID, address(token), owner, controller, address(policy));
 
         token.mint(owner, FUNDED);
@@ -153,14 +153,14 @@ contract SponsoredTasksVaultTest is Test {
 
     function test_FundingRejectsFeeOnTransferTokenAtomically() public {
         FeeOnTransferToken taxedToken = new FeeOnTransferToken();
-        SponsoredTasksVault taxedVault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        SponsoredTasksVaultV2 taxedVault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         taxedVault.initialize(keccak256("taxed"), address(taxedToken), owner, controller, address(policy));
         taxedToken.mint(owner, 100 ether);
 
         vm.startPrank(owner);
         taxedToken.approve(address(taxedVault), 100 ether);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenTransferAmountMismatch.selector, 100 ether, 99 ether)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenTransferAmountMismatch.selector, 100 ether, 99 ether)
         );
         taxedVault.fund(100 ether);
         vm.stopPrank();
@@ -172,14 +172,14 @@ contract SponsoredTasksVaultTest is Test {
 
     function test_FundingRejectsExtraSenderDebitAtomically() public {
         SenderTaxToken taxedToken = new SenderTaxToken();
-        SponsoredTasksVault taxedVault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        SponsoredTasksVaultV2 taxedVault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         taxedVault.initialize(keccak256("sender-taxed"), address(taxedToken), owner, controller, address(policy));
         taxedToken.mint(owner, 101 ether);
 
         vm.startPrank(owner);
         taxedToken.approve(address(taxedVault), 100 ether);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenSenderAmountMismatch.selector, 100 ether, 101 ether)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenSenderAmountMismatch.selector, 100 ether, 101 ether)
         );
         taxedVault.fund(100 ether);
         vm.stopPrank();
@@ -191,7 +191,7 @@ contract SponsoredTasksVaultTest is Test {
 
     function test_InexactOutgoingTransfersRollbackClaimsWithdrawalsFeesAndExit() public {
         FeeOnTransferToken taxedToken = new FeeOnTransferToken();
-        SponsoredTasksVault taxedVault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        SponsoredTasksVaultV2 taxedVault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         bytes32 taxedVaultId = keccak256("outgoing-taxed");
         taxedVault.initialize(taxedVaultId, address(taxedToken), owner, controller, address(policy));
         taxedToken.mint(address(taxedVault), 200 ether);
@@ -199,7 +199,7 @@ contract SponsoredTasksVaultTest is Test {
         vm.startPrank(owner);
         taxedVault.configureManager(manager, 100 ether, true);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, 10 ether, 9.9 ether)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, 10 ether, 9.9 ether)
         );
         taxedVault.withdrawAvailable(treasury, 10 ether);
         vm.stopPrank();
@@ -221,7 +221,7 @@ contract SponsoredTasksVaultTest is Test {
         vm.prank(worker);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SponsoredTasksVault.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 98.505 ether
+                SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 98.505 ether
             )
         );
         taxedVault.claim(allocationId, 0, sponsoredTaskTotal, emptyProof);
@@ -230,7 +230,7 @@ contract SponsoredTasksVaultTest is Test {
 
         vm.prank(feeRecipient);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, feeTotal, 0.495 ether)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, feeTotal, 0.495 ether)
         );
         taxedVault.claimFee(allocationId, treasury);
         assertEq(_vaultAllocation(taxedVault, allocationId).feeOutstanding, feeTotal);
@@ -249,7 +249,7 @@ contract SponsoredTasksVaultTest is Test {
     /// the named recipient with nothing, so every outgoing claim path reverts and rolls back.
     function test_RedirectingReceivePolicyRevertsClaimClaimToAndClaimFee() public {
         RedirectingReceiveToken rToken = new RedirectingReceiveToken();
-        SponsoredTasksVault rVault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        SponsoredTasksVaultV2 rVault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         rVault.initialize(keccak256("redirecting"), address(rToken), owner, controller, address(policy));
         rToken.mint(address(rVault), 200e6);
         vm.prank(owner);
@@ -274,7 +274,7 @@ contract SponsoredTasksVaultTest is Test {
         rToken.setRedirect(worker, elsewhere);
         vm.prank(worker);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 0)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 0)
         );
         rVault.claim(allocationId, 0, sponsoredTaskTotal, emptyProof);
         rToken.setRedirect(worker, address(0));
@@ -285,14 +285,16 @@ contract SponsoredTasksVaultTest is Test {
             workerKey, rVault.claimDigest(allocationId, 0, worker, destination, sponsoredTaskTotal, 0, deadline)
         );
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 0)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, sponsoredTaskTotal, 0)
         );
         rVault.claimTo(allocationId, 0, worker, destination, sponsoredTaskTotal, 0, deadline, signature, emptyProof);
         assertEq(rVault.claimNonces(worker), 0);
         assertFalse(rVault.isClaimed(allocationId, 0));
 
         vm.prank(feeRecipient);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, feeTotal, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, feeTotal, 0)
+        );
         rVault.claimFee(allocationId, destination);
         assertEq(_vaultAllocation(rVault, allocationId).feeOutstanding, feeTotal);
         assertEq(_vaultAllocation(rVault, allocationId).sponsoredTaskOutstanding, sponsoredTaskTotal);
@@ -306,13 +308,13 @@ contract SponsoredTasksVaultTest is Test {
 
     function test_ExactTransfersRejectVaultAsItsOwnRecipientWithoutMutatingAccounting() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenSenderAmountMismatch.selector, 1 ether, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.TokenSenderAmountMismatch.selector, 1 ether, 0));
         vault.withdrawAvailable(address(vault), 1 ether);
         assertEq(vault.totalWithdrawn(), 0);
         assertEq(vault.available(), FUNDED);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenSenderAmountMismatch.selector, FUNDED, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.TokenSenderAmountMismatch.selector, FUNDED, 0));
         vault.emergencyExitVault(address(vault));
         assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));
         assertEq(vault.epoch(), 1);
@@ -409,7 +411,7 @@ contract SponsoredTasksVaultTest is Test {
 
         bytes32 rejectedAllocation = keccak256("revoked-manager-allocation");
         vm.prank(controller);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.ManagerNotActive.selector, managerTwo));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ManagerNotActive.selector, managerTwo));
         vault.reserveTask(
             rejectedAllocation,
             keccak256("revoked-manager-task"),
@@ -492,12 +494,12 @@ contract SponsoredTasksVaultTest is Test {
         _reserve(ALLOCATION_ID, TASK_ID, 500 ether);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InvalidManagerCap.selector, 500 ether, 499 ether));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.InvalidManagerCap.selector, 500 ether, 499 ether));
         vault.configureManager(manager, 499 ether, true);
 
         _installSingle(ALLOCATION_ID, TASK_ID, 300 ether);
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InvalidManagerCap.selector, 300 ether, 299 ether));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.InvalidManagerCap.selector, 300 ether, 299 ether));
         vault.configureManager(manager, 299 ether, true);
 
         vm.prank(owner);
@@ -512,7 +514,7 @@ contract SponsoredTasksVaultTest is Test {
 
         uint64 currentEpoch = vault.epoch();
         vm.prank(controller);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.ManagerNotActive.selector, manager));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ManagerNotActive.selector, manager));
         vault.reserveTask(
             keccak256("next"), keccak256("next-task"), manager, 1 ether, currentEpoch, FEE_BPS, feeRecipient, TERMS_HASH
         );
@@ -526,17 +528,17 @@ contract SponsoredTasksVaultTest is Test {
 
     function test_ReserveChecksControllerEpochFeeCapAndAvailable() public {
         vm.prank(manager);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.OnlyController.selector, manager));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.OnlyController.selector, manager));
         vault.reserveTask(ALLOCATION_ID, TASK_ID, manager, 1 ether, 1, FEE_BPS, feeRecipient, TERMS_HASH);
 
         vm.prank(controller);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.AllocationEpochMismatch.selector, 2, 1));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.AllocationEpochMismatch.selector, 2, 1));
         vault.reserveTask(ALLOCATION_ID, TASK_ID, manager, 1 ether, 2, FEE_BPS, feeRecipient, TERMS_HASH);
 
         vm.prank(controller);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SponsoredTasksVault.FeeTermsMismatch.selector, uint16(51), feeRecipient, FEE_BPS, feeRecipient
+                SponsoredTasksVaultV2.FeeTermsMismatch.selector, uint16(51), feeRecipient, FEE_BPS, feeRecipient
             )
         );
         vault.reserveTask(ALLOCATION_ID, TASK_ID, manager, 1 ether, 1, 51, feeRecipient, TERMS_HASH);
@@ -544,7 +546,7 @@ contract SponsoredTasksVaultTest is Test {
         vm.prank(controller);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SponsoredTasksVault.ManagerAllowanceExceeded.selector, manager, MANAGER_CAP + 1, MANAGER_CAP
+                SponsoredTasksVaultV2.ManagerAllowanceExceeded.selector, manager, MANAGER_CAP + 1, MANAGER_CAP
             )
         );
         vault.reserveTask(ALLOCATION_ID, TASK_ID, manager, MANAGER_CAP + 1, 1, FEE_BPS, feeRecipient, TERMS_HASH);
@@ -553,7 +555,9 @@ contract SponsoredTasksVaultTest is Test {
         vm.prank(owner);
         vault.configureManager(largeManager, FUNDED + 1, true);
         vm.prank(controller);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InsufficientAvailable.selector, FUNDED + 1, FUNDED));
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTasksVaultV2.InsufficientAvailable.selector, FUNDED + 1, FUNDED)
+        );
         vault.reserveTask(ALLOCATION_ID, TASK_ID, largeManager, FUNDED + 1, 1, FEE_BPS, feeRecipient, TERMS_HASH);
     }
 
@@ -571,7 +575,7 @@ contract SponsoredTasksVaultTest is Test {
         vm.prank(controller);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SponsoredTasksVault.FeeTermsMismatch.selector, FEE_BPS, feeRecipient, uint16(100), newRecipient
+                SponsoredTasksVaultV2.FeeTermsMismatch.selector, FEE_BPS, feeRecipient, uint16(100), newRecipient
             )
         );
         vault.reserveTask(
@@ -619,24 +623,24 @@ contract SponsoredTasksVaultTest is Test {
         bytes32 root = keccak256("root");
 
         vm.prank(controller);
-        vm.expectRevert(SponsoredTasksVault.InvalidSettlementTotals.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidSettlementTotals.selector);
         vault.installSettlement(ALLOCATION_ID, TASK_ID, root, 1, 99 ether, 2 ether, 100 ether);
 
         vm.prank(controller);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.SettlementFeeTooHigh.selector, 1 ether, 0.5 ether));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.SettlementFeeTooHigh.selector, 1 ether, 0.5 ether));
         vault.installSettlement(ALLOCATION_ID, TASK_ID, root, 1, 99 ether, 1 ether, 100 ether);
 
         vm.prank(controller);
-        vm.expectRevert(SponsoredTasksVault.SettlementCommitmentRequired.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.SettlementCommitmentRequired.selector);
         vault.installSettlement(ALLOCATION_ID, TASK_ID, bytes32(0), 0, 99.5 ether, 0.5 ether, 100 ether);
 
         vm.prank(controller);
-        vm.expectRevert(SponsoredTasksVault.UnexpectedSettlementCommitment.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.UnexpectedSettlementCommitment.selector);
         vault.installSettlement(ALLOCATION_ID, TASK_ID, root, 1, 0, 0, 0);
 
         vm.prank(controller);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.SettlementExceedsAllocation.selector, 501 ether, 500 ether)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.SettlementExceedsAllocation.selector, 501 ether, 500 ether)
         );
         vault.installSettlement(ALLOCATION_ID, TASK_ID, root, 1, 500 ether, 1 ether, 501 ether);
     }
@@ -663,7 +667,7 @@ contract SponsoredTasksVaultTest is Test {
         assertTrue(vault.isClaimed(ALLOCATION_ID, 0));
 
         vm.prank(workerOne);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.ClaimAlreadyPaid.selector, ALLOCATION_ID, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ClaimAlreadyPaid.selector, ALLOCATION_ID, 0));
         vault.claim(ALLOCATION_ID, 0, amountOne, proofOne);
 
         bytes32[] memory proofTwo = new bytes32[](1);
@@ -672,7 +676,7 @@ contract SponsoredTasksVaultTest is Test {
         vault.claim(ALLOCATION_ID, 1, amountTwo, proofTwo);
 
         vm.prank(workerTwo);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.NotFeeRecipient.selector, workerTwo, feeRecipient));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.NotFeeRecipient.selector, workerTwo, feeRecipient));
         vault.claimFee(ALLOCATION_ID, treasury);
 
         vm.prank(feeRecipient);
@@ -728,15 +732,15 @@ contract SponsoredTasksVaultTest is Test {
         bytes32[] memory emptyProof = new bytes32[](0);
 
         vm.prank(makeAddr("imposter"));
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimProof.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimProof.selector);
         vault.claim(ALLOCATION_ID, 0, sponsoredTaskTotal, emptyProof);
 
         vm.prank(worker);
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimProof.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimProof.selector);
         vault.claim(ALLOCATION_ID, 0, sponsoredTaskTotal - 1, emptyProof);
 
         vm.prank(worker);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.ClaimIndexOutOfBounds.selector, 1, 1));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ClaimIndexOutOfBounds.selector, 1, 1));
         vault.claim(ALLOCATION_ID, 1, sponsoredTaskTotal, emptyProof);
     }
 
@@ -756,7 +760,7 @@ contract SponsoredTasksVaultTest is Test {
         bytes memory signature = abi.encodePacked(r, s, v);
         bytes32[] memory emptyProof = new bytes32[](0);
 
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimSignature.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimSignature.selector);
         vault.claimTo(
             ALLOCATION_ID,
             0,
@@ -774,7 +778,7 @@ contract SponsoredTasksVaultTest is Test {
         assertEq(token.balanceOf(destination), sponsoredTaskTotal);
         assertEq(vault.claimNonces(worker), 1);
 
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InvalidClaimNonce.selector, worker, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.InvalidClaimNonce.selector, worker, 1, 0));
         vault.claimTo(ALLOCATION_ID, 0, worker, destination, sponsoredTaskTotal, 0, deadline, signature, emptyProof);
     }
 
@@ -869,11 +873,11 @@ contract SponsoredTasksVaultTest is Test {
         _expectInvalidClaimSignature(worker, destination, sponsoredTaskTotal - 1, deadline, validSignature, emptyProof);
 
         vm.prank(manager);
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimProof.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimProof.selector);
         vault.claim(ALLOCATION_ID, 0, sponsoredTaskTotal, emptyProof);
 
         vm.prank(manager);
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimSignature.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimSignature.selector);
         vault.claimTo(
             ALLOCATION_ID, 0, worker, redirectedDestination, sponsoredTaskTotal, 0, deadline, validSignature, emptyProof
         );
@@ -889,7 +893,7 @@ contract SponsoredTasksVaultTest is Test {
         assertTrue(vault.isClaimed(ALLOCATION_ID, 0));
 
         vm.prank(manager);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InvalidClaimNonce.selector, worker, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.InvalidClaimNonce.selector, worker, 1, 0));
         vault.claimTo(
             ALLOCATION_ID, 0, worker, destination, sponsoredTaskTotal, 0, deadline, validSignature, emptyProof
         );
@@ -942,7 +946,7 @@ contract SponsoredTasksVaultTest is Test {
         vm.warp(deadline + 1);
 
         bytes32[] memory emptyProof = new bytes32[](0);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.ClaimExpired.selector, deadline));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ClaimExpired.selector, deadline));
         vault.claimTo(
             ALLOCATION_ID, 0, worker, worker, sponsoredTaskTotal, 0, deadline, abi.encodePacked(r, s, v), emptyProof
         );
@@ -955,14 +959,14 @@ contract SponsoredTasksVaultTest is Test {
         assertEq(vault.available(), 0);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InsufficientAvailable.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.InsufficientAvailable.selector, 1, 0));
         vault.withdrawAvailable(treasury, 1);
 
         _installSingle(ALLOCATION_ID, TASK_ID, 300 ether);
         assertEq(vault.available(), 100 ether);
         vm.prank(owner);
         vm.expectRevert(
-            abi.encodeWithSelector(SponsoredTasksVault.InsufficientAvailable.selector, 100 ether + 1, 100 ether)
+            abi.encodeWithSelector(SponsoredTasksVaultV2.InsufficientAvailable.selector, 100 ether + 1, 100 ether)
         );
         vault.withdrawAvailable(treasury, 100 ether + 1);
         _assertSolvent();
@@ -1009,15 +1013,15 @@ contract SponsoredTasksVaultTest is Test {
 
         bytes32[] memory emptyProof = new bytes32[](0);
         vm.prank(worker);
-        vm.expectRevert(SponsoredTasksVault.VaultNotActive.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotActive.selector);
         vault.claim(claimableAllocation, 0, sponsoredTaskTotal, emptyProof);
 
         vm.prank(controller);
-        vm.expectRevert(SponsoredTasksVault.VaultNotActive.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotActive.selector);
         vault.releaseTask(reservedAllocation);
 
         vm.prank(owner);
-        vm.expectRevert(SponsoredTasksVault.VaultNotActive.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotActive.selector);
         vault.fund(1);
     }
 
@@ -1027,13 +1031,13 @@ contract SponsoredTasksVaultTest is Test {
         vault.emergencyExitVault(manager);
 
         vm.prank(owner);
-        vm.expectRevert(SponsoredTasksVault.OwnershipRenunciationDisabled.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.OwnershipRenunciationDisabled.selector);
         vault.renounceOwnership();
 
         vm.prank(owner);
         vault.emergencyExitVault(owner);
         vm.prank(owner);
-        vm.expectRevert(SponsoredTasksVault.VaultNotActive.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotActive.selector);
         vault.emergencyExitVault(owner);
     }
 
@@ -1092,7 +1096,7 @@ contract SponsoredTasksVaultTest is Test {
         bytes memory signature,
         bytes32[] memory proof
     ) private {
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimSignature.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimSignature.selector);
         vault.claimTo(ALLOCATION_ID, 0, worker, destination, amount, 0, deadline, signature, proof);
         assertEq(vault.claimNonces(worker), 0);
         assertFalse(vault.isClaimed(ALLOCATION_ID, 0));
@@ -1174,12 +1178,12 @@ contract SponsoredTasksVaultHandler {
     bytes32 internal constant TERMS_HASH = keccak256("invariant-terms");
 
     MockERC20 public immutable token;
-    SponsoredTasksVault public immutable vault;
+    SponsoredTasksVaultV2 public immutable vault;
     bytes32[] private _allocationIds;
     uint256 private _nonce;
     bool private _bootstrapped;
 
-    constructor(MockERC20 token_, SponsoredTasksVault vault_) {
+    constructor(MockERC20 token_, SponsoredTasksVaultV2 vault_) {
         token = token_;
         vault = vault_;
     }
@@ -1294,14 +1298,14 @@ contract SponsoredTasksVaultInvariantTest is Test {
 
     MockERC20 internal token;
     SponsoredTaskFeePolicy internal policy;
-    SponsoredTasksVault internal vault;
+    SponsoredTasksVaultV2 internal vault;
     SponsoredTasksVaultHandler internal handler;
 
     function setUp() public {
         token = new MockERC20("Invariant Project", "IPROJECT", 18, address(this));
         policy = new SponsoredTaskFeePolicy(address(this), 50, address(this));
-        SponsoredTasksVault implementation = new SponsoredTasksVault();
-        vault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        SponsoredTasksVaultV2 implementation = new SponsoredTasksVaultV2();
+        vault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         handler = new SponsoredTasksVaultHandler(token, vault);
         policy.setFeeTerms(50, address(handler));
         vault.initialize(

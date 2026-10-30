@@ -58,8 +58,6 @@ const STANDALONE: Record<string, string> = {
   EpochBudget: 'EpochBudget.sol/EpochBudget.json',
   TaskMarketForwarder: 'TaskMarketForwarderV2.sol/TaskMarketForwarderV2.json',
   SponsoredTaskHook: 'SponsoredTaskHook.sol/SponsoredTaskHook.json',
-  SponsoredTasksVault: 'SponsoredTasksVault.sol/SponsoredTasksVault.json',
-  SponsoredTaskFactory: 'SponsoredTaskFactory.sol/SponsoredTaskFactory.json',
   SponsoredTasksVaultV2: 'SponsoredTasksVaultV2.sol/SponsoredTasksVaultV2.json',
   SponsoredTaskFactoryV2: 'SponsoredTaskFactoryV2.sol/SponsoredTaskFactoryV2.json',
   SponsoredTaskRegistry: 'SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json',

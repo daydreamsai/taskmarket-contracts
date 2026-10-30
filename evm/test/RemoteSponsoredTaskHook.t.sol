@@ -9,9 +9,9 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskSettler.sol";
 import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -35,7 +35,7 @@ contract RemoteSponsoredTaskHookTest is Test {
     RemoteSponsoredTaskHook private hook;
     MockERC20 private token;
     SponsoredTaskSettler private settler;
-    SponsoredTasksVault private vault;
+    SponsoredTasksVaultV2 private vault;
     MockERC20 private usdc;
 
     /// @dev The one-time vault creation fee the settler-mode factory takes.
@@ -53,7 +53,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         address[] memory settlers = new address[](1);
         settlers[0] = vm.addr(SETTLER_KEY);
         settler = new SponsoredTaskSettler(address(this), settlers, 1);
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(settler),
             address(feePolicy),
             registry,
@@ -63,7 +63,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         usdc.mint(address(this), CREATION_FEE);
         usdc.approve(address(factory), CREATION_FEE);
         (address v,) = factory.createVault(address(token), address(this), keccak256("remote"));
-        vault = SponsoredTasksVault(v);
+        vault = SponsoredTasksVaultV2(v);
         vault.configureManager(MANAGER, GROSS * 10, true);
         token.mint(address(this), GROSS * 10);
         token.approve(address(vault), type(uint256).max);

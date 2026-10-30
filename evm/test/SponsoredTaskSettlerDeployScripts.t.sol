@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskSettler.sol";
 import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
@@ -45,13 +45,13 @@ contract SponsoredTaskSettlerDeployScriptsTest is Test {
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         SponsoredTaskSettler settler;
-        SponsoredTaskFactory factory;
+        SponsoredTaskFactoryV2 factory;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == SponsoredTaskSettler.SettlersChanged.selector) {
                 settler = SponsoredTaskSettler(logs[i].emitter);
             }
             if (logs[i].topics[0] == SponsoredTaskRegistry.FactoryAuthorizationUpdated.selector) {
-                factory = SponsoredTaskFactory(address(uint160(uint256(logs[i].topics[1]))));
+                factory = SponsoredTaskFactoryV2(address(uint160(uint256(logs[i].topics[1]))));
             }
         }
         assertEq(settler.owner(), admin);

@@ -9,10 +9,10 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
 /// @notice FR-7 lifecycle coverage kept separate from the broad hook behavior suite.
@@ -28,7 +28,7 @@ contract SponsoredTaskForfeitReconcileTest is Test {
         (,,,,,,,, status) = h.taskAllocationSettlement(taskId);
     }
 
-    function _vaultAllocationStatus(SponsoredTasksVault v, bytes32 allocationId)
+    function _vaultAllocationStatus(SponsoredTasksVaultV2 v, bytes32 allocationId)
         private
         view
         returns (SponsoredTaskTypes.AllocationStatus status)
@@ -50,7 +50,7 @@ contract SponsoredTaskForfeitReconcileTest is Test {
     MockERC20 private usdc;
     MockERC20 private projectToken;
     SponsoredTaskHook private hook;
-    SponsoredTasksVault private vault;
+    SponsoredTasksVaultV2 private vault;
 
     function setUp() external {
         market = new MockTaskmarketForSponsoredTask();
@@ -61,12 +61,12 @@ contract SponsoredTaskForfeitReconcileTest is Test {
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
         hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
         );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256("forfeit-vault"));
-        vault = SponsoredTasksVault(vaultAddress);
+        vault = SponsoredTasksVaultV2(vaultAddress);
         vault.configureManager(MANAGER, GROSS * 100, true);
         projectToken.mint(address(this), GROSS * 100);
         projectToken.approve(address(vault), type(uint256).max);

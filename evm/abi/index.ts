@@ -17,8 +17,6 @@ export { RewardVaultABI } from './generated/RewardVault';
 export { TaskTokenRewardHookABI } from './generated/TaskTokenRewardHook';
 export { TaskMarketForwarderABI } from './generated/TaskMarketForwarder';
 export { SponsoredTaskHookABI } from './generated/SponsoredTaskHook';
-export { SponsoredTasksVaultABI } from './generated/SponsoredTasksVault';
-export { SponsoredTaskFactoryABI } from './generated/SponsoredTaskFactory';
 export { SponsoredTaskRegistryABI } from './generated/SponsoredTaskRegistry';
 export { SponsoredTaskFeePolicyABI } from './generated/SponsoredTaskFeePolicy';
 export { SponsoredTasksVaultV2ABI } from './generated/SponsoredTasksVaultV2';

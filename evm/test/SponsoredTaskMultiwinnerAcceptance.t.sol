@@ -9,9 +9,9 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -19,8 +19,8 @@ import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
     // allocationSettlement returns a tuple, not the Allocation struct -- the whole-struct
     // external getter tripped forge coverage --ir-minimum's stack-too-deep limit on its own ABI
-    // encoding (see SponsoredTasksVault.allocationSettlement's own doc comment).
-    function _allocationStatus(SponsoredTasksVault v, bytes32 allocationId)
+    // encoding (see SponsoredTasksVaultV2.allocationSettlement's own doc comment).
+    function _allocationStatus(SponsoredTasksVaultV2 v, bytes32 allocationId)
         private
         view
         returns (SponsoredTaskTypes.AllocationStatus status)
@@ -50,7 +50,7 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
     SponsoredTaskFeePolicy private feePolicy;
     SponsoredTaskRegistry private registry;
     SponsoredTaskHook private hook;
-    SponsoredTasksVault private vault;
+    SponsoredTasksVaultV2 private vault;
 
     address private workerOne;
     address private workerTwo;
@@ -68,13 +68,13 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
         registry = new SponsoredTaskRegistry(address(this));
         hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
         );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) =
             factory.createVault(address(projectToken), address(this), keccak256("multiwinner-vault"));
-        vault = SponsoredTasksVault(vaultAddress);
+        vault = SponsoredTasksVaultV2(vaultAddress);
         vault.configureManager(MANAGER, 10 * GROSS, true);
 
         projectToken.mint(address(this), 10 * GROSS);
@@ -104,17 +104,17 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
         bytes memory signatureOne = _claimSignature(WORKER_ONE_PK, 0, workerOne, DESTINATION_ONE, net[0], 0, deadline);
 
         // The signed worker, index, and destination are independent authorization boundaries.
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimSignature.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimSignature.selector);
         vault.claimTo(LOCAL_TASK, 0, workerTwo, DESTINATION_ONE, net[0], 0, deadline, signatureOne, proofOne);
 
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimSignature.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimSignature.selector);
         vault.claimTo(LOCAL_TASK, 1, workerOne, DESTINATION_ONE, net[0], 0, deadline, signatureOne, proofOne);
 
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimSignature.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimSignature.selector);
         vault.claimTo(LOCAL_TASK, 0, workerOne, MANAGER, net[0], 0, deadline, signatureOne, proofOne);
 
         // A worker cannot consume another worker's award index through the direct claim path.
-        vm.expectRevert(SponsoredTasksVault.InvalidClaimProof.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidClaimProof.selector);
         vm.prank(workerOne);
         vault.claim(LOCAL_TASK, 1, net[1], proofTwo);
 
@@ -132,10 +132,10 @@ contract SponsoredTaskMultiwinnerAcceptanceTest is Test {
         assertEq(projectToken.balanceOf(MANAGER), 0);
         assertEq(vault.totalSponsoredTaskPaid(), net[0] + net[1] + net[2]);
 
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.InvalidClaimNonce.selector, workerOne, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.InvalidClaimNonce.selector, workerOne, 1, 0));
         vault.claimTo(LOCAL_TASK, 0, workerOne, DESTINATION_ONE, net[0], 0, deadline, signatureOne, proofOne);
 
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.ClaimAlreadyPaid.selector, LOCAL_TASK, 2));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ClaimAlreadyPaid.selector, LOCAL_TASK, 2));
         vm.prank(workerThree);
         vault.claim(LOCAL_TASK, 2, net[2], proofThree);
 

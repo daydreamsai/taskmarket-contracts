@@ -6,7 +6,7 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 
 /// @dev An upgradeable-style token whose admin can switch on a 1% transfer fee after launch.
 contract SwitchableFeeToken is ERC20 {
@@ -56,13 +56,13 @@ contract SponsoredTasksVaultTokenLockoutTest is Test {
     address internal worker = makeAddr("worker");
 
     SwitchableFeeToken internal token;
-    SponsoredTasksVault internal vault;
+    SponsoredTasksVaultV2 internal vault;
 
     function setUp() public {
         token = new SwitchableFeeToken();
         SponsoredTaskFeePolicy policy = new SponsoredTaskFeePolicy(makeAddr("policyOwner"), FEE_BPS, feeRecipient);
-        SponsoredTasksVault implementation = new SponsoredTasksVault();
-        vault = SponsoredTasksVault(Clones.clone(address(implementation)));
+        SponsoredTasksVaultV2 implementation = new SponsoredTasksVaultV2();
+        vault = SponsoredTasksVaultV2(Clones.clone(address(implementation)));
         vault.initialize(keccak256("lockout-vault"), address(token), owner, controller, address(policy));
 
         token.mint(owner, FUNDED);
@@ -87,15 +87,15 @@ contract SponsoredTasksVaultTokenLockoutTest is Test {
     function test_FeeSwitchedOnAfterFunding_BlocksClaimsFeesAndWithdrawals() public {
         bytes32[] memory proof = new bytes32[](0);
         vm.prank(worker);
-        vm.expectPartialRevert(SponsoredTasksVault.TokenRecipientAmountMismatch.selector);
+        vm.expectPartialRevert(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector);
         vault.claim(ALLOCATION_ID, 0, 99.5 ether, proof);
 
         vm.prank(feeRecipient);
-        vm.expectPartialRevert(SponsoredTasksVault.TokenRecipientAmountMismatch.selector);
+        vm.expectPartialRevert(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector);
         vault.claimFee(ALLOCATION_ID, treasury);
 
         vm.prank(owner);
-        vm.expectPartialRevert(SponsoredTasksVault.TokenRecipientAmountMismatch.selector);
+        vm.expectPartialRevert(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector);
         vault.withdrawAvailable(treasury, 10 ether);
 
         assertEq(token.balanceOf(address(vault)), FUNDED, "nothing has left the vault");

@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
@@ -74,10 +74,10 @@ contract SponsoredTaskDeployScriptsTest is Test {
     }
 
     /// @dev The factory is the only address the registry authorizes in this script.
-    function _factoryOf(Vm.Log[] memory logs) private pure returns (SponsoredTaskFactory factory) {
+    function _factoryOf(Vm.Log[] memory logs) private pure returns (SponsoredTaskFactoryV2 factory) {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == SponsoredTaskRegistry.FactoryAuthorizationUpdated.selector) {
-                factory = SponsoredTaskFactory(address(uint160(uint256(logs[i].topics[1]))));
+                factory = SponsoredTaskFactoryV2(address(uint160(uint256(logs[i].topics[1]))));
             }
         }
     }
@@ -97,7 +97,7 @@ contract SponsoredTaskDeployScriptsTest is Test {
     function test_DeploySponsoredTask_FactoryTakesTheConfiguredCreationFee() public {
         vm.recordLogs();
         new DeploySponsoredTask().run();
-        SponsoredTaskFactory factory = _factoryOf(vm.getRecordedLogs());
+        SponsoredTaskFactoryV2 factory = _factoryOf(vm.getRecordedLogs());
 
         assertEq(address(factory.feeToken()), address(usdc));
         assertEq(factory.creationFee(), 1_000_000);

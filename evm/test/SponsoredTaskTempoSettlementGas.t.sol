@@ -9,9 +9,9 @@ import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -36,7 +36,7 @@ contract SponsoredTaskTempoSettlementGasTest is Test {
 
     MockTaskmarketForSponsoredTask private market;
     SponsoredTaskHook private hook;
-    SponsoredTasksVault private vault;
+    SponsoredTasksVaultV2 private vault;
     address private usdcAddress;
 
     function setUp() external {
@@ -48,12 +48,12 @@ contract SponsoredTaskTempoSettlementGasTest is Test {
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
         hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
         );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256("tempo-gas"));
-        vault = SponsoredTasksVault(vaultAddress);
+        vault = SponsoredTasksVaultV2(vaultAddress);
         vault.configureManager(MANAGER, GROSS * 100, true);
         projectToken.mint(address(this), GROSS * 100);
         projectToken.approve(address(vault), type(uint256).max);

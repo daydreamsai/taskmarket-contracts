@@ -12,7 +12,6 @@ import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTas
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
 import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 
 contract VaultV2ControllerStandIn { }
@@ -376,7 +375,7 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
 
         // Exited: every signed action is refused, whatever its signature.
         bytes memory next = _configureSig(ownerKey, manager, 1, true, 1, deadline);
-        vm.expectRevert(SponsoredTasksVault.VaultNotActive.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotActive.selector);
         vault.configureManagerBySig(manager, 1, true, deadline, next);
     }
 
@@ -459,9 +458,9 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
     }
 
     function test_RevertWhen_FundingAmountIsZeroOrFunderIsZero() public {
-        vm.expectRevert(SponsoredTasksVault.GrossAmountRequired.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.GrossAmountRequired.selector);
         vault.fundWithAuthorization(funder, 0, 0, vm.getBlockTimestamp() + 1 hours, bytes32(0), "");
-        vm.expectRevert(SponsoredTasksVault.ZeroAddress.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.ZeroAddress.selector);
         vault.fundWithAuthorization(address(0), 1, 0, vm.getBlockTimestamp() + 1 hours, bytes32(0), "");
     }
 
@@ -485,7 +484,7 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
         bytes32 nonce = keccak256("fund-1");
         bytes memory sig =
             _receiveAuthorization(funderKey, funder, address(vault), 10e6, vm.getBlockTimestamp() + 1 hours, nonce);
-        vm.expectRevert(SponsoredTasksVault.VaultNotActive.selector);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotActive.selector);
         vault.fundWithAuthorization(funder, 10e6, 0, vm.getBlockTimestamp() + 1 hours, nonce, sig);
     }
 
@@ -562,7 +561,7 @@ contract SponsoredTasksVaultV2RedirectTest is VaultV2Base {
 
         rToken.setRedirect(worker, elsewhere);
         vm.prank(worker);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, award, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, award, 0));
         vault.claim(allocationId, 0, award, proof);
 
         rToken.setRedirect(destination, elsewhere);
@@ -570,11 +569,13 @@ contract SponsoredTasksVaultV2RedirectTest is VaultV2Base {
         bytes memory signature =
             _sign(workerKey, vault.claimDigest(allocationId, 0, worker, destination, award, 0, deadline));
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, award, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, award, 0));
         vault.claimTo(allocationId, 0, worker, destination, award, 0, deadline, signature, proof);
 
         vm.prank(feeRecipient);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, feeTotal, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, feeTotal, 0)
+        );
         vault.claimFee(allocationId, destination);
 
         assertEq(vault.claimNonces(worker), 0);
@@ -595,7 +596,7 @@ contract SponsoredTasksVaultV2RedirectTest is VaultV2Base {
         bytes memory sig = _withdrawSig(recipient, 40e6, 0, deadline);
         rToken.setRedirect(recipient, elsewhere);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, 40e6, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, 40e6, 0));
         vault.withdrawAvailableBySig(recipient, 40e6, deadline, sig);
         assertEq(vault.ownerNonce(), 0);
         assertEq(vault.available(), 200e6);
@@ -613,7 +614,7 @@ contract SponsoredTasksVaultV2RedirectTest is VaultV2Base {
         bytes memory sig = _exitSig(recipient, 0, deadline);
         rToken.setRedirect(recipient, elsewhere);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVault.TokenRecipientAmountMismatch.selector, 200e6, 0));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.TokenRecipientAmountMismatch.selector, 200e6, 0));
         vault.emergencyExitVaultBySig(recipient, deadline, sig);
         assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));
         assertEq(vault.ownerNonce(), 0);

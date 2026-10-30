@@ -5,9 +5,12 @@
 Implemented in `evm/src/hooks/sponsored-task/SponsoredTasksVaultV2.sol` and
 `evm/src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol`. This spec covers two contracts. It does
 not change the Diamond, `AppStorage`, `SponsoredTaskHook`, `SponsoredTaskRegistry` or any
-deployed vault. `SponsoredTasksVault` (v1)
-moves the bodies of `fund`, `configureManager`, `withdrawAvailable` and `emergencyExitVault` into
-internal functions that v2 reuses. Every v1 entry point behaves exactly as before.
+deployed vault.
+
+The original vault and factory (v1) have been removed from the source. No v1 vault was ever used,
+and keeping two vault models meant a deploy script could still produce a stack whose owner actions
+are not gasless. `SponsoredTasksVaultV2` now holds the whole vault, with its storage layout,
+EIP-712 domain, functions and events unchanged, so the v2 contracts already deployed match it.
 
 ## Problem
 
@@ -123,20 +126,13 @@ rule above.
 
 ## Existing vaults
 
-Vaults made by the v1 factory keep their v1 implementation and gain nothing. An owner whose wallet
-can sign an EIP-7702 authorization can act on them gaslessly through a delegated EOA, since the vault
-still sees the owner as `msg.sender`. An owner who cannot does so through a v2 vault.
-
 ## Deployment
 
-Code only so far. On each chain:
-
-1. Deploy `SponsoredTaskFactoryV2(hook, feePolicy, registry, creationFee)` with the same hook and
-   fee policy as the v1 factory (`make deploy-sponsored-task-vault-v2 <chain>`).
-2. The registry owner calls `SponsoredTaskRegistry.setFactory(factoryV2, true)`. The script prints
-   that call when the deployer is not the owner.
-3. Record both addresses in the chain registry so the backend indexes the new factory and relays
-   the new calls.
+`make deploy-sponsored-task <chain>` (hook mode) and `make deploy-sponsored-task-settler <chain>`
+(settler mode) deploy `SponsoredTaskFactoryV2` directly and authorize it in the registry. On a chain
+whose registry still authorizes a v1 factory, the registry owner calls
+`SponsoredTaskRegistry.setFactory(v1Factory, false)` so no v1 vault can be created again. Record the
+factory in the chain registry so the backend indexes it and relays its calls.
 
 ## Tests
 

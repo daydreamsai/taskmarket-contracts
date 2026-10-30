@@ -6,7 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SponsoredTaskCreationFee } from "../src/hooks/sponsored-task/SponsoredTaskCreationFee.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 
@@ -29,7 +29,7 @@ import { DeploySponsoredTaskProxy } from "./lib/DeploySponsoredTaskProxy.sol";
 /// The factory's creation fee (token, amount and recipient) is fixed here, at deployment, and has
 /// no owner: a different fee or recipient takes a new factory.
 ///
-/// Vault creation is permissionless once this stack is live (SponsoredTaskFactory.createVault
+/// Vault creation is permissionless once this stack is live (SponsoredTaskFactoryV2.createVault
 /// has no access control): any project can spin up its own vault against the deployed
 /// registry, paying the factory's one-time creation fee. This script deploys only the shared,
 /// protocol-owned pieces -- the hook, the default fee policy, and the registry/factory pair that
@@ -65,7 +65,7 @@ contract DeploySponsoredTask is Script {
             uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0))),
             vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", address(0))
         );
-        SponsoredTaskFactory factory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(hook),
             address(feePolicy),
             registry,

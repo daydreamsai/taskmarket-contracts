@@ -9,9 +9,9 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskSettler.sol";
 import {
     ISponsoredTaskSettlerAuthority
@@ -50,9 +50,9 @@ contract SponsoredTaskSettlerTest is Test {
     MockERC20 private token;
     SponsoredTaskFeePolicy private feePolicy;
     SponsoredTaskRegistry private registry;
-    SponsoredTaskFactory private factory;
+    SponsoredTaskFactoryV2 private factory;
     SponsoredTaskSettler private settler;
-    SponsoredTasksVault private vault;
+    SponsoredTasksVaultV2 private vault;
     bytes32 private allocationId;
 
     function setUp() public {
@@ -61,12 +61,12 @@ contract SponsoredTaskSettlerTest is Test {
         feePolicy = new SponsoredTaskFeePolicy(address(this), FEE_BPS, FEE_RECIPIENT);
         registry = new SponsoredTaskRegistry(address(this));
         settler = new SponsoredTaskSettler(admin, _one(vm.addr(keyA)), 1);
-        factory = new SponsoredTaskFactory(
+        factory = new SponsoredTaskFactoryV2(
             address(settler), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
         );
         registry.setFactory(address(factory), true);
         (address v,) = factory.createVault(address(token), address(this), keccak256("remote"));
-        vault = SponsoredTasksVault(v);
+        vault = SponsoredTasksVaultV2(v);
         vault.configureManager(MANAGER, GROSS * 10, true);
         token.mint(address(this), GROSS * 10);
         token.approve(address(vault), type(uint256).max);
@@ -360,7 +360,7 @@ contract SponsoredTaskSettlerTest is Test {
     }
 
     function testReserveRejectsVaultNotControlled() public {
-        SponsoredTaskFactory otherFactory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 otherFactory = new SponsoredTaskFactoryV2(
             address(this), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
         );
         registry.setFactory(address(otherFactory), true);
@@ -383,7 +383,7 @@ contract SponsoredTaskSettlerTest is Test {
         bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
         vm.expectRevert(
             abi.encodeWithSelector(
-                SponsoredTasksVault.ManagerAllowanceExceeded.selector, MANAGER, GROSS * 11, GROSS * 10
+                SponsoredTasksVaultV2.ManagerAllowanceExceeded.selector, MANAGER, GROSS * 11, GROSS * 10
             )
         );
         settler.reserve(r, sigs);

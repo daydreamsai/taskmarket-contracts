@@ -10,9 +10,9 @@ import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { SponsoredTaskFactory } from "../src/hooks/sponsored-task/SponsoredTaskFactory.sol";
+import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
-import { SponsoredTasksVault } from "../src/hooks/sponsored-task/SponsoredTasksVault.sol";
+import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
 
@@ -35,9 +35,9 @@ contract SponsoredTaskHookValidationTest is Test {
     MockERC20 private projectToken;
     SponsoredTaskFeePolicy private feePolicy;
     SponsoredTaskRegistry private registry;
-    SponsoredTaskFactory private factory;
+    SponsoredTaskFactoryV2 private factory;
     SponsoredTaskHook private hook;
-    SponsoredTasksVault private vault;
+    SponsoredTasksVaultV2 private vault;
 
     function setUp() external {
         market = new MockTaskmarketForSponsoredTask();
@@ -47,12 +47,12 @@ contract SponsoredTaskHookValidationTest is Test {
         registry = new SponsoredTaskRegistry(address(this));
         hook = new SponsoredTaskHook(address(market), IERC20(address(usdc)), registry);
 
-        factory = new SponsoredTaskFactory(
+        factory = new SponsoredTaskFactoryV2(
             address(hook), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
         );
         registry.setFactory(address(factory), true);
         (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256("hook-vault"));
-        vault = SponsoredTasksVault(vaultAddress);
+        vault = SponsoredTasksVaultV2(vaultAddress);
         vault.configureManager(MANAGER, GROSS * 100, true);
         projectToken.mint(address(this), GROSS * 100);
         projectToken.approve(address(vault), type(uint256).max);
@@ -117,13 +117,13 @@ contract SponsoredTaskHookValidationTest is Test {
 
     function test_FundRejectsVaultWithWrongController() external {
         address foreignController = address(new DummyController());
-        SponsoredTaskFactory otherFactory = new SponsoredTaskFactory(
+        SponsoredTaskFactoryV2 otherFactory = new SponsoredTaskFactoryV2(
             foreignController, address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
         );
         registry.setFactory(address(otherFactory), true);
         (address foreignVaultAddress,) =
             otherFactory.createVault(address(projectToken), address(this), keccak256("foreign-vault"));
-        SponsoredTasksVault foreignVault = SponsoredTasksVault(foreignVaultAddress);
+        SponsoredTasksVaultV2 foreignVault = SponsoredTasksVaultV2(foreignVaultAddress);
         foreignVault.configureManager(MANAGER, GROSS * 100, true);
 
         bytes32 termsHash = hook.currentTaskTermsHash(TASK_ID);
@@ -292,5 +292,5 @@ contract SponsoredTaskHookValidationTest is Test {
 }
 
 /// @dev A trivial contract with real code, standing in for a Safe-compatible controller whose
-///      only requirement (per `SponsoredTaskFactory`'s own constructor check) is having code.
+///      only requirement (per `SponsoredTaskFactoryV2`'s own constructor check) is having code.
 contract DummyController { }
