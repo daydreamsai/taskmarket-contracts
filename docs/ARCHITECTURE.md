@@ -127,11 +127,17 @@ forwarder that does not implement `pgtrPaymentAmount()` is accepted only for a z
 
 ## Fund Recovery Invariant
 
-`refundExpired()` is explicitly exempt from all hook checks and MUST always be callable once
-a task has expired. The design rule is: any code path that extends `expiryTime` must ensure
-the extension only covers the duration of active work (evaluation window, appeal window), and
-only while funds are legitimately locked. No hook, evaluator, or dispute resolver may block
-a requester from recovering escrowed funds after all deadlines have passed.
+`refundExpired()` is explicitly exempt from all hook checks and is callable by anyone once a task
+has expired, except where submitted work must be judged first. Since rev025, a Bounty or Benchmark
+without an evaluator that holds live submissions reverts `SubmissionsExist` while the decision
+window is open and `DecisionWindowLapsed` after it. The permissionless exits for those cases are
+`requesterTimeout` (an abandoned task: refunds the requester and records a negative requester
+signal), `evaluatorTimeout`, `finalizeVerdict` and `settleLapsedReview`. None of them reads the
+caller, so none depends on the relayer. The design rule is: any code path that extends
+`expiryTime` must ensure the extension only covers the duration of active work (evaluation window,
+appeal window), and only while funds are legitimately locked. No hook, evaluator, or dispute
+resolver may block escrowed funds from leaving through one of these exits after all deadlines have
+passed.
 
 When an evaluator is assigned and `submitWork` is called, `expiryTime` is extended to
 `max(expiryTime, block.timestamp + evaluationWindow)` so that `refundExpired` cannot fire
