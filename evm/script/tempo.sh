@@ -3,7 +3,7 @@
 #   make deploy 42431|4217
 #   make deploy-forwarder 42431|4217
 #   make upgrade 42431|4217 [revNNN]
-#   make deploy-sponsored-task|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock 42431|4217
+#   make deploy-sponsored-task|deploy-remote-sponsored-task-hook|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock 42431|4217
 #
 # Usage: script/tempo.sh <action> <42431|4217> [revNNN]
 #
@@ -36,7 +36,7 @@ esac
 export DRY_RUN
 
 usage() {
-  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
+  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|deploy-remote-sponsored-task-hook|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
   exit 1
 }
 
@@ -57,6 +57,12 @@ case "$ACTION" in
     REQUIRED=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT
       FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT FORGE_SPONSORED_TASK_ADMIN)
     OPTIONAL=(FORGE_SPONSORED_TASK_CREATION_FEE_USDC FORGE_SPONSORED_TASK_TOKEN_FEE_BPS)
+    ;;
+  deploy-remote-sponsored-task-hook)
+    SCRIPT=script/DeployRemoteSponsoredTaskHook.s.sol:DeployRemoteSponsoredTaskHook; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN)
+    OPTIONAL=()
     ;;
   upgrade-sponsored-task)
     SCRIPT=script/UpgradeSponsoredTask.s.sol:UpgradeSponsoredTask; SCRIPT_VERIFY=1
