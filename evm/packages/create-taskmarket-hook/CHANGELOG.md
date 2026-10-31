@@ -1,5 +1,12 @@
 # create-taskmarket-hook
 
+## 0.2.2
+
+### Patch Changes
+
+- 12c96e4: The package's repository link now points at its folder in the `taskmarket-contracts` repository, `evm/packages/create-taskmarket-hook`, where the EVM contracts and their tools live. Scaffolded projects are unchanged.
+- 1ad0a83: The generated lifecycle test now also creates its task against Taskmarket contracts whose `createTask` takes version 2 settlement terms (with an accept window for a reserved worker), so it keeps compiling and passing when the pinned contracts move to that version.
+
 ## 0.2.1
 
 ### Patch Changes
