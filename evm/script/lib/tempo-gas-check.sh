@@ -49,7 +49,11 @@ for i in $(seq 0 $((COUNT - 1))); do
   fi
   # Send it on the fork so the next estimate sees its effect. The limit here is fork-only, and the
   # fee is zero (the fork runs with --base-fee 0) so the replay never needs the fee token.
-  SEND="$(printf '%s' "$TX" | jq -c --arg gas "$(printf '0x%x' $((EST + EST / 5)))" '. + {gas: $gas, maxFeePerGas: "0x0", maxPriorityFeePerGas: "0x0"}')"
+  # The headroom is capped at LIMIT: a fork of a node with a 30M block gas limit (a local anvil)
+  # refuses a larger limit outright, and an estimate near the cap would otherwise get one.
+  SEND_GAS=$((EST + EST / 5))
+  [ "$SEND_GAS" -gt "$LIMIT" ] && SEND_GAS="$LIMIT"
+  SEND="$(printf '%s' "$TX" | jq -c --arg gas "$(printf '0x%x' "$SEND_GAS")" '. + {gas: $gas, maxFeePerGas: "0x0", maxPriorityFeePerGas: "0x0"}')"
   HASH="$(cast rpc --rpc-url "$RPC" eth_sendTransaction "$SEND" | tr -d '"[:space:]')"
   STATUS="$(cast receipt --rpc-url "$RPC" "$HASH" status 2>/dev/null | awk '{print $1}')"
   if [ "$STATUS" != "1" ] && [ "$STATUS" != "true" ]; then
