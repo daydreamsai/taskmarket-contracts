@@ -199,6 +199,10 @@ library LibTaskCreation {
             address h = hookConfig.contracts[i];
             if (h == address(0)) revert ITMPCore.InvalidHookAddress();
             if (h.code.length == 0) revert ITMPCore.InvalidHookAddress();
+            // F-06 Security Fix: Prevent arbitrary unverified hooks on staked tasks (honeypot prevention)
+            if (terms.stakeRequired && !s.allowlistedHooks[h]) {
+                revert ITMPCore.InvalidHookAddress(); // or custom UnallowlistedHookForStakedTask
+            }
             for (uint256 j; j < defaultLen; j++) {
                 if (s.defaultHooks[j] == h) revert ITMPCore.DuplicateHookAddress();
             }
