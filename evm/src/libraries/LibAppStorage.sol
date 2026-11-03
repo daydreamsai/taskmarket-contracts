@@ -131,6 +131,7 @@ struct AppStorage {
     // Rev027: the funding pool contract a project's budget lives in, set once by
     // ProjectFacet.initFundingPool and never changed. Zero until then.
     address fundingPool;
+    mapping(address => bool) allowlistedHooks;
 }
 
 library LibAppStorage {
