@@ -47,7 +47,11 @@ library LibTaskCreation {
         // than one that only becomes evaluator-gated a moment later.
         _applyCreationEvaluatorConfig(taskId, requester, evaluatorConfig, s);
 
-        _buildAndCheckHooks(taskId, hookConfig, s);
+        // Rev028: every task created after the cut is a Task Hook V2 task. hookConfig.contracts
+        // holds the requester's V2 hooks (after the protocol defaults); hookConfig.data is empty or
+        // abi.encode(bytes[] configs), one configuration per requester hook. A V1-only hook reverts
+        // HookV1Retired. Below rev028 the rev027 V1 build runs instead.
+        LibHooks._attach(taskId, hookConfig);
         _announceAndBook(s, taskId, requester, reservedWorker);
     }
 
@@ -182,31 +186,5 @@ library LibTaskCreation {
         }
         // The reward is the whole payment of an evaluator-less create.
         LibGuards._requireFunding(s, s.tasks[taskId].reward);
-    }
-
-    function _buildAndCheckHooks(bytes32 taskId, ITMPCore.HookConfig calldata hookConfig, AppStorage storage s)
-        private
-    {
-        uint256 defaultLen = s.defaultHooks.length;
-        uint256 reqLen = hookConfig.contracts.length;
-        if (defaultLen == 0 && reqLen == 0) return;
-        if (defaultLen + reqLen > LibTaskLimits.maxHooks(s)) revert ITMPCore.TooManyHooks();
-        address[] storage th = s.taskHooks[taskId];
-        for (uint256 i; i < defaultLen; i++) {
-            th.push(s.defaultHooks[i]);
-        }
-        for (uint256 i; i < reqLen; i++) {
-            address h = hookConfig.contracts[i];
-            if (h == address(0)) revert ITMPCore.InvalidHookAddress();
-            if (h.code.length == 0) revert ITMPCore.InvalidHookAddress();
-            for (uint256 j; j < defaultLen; j++) {
-                if (s.defaultHooks[j] == h) revert ITMPCore.DuplicateHookAddress();
-            }
-            for (uint256 j; j < i; j++) {
-                if (hookConfig.contracts[j] == h) revert ITMPCore.DuplicateHookAddress();
-            }
-            th.push(h);
-        }
-        LibHooks._checkFundHooks(taskId, th, hookConfig.data, s);
     }
 }

@@ -42,6 +42,12 @@ const DIAMOND_FACETS = [
   'FeedbackFacet.sol/FeedbackFacet.json',
   'WorkerFacet.sol/WorkerFacet.json',
   'ProjectFacet.sol/ProjectFacet.json',
+  // rev028: Task Hook V2 views, settings, per-action data and the settlement record.
+  'HooksV2Facet.sol/HooksV2Facet.json',
+  // rev028: the internal hook dispatch. Its functions are callable only by the diamond itself,
+  // but it emits the V1 hook events (HookRegistered, HookCallFailed) and raises the hook errors
+  // the indexer and the backend's error map read, so its ABI belongs in the union.
+  'HookDispatchFacet.sol/HookDispatchFacet.json',
 ];
 
 // Standalone contracts deployed at their own addresses. The indexer polls each of
@@ -63,6 +69,11 @@ const STANDALONE: Record<string, string> = {
   SponsoredTaskRegistry: 'SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json',
   SponsoredTaskFeePolicy: 'SponsoredTaskFeePolicy.sol/SponsoredTaskFeePolicy.json',
   FundingPool: 'FundingPool.sol/FundingPool.json',
+  // rev028 Task Hook V2 hooks.
+  PayoutGateHook: 'PayoutGateHook.sol/PayoutGateHook.json',
+  SponsoredTaskHookV2: 'SponsoredTaskHookV2.sol/SponsoredTaskHookV2.json',
+  RemoteSponsoredTaskHookV2: 'RemoteSponsoredTaskHookV2.sol/RemoteSponsoredTaskHookV2.json',
+  TaskTokenRewardHookV2: 'TaskTokenRewardHookV2.sol/TaskTokenRewardHookV2.json',
 };
 
 type AbiEntry = Record<string, unknown>;

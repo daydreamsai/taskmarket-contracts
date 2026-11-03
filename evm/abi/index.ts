@@ -22,3 +22,7 @@ export { SponsoredTaskFeePolicyABI } from './generated/SponsoredTaskFeePolicy';
 export { SponsoredTasksVaultV2ABI } from './generated/SponsoredTasksVaultV2';
 export { SponsoredTaskFactoryV2ABI } from './generated/SponsoredTaskFactoryV2';
 export { FundingPoolABI } from './generated/FundingPool';
+// The rev028 V2 hook ABIs (PayoutGateHook, SponsoredTaskHookV2, RemoteSponsoredTaskHookV2,
+// TaskTokenRewardHookV2) are generated under ./generated but not re-exported here: nothing reads
+// them yet, and every consumer of this index type-checks each export (the backend's tsc ran out of
+// heap with them). Import one from './generated/<Name>' when a consumer needs it.

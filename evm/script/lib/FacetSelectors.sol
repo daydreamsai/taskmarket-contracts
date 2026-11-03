@@ -14,6 +14,8 @@ import { RegistryFacet } from "../../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
+import { HookDispatchFacet } from "../../src/facets/HookDispatchFacet.sol";
+import { HooksV2Facet } from "../../src/facets/HooksV2Facet.sol";
 import { ITMPDiamond } from "../../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../../src/interfaces/ITMPTerms.sol";
 import { ITMPReservation } from "../../src/interfaces/ITMPReservation.sol";
@@ -324,15 +326,12 @@ library FacetSelectors {
     }
 
     function registryFacetSelectors() internal pure returns (bytes4[] memory s) {
-        bytes4[] memory base = registryFacetSelectorsThroughRev025();
-        bytes4[] memory added = registryFacetSelectorsAddedRev026();
-        s = new bytes4[](base.length + added.length);
-        for (uint256 i; i < base.length; ++i) {
-            s[i] = base[i];
-        }
-        for (uint256 i; i < added.length; ++i) {
-            s[base.length + i] = added[i];
-        }
+        s = _concat(registryFacetSelectorsThroughRev026(), settlementViewSelectorsMovedRev028());
+    }
+
+    /// @dev The RegistryFacet selector set as it stood through rev027.
+    function registryFacetSelectorsThroughRev026() internal pure returns (bytes4[] memory s) {
+        s = _concat(registryFacetSelectorsThroughRev025(), registryFacetSelectorsAddedRev026());
     }
 
     /// @dev rev026: the escrow liability views.
@@ -379,15 +378,69 @@ library FacetSelectors {
 
     /// @dev rev025: the settlement terms surface plus the settlement calls moved off CoreFacet,
     ///      less normalizeTerms, which rev026 removed.
+    /// @dev rev028: the settlement views move to RegistryFacet (settlementViewSelectorsMovedRev028).
     function settlementFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = _concat(settlementFacetSelectorsThroughRev026(), settlementFacetSelectorsAddedRev027());
+        s = _without(
+            _without(
+                _concat(settlementFacetSelectorsThroughRev026(), settlementFacetSelectorsAddedRev027()),
+                settlementViewSelectorsMovedRev028()
+            ),
+            settlementSelectorsMovedToAcceptanceRev028()
+        );
+    }
+
+    /// @dev The rev026 SettlementFacet set less what this build's SettlementFacet no longer serves
+    ///      (rev028 moved the views to RegistryFacet and settleLapsedReview to AcceptanceFacet). The
+    ///      historical rev027 step Replaces this list, so a test that runs it with this build's
+    ///      bytecode never routes a selector to a facet that lacks it.
+    function settlementFacetSelectorsThroughRev026ServedNow() internal pure returns (bytes4[] memory s) {
+        s = _without(
+            _without(settlementFacetSelectorsThroughRev026(), settlementViewSelectorsMovedRev028()),
+            settlementSelectorsMovedToAcceptanceRev028()
+        );
+    }
+
+    /// @dev rev027's added settlement selectors less getReservation, which this build serves from
+    ///      RegistryFacet.
+    function settlementFacetSelectorsAddedRev027ServedNow() internal pure returns (bytes4[] memory s) {
+        s = _without(settlementFacetSelectorsAddedRev027(), rev027SelectorsServedByRegistryNow());
+    }
+
+    function rev027SelectorsServedByRegistryNow() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = RegistryFacet.getReservation.selector;
+    }
+
+    /// @dev rev028: settleLapsedReview moves to AcceptanceFacet, selector unchanged.
+    function settlementSelectorsMovedToAcceptanceRev028() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = AcceptanceFacet.settleLapsedReview.selector;
+    }
+
+    /// @dev rev028: the steady-state AcceptanceFacet set (acceptFacetSelectors stays the historical
+    ///      list the earlier step scripts Replace).
+    function acceptFacetSelectorsRev028() internal pure returns (bytes4[] memory s) {
+        s = _concat(acceptFacetSelectors(), settlementSelectorsMovedToAcceptanceRev028());
+    }
+
+    /// @dev rev028: the settlement views RegistryFacet serves from rev028 on, selectors unchanged, so
+    ///      SettlementFacet fits under the contract size limit.
+    function settlementViewSelectorsMovedRev028() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = RegistryFacet.getTaskTerms.selector;
+        s[1] = RegistryFacet.getTaskClock.selector;
+        s[2] = RegistryFacet.termsBounds.selector;
+        s[3] = RegistryFacet.getReservation.selector;
+        s[4] = RegistryFacet.isSettling.selector;
+        s[5] = RegistryFacet.MAX_SUBMISSION_WINNERS.selector;
+        s[6] = RegistryFacet.reviewDeadline.selector;
     }
 
     /// @dev rev027: decline, the reservation view and the permissionless requester timeout.
     function settlementFacetSelectorsAddedRev027() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = SettlementFacet.declineReservation.selector;
-        s[1] = SettlementFacet.getReservation.selector;
+        s[1] = RegistryFacet.getReservation.selector;
         s[2] = SettlementFacet.requesterTimeout.selector;
     }
 
@@ -411,16 +464,16 @@ library FacetSelectors {
     function settlementFacetSelectorsAdded() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](11);
         s[0] = NORMALIZE_TERMS;
-        s[1] = SettlementFacet.getTaskTerms.selector;
-        s[2] = SettlementFacet.termsBounds.selector;
-        s[3] = SettlementFacet.reviewDeadline.selector;
+        s[1] = RegistryFacet.getTaskTerms.selector;
+        s[2] = RegistryFacet.termsBounds.selector;
+        s[3] = RegistryFacet.reviewDeadline.selector;
         s[4] = SettlementFacet.rejectDelivery.selector;
         s[5] = SettlementFacet.requestRevision.selector;
-        s[6] = SettlementFacet.settleLapsedReview.selector;
-        s[7] = SettlementFacet.MAX_SUBMISSION_WINNERS.selector;
+        s[6] = AcceptanceFacet.settleLapsedReview.selector;
+        s[7] = RegistryFacet.MAX_SUBMISSION_WINNERS.selector;
         s[8] = SettlementFacet.releaseClaim.selector;
-        s[9] = SettlementFacet.isSettling.selector;
-        s[10] = SettlementFacet.getTaskClock.selector;
+        s[9] = RegistryFacet.isSettling.selector;
+        s[10] = RegistryFacet.getTaskClock.selector;
     }
 
     /// @dev rev025: the selectors CoreFacet served through rev024 that rev025 Replaces onto
@@ -477,5 +530,43 @@ library FacetSelectors {
         s[18] = ProjectFacet.fund.selector;
         s[19] = ProjectFacet.claim.selector;
         s[20] = ProjectFacet.refundProjectTask.selector;
+    }
+
+    /// @dev rev028: every selector rev028 Adds.
+    function selectorsAddedRev028() internal pure returns (bytes4[] memory s) {
+        s = _concat(hookDispatchFacetSelectors(), hooksV2FacetSelectors());
+    }
+
+    /// @dev rev028: the internal hook dispatch, callable only by the diamond itself. Every
+    ///      selector is new in rev028.
+    function hookDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[7] = HookDispatchFacet.hookCall.selector;
+        s[0] = HookDispatchFacet.hookAttach.selector;
+        s[1] = HookDispatchFacet.hookReadManifest.selector;
+        s[2] = HookDispatchFacet.hookBefore.selector;
+        s[3] = HookDispatchFacet.hookObserve.selector;
+        s[4] = HookDispatchFacet.hookCheckCompleteV1.selector;
+        s[5] = HookDispatchFacet.hookAcceptV2.selector;
+        s[6] = HookDispatchFacet.hookSettle.selector;
+    }
+
+    /// @dev rev028: Task Hook V2 views, owner settings, per-action data and the settlement record.
+    ///      Every selector is new in rev028.
+    function hooksV2FacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](13);
+        s[11] = HooksV2Facet.callTaskHook.selector;
+        s[12] = HooksV2Facet.taskCallerRoles.selector;
+        s[0] = HooksV2Facet.getTaskHooksV2.selector;
+        s[1] = HooksV2Facet.getTaskHookVersion.selector;
+        s[2] = HooksV2Facet.getTaskSettlement.selector;
+        s[3] = HooksV2Facet.getDefaultHooksV2.selector;
+        s[4] = HooksV2Facet.hookCapabilityGas.selector;
+        s[5] = HooksV2Facet.maxHookFeeBps.selector;
+        s[6] = HooksV2Facet.hookCallSeq.selector;
+        s[7] = HooksV2Facet.setDefaultHooksV2.selector;
+        s[8] = HooksV2Facet.setHookCapabilityGas.selector;
+        s[9] = HooksV2Facet.setMaxHookFeeBps.selector;
+        s[10] = HooksV2Facet.withActionData.selector;
     }
 }

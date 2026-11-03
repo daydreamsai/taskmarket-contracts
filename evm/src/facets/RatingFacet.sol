@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -39,6 +41,8 @@ contract RatingFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
+        // Rev028: guarded so a V2 hook called here cannot re-enter the diamond.
+        LibGuards._nonReentrantBefore(s);
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -58,6 +62,7 @@ contract RatingFacet {
         }
 
         if (s.taskWorkerRated[taskId][worker]) revert ITMPCore.WorkerAlreadyRated();
+        LibHooks._before(s, taskId, LibHooksV2.A_RATE, worker, bytes32(0));
         s.taskWorkerRated[taskId][worker] = true;
 
         if (task.rating == 0) {
@@ -70,6 +75,8 @@ contract RatingFacet {
         emit ITMPCore.TaskRated(taskId, worker, rating, raterAgentId);
 
         LibFeedback.worker(s, taskId, workerAgentId, rating, task.mode, feedbackURI, feedbackHash);
+        LibHooks._observe(s, taskId, LibHooksV2.A_RATE, true);
+        LibGuards._nonReentrantAfter(s);
     }
 
     /// @notice Bühlmann credibility of a worker's reputation (0-1000).

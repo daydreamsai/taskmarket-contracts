@@ -45,6 +45,9 @@ contract SwapRewardHookTest is Test, DiamondTestHelper {
         vm.startPrank(owner);
 
         diamond = deployDiamond(owner, usdc, feeRecipient, feeBps);
+        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
+        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
+        placeAtVersion(address(diamond), 27);
         forwarder = new TaskMarketForwarderV2(usdc, address(diamond), relayer);
         dreamsToken = new MockUSDC();
 

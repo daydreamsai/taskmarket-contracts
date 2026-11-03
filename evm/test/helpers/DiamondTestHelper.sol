@@ -18,6 +18,8 @@ import { SettlementFacet } from "../../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../../src/facets/FeedbackFacet.sol";
 import { WorkerFacet } from "../../src/facets/WorkerFacet.sol";
 import { ProjectFacet } from "../../src/facets/ProjectFacet.sol";
+import { HookDispatchFacet } from "../../src/facets/HookDispatchFacet.sol";
+import { HooksV2Facet } from "../../src/facets/HooksV2Facet.sol";
 import { FundingPool } from "../../src/FundingPool.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { ITMPProject } from "../../src/interfaces/ITMPProject.sol";
@@ -58,7 +60,7 @@ abstract contract DiamondTestHelper is Test {
     /// @dev Deploys every facet and returns the full Add cut. Separate from deployDiamond so the
     ///      ten facet cuts do not share one stack frame with the deploy.
     function _facetCuts() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](13);
+        cuts = new IDiamondCut.FacetCut[](15);
         cuts[0] = IDiamondCut.FacetCut(
             address(new DiamondCutFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors()
         );
@@ -75,7 +77,7 @@ abstract contract DiamondTestHelper is Test {
             address(new AuctionFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.auctionFacetSelectors()
         );
         cuts[5] = IDiamondCut.FacetCut(
-            address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectors()
+            address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectorsRev028()
         );
         cuts[6] = IDiamondCut.FacetCut(
             address(new EvaluatorFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.evalFacetSelectors()
@@ -97,6 +99,14 @@ abstract contract DiamondTestHelper is Test {
         );
         cuts[12] = IDiamondCut.FacetCut(
             address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()
+        );
+        cuts[13] = IDiamondCut.FacetCut(
+            address(new HookDispatchFacet()),
+            IDiamondCut.FacetCutAction.Add,
+            FacetSelectors.hookDispatchFacetSelectors()
+        );
+        cuts[14] = IDiamondCut.FacetCut(
+            address(new HooksV2Facet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.hooksV2FacetSelectors()
         );
     }
 

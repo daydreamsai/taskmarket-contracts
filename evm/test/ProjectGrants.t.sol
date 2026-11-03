@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
+import { ITMPHooksV2 } from "../src/interfaces/ITMPHooksV2.sol";
 import { FundingPool } from "../src/FundingPool.sol";
 import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
@@ -109,6 +110,38 @@ contract ProjectGrantsTest is DiamondTestHelper {
 
     function _opTask(address op, uint256 reward) internal returns (bytes32) {
         return abi.decode(_relay(op, 0, _taskCall(reward)), (bytes32));
+    }
+
+    // -------------------------------------------------------------------------
+    // Caller roles (rev028 callTaskHook): Project
+    // -------------------------------------------------------------------------
+
+    function _roles(bytes32 taskId, address who) internal view returns (uint32) {
+        return ITMPHooksV2(address(market)).taskCallerRoles(taskId, who);
+    }
+
+    function test_CallerRolesOnProjectTasks() public {
+        uint32 requesterRole = 1 << 0;
+        uint32 projectRole = 1 << 1;
+        uint32 strangerRole = uint32(1) << 31;
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Operator, true, true));
+        bytes32 ownerTask = _opTask(owner, REWARD);
+        bytes32 opTask = _opTask(operator, REWARD);
+
+        assertEq(_roles(ownerTask, owner), requesterRole | projectRole, "owner on its own task");
+        assertEq(_roles(ownerTask, operator), projectRole, "granted operator on the owner's task");
+        assertEq(_roles(opTask, operator), requesterRole | projectRole, "operator of record");
+        assertEq(_roles(opTask, owner), projectRole, "owner on the operator's task");
+        assertEq(_roles(ownerTask, stranger), strangerRole);
+
+        // A granted operator that has not accepted holds no project role.
+        _grant(otherOperator, _wideOpen());
+        assertEq(_roles(ownerTask, otherOperator), strangerRole, "unaccepted grant");
+
+        // Revoked: no longer a project operator, though still the creator of its own task.
+        _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, operator)));
+        assertEq(_roles(ownerTask, operator), strangerRole, "revoked operator");
+        assertTrue(_roles(opTask, operator) & projectRole != 0, "creator of the task");
     }
 
     function _cancel(address who, bytes32 taskId) internal returns (bool ok) {

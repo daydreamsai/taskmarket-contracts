@@ -163,6 +163,9 @@ contract DiamondReentrancyTest is DiamondTestHelper {
         token = new ReentrantToken();
         vm.startPrank(owner);
         market = deployDiamond(owner, address(token), feeRecipient, FEE_BPS);
+        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
+        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
+        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(token));
         market.addForwarder(address(forwarder));
         vm.stopPrank();
@@ -419,6 +422,9 @@ contract ForwarderReentrancyTest is DiamondTestHelper {
         token = new ReentrantToken();
         vm.startPrank(owner);
         market = deployDiamond(owner, address(token), owner, 500);
+        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
+        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
+        placeAtVersion(address(market), 27);
         forwarder = new TaskMarketForwarderV2(address(token), address(market), address(token));
         market.addForwarder(address(forwarder));
         vm.stopPrank();

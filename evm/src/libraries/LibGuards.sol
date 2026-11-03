@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { LibHooksV2 } from "./LibHooksV2.sol";
 import { AppStorage } from "./LibAppStorage.sol";
 import { LibProject } from "./LibProject.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -37,10 +38,14 @@ library LibGuards {
     function _nonReentrantBefore(AppStorage storage s) internal {
         if (s.reentrancyStatus == ENTERED) revert ReentrancyGuardReentrantCall();
         s.reentrancyStatus = ENTERED;
+        // Rev028: the caller of the action under way, for the V2 hook context's actor.
+        LibHooksV2.setActor(msg.sender);
     }
 
     function _nonReentrantAfter(AppStorage storage s) internal {
         s.reentrancyStatus = NOT_ENTERED;
+        // Rev028: the priorStatus snapshot belongs to the action that just ended.
+        LibHooksV2.clearSnap();
     }
 
     // -------------------------------------------------------------------------

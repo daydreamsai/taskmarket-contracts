@@ -17,6 +17,8 @@ import { RatingFacet } from "../src/facets/RatingFacet.sol";
 import { RegistryFacet } from "../src/facets/RegistryFacet.sol";
 import { SettlementFacet } from "../src/facets/SettlementFacet.sol";
 import { FeedbackFacet } from "../src/facets/FeedbackFacet.sol";
+import { HookDispatchFacet } from "../src/facets/HookDispatchFacet.sol";
+import { HooksV2Facet } from "../src/facets/HooksV2Facet.sol";
 import { DeployTarget } from "./lib/DeployTarget.sol";
 import { FacetSelectors } from "./lib/FacetSelectors.sol";
 import { DeployFundingPool } from "./lib/DeployFundingPool.sol";
@@ -138,6 +140,8 @@ contract DiamondDeploy is Script {
         console.log("FeedbackFacet:      ", cuts[10].facetAddress);
         console.log("WorkerFacet:        ", cuts[11].facetAddress);
         console.log("ProjectFacet:       ", cuts[12].facetAddress);
+        console.log("HookDispatchFacet:  ", cuts[13].facetAddress);
+        console.log("HooksV2Facet:       ", cuts[14].facetAddress);
         console.log("FundingPool implementation:", poolImpl);
         console.log("FundingPool proxy:         ", pool);
     }
@@ -153,13 +157,14 @@ contract DiamondDeploy is Script {
         address rating,
         address registry
     ) internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](13);
+        cuts = new IDiamondCut.FacetCut[](15);
         cuts[0] = IDiamondCut.FacetCut(cut, IDiamondCut.FacetCutAction.Add, FacetSelectors.cutFacetSelectors());
         cuts[1] = IDiamondCut.FacetCut(loupe, IDiamondCut.FacetCutAction.Add, FacetSelectors.loupeFacetSelectors());
         cuts[2] = IDiamondCut.FacetCut(admin, IDiamondCut.FacetCutAction.Add, FacetSelectors.adminFacetSelectors());
         cuts[3] = IDiamondCut.FacetCut(core, IDiamondCut.FacetCutAction.Add, FacetSelectors.coreFacetSelectors());
         cuts[4] = IDiamondCut.FacetCut(auction, IDiamondCut.FacetCutAction.Add, FacetSelectors.auctionFacetSelectors());
-        cuts[5] = IDiamondCut.FacetCut(accept, IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectors());
+        cuts[5] =
+            IDiamondCut.FacetCut(accept, IDiamondCut.FacetCutAction.Add, FacetSelectors.acceptFacetSelectorsRev028());
         cuts[6] = IDiamondCut.FacetCut(eval, IDiamondCut.FacetCutAction.Add, FacetSelectors.evalFacetSelectors());
         cuts[7] = IDiamondCut.FacetCut(rating, IDiamondCut.FacetCutAction.Add, FacetSelectors.ratingFacetSelectors());
         cuts[8] =
@@ -170,6 +175,24 @@ contract DiamondDeploy is Script {
         cuts[10] = _feedbackCut();
         cuts[11] = _workerCut();
         cuts[12] = _projectCut();
+        cuts[13] = _hookDispatchCut();
+        cuts[14] = _hooksV2Cut();
+    }
+
+    /// @dev rev028: the internal hook dispatch. Its own frame keeps _buildCuts under the stack limit.
+    function _hookDispatchCut() internal returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(
+            address(new HookDispatchFacet()),
+            IDiamondCut.FacetCutAction.Add,
+            FacetSelectors.hookDispatchFacetSelectors()
+        );
+    }
+
+    /// @dev rev028: Task Hook V2 views, settings and the settlement record.
+    function _hooksV2Cut() internal returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut(
+            address(new HooksV2Facet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.hooksV2FacetSelectors()
+        );
     }
 
     /// @dev Its own frame keeps _buildCuts under the stack limit.

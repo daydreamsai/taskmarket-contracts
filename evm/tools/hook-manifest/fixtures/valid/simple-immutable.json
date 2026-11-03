@@ -1,5 +1,6 @@
 {
-  "manifestVersion": "1.0.0",
+  "manifestVersion": "2.0.0",
+  "hookVersion": 1,
   "identity": {
     "name": "Simple immutable hook",
     "slug": "simple-immutable-hook",

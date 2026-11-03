@@ -6,6 +6,8 @@ import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
+import { LibSettlement } from "../libraries/LibSettlement.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
@@ -30,31 +32,6 @@ contract SettlementFacet {
     // -------------------------------------------------------------------------
     // Terms
     // -------------------------------------------------------------------------
-
-    /// @notice Get a task's settlement terms. A task created before rev025 that was terminal at
-    ///         the rev025 cut was never normalized and reads as version 0.
-    function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory) {
-        return LibAppStorage.appStorage().taskTerms[taskId];
-    }
-
-    /// @notice Get a task's delivery and review clock: when the current delivery landed
-    ///         (deliveredAt, zero while none is under review), when the decision clock started
-    ///         (decisionStartAt), how many revisions the requester has used, and the resubmission
-    ///         deadline of an open revision request (revisionDueAt, zero when none is open).
-    ///         All fields read zero for a task with no clock record.
-    function getTaskClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory) {
-        return LibAppStorage.appStorage().taskClocks[taskId];
-    }
-
-    /// @notice Return the effective bounds on requester-chosen settlement terms. Each reads as
-    ///         its compiled default until the owner sets it.
-    function termsBounds()
-        external
-        view
-        returns (uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions)
-    {
-        (minWindowSecs, maxWindowSecs, maxRejectFeeBps, maxRevisions) = LibTerms.bounds(LibAppStorage.appStorage());
-    }
 
     // -------------------------------------------------------------------------
     // Settlement calls
@@ -81,6 +58,7 @@ contract SettlementFacet {
         if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
         if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
         LibReview.requireDecisionOpen(s, taskId, task);
+        LibHooks._before(s, taskId, LibHooksV2.A_REJECT_SUBMISSION, worker, bytes32(0));
 
         s.taskRejectedWorkers[taskId][worker] = true;
         // Decrement by the worker's full submission count so that workers who submitted
@@ -95,6 +73,7 @@ contract SettlementFacet {
         }
 
         emit ITMPCore.SubmissionRejected(taskId, worker);
+        LibHooks._observe(s, taskId, LibHooksV2.A_REJECT_SUBMISSION, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -105,6 +84,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         address requester = LibGuards._effectiveSender(s);
@@ -153,6 +133,7 @@ contract SettlementFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -190,6 +171,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         address worker = LibGuards._effectiveSender(s);
@@ -256,6 +238,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         address requester = LibGuards._effectiveSender(s);
@@ -273,6 +256,7 @@ contract SettlementFacet {
             LibReview.requireDecisionOpen(s, taskId, task);
             revert ITMPCore.SubmissionsExist();
         }
+        LibHooks._before(s, taskId, LibHooksV2.A_CANCEL, address(0), bytes32(0));
 
         task.status = ITMPCore.TaskStatus.Cancelled;
         uint256 refundAmount = task.reward;
@@ -293,7 +277,7 @@ contract SettlementFacet {
         }
 
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refundAmount);
-        LibHooks._onCancelHooks(taskId, s);
+        LibHooks._onCancelHooksStrict(taskId);
         LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
@@ -321,6 +305,7 @@ contract SettlementFacet {
             return;
         }
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
@@ -379,6 +364,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         address worker = LibGuards._effectiveSender(s);
@@ -405,12 +391,6 @@ contract SettlementFacet {
         LibGuards._nonReentrantAfter(s);
     }
 
-    /// @notice A task's reserved worker and accept-by time; both zero for a task without one.
-    function getReservation(bytes32 taskId) external view returns (address worker, uint256 acceptBy) {
-        AppStorage storage s = LibAppStorage.appStorage();
-        return (s.reservedWorkers[taskId], LibTerms.acceptBy(s, taskId));
-    }
-
     /// @dev An open task with a reserved worker whose accept-by time has passed.
     function _lapsed(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private view returns (bool) {
         return task.status == ITMPCore.TaskStatus.Open && s.reservedWorkers[taskId] != address(0)
@@ -434,29 +414,6 @@ contract SettlementFacet {
     // Review window (Claim, Pitch and Auction without an evaluator)
     // -------------------------------------------------------------------------
 
-    /// @notice Whether the diamond is inside a state-changing call (its reentrancy lock is held), as
-    ///         during settlement while check hooks are dispatched. Lets a hook tell a settlement in
-    ///         progress from one that finished.
-    function isSettling() external view returns (bool) {
-        return LibAppStorage.appStorage().reentrancyStatus == LibGuards.ENTERED;
-    }
-
-    /// @notice Most winners one Bounty or Benchmark settlement may pay.
-    // solhint-disable-next-line func-name-mixedcase
-    function MAX_SUBMISSION_WINNERS() external pure returns (uint256) {
-        return LibTaskMarket.MAX_SUBMISSION_WINNERS;
-    }
-
-    /// @notice End of the current review window, or zero when no delivery awaits review. While a
-    ///         revision is open, the deadline the superseded delivery gets if none is resubmitted.
-    function reviewDeadline(bytes32 taskId) external view returns (uint256) {
-        AppStorage storage s = LibAppStorage.appStorage();
-        ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
-        uint256 start = clock.deliveredAt != 0 ? clock.deliveredAt : clock.revisionDueAt;
-        if (start == 0) return 0;
-        return start + LibReview.reviewWindow(s.taskTerms[taskId]);
-    }
-
     /// @notice Reject a delivery inside its review window. The worker is paid the reject fee less
     ///         the platform fee and cannot take the task again; the rest of the escrow reopens the
     ///         task or returns to the requester per the task's rejectOutcome.
@@ -466,6 +423,7 @@ contract SettlementFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = _requireRequesterReview(taskId, s);
@@ -473,7 +431,8 @@ contract SettlementFacet {
         if (block.timestamp > deadline) revert ITMPCore.ReviewWindowClosed();
 
         address worker = task.worker;
-        uint256 rejectFee = _payRejectFee(task, t, worker, s);
+        LibHooks._before(s, taskId, LibHooksV2.A_REJECT_SUBMISSION, worker, bytes32(0));
+        uint256 rejectFee = _payRejectFee(taskId, task, t, worker, s);
         uint256 stakeForfeited = _settleRejectedStake(taskId, task, worker, s);
 
         s.taskRejectedWorkers[taskId][worker] = true;
@@ -487,7 +446,7 @@ contract SettlementFacet {
         emit ITMPCore.DeliveryRejected(taskId, worker, rejectFee, stakeForfeited);
         _applyRejectOutcome(taskId, task, t);
 
-        LibHooks._onForfeitHooks(taskId, worker, s);
+        LibHooks._onForfeitHooksStrict(taskId, worker);
         LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
     }
@@ -523,49 +482,6 @@ contract SettlementFacet {
         LibGuards._nonReentrantAfter(s);
     }
 
-    /// @notice Pay the worker for a delivery whose review window lapsed undecided, exactly as an
-    ///         accept would (permissionless). Check hooks are not consulted: a lapsed review must
-    ///         settle, so only the onComplete after-hooks run.
-    function settleLapsedReview(bytes32 taskId) external {
-        AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireNotPaused(s);
-        LibGuards._nonReentrantBefore(s);
-        uint256 balanceBefore = LibEscrow.balance(s);
-
-        ITMPCore.Task storage task = s.tasks[taskId];
-        _requireDelivered(taskId, task, s);
-        uint256 deadline = LibReview.requireReviewDeadline(s, taskId, LibTerms.terms(s, taskId));
-        if (block.timestamp <= deadline) revert ITMPCore.ReviewWindowOpen();
-
-        address worker = task.worker;
-        LibReview.clear(s.taskClocks[taskId]);
-        task.status = ITMPCore.TaskStatus.Accepted;
-        s.workerStats[worker].completedTasks++;
-        s.taskAwarded[taskId][worker] = true;
-
-        uint256 payment = _payLapsedReview(taskId, task, worker, s);
-
-        emit ITMPCore.ReviewLapsed(taskId, worker);
-
-        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({ worker: worker, amount: payment, rank: 1 });
-        LibHooks._onCompleteHooks(
-            taskId,
-            s,
-            ITMPCore.Verdict({
-                issued: true,
-                verdictType: ITMPCore.VerdictType.APPROVE,
-                score: 1000,
-                confidence: 1000,
-                criteriaFlags: new bytes32[](0),
-                evidenceHash: bytes32(0),
-                awards: awards
-            })
-        );
-        LibEscrow.release(s, taskId, balanceBefore);
-        LibGuards._nonReentrantAfter(s);
-    }
-
     function _requireRequesterReview(bytes32 taskId, AppStorage storage s)
         private
         view
@@ -587,35 +503,10 @@ contract SettlementFacet {
         ) revert ITMPCore.DeliverableRequired();
     }
 
-    /// @dev Pays the worker as acceptSubmission does and returns the gross payment.
-    function _payLapsedReview(bytes32 taskId, ITMPCore.Task storage task, address worker, AppStorage storage s)
-        private
-        returns (uint256 payment)
-    {
-        bool auction = task.mode == AUCTION;
-        payment = auction ? task.stakeAmount : task.reward;
-        uint256 fee = (payment * task.feeBps) / 10000;
-        if (fee > 0) s.totalFeesCollected += fee;
-        if (!s.usdcToken.transfer(worker, payment - fee)) revert ITMPCore.WorkerPaymentFailed();
-        if (fee > 0) {
-            if (!s.usdcToken.transfer(s.feeRecipient, fee)) revert ITMPCore.FeeTransferFailed();
-        }
-        if (task.mode == CLAIM && task.stakeAmount > 0) {
-            if (!s.usdcToken.transfer(worker, task.stakeAmount)) revert ITMPCore.StakeReturnFailed();
-            emit ITMPCore.StakeReturned(taskId, worker, task.stakeAmount);
-        }
-        if (auction) {
-            uint256 refund = s.taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
-            if (refund > 0) {
-                if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.AuctionRefundFailed();
-            }
-        }
-        emit ITMPCore.TaskCompleted(taskId, task.requester, worker, payment - fee, fee);
-    }
-
     /// @dev Pays the reject fee (on the reward, or the settled price on an auction) to the
     ///      worker less the platform fee, and takes it out of the task's escrow.
     function _payRejectFee(
+        bytes32 taskId,
         ITMPCore.Task storage task,
         ITMPCore.TaskTerms storage t,
         address worker,
@@ -635,6 +526,13 @@ contract SettlementFacet {
         if (platformFee > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, platformFee)) revert ITMPCore.FeeTransferFailed();
         }
+        _tallyPaid(taskId, rejectFee - platformFee, platformFee);
+    }
+
+    /// @dev Rev028: worker and protocol-fee amounts toward the settlement record.
+    function _tallyPaid(bytes32 taskId, uint256 net, uint256 fee) private {
+        LibSettlement.add(taskId, LibSettlement.WORKER, net);
+        LibSettlement.add(taskId, LibSettlement.PROTOCOL_FEE, fee);
     }
 
     /// @dev A delivered worker's claim stake always comes back on reject, whatever the reject fee:
@@ -721,6 +619,7 @@ contract SettlementFacet {
 
         if (evaluatorForfeited > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, evaluatorForfeited)) revert ITMPCore.ForfeitTransferFailed();
+            LibSettlement.add(taskId, LibSettlement.FORFEITED, evaluatorForfeited);
             emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, evaluatorForfeited);
         }
 
@@ -774,6 +673,7 @@ contract SettlementFacet {
 
         if (evaluatorForfeited > 0) {
             if (!s.usdcToken.transfer(s.feeRecipient, evaluatorForfeited)) revert ITMPCore.ForfeitTransferFailed();
+            LibSettlement.add(taskId, LibSettlement.FORFEITED, evaluatorForfeited);
             emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, evaluatorForfeited);
         }
 
@@ -798,5 +698,10 @@ contract SettlementFacet {
 
         // NORMATIVE: onExpire MUST NOT block fund recovery. Always try-catch (dispatchAfterHooks).
         LibHooks._onExpireHooks(taskId, s);
+    }
+
+    /// @dev Rev028: the status before this action writes it, for the V2 hook context.
+    function _snap(bytes32 taskId, AppStorage storage s) private {
+        LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
     }
 }

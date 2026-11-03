@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { LibSettlement } from "./LibSettlement.sol";
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { TMP_AUCTION, TMP_CLAIM } from "../interfaces/ITMPModes.sol";
@@ -61,6 +62,8 @@ library LibTerms {
     ///         their own destinations. The caller clears the stake and emits its event.
     function payWorkerPenalty(AppStorage storage s, bytes32 taskId, uint256 amount) internal {
         if (amount == 0) return;
+        // Rev028: a forfeited worker stake counts toward the settlement record.
+        LibSettlement.add(taskId, LibSettlement.FORFEITED, amount);
         bool ok;
         if (terms(s, taskId).penaltyTo == ITMPCore.PenaltyTo.Protocol) {
             s.totalFeesCollected += amount;

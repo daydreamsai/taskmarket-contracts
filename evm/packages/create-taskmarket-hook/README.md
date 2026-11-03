@@ -14,9 +14,16 @@ From a source checkout, run this from the package directory:
 node bin/create-taskmarket-hook.mjs <project-name> --taskmarket <address>
 ```
 
+`--hook-version <1|2>` picks the hook interface and defaults to `1` (`BaseTMPHook`, `ITMPHook`, with
+its local lifecycle test). `--hook-version 2` generates a Task Hook V2 (`ITMPHookV2`, rev028 and
+later) project: it extends `BaseTMPHookV2`, declares its callbacks in `hookCapabilities()` and ships
+unit tests for the interface, the capability declaration and the diamond-only caller check. The
+pinned `taskmarket-contracts` commit does not contain the V2 sources yet, so a V2 project builds
+only against a checkout that has them.
+
 `--network <base-sepolia|tempo-moderato>` picks the deploy target and defaults to `base-sepolia`.
 `tempo-moderato` generates a `foundry.toml` with a `tempo` profile and a `tempo_moderato` RPC
 alias, an `.env.example` that names the TIP-20 fee token (Tempo has no native gas token), and
 README deploy steps that verify through Sourcify at `https://contracts.tempo.xyz`.
 
-The generated project's README contains reproducible, commit-pinned installation commands for Taskmarket, OpenZeppelin, and forge-std, plus build, test, deployment, and verification instructions for the chosen network. It also emits a runnable local Taskmarket lifecycle integration test: configure one generated hook as a protocol default, create a task with two generated custom hooks, prove their registration and default-then-custom ordering, submit work, accept it, and observe all three generated hook callbacks. Dependencies are installed directly because Taskmarket's nested Foundry gitlinks are not independently fetchable.
+The generated project's README contains reproducible, commit-pinned installation commands for Taskmarket, OpenZeppelin, and forge-std, plus build, test, deployment, and verification instructions for the chosen network. The legacy V1 project also emits a runnable local Taskmarket lifecycle integration test: configure one generated hook as a protocol default, create a task with two generated custom hooks, prove their registration and default-then-custom ordering, submit work, accept it, and observe all three generated hook callbacks. Dependencies are installed directly because Taskmarket's nested Foundry gitlinks are not independently fetchable.

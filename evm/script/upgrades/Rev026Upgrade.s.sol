@@ -102,7 +102,7 @@ contract Rev026Upgrade is Script {
         cuts[1] = IDiamondCut.FacetCut(
             address(new SettlementFacet()),
             IDiamondCut.FacetCutAction.Replace,
-            FacetSelectors.settlementFacetSelectorsThroughRev026()
+            FacetSelectors.settlementFacetSelectorsThroughRev026ServedNow()
         );
         cuts[2] = IDiamondCut.FacetCut(
             address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()

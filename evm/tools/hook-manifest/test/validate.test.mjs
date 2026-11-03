@@ -56,13 +56,123 @@ test("valid immutable, proxy, multi-chain, and portal-ready fixtures validate", 
   assert.deepEqual(validate(portalReady()), []);
 });
 
+const simpleV2 = () => fixture("valid/simple-v2.json");
+
+test("a V2 manifest with capabilities, minDiamondVersion and configSchema validates", () => {
+  assert.deepEqual(validate(simpleV2()), []);
+});
+
+test("rejects a 1.0.0 manifest with an error naming 2.0.0", () => {
+  const manifest = immutable();
+  manifest.manifestVersion = "1.0.0";
+  delete manifest.hookVersion;
+  const errors = errorsFor(manifest, "$.manifestVersion");
+  assert.ok(
+    errors.some((error) => error.includes("must use schema 2.0.0")),
+    errors.join("\n"),
+  );
+  errorsFor(manifest, "$.hookVersion");
+});
+
+test("hookVersion selects the callback vocabulary and the V2-only fields", () => {
+  const v1WithV2Callback = immutable();
+  v1WithV2Callback.callbacks = ["checkFund", "beforeClaim"];
+  errorsFor(v1WithV2Callback, "$.callbacks[1]");
+
+  const v1WithCapabilities = immutable();
+  v1WithCapabilities.capabilities = 1;
+  errorsFor(v1WithCapabilities, "$.capabilities");
+
+  const v2WithV1Callback = simpleV2();
+  v2WithV1Callback.callbacks = ["beforeCreate", "checkFund"];
+  errorsFor(v2WithV1Callback, "$.callbacks[1]");
+
+  for (const field of ["capabilities", "minDiamondVersion", "configSchema"]) {
+    const manifest = simpleV2();
+    delete manifest[field];
+    errorsFor(manifest, `$.${field}`);
+  }
+
+  const badVersion = simpleV2();
+  badVersion.hookVersion = 3;
+  errorsFor(badVersion, "$.hookVersion");
+
+  const oldDiamond = simpleV2();
+  oldDiamond.minDiamondVersion = 27;
+  errorsFor(oldDiamond, "$.minDiamondVersion");
+});
+
+test("V2 callbacks must match the capability bits exactly", () => {
+  const missingBit = simpleV2();
+  missingBit.capabilities = 1;
+  errorsFor(missingBit, "beforeAccept is declared but capability bit 13");
+
+  const missingCallback = simpleV2();
+  missingCallback.capabilities = 0x2001 | (1 << 25);
+  errorsFor(missingCallback, "capability bit 25 is set but afterAction");
+
+  const reserved = simpleV2();
+  reserved.capabilities = 0x2001 | (1 << 16);
+  errorsFor(reserved, "$.capabilities: reserved bits are set (0x10000)");
+
+  const resultPower = simpleV2();
+  resultPower.capabilities = 0x2001 | (1 << 26);
+  assert.deepEqual(validate(resultPower), []);
+
+  const tooWide = simpleV2();
+  tooWide.capabilities = 2 ** 32;
+  errorsFor(tooWide, "$.capabilities");
+});
+
+test("configSchema is an ABI parameter list with tuple components", () => {
+  assert.deepEqual(validate({ ...simpleV2(), configSchema: [] }), []);
+
+  const tupleWithoutComponents = simpleV2();
+  tupleWithoutComponents.configSchema = [{ name: "window", type: "tuple" }];
+  errorsFor(tupleWithoutComponents, "$.configSchema[0].components");
+
+  const scalarWithComponents = simpleV2();
+  scalarWithComponents.configSchema = [
+    { name: "x", type: "uint64", components: [{ name: "y", type: "uint8" }] },
+  ];
+  errorsFor(scalarWithComponents, "$.configSchema[0]");
+
+  const badType = simpleV2();
+  badType.configSchema = [{ name: "x", type: "Uint64" }];
+  errorsFor(badType, "$.configSchema[0].type");
+
+  const tooDeep = simpleV2();
+  tooDeep.configSchema = [
+    {
+      name: "a",
+      type: "tuple",
+      components: [
+        {
+          name: "b",
+          type: "tuple",
+          components: [
+            {
+              name: "c",
+              type: "tuple",
+              components: [{ name: "d", type: "uint8" }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  errorsFor(tooDeep, "$.configSchema[0].components[0].components[0]");
+});
+
 test("rejects deployment network labels beyond the portal-safe boundary", () => {
   const manifest = portalReady();
   manifest.deployments[0].network = "n".repeat(121);
 
   const errors = errorsFor(manifest, "$.deployments[0].network");
   assert.ok(
-    errors.some((error) => error.includes("must NOT have more than 120 characters")),
+    errors.some((error) =>
+      error.includes("must NOT have more than 120 characters"),
+    ),
     errors.join("\n"),
   );
 });
@@ -309,14 +419,14 @@ test("raw safe-integer patterns stay aligned with the canonical schema", () => {
   collectSafeIntegerReferences(JSON.parse(canonicalSchema));
   assert.deepEqual(safeIntegerSchemaPaths, [
     "$defs.roleHolder.properties.chainId",
-    "$defs.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$.properties.typical",
-    "$defs.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$.properties.maximum",
+    "$defs.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire|beforeCreate|beforeAssignEvaluator|beforeUpdate|beforeClaim|beforeSubmitPitch|beforeSelectWorker|beforeSubmitProof|beforeSubmitBid|beforeAcceptAuction|beforeSubmitWork|beforeRejectSubmission|beforeEvaluate|beforeAppeal|beforeAccept|beforeCancel|beforeRate|afterComplete|afterCancel|afterExpire|afterForfeit|afterAction)$.properties.typical",
+    "$defs.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire|beforeCreate|beforeAssignEvaluator|beforeUpdate|beforeClaim|beforeSubmitPitch|beforeSelectWorker|beforeSubmitProof|beforeSubmitBid|beforeAcceptAuction|beforeSubmitWork|beforeRejectSubmission|beforeEvaluate|beforeAppeal|beforeAccept|beforeCancel|beforeRate|afterComplete|afterCancel|afterExpire|afterForfeit|afterAction)$.properties.maximum",
     "$defs.dependencyDeployment.properties.chainId",
     "$defs.chainDeployment.properties.chainId",
     "$defs.chainDeployment.properties.deployment.properties.blockNumber",
     "$defs.publishableEvidence.properties.deployments.items.properties.deployment.properties.blockNumber",
-    "$defs.publishableEvidence.properties.deployments.items.properties.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$.properties.typical",
-    "$defs.publishableEvidence.properties.deployments.items.properties.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$.properties.maximum",
+    "$defs.publishableEvidence.properties.deployments.items.properties.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire|beforeCreate|beforeAssignEvaluator|beforeUpdate|beforeClaim|beforeSubmitPitch|beforeSelectWorker|beforeSubmitProof|beforeSubmitBid|beforeAcceptAuction|beforeSubmitWork|beforeRejectSubmission|beforeEvaluate|beforeAppeal|beforeAccept|beforeCancel|beforeRate|afterComplete|afterCancel|afterExpire|afterForfeit|afterAction)$.properties.typical",
+    "$defs.publishableEvidence.properties.deployments.items.properties.gas.properties.estimates.patternProperties.^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire|beforeCreate|beforeAssignEvaluator|beforeUpdate|beforeClaim|beforeSubmitPitch|beforeSelectWorker|beforeSubmitProof|beforeSubmitBid|beforeAcceptAuction|beforeSubmitWork|beforeRejectSubmission|beforeEvaluate|beforeAppeal|beforeAccept|beforeCancel|beforeRate|afterComplete|afterCancel|afterExpire|afterForfeit|afterAction)$.properties.maximum",
     "properties.sourceVerification.properties.verifiers.items.properties.chainId",
     "properties.protocolDefault.properties.chains.items",
   ]);

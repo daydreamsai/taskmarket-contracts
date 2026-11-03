@@ -143,7 +143,11 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         address settlement = loupe.facetAddress(ITMPDiamond.refundExpired.selector);
         assertNotEq(settlement, settlementBefore, "SettlementFacet replaced");
         assertEq(loupe.facetAddress(ITMPDiamond.declineReservation.selector), settlement);
-        assertEq(loupe.facetAddress(ITMPDiamond.getReservation.selector), settlement);
+        assertEq(
+            loupe.facetAddress(ITMPDiamond.getReservation.selector),
+            loupe.facetAddress(ITMPDiamond.getTaskHooks.selector),
+            "getReservation is served by RegistryFacet in this build"
+        );
         assertEq(loupe.facetAddress(ITMPDiamond.requesterTimeout.selector), settlement, "requesterTimeout added");
         address evaluator = loupe.facetAddress(ITMPDiamond.evaluatorTimeout.selector);
         assertNotEq(evaluator, evaluatorBefore, "EvaluatorFacet replaced: evaluatorTimeout loses its forwarder gate");

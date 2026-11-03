@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { LibAppStorage } from "../libraries/LibAppStorage.sol";
+import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
+import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibReview } from "../libraries/LibReview.sol";
+import { LibTerms } from "../libraries/LibTerms.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 
@@ -209,5 +213,64 @@ contract RegistryFacet {
     /// @notice True once every live task is booked; the surplus sweep stays closed until then.
     function liabilitiesInitialised() external view returns (bool) {
         return LibAppStorage.appStorage().liabilitiesInitialised;
+    }
+
+    // -------------------------------------------------------------------------
+    // Settlement views (rev028: moved from SettlementFacet, selectors unchanged, to keep that
+    // facet under the contract size limit)
+    // -------------------------------------------------------------------------
+
+    /// @notice Get a task's settlement terms. A task created before rev025 that was terminal at
+    ///         the rev025 cut was never normalized and reads as version 0.
+    function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory) {
+        return LibAppStorage.appStorage().taskTerms[taskId];
+    }
+
+    /// @notice Get a task's delivery and review clock: when the current delivery landed
+    ///         (deliveredAt, zero while none is under review), when the decision clock started
+    ///         (decisionStartAt), how many revisions the requester has used, and the resubmission
+    ///         deadline of an open revision request (revisionDueAt, zero when none is open).
+    ///         All fields read zero for a task with no clock record.
+    function getTaskClock(bytes32 taskId) external view returns (ITMPCore.TaskClock memory) {
+        return LibAppStorage.appStorage().taskClocks[taskId];
+    }
+
+    /// @notice Return the effective bounds on requester-chosen settlement terms. Each reads as
+    ///         its compiled default until the owner sets it.
+    function termsBounds()
+        external
+        view
+        returns (uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions)
+    {
+        (minWindowSecs, maxWindowSecs, maxRejectFeeBps, maxRevisions) = LibTerms.bounds(LibAppStorage.appStorage());
+    }
+
+    /// @notice A task's reserved worker and accept-by time; both zero for a task without one.
+    function getReservation(bytes32 taskId) external view returns (address worker, uint256 acceptBy) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        return (s.reservedWorkers[taskId], LibTerms.acceptBy(s, taskId));
+    }
+
+    /// @notice Whether the diamond is inside a state-changing call (its reentrancy lock is held), as
+    ///         during settlement while check hooks are dispatched. Lets a hook tell a settlement in
+    ///         progress from one that finished.
+    function isSettling() external view returns (bool) {
+        return LibAppStorage.appStorage().reentrancyStatus == LibGuards.ENTERED;
+    }
+
+    /// @notice Most winners one Bounty or Benchmark settlement may pay.
+    // solhint-disable-next-line func-name-mixedcase
+    function MAX_SUBMISSION_WINNERS() external pure returns (uint256) {
+        return LibTaskMarket.MAX_SUBMISSION_WINNERS;
+    }
+
+    /// @notice End of the current review window, or zero when no delivery awaits review. While a
+    ///         revision is open, the deadline the superseded delivery gets if none is resubmitted.
+    function reviewDeadline(bytes32 taskId) external view returns (uint256) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        ITMPCore.TaskClock storage clock = s.taskClocks[taskId];
+        uint256 start = clock.deliveredAt != 0 ? clock.deliveredAt : clock.revisionDueAt;
+        if (start == 0) return 0;
+        return start + LibReview.reviewWindow(s.taskTerms[taskId]);
     }
 }

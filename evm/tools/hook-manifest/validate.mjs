@@ -196,6 +196,72 @@ function isSafeNonnegativeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
+export const manifestVersion = "2.0.0";
+
+// rev028 ITMPHookV2 capability bits: bit n names a callback, except the result powers (26 award
+// reallocation, 27 hook fee), which have no callback of their own.
+export const v2CallbackBits = Object.freeze({
+  beforeCreate: 0,
+  beforeAssignEvaluator: 1,
+  beforeUpdate: 2,
+  beforeClaim: 3,
+  beforeSubmitPitch: 4,
+  beforeSelectWorker: 5,
+  beforeSubmitProof: 6,
+  beforeSubmitBid: 7,
+  beforeAcceptAuction: 8,
+  beforeSubmitWork: 9,
+  beforeRejectSubmission: 10,
+  beforeEvaluate: 11,
+  beforeAppeal: 12,
+  beforeAccept: 13,
+  beforeCancel: 14,
+  beforeRate: 15,
+  afterComplete: 21,
+  afterCancel: 22,
+  afterExpire: 23,
+  afterForfeit: 24,
+  afterAction: 25,
+});
+export const v2ResultPowerBits = Object.freeze({
+  awardReallocation: 26,
+  hookFee: 27,
+});
+const v2DefinedMask =
+  [
+    ...Object.values(v2CallbackBits),
+    ...Object.values(v2ResultPowerBits),
+  ].reduce((mask, bit) => mask | (2 ** bit), 0) >>> 0;
+
+function checkV2Capabilities(manifest, callbacks, errors) {
+  const capabilities = manifest.capabilities;
+  if (
+    !Number.isSafeInteger(capabilities) ||
+    capabilities < 1 ||
+    capabilities > 0xffffffff
+  )
+    return;
+  const reserved = (capabilities & ~v2DefinedMask) >>> 0;
+  if (reserved !== 0) {
+    errors.push(
+      `$.capabilities: reserved bits are set (0x${reserved.toString(16)}); bits 16-20 and 28-31 must be zero`,
+    );
+  }
+  for (const [callback, bit] of Object.entries(v2CallbackBits)) {
+    const declared = callbacks.includes(callback);
+    const flagged = ((capabilities >>> bit) & 1) === 1;
+    if (flagged && !declared) {
+      errors.push(
+        `$.callbacks: capability bit ${bit} is set but ${callback} is not declared`,
+      );
+    } else if (declared && !flagged) {
+      errors.push(
+        `$.callbacks: ${callback} is declared but capability bit ${bit} is not set`,
+      );
+    }
+  }
+}
+
 function checkSemanticConsistency(manifest, errors) {
   if (
     manifest === null ||
@@ -222,6 +288,8 @@ function checkSemanticConsistency(manifest, errors) {
   });
 
   const callbacks = Array.isArray(manifest.callbacks) ? manifest.callbacks : [];
+  if (manifest.hookVersion === 2)
+    checkV2Capabilities(manifest, callbacks, errors);
   deployments.forEach((deployment, deploymentIndex) => {
     const estimates = deployment?.gas?.estimates;
     if (!estimates || typeof estimates !== "object" || Array.isArray(estimates))
@@ -484,7 +552,18 @@ function isDraft(manifest) {
 
 export function inspect(manifest) {
   validateSchema(manifest);
-  const errors = (validateSchema.errors ?? []).map(formatSchemaError);
+  const errors = [];
+  if (
+    manifest !== null &&
+    typeof manifest === "object" &&
+    Object.hasOwn(manifest, "manifestVersion") &&
+    manifest.manifestVersion !== manifestVersion
+  ) {
+    errors.push(
+      `$.manifestVersion: ${JSON.stringify(manifest.manifestVersion)} is not accepted; manifests must use schema ${manifestVersion} (for a 1.0.0 manifest, set manifestVersion to "${manifestVersion}" and add "hookVersion": 1)`,
+    );
+  }
+  errors.push(...(validateSchema.errors ?? []).map(formatSchemaError));
   checkSemanticConsistency(manifest, errors);
   if (
     manifest !== null &&

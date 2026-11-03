@@ -6,12 +6,14 @@ import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
+import { LibSettlement } from "../libraries/LibSettlement.sol";
+import { LibPayout } from "../libraries/LibPayout.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
-import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title AcceptanceFacet — single and multi-winner submission acceptance with payouts
@@ -40,6 +42,7 @@ contract AcceptanceFacet {
         LibGuards._requireRequester(s, taskId, requester);
 
         bytes4 mode = task.mode;
+        LibHooksV2.snap(taskId, uint8(task.status));
         _validateAcceptSubmission(task, taskId, worker, deliverable, s);
         _signalDecisionLapsed(taskId, task, s);
 
@@ -84,38 +87,21 @@ contract AcceptanceFacet {
         AppStorage storage s
     ) private {
         uint256 paymentAmount = mode == AUCTION ? task.stakeAmount : task.reward;
-        uint256 fee = (paymentAmount * task.feeBps) / 10000;
-        uint256 workerPayment = paymentAmount - fee;
-        if (fee > 0) s.totalFeesCollected += fee;
-        if (paymentAmount > 0) s.taskAwarded[taskId][worker] = true;
-
-        address[] memory hooks = LibHooks._resolveHooks(taskId, s);
-        if (hooks.length > 0) {
-            LibHooks._dispatchCheckHooks(
-                hooks,
-                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibHooks._buildContext(taskId, s), verdict)),
-                ITMPCore.HookCheckCompleteRejected.selector
-            );
+        // Rev028: a V2 task's beforeAccept, and the transforming hook's result if any.
+        (bool changed, ITMPCore.Award[] memory awards, uint16 hookFeeBps, address feeHook) =
+            LibHooks._acceptV2(s, taskId, verdict, true, false, paymentAmount);
+        if (changed) {
+            // Undo the core award's bookkeeping; _payResult books the final awards.
+            s.workerStats[worker].completedTasks--;
+            s.taskAwarded[taskId][worker] = false;
+            if (awards.length == 0) awards = verdict.awards;
+            _payResult(taskId, requester, awards, paymentAmount, task.feeBps, hookFeeBps, feeHook, s);
+        } else {
+            if (paymentAmount > 0) s.taskAwarded[taskId][worker] = true;
+            LibHooks._checkCompleteHooks(taskId, s, verdict, false);
+            _payWorkerShare(taskId, requester, worker, paymentAmount, task.feeBps, s);
         }
-
-        if (!s.usdcToken.transfer(worker, workerPayment)) revert ITMPCore.WorkerPaymentFailed();
-        if (fee > 0) {
-            if (!s.usdcToken.transfer(s.feeRecipient, fee)) revert ITMPCore.FeeTransferFailed();
-        }
-
-        if (mode == CLAIM && task.stakeAmount > 0) {
-            if (!s.usdcToken.transfer(task.worker, task.stakeAmount)) revert ITMPCore.StakeReturnFailed();
-            emit ITMPCore.StakeReturned(taskId, task.worker, task.stakeAmount);
-        }
-
-        if (mode == AUCTION) {
-            uint256 refund = s.taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
-            if (refund > 0) {
-                if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.AuctionRefundFailed();
-            }
-        }
-
-        emit ITMPCore.TaskCompleted(taskId, requester, worker, workerPayment, fee);
+        _returnStakeAndPriceCap(taskId, task, s);
 
         if (worker == requester) {
             emit ITMPCore.SelfAward(taskId, requester, worker);
@@ -132,9 +118,7 @@ contract AcceptanceFacet {
             LibFeedback.requester(s, taskId, requester, requesterAgentId, LibFeedback.COMPLETED, mode);
         }
 
-        LibHooks._dispatchAfterHooksFullGas(
-            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibHooks._buildContext(taskId, s), verdict))
-        );
+        LibHooks._onCompleteHooksStrict(taskId, verdict);
     }
 
     /// @notice Accept N submissions at once with explicit share basis points.
@@ -266,6 +250,7 @@ contract AcceptanceFacet {
     ) private {
         ITMPCore.Task storage task = s.tasks[taskId];
         LibGuards._requireRequester(s, taskId, requester);
+        LibHooksV2.snap(taskId, uint8(task.status));
         if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.MultiSubmissionOnlyForBountyBenchmark();
         if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) revert ITMPCore.UseEvaluate();
         if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
@@ -316,42 +301,28 @@ contract AcceptanceFacet {
             awards: awards
         });
 
-        // First pass: update stats and accumulate totalFee (all state changes before any transfer).
-        uint256 totalFee = 0;
+        // Every pair must pay something, whichever path settles it.
         for (uint256 i; i < awards.length; ++i) {
             if (awards[i].amount == 0) revert ITMPCore.ZeroPayoutPerPair();
-            totalFee += (awards[i].amount * uint256(task.feeBps)) / 10000;
-            s.workerStats[awards[i].worker].completedTasks++;
-            s.taskAwarded[taskId][awards[i].worker] = true;
         }
-        if (totalFee > 0) s.totalFeesCollected += totalFee;
-
-        address[] memory hooks = LibHooks._resolveHooks(taskId, s);
-        if (hooks.length > 0) {
-            LibHooks._dispatchCheckHooks(
-                hooks,
-                abi.encodeCall(ITMPHook.checkComplete, (taskId, LibHooks._buildContext(taskId, s), verdict)),
-                ITMPCore.HookCheckCompleteRejected.selector
-            );
+        // Rev028: a V2 task's beforeAccept, and the transforming hook's result if any.
+        (bool changed, ITMPCore.Award[] memory result, uint16 hookFeeBps, address feeHook) =
+            LibHooks._acceptV2(s, taskId, verdict, true, false, task.reward);
+        if (changed) {
+            if (result.length == 0) result = awards;
+            _payResult(taskId, requester, result, task.reward, task.feeBps, hookFeeBps, feeHook, s);
+            awards = result;
+        } else {
+            _payMultiCore(taskId, task, requester, awards, verdict, s);
         }
-
-        // Second pass: transfers and events. fee/net computed inline to avoid nets[]/fees[] arrays.
-        // slither-disable-next-line calls-loop
         bool anySelfAward = false;
         for (uint256 i; i < awards.length; ++i) {
-            uint256 fee = (awards[i].amount * uint256(task.feeBps)) / 10000;
-            uint256 net = awards[i].amount - fee;
-            if (!s.usdcToken.transfer(awards[i].worker, net)) revert ITMPCore.WorkerPaymentFailed();
-            emit ITMPCore.TaskCompleted(taskId, requester, awards[i].worker, net, fee);
-            if (awards[i].worker == requester) {
+            if (awards[i].amount > 0 && awards[i].worker == requester) {
                 emit ITMPCore.SelfAward(taskId, requester, awards[i].worker);
                 anySelfAward = true;
             }
         }
-        if (totalFee > 0) {
-            if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
-        }
-        _refundSplitRemainder(taskId, task.reward, awards, s);
+        if (!changed) _refundSplitRemainder(taskId, task.reward, awards, s);
 
         emit ITMPCore.RequesterReputation(
             taskId,
@@ -363,9 +334,69 @@ contract AcceptanceFacet {
         );
         LibFeedback.requester(s, taskId, requester, requesterAgentId, LibFeedback.COMPLETED, task.mode);
 
-        LibHooks._dispatchAfterHooksFullGas(
-            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, LibHooks._buildContext(taskId, s), verdict))
-        );
+        LibHooks._onCompleteHooksStrict(taskId, verdict);
+    }
+
+    /// @dev The core multi-winner payout, unchanged from rev027 apart from the settlement tally:
+    ///      bookkeeping, the V1 check hook, then transfers.
+    function _payMultiCore(
+        bytes32 taskId,
+        ITMPCore.Task storage task,
+        address requester,
+        ITMPCore.Award[] memory awards,
+        ITMPCore.Verdict memory verdict,
+        AppStorage storage s
+    ) private {
+        uint256 totalFee = 0;
+        for (uint256 i; i < awards.length; ++i) {
+            if (awards[i].amount == 0) revert ITMPCore.ZeroPayoutPerPair();
+            totalFee += (awards[i].amount * uint256(task.feeBps)) / 10000;
+            s.workerStats[awards[i].worker].completedTasks++;
+            s.taskAwarded[taskId][awards[i].worker] = true;
+        }
+        if (totalFee > 0) s.totalFeesCollected += totalFee;
+
+        LibHooks._checkCompleteHooks(taskId, s, verdict, false);
+
+        uint256 totalNet = 0;
+        // slither-disable-next-line calls-loop
+        for (uint256 i; i < awards.length; ++i) {
+            uint256 fee = (awards[i].amount * uint256(task.feeBps)) / 10000;
+            uint256 net = awards[i].amount - fee;
+            totalNet += net;
+            if (!s.usdcToken.transfer(awards[i].worker, net)) revert ITMPCore.WorkerPaymentFailed();
+            emit ITMPCore.TaskCompleted(taskId, requester, awards[i].worker, net, fee);
+        }
+        if (totalFee > 0) {
+            if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
+        }
+        _tally(taskId, totalNet, totalFee, awards.length);
+    }
+
+    /// @dev Rev028: pays a transforming hook's validated result. Each nonzero award is paid net of
+    ///      the protocol fee and the hook fee (both from the worker side); the hook fee goes to the
+    ///      hook; whatever the awards leave of `budget` goes back to the requester. Rating rights
+    ///      follow the final nonzero awards.
+    function _payResult(
+        bytes32 taskId,
+        address requester,
+        ITMPCore.Award[] memory awards,
+        uint256 budget,
+        uint16 feeBps,
+        uint16 hookFeeBps,
+        address feeHook,
+        AppStorage storage s
+    ) private {
+        uint256 total = LibPayout.payAwards(s, taskId, requester, awards, feeBps, hookFeeBps, feeHook);
+        if (budget > total) {
+            if (!LibProject.payRequester(s, taskId, budget - total)) revert ITMPCore.ExcessRefundFailed();
+        }
+    }
+
+    function _tally(bytes32 taskId, uint256 net, uint256 fee, uint256 count) private {
+        LibSettlement.add(taskId, LibSettlement.WORKER, net);
+        LibSettlement.add(taskId, LibSettlement.PROTOCOL_FEE, fee);
+        LibSettlement.add(taskId, LibSettlement.AWARDS, count);
     }
 
     /// @dev Each award is rounded down from its share, so the awards can sum to a few base units less
@@ -410,5 +441,111 @@ contract AcceptanceFacet {
             sumShares += shares[i];
         }
         if (sumShares != 10000) revert ITMPCore.SharesMustSumTo10000();
+    }
+
+    // -------------------------------------------------------------------------
+    // Lapsed review (rev028: moved from SettlementFacet, selector unchanged, to keep that facet
+    // under the contract size limit)
+    // -------------------------------------------------------------------------
+
+    /// @notice Pay the worker for a delivery whose review window lapsed undecided, exactly as an
+    ///         accept would (permissionless). Check hooks are not consulted: a lapsed review must
+    ///         settle, so only the onComplete after-hooks run.
+    function settleLapsedReview(bytes32 taskId) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
+        uint256 balanceBefore = LibEscrow.balance(s);
+
+        ITMPCore.Task storage task = s.tasks[taskId];
+        _requireLapsedDelivery(taskId, task, s);
+        uint256 deadline = LibReview.requireReviewDeadline(s, taskId, LibTerms.terms(s, taskId));
+        if (block.timestamp <= deadline) revert ITMPCore.ReviewWindowOpen();
+
+        address worker = task.worker;
+        LibReview.clear(s.taskClocks[taskId]);
+        task.status = ITMPCore.TaskStatus.Accepted;
+        s.workerStats[worker].completedTasks++;
+        s.taskAwarded[taskId][worker] = true;
+
+        uint256 payment = _payLapsedReview(taskId, task, worker, s);
+
+        emit ITMPCore.ReviewLapsed(taskId, worker);
+
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker, amount: payment, rank: 1 });
+        LibHooks._onCompleteHooks(
+            taskId,
+            s,
+            ITMPCore.Verdict({
+                issued: true,
+                verdictType: ITMPCore.VerdictType.APPROVE,
+                score: 1000,
+                confidence: 1000,
+                criteriaFlags: new bytes32[](0),
+                evidenceHash: bytes32(0),
+                awards: awards
+            })
+        );
+        LibEscrow.release(s, taskId, balanceBefore);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @dev Pays the worker as acceptSubmission does and returns the gross payment.
+    function _payLapsedReview(bytes32 taskId, ITMPCore.Task storage task, address worker, AppStorage storage s)
+        private
+        returns (uint256 payment)
+    {
+        payment = task.mode == AUCTION ? task.stakeAmount : task.reward;
+        _payWorkerShare(taskId, task.requester, worker, payment, task.feeBps, s);
+        _returnStakeAndPriceCap(taskId, task, s);
+    }
+
+    /// @dev The single-payee payout shared by acceptSubmission and settleLapsedReview: the protocol
+    ///      fee is booked and sent, the worker paid the rest, and the settlement record tallied.
+    function _payWorkerShare(
+        bytes32 taskId,
+        address requester,
+        address worker,
+        uint256 payment,
+        uint16 feeBps,
+        AppStorage storage s
+    ) private {
+        uint256 fee = (payment * feeBps) / 10000;
+        uint256 net = payment - fee;
+        if (fee > 0) s.totalFeesCollected += fee;
+        if (!s.usdcToken.transfer(worker, net)) revert ITMPCore.WorkerPaymentFailed();
+        if (fee > 0) {
+            if (!s.usdcToken.transfer(s.feeRecipient, fee)) revert ITMPCore.FeeTransferFailed();
+        }
+        _tally(taskId, net, fee, 1);
+        emit ITMPCore.TaskCompleted(taskId, requester, worker, net, fee);
+    }
+
+    /// @dev A Claim worker's stake goes back to them, and an auction's unused price cap to the
+    ///      requester.
+    function _returnStakeAndPriceCap(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
+        if (task.mode == CLAIM && task.stakeAmount > 0) {
+            if (!s.usdcToken.transfer(task.worker, task.stakeAmount)) revert ITMPCore.StakeReturnFailed();
+            emit ITMPCore.StakeReturned(taskId, task.worker, task.stakeAmount);
+        }
+        if (task.mode == AUCTION) {
+            uint256 refund = s.taskAuctionConfigs[taskId].maxPrice - task.stakeAmount;
+            if (refund > 0) {
+                if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.AuctionRefundFailed();
+            }
+        }
+    }
+
+    /// @dev A Claim, Pitch or Auction delivery with no evaluator, still Claimed or WorkerSelected.
+    function _requireLapsedDelivery(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private view {
+        if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        if (task.mode != CLAIM && task.mode != PITCH && task.mode != AUCTION) revert ITMPCore.InvalidMode();
+        if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) revert ITMPCore.UseEvaluate();
+        if (
+            task.deliverable == bytes32(0)
+                || (task.status != ITMPCore.TaskStatus.Claimed && task.status != ITMPCore.TaskStatus.WorkerSelected)
+        ) revert ITMPCore.DeliverableRequired();
     }
 }

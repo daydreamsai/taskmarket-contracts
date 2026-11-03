@@ -40,6 +40,9 @@ contract ForcedExitHooksTest is DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), feeRecipient, uint16(FEE_BPS));
+        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
+        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
+        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
         vm.stopPrank();

@@ -87,7 +87,7 @@ contract Rev027Upgrade is Script {
     }
 
     function _cut() internal returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](12);
+        cuts = new IDiamondCut.FacetCut[](13);
         address core = address(new CoreFacet());
         address worker = address(new WorkerFacet());
         address settlement = address(new SettlementFacet());
@@ -105,10 +105,12 @@ contract Rev027Upgrade is Script {
             worker, IDiamondCut.FacetCutAction.Add, FacetSelectors.workerFacetSelectorsAddedRev027()
         );
         cuts[4] = IDiamondCut.FacetCut(
-            settlement, IDiamondCut.FacetCutAction.Replace, FacetSelectors.settlementFacetSelectorsThroughRev026()
+            settlement,
+            IDiamondCut.FacetCutAction.Replace,
+            FacetSelectors.settlementFacetSelectorsThroughRev026ServedNow()
         );
         cuts[5] = IDiamondCut.FacetCut(
-            settlement, IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectorsAddedRev027()
+            settlement, IDiamondCut.FacetCutAction.Add, FacetSelectors.settlementFacetSelectorsAddedRev027ServedNow()
         );
         cuts[6] = IDiamondCut.FacetCut(
             feedback, IDiamondCut.FacetCutAction.Replace, FacetSelectors.feedbackFacetSelectorsThroughRev026()
@@ -126,6 +128,13 @@ contract Rev027Upgrade is Script {
         );
         cuts[11] = IDiamondCut.FacetCut(
             address(new RatingFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.ratingFacetSelectors()
+        );
+        // This build serves getReservation from RegistryFacet (moved there in rev028), so a run of
+        // this historical step against current bytecode routes it to the diamond's registry facet.
+        cuts[12] = IDiamondCut.FacetCut(
+            IDiamondLoupe(DeployTarget.diamondFor(vm)).facetAddress(ITMPDiamond.getTaskHooks.selector),
+            IDiamondCut.FacetCutAction.Add,
+            FacetSelectors.rev027SelectorsServedByRegistryNow()
         );
     }
 }

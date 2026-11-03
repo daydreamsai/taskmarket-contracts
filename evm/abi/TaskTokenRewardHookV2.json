@@ -1,0 +1,6167 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "BONUS_AWARD_GAS_FLOOR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "CAPABILITIES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BONUS_AWARDS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RECOVER_BOUNTY_MIN_GAS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "UPGRADE_INTERFACE_VERSION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "afterAction",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "afterCancel",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.SettlementAmounts",
+        "components": [
+          {
+            "name": "workerPaid",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "requesterRefund",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "forfeited",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "evaluatorFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "protocolFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "hookFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "terminalStatus",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "settledAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recorded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "afterComplete",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.SettlementAmounts",
+        "components": [
+          {
+            "name": "workerPaid",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "requesterRefund",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "forfeited",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "evaluatorFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "protocolFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "hookFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "terminalStatus",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "settledAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recorded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "afterExpire",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.SettlementAmounts",
+        "components": [
+          {
+            "name": "workerPaid",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "requesterRefund",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "forfeited",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "evaluatorFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "protocolFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "hookFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "terminalStatus",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "settledAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recorded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "afterForfeit",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.SettlementAmounts",
+        "components": [
+          {
+            "name": "workerPaid",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "requesterRefund",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "forfeited",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "evaluatorFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "protocolFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "hookFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "terminalStatus",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "settledAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recorded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "authorizedRelayer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "banWallet",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "banned",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeAccept",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "verdict",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.Verdict",
+        "components": [
+          {
+            "name": "issued",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "verdictType",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.VerdictType"
+          },
+          {
+            "name": "score",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "confidence",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "criteriaFlags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "evidenceHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "awards",
+            "type": "tuple[]",
+            "internalType": "struct ITMPCore.Award[]",
+            "components": [
+              {
+                "name": "worker",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "amount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "rank",
+                "type": "uint16",
+                "internalType": "uint16"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.SettlementDelta",
+        "components": [
+          {
+            "name": "selector",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "hookFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct ITMPCore.Award[]",
+        "components": [
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "rank",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "beforeAcceptAuction",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "beforeAppeal",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeAssignEvaluator",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeCancel",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeClaim",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "beforeCreate",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "config",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "beforeEvaluate",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.Verdict",
+        "components": [
+          {
+            "name": "issued",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "verdictType",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.VerdictType"
+          },
+          {
+            "name": "score",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "confidence",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "criteriaFlags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "evidenceHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "awards",
+            "type": "tuple[]",
+            "internalType": "struct ITMPCore.Award[]",
+            "components": [
+              {
+                "name": "worker",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "amount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "rank",
+                "type": "uint16",
+                "internalType": "uint16"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeRate",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeRejectSubmission",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeSelectWorker",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "beforeSubmitBid",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeSubmitPitch",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeSubmitProof",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeSubmitWork",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "ctx",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "d",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "beforeUpdate",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bonusBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "claimable",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "diamond",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "dreamsPerUsdc",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "epochBudget",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract EpochBudget"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "firstSeen",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hookCallRoles",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "hookCapabilities",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "initialize",
+    "inputs": [
+      {
+        "name": "_vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_epochBudget",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_diamond",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_tokenDecimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "_dreamsPerUsdc",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "_bonusBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "_token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_workerSplitBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "_authorizedRelayer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "minDiamondVersion",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "onCall",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.TaskContextV2",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "evaluator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "disputeResolver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reward",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "evaluatorFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "feeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mode",
+            "type": "bytes4",
+            "internalType": "bytes4"
+          },
+          {
+            "name": "priorStatus",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "currentState",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.TaskStatus"
+          },
+          {
+            "name": "expiryTime",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "projectId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "terms",
+            "type": "tuple",
+            "internalType": "struct ITMPCore.TaskTerms",
+            "components": [
+              {
+                "name": "version",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "stakeRequired",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "stakeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "penaltyTo",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.PenaltyTo"
+              },
+              {
+                "name": "reviewWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "decisionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "reopenExtensionSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "releaseAllowed",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.ReleaseAllowed"
+              },
+              {
+                "name": "releaseGraceBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "rejectOutcome",
+                "type": "uint8",
+                "internalType": "enum ITMPCore.RejectOutcome"
+              },
+              {
+                "name": "rejectFeeBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxRevisions",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "resolutionWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "acceptWindowSecs",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "proxiableUUID",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rampMultipliers",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rampThresholds",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recoverReserve",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseProgress",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct TaskTokenRewardHookV2.ReleaseProgress",
+        "components": [
+          {
+            "name": "tokenAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "usdAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "consumedEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "vaultReleased",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "budgetReleased",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "renounceOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rewardStateSealed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rewardStates",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rewardUsd",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "usdBonusValue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "startPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservedTokenAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "reserved",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "paid",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "consumedEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sealRewardState",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sealWalletHistory",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedRewardStates",
+    "inputs": [
+      {
+        "name": "taskIds",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "states",
+        "type": "tuple[]",
+        "internalType": "struct TaskTokenRewardHookV2.RewardState[]",
+        "components": [
+          {
+            "name": "rewardUsd",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "usdBonusValue",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "startPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedTokenAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requester",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "reserved",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "paid",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "consumedEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedWalletHistory",
+    "inputs": [
+      {
+        "name": "wallets",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "firstSeenAt",
+        "type": "uint40[]",
+        "internalType": "uint40[]"
+      },
+      {
+        "name": "isBanned",
+        "type": "bool[]",
+        "internalType": "bool[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setAuthorizedRelayer",
+    "inputs": [
+      {
+        "name": "_authorizedRelayer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBonusBps",
+    "inputs": [
+      {
+        "name": "_bonusBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDiamond",
+    "inputs": [
+      {
+        "name": "_diamond",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDreamsPerUsdc",
+    "inputs": [
+      {
+        "name": "_rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setEpochBudget",
+    "inputs": [
+      {
+        "name": "_epochBudget",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRamp",
+    "inputs": [
+      {
+        "name": "thresholds",
+        "type": "uint40[3]",
+        "internalType": "uint40[3]"
+      },
+      {
+        "name": "multipliers",
+        "type": "uint16[4]",
+        "internalType": "uint16[4]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVault",
+    "inputs": [
+      {
+        "name": "_vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setWorkerSplitBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "interfaceId",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "sweepUnclaimed",
+    "inputs": [
+      {
+        "name": "destination",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "token",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tokenDecimals",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalClaimable",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "transferOwnership",
+    "inputs": [
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unbanWallet",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "upgradeToAndCall",
+    "inputs": [
+      {
+        "name": "newImplementation",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "usedWithdrawNonce",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vault",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IRewardVault"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "walletHistorySealed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "withdrawFor",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "destination",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nonce",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "validBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "workerSplitBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "BonusBpsUpdated",
+    "inputs": [
+      {
+        "name": "bonusBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Initialized",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PriceUpdated",
+    "inputs": [
+      {
+        "name": "dreamsPerUsdc",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardBudgetReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "usdAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardConfigured",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "rewardUsd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardPaid",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "rewardUsd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "usdBonusValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokenAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardReleaseFailed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dependency",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum TaskTokenRewardHookV2.ReleaseDependency"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardReserveReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "releasedAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardReserved",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "startPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservedAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardStateSealed",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardStateSeeded",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "reservedTokenAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardVaultReleased",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "tokenAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardsWithdrawn",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "destination",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Upgraded",
+    "inputs": [
+      {
+        "name": "implementation",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletBanned",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletHistorySealed",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletHistorySeeded",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "firstSeenAt",
+        "type": "uint40",
+        "indexed": false,
+        "internalType": "uint40"
+      },
+      {
+        "name": "banned",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WalletUnbanned",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CallUnsupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CallerNotDiamond",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ERC1967InvalidImplementation",
+    "inputs": [
+      {
+        "name": "implementation",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC1967NonPayable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientRecoveryGas",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientSweepable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidBps",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidInitialization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRamp",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidWithdrawSignature",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoWorkerFound",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotInitializing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToRecover",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableInvalidOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OwnableUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReleaseNotDue",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardAlreadyPaid",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardNotReserved",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardStateAlreadySealed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardStateAlreadySettled",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedLengthMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StringsInsufficientHexLength",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UUPSUnauthorizedCallContext",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UUPSUnsupportedProxiableUUID",
+    "inputs": [
+      {
+        "name": "slot",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedRelayer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletHistoryAlreadySealed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawAuthorizationExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawNonceUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WorkerMismatch",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "got",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRate",
+    "inputs": []
+  }
+]

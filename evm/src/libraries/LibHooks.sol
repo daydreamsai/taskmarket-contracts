@@ -3,7 +3,10 @@ pragma solidity ^0.8.24;
 
 import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
-import { ITMPHook } from "../interfaces/ITMPHook.sol";
+import { ITMPHookDispatch } from "../interfaces/ITMPHookDispatch.sol";
+import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
+import { LibHooksV2 } from "./LibHooksV2.sol";
+import { LibSettlement } from "./LibSettlement.sol";
 
 /// @title LibHooks — hook resolution, bounded hook calls and check*/on* dispatch
 library LibHooks {
@@ -70,7 +73,17 @@ library LibHooks {
 
     /// @notice Returns the hook list for a task (Rev008).
     ///         task.hookContract is deprecated dead storage; taskHooks is authoritative.
-    function _resolveHooks(bytes32 taskId, AppStorage storage s) internal view returns (address[] memory) {
+    ///         Rev028: for a V2 task, the addresses of its V2 attachments in dispatch order, so
+    ///         getTaskHooks reads the same for V1 and V2 tasks.
+    function _resolveHooks(bytes32 taskId, AppStorage storage s) internal view returns (address[] memory hooks) {
+        if (s.taskHookVersion[taskId] == LibHooksV2.VERSION_V2) {
+            ITMPHookV2.Attachment[] storage list = s.taskHooksV2[taskId];
+            hooks = new address[](list.length);
+            for (uint256 i; i < list.length; ++i) {
+                hooks[i] = list[i].hook;
+            }
+            return hooks;
+        }
         return s.taskHooks[taskId];
     }
 
@@ -140,94 +153,152 @@ library LibHooks {
     }
 
     // -------------------------------------------------------------------------
-    // Hook helpers — typed dispatch (keep abi.encodeCall out of facet stack frames)
+    // Rev028: typed dispatch through HookDispatchFacet
     // -------------------------------------------------------------------------
+    // Every facet reaches hooks through these stubs, which call the diamond itself
+    // (ITMPHookDispatch). The dispatch code then lives once, in HookDispatchFacet, instead of in
+    // every facet. A V1 task (created before the rev028 cut) gets the V1 dispatch it always had;
+    // every later task gets V2. A revert inside the dispatch is bubbled unchanged, so a V1 check
+    // rejection still reverts with its HookCheck*Rejected selector.
 
-    /// @notice Calls checkFund on all hooks, reverts if any reject. Emits HookRegistered per hook.
-    function _checkFundHooks(bytes32 taskId, address[] memory hooks, bytes calldata hookData, AppStorage storage s)
-        internal
-    {
-        bytes memory callData = abi.encodeCall(ITMPHook.checkFund, (taskId, _buildContext(taskId, s), hookData));
-        for (uint256 i; i < hooks.length; i++) {
-            (bool ok, bytes memory ret) = _safeHookCall(hooks[i], callData);
-            if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) {
-                revert ITMPCore.HookCheckFundRejected();
+    function _self(bytes memory callData) private returns (bytes memory ret) {
+        bool ok;
+        (ok, ret) = address(this).call(callData);
+        if (!ok) {
+            // Memory-safe: reverts with the returned data.
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
             }
-            emit ITMPCore.HookRegistered(taskId, hooks[i]);
         }
     }
 
+    function _isV2(AppStorage storage s, bytes32 taskId) internal view returns (bool) {
+        return s.taskHookVersion[taskId] == LibHooksV2.VERSION_V2;
+    }
+
+    function _hasHooks(AppStorage storage s, bytes32 taskId) internal view returns (bool) {
+        return _isV2(s, taskId) ? s.taskHooksV2[taskId].length > 0 : s.taskHooks[taskId].length > 0;
+    }
+
+    /// @notice Attaches a new task's V2 hooks and runs beforeCreate (every task created after the cut).
+    function _attach(bytes32 taskId, ITMPCore.HookConfig calldata hookConfig) internal {
+        _self(abi.encodeCall(ITMPHookDispatch.hookAttach, (taskId, hookConfig.contracts, hookConfig.data)));
+    }
+
+    /// @notice The before-callbacks of a vetoable action (the V1 check where V1 had one).
+    function _before(AppStorage storage s, bytes32 taskId, uint8 action, address who, bytes32 extra) internal {
+        if (_isV2(s, taskId)) {
+            if (s.taskHooksV2[taskId].length == 0) return;
+        } else if (
+            s.taskHooks[taskId].length == 0
+                || (action != LibHooksV2.A_CLAIM
+                    && action != LibHooksV2.A_SELECT_WORKER
+                    && action != LibHooksV2.A_ACCEPT_AUCTION
+                    && action != LibHooksV2.A_SUBMIT_WORK
+                    && action != LibHooksV2.A_EVALUATE)
+        ) {
+            // A V1 task has a check hook only for claim, worker selection, submit and evaluate.
+            return;
+        }
+        _self(abi.encodeCall(ITMPHookDispatch.hookBefore, (taskId, action, who, extra)));
+    }
+
+    /// @notice The observer after-callback of a V2 task's action. `vetoable` is false for the
+    ///         non-vetoable exits, where a changed hook codehash does not block the action.
+    function _observe(AppStorage storage s, bytes32 taskId, uint8 action, bool vetoable) internal {
+        if (!_isV2(s, taskId) || s.taskHooksV2[taskId].length == 0) return;
+        _self(abi.encodeCall(ITMPHookDispatch.hookObserve, (taskId, action, vetoable)));
+    }
+
     function _checkClaimHooks(bytes32 taskId, address worker, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        if (hooks.length == 0) return;
-        _dispatchCheckHooks(
-            hooks,
-            abi.encodeCall(ITMPHook.checkClaim, (taskId, _buildContext(taskId, s), worker)),
-            ITMPCore.HookCheckClaimRejected.selector
-        );
+        _before(s, taskId, LibHooksV2.A_CLAIM, worker, bytes32(0));
     }
 
     function _checkSelectWorkerHooks(bytes32 taskId, address worker, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        if (hooks.length == 0) return;
-        _dispatchCheckHooks(
-            hooks,
-            abi.encodeCall(ITMPHook.checkSelectWorker, (taskId, _buildContext(taskId, s), worker)),
-            ITMPCore.HookCheckSelectWorkerRejected.selector
-        );
+        _before(s, taskId, LibHooksV2.A_SELECT_WORKER, worker, bytes32(0));
     }
 
     function _checkSubmitHooks(bytes32 taskId, address worker, bytes32 deliverable, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        if (hooks.length == 0) return;
-        _dispatchCheckHooks(
-            hooks,
-            abi.encodeCall(ITMPHook.checkSubmit, (taskId, _buildContext(taskId, s), worker, deliverable)),
-            ITMPCore.HookCheckSubmitRejected.selector
-        );
+        _before(s, taskId, LibHooksV2.A_SUBMIT_WORK, worker, deliverable);
     }
 
     function _checkEvaluateHooks(bytes32 taskId, address evaluator, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        if (hooks.length == 0) return;
-        _dispatchCheckHooks(
-            hooks,
-            abi.encodeCall(ITMPHook.checkEvaluate, (taskId, _buildContext(taskId, s), evaluator)),
-            ITMPCore.HookCheckEvaluateRejected.selector
-        );
+        _before(s, taskId, LibHooksV2.A_EVALUATE, evaluator, bytes32(0));
     }
 
-    function _checkCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        if (hooks.length == 0) return;
-        _dispatchCheckHooks(
-            hooks,
-            abi.encodeCall(ITMPHook.checkComplete, (taskId, _buildContext(taskId, s), verdict)),
-            ITMPCore.HookCheckCompleteRejected.selector
-        );
+    /// @notice V1 checkComplete. On a dispute resolution (`disputed`) the context passed to the
+    ///         hooks shows currentState == Disputed (rev028).
+    function _checkCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict, bool disputed)
+        internal
+    {
+        if (_isV2(s, taskId) || s.taskHooks[taskId].length == 0) return;
+        _self(abi.encodeCall(ITMPHookDispatch.hookCheckCompleteV1, (taskId, verdict, disputed)));
     }
 
-    function _onCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooksFullGas(
-            hooks, abi.encodeCall(ITMPHook.onComplete, (taskId, _buildContext(taskId, s), verdict))
-        );
+    /// @notice V2 beforeAccept and the transforming hook's validated result, for a V2 task.
+    function _acceptV2(
+        AppStorage storage s,
+        bytes32 taskId,
+        ITMPCore.Verdict memory verdict,
+        bool vetoable,
+        bool disputed,
+        uint256 budget
+    ) internal returns (bool changed, ITMPCore.Award[] memory awards, uint16 hookFeeBps, address feeHook) {
+        if (!_isV2(s, taskId) || s.taskHooksV2[taskId].length == 0) return (false, awards, 0, address(0));
+        bytes memory ret =
+            _self(abi.encodeCall(ITMPHookDispatch.hookAcceptV2, (taskId, verdict, vetoable, disputed, budget)));
+        return abi.decode(ret, (bool, ITMPCore.Award[], uint16, address));
     }
 
-    function _onForfeitHooks(bytes32 taskId, address forfeiter, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooksFullGas(
-            hooks, abi.encodeCall(ITMPHook.onForfeit, (taskId, _buildContext(taskId, s), forfeiter))
-        );
+    function _settle(bytes32 taskId, uint8 kind, ITMPCore.Verdict memory verdict, address who) private {
+        _self(abi.encodeCall(ITMPHookDispatch.hookSettle, (taskId, kind, verdict, who)));
     }
 
-    function _onCancelHooks(bytes32 taskId, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooksFullGas(hooks, abi.encodeCall(ITMPHook.onCancel, (taskId, _buildContext(taskId, s))));
+    /// @notice Settlement record, then onComplete (V1) or afterComplete (V2).
+    function _onCompleteHooks(bytes32 taskId, AppStorage storage, ITMPCore.Verdict memory verdict) internal {
+        _settle(taskId, LibHooksV2.KIND_COMPLETE, verdict, address(0));
     }
 
-    function _onExpireHooks(bytes32 taskId, AppStorage storage s) internal {
-        address[] memory hooks = _resolveHooks(taskId, s);
-        _dispatchAfterHooksFullGas(hooks, abi.encodeCall(ITMPHook.onExpire, (taskId, _buildContext(taskId, s))));
+    function _onForfeitHooks(bytes32 taskId, address forfeiter, AppStorage storage) internal {
+        ITMPCore.Verdict memory none;
+        _settle(taskId, LibHooksV2.KIND_FORFEIT, none, forfeiter);
+    }
+
+    /// @notice Rev028: an evaluator timeout forfeits the evaluator's stake. V1 never called a hook
+    ///         here and still does not; the forfeit only joins the settlement record's running
+    ///         total. A V2 task also gets afterForfeit.
+    function _onEvaluatorForfeit(AppStorage storage s, bytes32 taskId, address evaluator) internal {
+        if (_isV2(s, taskId)) {
+            ITMPCore.Verdict memory none;
+            _settle(taskId, LibHooksV2.KIND_FORFEIT, none, evaluator);
+        } else {
+            LibSettlement.forfeit(s, taskId);
+        }
+    }
+
+    /// @notice Strict variants for a non-exit action (an accept, a cancel, a rejected delivery): the
+    ///         gas for every V2 after-callback is required up front, so a gas estimate covers it.
+    function _onCompleteHooksStrict(bytes32 taskId, ITMPCore.Verdict memory verdict) internal {
+        _settle(taskId, LibHooksV2.KIND_COMPLETE | LibHooksV2.KIND_STRICT, verdict, address(0));
+    }
+
+    function _onCancelHooksStrict(bytes32 taskId) internal {
+        ITMPCore.Verdict memory none;
+        _settle(taskId, LibHooksV2.KIND_CANCEL | LibHooksV2.KIND_STRICT, none, address(0));
+    }
+
+    function _onForfeitHooksStrict(bytes32 taskId, address forfeiter) internal {
+        ITMPCore.Verdict memory none;
+        _settle(taskId, LibHooksV2.KIND_FORFEIT | LibHooksV2.KIND_STRICT, none, forfeiter);
+    }
+
+    function _onCancelHooks(bytes32 taskId, AppStorage storage) internal {
+        ITMPCore.Verdict memory none;
+        _settle(taskId, LibHooksV2.KIND_CANCEL, none, address(0));
+    }
+
+    function _onExpireHooks(bytes32 taskId, AppStorage storage) internal {
+        ITMPCore.Verdict memory none;
+        _settle(taskId, LibHooksV2.KIND_EXPIRE, none, address(0));
     }
 }

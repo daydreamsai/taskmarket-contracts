@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import {
@@ -54,6 +55,7 @@ contract AuctionFacet {
         if (bidCount >= MAX_BIDS_PER_TASK && !(lowest && auctionCfg.lowestBidder != address(0))) {
             revert ITMPCore.BidLimitReached();
         }
+        LibHooks._before(s, taskId, LibHooksV2.A_SUBMIT_BID, worker, bytes32(price));
 
         if (lowest) {
             auctionCfg.lowestBidPrice = price;
@@ -63,6 +65,7 @@ contract AuctionFacet {
         if (bidCount < MAX_BIDS_PER_TASK) s.taskBids[taskId].push(ITMPCore.Bid({ worker: worker, price: price }));
 
         emit ITMPCore.BidSubmitted(taskId, worker, price);
+        LibHooks._observe(s, taskId, LibHooksV2.A_SUBMIT_BID, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -87,6 +90,7 @@ contract AuctionFacet {
         if (block.timestamp < auctionCfg.bidDeadline) revert ITMPCore.BidDeadlineNotPassed();
         if (auctionCfg.lowestBidder == address(0)) revert ITMPCore.NoBidsSubmitted();
 
+        LibHooksV2.snap(taskId, uint8(task.status));
         task.worker = auctionCfg.lowestBidder;
         task.stakeAmount = auctionCfg.lowestBidPrice;
         task.status = ITMPCore.TaskStatus.Claimed;
@@ -94,6 +98,7 @@ contract AuctionFacet {
         LibHooks._checkSelectWorkerHooks(taskId, auctionCfg.lowestBidder, s);
 
         emit ITMPCore.TaskWorkerSelected(taskId, auctionCfg.lowestBidder);
+        LibHooks._observe(s, taskId, LibHooksV2.A_SELECT_WORKER, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -120,13 +125,16 @@ contract AuctionFacet {
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (price > auctionCfg.maxPrice) revert ITMPCore.PriceExceedsMaxPrice();
 
+        LibHooksV2.snap(taskId, uint8(task.status));
         task.worker = worker;
         task.stakeAmount = price;
         task.status = ITMPCore.TaskStatus.Claimed;
 
-        LibHooks._checkSelectWorkerHooks(taskId, worker, s);
+        // V1: checkSelectWorker; V2: beforeAcceptAuction.
+        LibHooks._before(s, taskId, LibHooksV2.A_ACCEPT_AUCTION, worker, bytes32(0));
 
         emit ITMPCore.AuctionAccepted(taskId, worker, price);
+        LibHooks._observe(s, taskId, LibHooksV2.A_ACCEPT_AUCTION, true);
         LibGuards._nonReentrantAfter(s);
     }
 }

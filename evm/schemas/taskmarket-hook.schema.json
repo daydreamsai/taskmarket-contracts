@@ -1,13 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json",
+  "$id": "https://taskmarket.dev/schemas/taskmarket-hook/2.0.0/schema.json",
   "title": "Taskmarket hook manifest",
-  "description": "A versioned, publishable declaration about one Taskmarket hook. It is descriptive evidence, not an on-chain attestation or a protocol listing decision.",
+  "description": "A versioned, publishable declaration about one Taskmarket hook, V1 (ITMPHooks) or V2 (ITMPHookV2, rev028). It is descriptive evidence, not an on-chain attestation or a protocol listing decision.",
   "type": "object",
   "additionalProperties": false,
-  "patternProperties": { "^x-(?!draft$)": {} },
+  "patternProperties": {
+    "^x-(?!draft$)": {}
+  },
   "required": [
     "manifestVersion",
+    "hookVersion",
     "identity",
     "author",
     "source",
@@ -26,17 +29,26 @@
     "protocolDefault"
   ],
   "$defs": {
-    "address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
+    "address": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
     "nonZeroAddress": {
       "type": "string",
       "pattern": "^0x(?!0{40}$)[a-fA-F0-9]{40}$"
     },
-    "bytes32": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+    "bytes32": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
     "nonZeroBytes32": {
       "type": "string",
       "pattern": "^0x(?!0{64}$)[a-fA-F0-9]{64}$"
     },
-    "txHash": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+    "txHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
     "nonZeroTxHash": {
       "type": "string",
       "pattern": "^0x(?!0{64}$)[a-fA-F0-9]{64}$"
@@ -64,7 +76,9 @@
     },
     "extensions": {
       "type": "object",
-      "patternProperties": { "^x-": {} },
+      "patternProperties": {
+        "^x-": {}
+      },
       "additionalProperties": false
     },
     "roleHolder": {
@@ -73,30 +87,46 @@
       "additionalProperties": false,
       "required": ["chainId", "address"],
       "properties": {
-        "chainId": { "$ref": "#/$defs/safePositiveInteger" },
-        "address": { "$ref": "#/$defs/address" }
+        "chainId": {
+          "$ref": "#/$defs/safePositiveInteger"
+        },
+        "address": {
+          "$ref": "#/$defs/address"
+        }
       }
     },
     "role": {
       "type": "object",
       "additionalProperties": false,
-      "patternProperties": { "^x-": {} },
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": ["name", "holders", "capabilities"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "holders": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/roleHolder" }
+          "items": {
+            "$ref": "#/$defs/roleHolder"
+          }
         },
         "capabilities": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "renounceable": { "type": "boolean" }
+        "renounceable": {
+          "type": "boolean"
+        }
       }
     },
     "proxy": {
@@ -108,25 +138,40 @@
         "kind": {
           "enum": ["none", "erc1967", "transparent", "uups", "beacon", "custom"]
         },
-        "upgradeable": { "type": "boolean" },
-        "implementation": { "$ref": "#/$defs/address" },
-        "admin": { "$ref": "#/$defs/address" },
+        "upgradeable": {
+          "type": "boolean"
+        },
+        "implementation": {
+          "$ref": "#/$defs/address"
+        },
+        "admin": {
+          "$ref": "#/$defs/address"
+        },
         "beacon": {
           "$ref": "#/$defs/address",
           "description": "Beacon contract read by a beacon proxy; required only for kind beacon."
         },
-        "timelock": { "$ref": "#/$defs/address" },
+        "timelock": {
+          "$ref": "#/$defs/address"
+        },
         "upgradeAuthorityRole": {
           "type": "string",
           "minLength": 1,
           "description": "Exact privilegedRoles[].name entry that authorizes upgrades. The CLI requires this reference to resolve uniquely when present."
         },
-        "upgradeAuthorityDescription": { "type": "string", "minLength": 1 }
+        "upgradeAuthorityDescription": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "allOf": [
         {
           "if": {
-            "properties": { "upgradeable": { "const": true } },
+            "properties": {
+              "upgradeable": {
+                "const": true
+              }
+            },
             "required": ["upgradeable"]
           },
           "then": {
@@ -134,17 +179,23 @@
             "anyOf": [
               {
                 "type": "object",
-                "properties": { "admin": {} },
+                "properties": {
+                  "admin": {}
+                },
                 "required": ["admin"]
               },
               {
                 "type": "object",
-                "properties": { "timelock": {} },
+                "properties": {
+                  "timelock": {}
+                },
                 "required": ["timelock"]
               },
               {
                 "type": "object",
-                "properties": { "upgradeAuthorityRole": {} },
+                "properties": {
+                  "upgradeAuthorityRole": {}
+                },
                 "required": ["upgradeAuthorityRole"]
               }
             ],
@@ -158,7 +209,9 @@
           },
           "else": {
             "properties": {
-              "kind": { "const": "none" },
+              "kind": {
+                "const": "none"
+              },
               "implementation": false,
               "admin": false,
               "beacon": false,
@@ -171,29 +224,43 @@
         {
           "if": {
             "type": "object",
-            "properties": { "kind": { "const": "transparent" } },
+            "properties": {
+              "kind": {
+                "const": "transparent"
+              }
+            },
             "required": ["kind"]
           },
           "then": {
             "type": "object",
-            "properties": { "admin": {} },
+            "properties": {
+              "admin": {}
+            },
             "required": ["admin"]
           }
         },
         {
           "if": {
             "type": "object",
-            "properties": { "kind": { "const": "beacon" } },
+            "properties": {
+              "kind": {
+                "const": "beacon"
+              }
+            },
             "required": ["kind"]
           },
           "then": {
             "type": "object",
-            "properties": { "beacon": {} },
+            "properties": {
+              "beacon": {}
+            },
             "required": ["beacon"]
           },
           "else": {
             "type": "object",
-            "properties": { "beacon": false }
+            "properties": {
+              "beacon": false
+            }
           }
         }
       ]
@@ -208,14 +275,21 @@
           "type": "object",
           "minProperties": 1,
           "patternProperties": {
-            "^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$": {
+            "^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire|beforeCreate|beforeAssignEvaluator|beforeUpdate|beforeClaim|beforeSubmitPitch|beforeSelectWorker|beforeSubmitProof|beforeSubmitBid|beforeAcceptAuction|beforeSubmitWork|beforeRejectSubmission|beforeEvaluate|beforeAppeal|beforeAccept|beforeCancel|beforeRate|afterComplete|afterCancel|afterExpire|afterForfeit|afterAction)$": {
               "type": "object",
               "additionalProperties": false,
               "required": ["typical", "maximum", "methodology"],
               "properties": {
-                "typical": { "$ref": "#/$defs/safeNonnegativeInteger" },
-                "maximum": { "$ref": "#/$defs/safeNonnegativeInteger" },
-                "methodology": { "type": "string", "minLength": 1 }
+                "typical": {
+                  "$ref": "#/$defs/safeNonnegativeInteger"
+                },
+                "maximum": {
+                  "$ref": "#/$defs/safeNonnegativeInteger"
+                },
+                "methodology": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             }
           },
@@ -229,20 +303,28 @@
       "additionalProperties": false,
       "required": ["chainId"],
       "properties": {
-        "chainId": { "$ref": "#/$defs/safePositiveInteger" },
+        "chainId": {
+          "$ref": "#/$defs/safePositiveInteger"
+        },
         "addresses": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/address" }
+          "items": {
+            "$ref": "#/$defs/address"
+          }
         },
-        "url": { "$ref": "#/$defs/httpsUri" }
+        "url": {
+          "$ref": "#/$defs/httpsUri"
+        }
       }
     },
     "chainDeployment": {
       "type": "object",
       "additionalProperties": false,
-      "patternProperties": { "^x-": {} },
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "chainId",
         "hook",
@@ -253,38 +335,46 @@
         "gas"
       ],
       "properties": {
-        "chainId": { "$ref": "#/$defs/safePositiveInteger" },
-        "network": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "hook": { "$ref": "#/$defs/address" },
-        "taskmarketDiamond": { "$ref": "#/$defs/address" },
+        "chainId": {
+          "$ref": "#/$defs/safePositiveInteger"
+        },
+        "network": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "hook": {
+          "$ref": "#/$defs/address"
+        },
+        "taskmarketDiamond": {
+          "$ref": "#/$defs/address"
+        },
         "deployment": {
           "type": "object",
           "additionalProperties": false,
           "required": ["transactionHash", "blockNumber"],
           "properties": {
-            "transactionHash": { "$ref": "#/$defs/txHash" },
-            "blockNumber": { "$ref": "#/$defs/safeNonnegativeInteger" }
+            "transactionHash": {
+              "$ref": "#/$defs/txHash"
+            },
+            "blockNumber": {
+              "$ref": "#/$defs/safeNonnegativeInteger"
+            }
           }
         },
-        "runtimeCodehash": { "$ref": "#/$defs/bytes32" },
-        "creationCodehash": { "$ref": "#/$defs/bytes32" },
-        "proxy": { "$ref": "#/$defs/proxy" },
-        "gas": { "$ref": "#/$defs/gas" }
+        "runtimeCodehash": {
+          "$ref": "#/$defs/bytes32"
+        },
+        "creationCodehash": {
+          "$ref": "#/$defs/bytes32"
+        },
+        "proxy": {
+          "$ref": "#/$defs/proxy"
+        },
+        "gas": {
+          "$ref": "#/$defs/gas"
+        }
       }
-    },
-    "callback": {
-      "enum": [
-        "checkFund",
-        "checkClaim",
-        "checkSelectWorker",
-        "checkSubmit",
-        "checkEvaluate",
-        "checkComplete",
-        "onComplete",
-        "onForfeit",
-        "onCancel",
-        "onExpire"
-      ]
     },
     "publishableEvidence": {
       "type": "object",
@@ -303,24 +393,44 @@
           "items": {
             "type": "object",
             "properties": {
-              "hook": { "$ref": "#/$defs/nonZeroAddress" },
-              "taskmarketDiamond": { "$ref": "#/$defs/nonZeroAddress" },
+              "hook": {
+                "$ref": "#/$defs/nonZeroAddress"
+              },
+              "taskmarketDiamond": {
+                "$ref": "#/$defs/nonZeroAddress"
+              },
               "deployment": {
                 "type": "object",
                 "properties": {
-                  "transactionHash": { "$ref": "#/$defs/nonZeroTxHash" },
-                  "blockNumber": { "$ref": "#/$defs/safePositiveInteger" }
+                  "transactionHash": {
+                    "$ref": "#/$defs/nonZeroTxHash"
+                  },
+                  "blockNumber": {
+                    "$ref": "#/$defs/safePositiveInteger"
+                  }
                 }
               },
-              "runtimeCodehash": { "$ref": "#/$defs/nonZeroBytes32" },
-              "creationCodehash": { "$ref": "#/$defs/nonZeroBytes32" },
+              "runtimeCodehash": {
+                "$ref": "#/$defs/nonZeroBytes32"
+              },
+              "creationCodehash": {
+                "$ref": "#/$defs/nonZeroBytes32"
+              },
               "proxy": {
                 "type": "object",
                 "properties": {
-                  "implementation": { "$ref": "#/$defs/nonZeroAddress" },
-                  "admin": { "$ref": "#/$defs/nonZeroAddress" },
-                  "beacon": { "$ref": "#/$defs/nonZeroAddress" },
-                  "timelock": { "$ref": "#/$defs/nonZeroAddress" }
+                  "implementation": {
+                    "$ref": "#/$defs/nonZeroAddress"
+                  },
+                  "admin": {
+                    "$ref": "#/$defs/nonZeroAddress"
+                  },
+                  "beacon": {
+                    "$ref": "#/$defs/nonZeroAddress"
+                  },
+                  "timelock": {
+                    "$ref": "#/$defs/nonZeroAddress"
+                  }
                 }
               },
               "gas": {
@@ -329,11 +439,15 @@
                   "estimates": {
                     "type": "object",
                     "patternProperties": {
-                      "^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire)$": {
+                      "^(checkFund|checkClaim|checkSelectWorker|checkSubmit|checkEvaluate|checkComplete|onComplete|onForfeit|onCancel|onExpire|beforeCreate|beforeAssignEvaluator|beforeUpdate|beforeClaim|beforeSubmitPitch|beforeSelectWorker|beforeSubmitProof|beforeSubmitBid|beforeAcceptAuction|beforeSubmitWork|beforeRejectSubmission|beforeEvaluate|beforeAppeal|beforeAccept|beforeCancel|beforeRate|afterComplete|afterCancel|afterExpire|afterForfeit|afterAction)$": {
                         "type": "object",
                         "properties": {
-                          "typical": { "$ref": "#/$defs/safePositiveInteger" },
-                          "maximum": { "$ref": "#/$defs/safePositiveInteger" }
+                          "typical": {
+                            "$ref": "#/$defs/safePositiveInteger"
+                          },
+                          "maximum": {
+                            "$ref": "#/$defs/safePositiveInteger"
+                          }
                         }
                       }
                     }
@@ -353,7 +467,9 @@
                 "items": {
                   "type": "object",
                   "properties": {
-                    "address": { "$ref": "#/$defs/nonZeroAddress" }
+                    "address": {
+                      "$ref": "#/$defs/nonZeroAddress"
+                    }
                   }
                 }
               }
@@ -372,7 +488,9 @@
                   "properties": {
                     "addresses": {
                       "type": "array",
-                      "items": { "$ref": "#/$defs/nonZeroAddress" }
+                      "items": {
+                        "$ref": "#/$defs/nonZeroAddress"
+                      }
                     }
                   }
                 }
@@ -386,7 +504,11 @@
             {
               "if": {
                 "type": "object",
-                "properties": { "status": { "const": "verified" } },
+                "properties": {
+                  "status": {
+                    "const": "verified"
+                  }
+                },
                 "required": ["status"]
               },
               "then": {
@@ -397,7 +519,11 @@
                     "minItems": 1,
                     "items": {
                       "type": "object",
-                      "properties": { "status": { "const": "verified" } },
+                      "properties": {
+                        "status": {
+                          "const": "verified"
+                        }
+                      },
                       "required": ["status"]
                     }
                   }
@@ -407,7 +533,11 @@
             {
               "if": {
                 "type": "object",
-                "properties": { "status": { "const": "partially-verified" } },
+                "properties": {
+                  "status": {
+                    "const": "partially-verified"
+                  }
+                },
                 "required": ["status"]
               },
               "then": {
@@ -420,7 +550,11 @@
                       {
                         "contains": {
                           "type": "object",
-                          "properties": { "status": { "const": "verified" } },
+                          "properties": {
+                            "status": {
+                              "const": "verified"
+                            }
+                          },
                           "required": ["status"]
                         }
                       },
@@ -428,7 +562,9 @@
                         "contains": {
                           "type": "object",
                           "properties": {
-                            "status": { "enum": ["unverified", "pending"] }
+                            "status": {
+                              "enum": ["unverified", "pending"]
+                            }
                           },
                           "required": ["status"]
                         }
@@ -441,7 +577,11 @@
             {
               "if": {
                 "type": "object",
-                "properties": { "status": { "const": "unverified" } },
+                "properties": {
+                  "status": {
+                    "const": "unverified"
+                  }
+                },
                 "required": ["status"]
               },
               "then": {
@@ -452,7 +592,9 @@
                     "items": {
                       "type": "object",
                       "properties": {
-                        "status": { "enum": ["unverified", "pending"] }
+                        "status": {
+                          "enum": ["unverified", "pending"]
+                        }
                       },
                       "required": ["status"]
                     }
@@ -463,13 +605,20 @@
             {
               "if": {
                 "type": "object",
-                "properties": { "status": { "const": "not-applicable" } },
+                "properties": {
+                  "status": {
+                    "const": "not-applicable"
+                  }
+                },
                 "required": ["status"]
               },
               "then": {
                 "type": "object",
                 "properties": {
-                  "verifiers": { "type": "array", "maxItems": 0 }
+                  "verifiers": {
+                    "type": "array",
+                    "maxItems": 0
+                  }
                 }
               }
             }
@@ -486,12 +635,18 @@
                   {
                     "if": {
                       "type": "object",
-                      "properties": { "status": { "const": "audited" } },
+                      "properties": {
+                        "status": {
+                          "const": "audited"
+                        }
+                      },
                       "required": ["status"]
                     },
                     "then": {
                       "type": "object",
-                      "properties": { "report": {} },
+                      "properties": {
+                        "report": {}
+                      },
                       "required": ["report"]
                     }
                   }
@@ -506,12 +661,18 @@
             {
               "if": {
                 "type": "object",
-                "properties": { "status": { "enum": ["submitted", "listed"] } },
+                "properties": {
+                  "status": {
+                    "enum": ["submitted", "listed"]
+                  }
+                },
                 "required": ["status"]
               },
               "then": {
                 "type": "object",
-                "properties": { "listingUrl": {} },
+                "properties": {
+                  "listingUrl": {}
+                },
                 "required": ["listingUrl"]
               }
             }
@@ -524,13 +685,17 @@
               "if": {
                 "type": "object",
                 "properties": {
-                  "status": { "enum": ["tested", "independently-verified"] }
+                  "status": {
+                    "enum": ["tested", "independently-verified"]
+                  }
                 },
                 "required": ["status"]
               },
               "then": {
                 "type": "object",
-                "properties": { "evidence": {} },
+                "properties": {
+                  "evidence": {}
+                },
                 "required": ["evidence"]
               }
             }
@@ -542,12 +707,18 @@
             {
               "if": {
                 "type": "object",
-                "properties": { "status": { "const": "candidate" } },
+                "properties": {
+                  "status": {
+                    "const": "candidate"
+                  }
+                },
                 "required": ["status"]
               },
               "then": {
                 "type": "object",
-                "properties": { "evidence": {} },
+                "properties": {
+                  "evidence": {}
+                },
                 "required": ["evidence"]
               }
             },
@@ -568,7 +739,10 @@
                 "type": "object",
                 "properties": {
                   "evidence": {},
-                  "chains": { "type": "array", "minItems": 1 }
+                  "chains": {
+                    "type": "array",
+                    "minItems": 1
+                  }
                 },
                 "required": ["evidence", "chains"]
               }
@@ -576,35 +750,240 @@
           ]
         }
       }
+    },
+    "callbackV1": {
+      "description": "A V1 (ITMPHooks) callback.",
+      "enum": [
+        "checkFund",
+        "checkClaim",
+        "checkSelectWorker",
+        "checkSubmit",
+        "checkEvaluate",
+        "checkComplete",
+        "onComplete",
+        "onForfeit",
+        "onCancel",
+        "onExpire"
+      ]
+    },
+    "callbackV2": {
+      "description": "A V2 (ITMPHookV2) callback: one before-callback per vetoable action (capability bits 0-15), the four terminal after-callbacks (bits 21-24) and afterAction (bit 25).",
+      "enum": [
+        "beforeCreate",
+        "beforeAssignEvaluator",
+        "beforeUpdate",
+        "beforeClaim",
+        "beforeSubmitPitch",
+        "beforeSelectWorker",
+        "beforeSubmitProof",
+        "beforeSubmitBid",
+        "beforeAcceptAuction",
+        "beforeSubmitWork",
+        "beforeRejectSubmission",
+        "beforeEvaluate",
+        "beforeAppeal",
+        "beforeAccept",
+        "beforeCancel",
+        "beforeRate",
+        "afterComplete",
+        "afterCancel",
+        "afterExpire",
+        "afterForfeit",
+        "afterAction"
+      ]
+    },
+    "configParamLeaf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(\\[[0-9]*\\])*$"
+        }
+      }
+    },
+    "configParamMid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(\\[[0-9]*\\])*$|^tuple(\\[[0-9]*\\])*$"
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/configParamLeaf"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^tuple(\\[[0-9]*\\])*$"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "components": {}
+        },
+        "required": ["components"]
+      },
+      "else": {
+        "properties": {
+          "components": false
+        }
+      }
+    },
+    "configParam": {
+      "description": "One ABI parameter of the hook's V2 configuration tuple, in the shape of a Solidity ABI JSON input: a name, an ABI type and, for a tuple, its components (at most three levels).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(\\[[0-9]*\\])*$|^tuple(\\[[0-9]*\\])*$"
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/configParamMid"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^tuple(\\[[0-9]*\\])*$"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "components": {}
+        },
+        "required": ["components"]
+      },
+      "else": {
+        "properties": {
+          "components": false
+        }
+      }
     }
   },
   "properties": {
     "x-draft": {
-      "anyOf": [{ "type": "boolean" }, { "type": "object" }],
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object"
+        }
+      ],
       "description": "When true or an object, explicitly marks schema-shaped editing output that is never publishable. Generic validators must treat this marker as draft status; false is evaluated with publishable evidence requirements."
     },
-    "manifestVersion": { "const": "1.0.0" },
+    "manifestVersion": {
+      "const": "2.0.0",
+      "description": "Manifest schema 2.0.0. A 1.0.0 manifest must be migrated: set manifestVersion to 2.0.0 and add hookVersion 1."
+    },
+    "hookVersion": {
+      "enum": [1, 2],
+      "description": "The hook interface: 1 for ITMPHooks (check*/on* callbacks), 2 for ITMPHookV2 (rev028: before*/after* callbacks, capabilities, configuration)."
+    },
+    "capabilities": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "V2 only: the uint32 value hookCapabilities() returns. Bits 0-15 are the before-callback of each vetoable action (bit = action id), 21-24 afterComplete/afterCancel/afterExpire/afterForfeit, 25 afterAction, 26 award reallocation and 27 a hook fee; bits 16-20 and 28-31 are reserved and must be zero."
+    },
+    "minDiamondVersion": {
+      "type": "integer",
+      "minimum": 28,
+      "maximum": 65535,
+      "description": "V2 only: the uint16 value minDiamondVersion() returns, the lowest diamondVersion() the hook attaches to (28 or later)."
+    },
+    "configSchema": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/configParam"
+      },
+      "description": "V2 only: the ABI parameters of the tuple the hook's configuration bytes encode, e.g. [{\"name\":\"gatingTaskId\",\"type\":\"bytes32\"}]. Empty when the hook takes no configuration."
+    },
     "identity": {
       "type": "object",
       "additionalProperties": false,
-      "patternProperties": { "^x-": {} },
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": ["name", "slug", "version", "description"],
       "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
-        "version": { "$ref": "#/$defs/semver" },
-        "description": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "version": {
+          "$ref": "#/$defs/semver"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
       }
     },
     "author": {
       "type": "object",
       "additionalProperties": false,
-      "patternProperties": { "^x-": {} },
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": ["name", "url"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "url": { "$ref": "#/$defs/httpsUri" },
-        "contact": { "type": "string", "format": "email" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "$ref": "#/$defs/httpsUri"
+        },
+        "contact": {
+          "type": "string",
+          "format": "email"
+        }
       }
     },
     "source": {
@@ -612,8 +991,13 @@
       "additionalProperties": false,
       "required": ["repository", "commit", "path"],
       "properties": {
-        "repository": { "$ref": "#/$defs/httpsUri" },
-        "commit": { "type": "string", "pattern": "^[a-fA-F0-9]{7,64}$" },
+        "repository": {
+          "$ref": "#/$defs/httpsUri"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{7,64}$"
+        },
         "path": {
           "type": "string",
           "pattern": "^(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*//)(?!.*[\\\\\\u0000-\\u001F\\u007F])[^/]+(?:/[^/]+)*$"
@@ -628,30 +1012,52 @@
       "type": "array",
       "description": "Chain-owned runtime evidence. Every deployment carries its own addresses, bytecode hashes, proxy metadata, and gas measurements.",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/chainDeployment" }
+      "items": {
+        "$ref": "#/$defs/chainDeployment"
+      }
     },
     "callbacks": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "$ref": "#/$defs/callback" }
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/callbackV1"
+          },
+          {
+            "$ref": "#/$defs/callbackV2"
+          }
+        ]
+      }
     },
     "taskModes": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "enum": ["bounty", "claim", "pitch", "auction", "benchmark"] }
+      "items": {
+        "enum": ["bounty", "claim", "pitch", "auction", "benchmark"]
+      }
     },
     "hookData": {
       "type": "object",
       "description": "Publisher-attested wire metadata. Validation is structural and does not prove ABI type, decoded value, schema, and encoded bytes equivalence.",
       "additionalProperties": false,
-      "patternProperties": { "^x-": {} },
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": ["encoding", "schema", "examples"],
       "properties": {
-        "encoding": { "enum": ["none", "abi"] },
-        "abiType": { "type": "string", "minLength": 1 },
-        "schema": { "type": "object" },
+        "encoding": {
+          "enum": ["none", "abi"]
+        },
+        "abiType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema": {
+          "type": "object"
+        },
         "examples": {
           "type": "array",
           "minItems": 1,
@@ -660,7 +1066,10 @@
             "additionalProperties": false,
             "required": ["name", "decoded", "encoded"],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
               "decoded": {},
               "encoded": {
                 "type": "string",
@@ -673,26 +1082,42 @@
       "allOf": [
         {
           "if": {
-            "properties": { "encoding": { "const": "none" } },
+            "properties": {
+              "encoding": {
+                "const": "none"
+              }
+            },
             "required": ["encoding"]
           },
           "then": {
             "properties": {
               "abiType": false,
-              "schema": { "type": "object", "maxProperties": 0 },
+              "schema": {
+                "type": "object",
+                "maxProperties": 0
+              },
               "examples": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "decoded": { "type": "null" },
-                    "encoded": { "const": "0x" }
+                    "decoded": {
+                      "type": "null"
+                    },
+                    "encoded": {
+                      "const": "0x"
+                    }
                   }
                 }
               }
             }
           },
-          "else": { "properties": { "abiType": {} }, "required": ["abiType"] }
+          "else": {
+            "properties": {
+              "abiType": {}
+            },
+            "required": ["abiType"]
+          }
         }
       ]
     },
@@ -717,9 +1142,15 @@
             "additionalProperties": false,
             "required": ["chainId", "url", "status"],
             "properties": {
-              "chainId": { "$ref": "#/$defs/safePositiveInteger" },
-              "url": { "$ref": "#/$defs/httpsUri" },
-              "status": { "enum": ["verified", "unverified", "pending"] }
+              "chainId": {
+                "$ref": "#/$defs/safePositiveInteger"
+              },
+              "url": {
+                "$ref": "#/$defs/httpsUri"
+              },
+              "status": {
+                "enum": ["verified", "unverified", "pending"]
+              }
             }
           }
         }
@@ -728,7 +1159,9 @@
     "privilegedRoles": {
       "type": "array",
       "description": "Reusable role definitions with every holder explicitly bound to a declared deployment chain.",
-      "items": { "$ref": "#/$defs/role" }
+      "items": {
+        "$ref": "#/$defs/role"
+      }
     },
     "externalDependencies": {
       "type": "array",
@@ -738,16 +1171,24 @@
         "additionalProperties": false,
         "required": ["name", "kind", "purpose", "deployments"],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
           "kind": {
             "enum": ["contract", "oracle", "token", "relayer", "api", "other"]
           },
-          "purpose": { "type": "string", "minLength": 1 },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
           "deployments": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": { "$ref": "#/$defs/dependencyDeployment" }
+            "items": {
+              "$ref": "#/$defs/dependencyDeployment"
+            }
           }
         },
         "allOf": [
@@ -766,7 +1207,9 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "properties": { "addresses": {} },
+                    "properties": {
+                      "addresses": {}
+                    },
                     "required": ["addresses"]
                   }
                 }
@@ -775,7 +1218,11 @@
           },
           {
             "if": {
-              "properties": { "kind": { "const": "api" } },
+              "properties": {
+                "kind": {
+                  "const": "api"
+                }
+              },
               "required": ["kind"]
             },
             "then": {
@@ -784,7 +1231,10 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "properties": { "addresses": false, "url": {} },
+                    "properties": {
+                      "addresses": false,
+                      "url": {}
+                    },
                     "required": ["url"]
                   }
                 }
@@ -793,7 +1243,11 @@
           },
           {
             "if": {
-              "properties": { "kind": { "const": "other" } },
+              "properties": {
+                "kind": {
+                  "const": "other"
+                }
+              },
               "required": ["kind"]
             },
             "then": {
@@ -805,12 +1259,16 @@
                     "anyOf": [
                       {
                         "type": "object",
-                        "properties": { "addresses": {} },
+                        "properties": {
+                          "addresses": {}
+                        },
                         "required": ["addresses"]
                       },
                       {
                         "type": "object",
-                        "properties": { "url": {} },
+                        "properties": {
+                          "url": {}
+                        },
                         "required": ["url"]
                       }
                     ]
@@ -827,9 +1285,19 @@
       "additionalProperties": false,
       "required": ["requirements", "failureMode"],
       "properties": {
-        "requirements": { "type": "array", "items": { "type": "string" } },
-        "failureMode": { "type": "string", "minLength": 1 },
-        "recovery": { "type": "string" }
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failureMode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recovery": {
+          "type": "string"
+        }
       }
     },
     "security": {
@@ -844,17 +1312,30 @@
             "additionalProperties": false,
             "required": ["status", "scope"],
             "properties": {
-              "status": { "enum": ["audited", "unaudited", "in-progress"] },
-              "scope": { "type": "string", "minLength": 1 },
-              "report": { "$ref": "#/$defs/httpsUri" },
-              "date": { "type": "string", "format": "date" }
+              "status": {
+                "enum": ["audited", "unaudited", "in-progress"]
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "report": {
+                "$ref": "#/$defs/httpsUri"
+              },
+              "date": {
+                "type": "string",
+                "format": "date"
+              }
             }
           }
         },
         "notes": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -864,9 +1345,15 @@
       "additionalProperties": false,
       "required": ["status"],
       "properties": {
-        "status": { "enum": ["unlisted", "submitted", "listed", "delisted"] },
-        "listingUrl": { "$ref": "#/$defs/httpsUri" },
-        "notes": { "type": "string" }
+        "status": {
+          "enum": ["unlisted", "submitted", "listed", "delisted"]
+        },
+        "listingUrl": {
+          "$ref": "#/$defs/httpsUri"
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "conformance": {
@@ -883,8 +1370,13 @@
             "not-claimed"
           ]
         },
-        "standard": { "type": "string", "minLength": 1 },
-        "evidence": { "$ref": "#/$defs/httpsUri" }
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "$ref": "#/$defs/httpsUri"
+        }
       }
     },
     "protocolDefault": {
@@ -901,32 +1393,91 @@
             "default-on-all-declared-chains"
           ]
         },
-        "evidence": { "$ref": "#/$defs/httpsUri" },
+        "evidence": {
+          "$ref": "#/$defs/httpsUri"
+        },
         "chains": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/safePositiveInteger" }
+          "items": {
+            "$ref": "#/$defs/safePositiveInteger"
+          }
         }
       }
     }
   },
-  "$comment": "Generic Draft 2020-12 validation enforces non-placeholder evidence whenever x-draft is absent or false. A true/object x-draft marker conditionally permits placeholder editing output but explicitly marks it non-publishable. Raw JSON ingestion must also use the exported lossless inspector so fractional or unsafe mathematical values cannot be rounded by JSON.parse before schema validation. The CLI uses that raw-source path and additionally enforces unique deployment chainIds; exact callback-to-gas-estimate coverage and typical <= maximum on every deployment; unique role/dependency names; declared-chain and normalized duplicate checks for role holders and dependency bindings; same-chain proxy authority links; normalized verifier (chainId, url) uniqueness and verified coverage of every declared chain; exact all/some-chain default semantics; and always reports drafts non-publishable.",
+  "$comment": "Generic Draft 2020-12 validation enforces non-placeholder evidence whenever x-draft is absent or false. A true/object x-draft marker conditionally permits placeholder editing output but explicitly marks it non-publishable. Raw JSON ingestion must also use the exported lossless inspector so fractional or unsafe mathematical values cannot be rounded by JSON.parse before schema validation. hookVersion selects the callback vocabulary and, for 2, requires capabilities, minDiamondVersion and configSchema (all three are forbidden for 1). The CLI uses that raw-source path and additionally enforces unique deployment chainIds; exact callback-to-gas-estimate coverage; for V2, callbacks exactly matching the callback bits of capabilities with no reserved bit set and typical <= maximum on every deployment; unique role/dependency names; declared-chain and normalized duplicate checks for role holders and dependency bindings; same-chain proxy authority links; normalized verifier (chainId, url) uniqueness and verified coverage of every declared chain; exact all/some-chain default semantics; and always reports drafts non-publishable.",
   "allOf": [
     {
-      "if": { "properties": { "x-draft": {} }, "required": ["x-draft"] },
-      "then": {
-        "if": {
-          "properties": { "x-draft": { "const": false } },
-          "required": ["x-draft"]
+      "if": {
+        "properties": {
+          "hookVersion": {
+            "const": 2
+          }
         },
-        "then": { "$ref": "#/$defs/publishableEvidence" }
+        "required": ["hookVersion"]
       },
-      "else": { "$ref": "#/$defs/publishableEvidence" }
+      "then": {
+        "required": ["capabilities", "minDiamondVersion", "configSchema"],
+        "properties": {
+          "capabilities": {},
+          "minDiamondVersion": {},
+          "configSchema": {},
+          "callbacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/callbackV2"
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/callbackV1"
+            }
+          },
+          "capabilities": false,
+          "minDiamondVersion": false,
+          "configSchema": false
+        }
+      }
     },
     {
       "if": {
         "properties": {
-          "callbacks": { "type": "array", "contains": { "const": "checkFund" } }
+          "x-draft": {}
+        },
+        "required": ["x-draft"]
+      },
+      "then": {
+        "if": {
+          "properties": {
+            "x-draft": {
+              "const": false
+            }
+          },
+          "required": ["x-draft"]
+        },
+        "then": {
+          "$ref": "#/$defs/publishableEvidence"
+        }
+      },
+      "else": {
+        "$ref": "#/$defs/publishableEvidence"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "checkFund"
+            }
+          }
         },
         "required": ["callbacks"]
       },
@@ -942,7 +1493,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkFund": {} },
+                      "properties": {
+                        "checkFund": {}
+                      },
                       "required": ["checkFund"]
                     }
                   }
@@ -964,7 +1517,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkFund": false }
+                      "properties": {
+                        "checkFund": false
+                      }
                     }
                   }
                 }
@@ -979,7 +1534,9 @@
         "properties": {
           "callbacks": {
             "type": "array",
-            "contains": { "const": "checkClaim" }
+            "contains": {
+              "const": "checkClaim"
+            }
           }
         },
         "required": ["callbacks"]
@@ -996,7 +1553,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkClaim": {} },
+                      "properties": {
+                        "checkClaim": {}
+                      },
                       "required": ["checkClaim"]
                     }
                   }
@@ -1018,7 +1577,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkClaim": false }
+                      "properties": {
+                        "checkClaim": false
+                      }
                     }
                   }
                 }
@@ -1033,7 +1594,9 @@
         "properties": {
           "callbacks": {
             "type": "array",
-            "contains": { "const": "checkSelectWorker" }
+            "contains": {
+              "const": "checkSelectWorker"
+            }
           }
         },
         "required": ["callbacks"]
@@ -1050,7 +1613,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkSelectWorker": {} },
+                      "properties": {
+                        "checkSelectWorker": {}
+                      },
                       "required": ["checkSelectWorker"]
                     }
                   }
@@ -1072,7 +1637,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkSelectWorker": false }
+                      "properties": {
+                        "checkSelectWorker": false
+                      }
                     }
                   }
                 }
@@ -1087,7 +1654,9 @@
         "properties": {
           "callbacks": {
             "type": "array",
-            "contains": { "const": "checkSubmit" }
+            "contains": {
+              "const": "checkSubmit"
+            }
           }
         },
         "required": ["callbacks"]
@@ -1104,7 +1673,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkSubmit": {} },
+                      "properties": {
+                        "checkSubmit": {}
+                      },
                       "required": ["checkSubmit"]
                     }
                   }
@@ -1126,7 +1697,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkSubmit": false }
+                      "properties": {
+                        "checkSubmit": false
+                      }
                     }
                   }
                 }
@@ -1141,7 +1714,9 @@
         "properties": {
           "callbacks": {
             "type": "array",
-            "contains": { "const": "checkEvaluate" }
+            "contains": {
+              "const": "checkEvaluate"
+            }
           }
         },
         "required": ["callbacks"]
@@ -1158,7 +1733,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkEvaluate": {} },
+                      "properties": {
+                        "checkEvaluate": {}
+                      },
                       "required": ["checkEvaluate"]
                     }
                   }
@@ -1180,7 +1757,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkEvaluate": false }
+                      "properties": {
+                        "checkEvaluate": false
+                      }
                     }
                   }
                 }
@@ -1195,7 +1774,9 @@
         "properties": {
           "callbacks": {
             "type": "array",
-            "contains": { "const": "checkComplete" }
+            "contains": {
+              "const": "checkComplete"
+            }
           }
         },
         "required": ["callbacks"]
@@ -1212,7 +1793,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkComplete": {} },
+                      "properties": {
+                        "checkComplete": {}
+                      },
                       "required": ["checkComplete"]
                     }
                   }
@@ -1234,7 +1817,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "checkComplete": false }
+                      "properties": {
+                        "checkComplete": false
+                      }
                     }
                   }
                 }
@@ -1249,7 +1834,9 @@
         "properties": {
           "callbacks": {
             "type": "array",
-            "contains": { "const": "onComplete" }
+            "contains": {
+              "const": "onComplete"
+            }
           }
         },
         "required": ["callbacks"]
@@ -1266,7 +1853,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onComplete": {} },
+                      "properties": {
+                        "onComplete": {}
+                      },
                       "required": ["onComplete"]
                     }
                   }
@@ -1288,7 +1877,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onComplete": false }
+                      "properties": {
+                        "onComplete": false
+                      }
                     }
                   }
                 }
@@ -1301,7 +1892,12 @@
     {
       "if": {
         "properties": {
-          "callbacks": { "type": "array", "contains": { "const": "onForfeit" } }
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "onForfeit"
+            }
+          }
         },
         "required": ["callbacks"]
       },
@@ -1317,7 +1913,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onForfeit": {} },
+                      "properties": {
+                        "onForfeit": {}
+                      },
                       "required": ["onForfeit"]
                     }
                   }
@@ -1339,7 +1937,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onForfeit": false }
+                      "properties": {
+                        "onForfeit": false
+                      }
                     }
                   }
                 }
@@ -1352,7 +1952,12 @@
     {
       "if": {
         "properties": {
-          "callbacks": { "type": "array", "contains": { "const": "onCancel" } }
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "onCancel"
+            }
+          }
         },
         "required": ["callbacks"]
       },
@@ -1368,7 +1973,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onCancel": {} },
+                      "properties": {
+                        "onCancel": {}
+                      },
                       "required": ["onCancel"]
                     }
                   }
@@ -1390,7 +1997,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onCancel": false }
+                      "properties": {
+                        "onCancel": false
+                      }
                     }
                   }
                 }
@@ -1403,7 +2012,12 @@
     {
       "if": {
         "properties": {
-          "callbacks": { "type": "array", "contains": { "const": "onExpire" } }
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "onExpire"
+            }
+          }
         },
         "required": ["callbacks"]
       },
@@ -1419,7 +2033,9 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onExpire": {} },
+                      "properties": {
+                        "onExpire": {}
+                      },
                       "required": ["onExpire"]
                     }
                   }
@@ -1441,7 +2057,1269 @@
                   "properties": {
                     "estimates": {
                       "type": "object",
-                      "properties": { "onExpire": false }
+                      "properties": {
+                        "onExpire": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeCreate"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeCreate": {}
+                      },
+                      "required": ["beforeCreate"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeCreate": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeAssignEvaluator"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAssignEvaluator": {}
+                      },
+                      "required": ["beforeAssignEvaluator"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAssignEvaluator": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeUpdate"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeUpdate": {}
+                      },
+                      "required": ["beforeUpdate"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeUpdate": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeClaim"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeClaim": {}
+                      },
+                      "required": ["beforeClaim"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeClaim": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeSubmitPitch"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitPitch": {}
+                      },
+                      "required": ["beforeSubmitPitch"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitPitch": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeSelectWorker"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSelectWorker": {}
+                      },
+                      "required": ["beforeSelectWorker"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSelectWorker": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeSubmitProof"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitProof": {}
+                      },
+                      "required": ["beforeSubmitProof"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitProof": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeSubmitBid"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitBid": {}
+                      },
+                      "required": ["beforeSubmitBid"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitBid": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeAcceptAuction"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAcceptAuction": {}
+                      },
+                      "required": ["beforeAcceptAuction"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAcceptAuction": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeSubmitWork"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitWork": {}
+                      },
+                      "required": ["beforeSubmitWork"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeSubmitWork": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeRejectSubmission"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeRejectSubmission": {}
+                      },
+                      "required": ["beforeRejectSubmission"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeRejectSubmission": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeEvaluate"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeEvaluate": {}
+                      },
+                      "required": ["beforeEvaluate"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeEvaluate": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeAppeal"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAppeal": {}
+                      },
+                      "required": ["beforeAppeal"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAppeal": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeAccept"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAccept": {}
+                      },
+                      "required": ["beforeAccept"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeAccept": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeCancel"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeCancel": {}
+                      },
+                      "required": ["beforeCancel"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeCancel": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "beforeRate"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeRate": {}
+                      },
+                      "required": ["beforeRate"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "beforeRate": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "afterComplete"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterComplete": {}
+                      },
+                      "required": ["afterComplete"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterComplete": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "afterCancel"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterCancel": {}
+                      },
+                      "required": ["afterCancel"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterCancel": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "afterExpire"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterExpire": {}
+                      },
+                      "required": ["afterExpire"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterExpire": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "afterForfeit"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterForfeit": {}
+                      },
+                      "required": ["afterForfeit"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterForfeit": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "callbacks": {
+            "type": "array",
+            "contains": {
+              "const": "afterAction"
+            }
+          }
+        },
+        "required": ["callbacks"]
+      },
+      "then": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterAction": {}
+                      },
+                      "required": ["afterAction"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deployments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "gas": {
+                  "type": "object",
+                  "properties": {
+                    "estimates": {
+                      "type": "object",
+                      "properties": {
+                        "afterAction": false
+                      }
                     }
                   }
                 }

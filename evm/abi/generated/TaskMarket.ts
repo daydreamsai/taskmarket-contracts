@@ -2043,25 +2043,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "HookRegistered",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "hookContract",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TaskCreated",
     "inputs": [
       {
@@ -2409,11 +2390,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "HookCheckFundRejected",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAuctionSubtype",
     "inputs": []
   },
@@ -2742,17 +2718,17 @@ export const TaskMarketABI = [
     "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "HookCallFailed",
+    "type": "function",
+    "name": "settleLapsedReview",
     "inputs": [
       {
-        "name": "hook",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "anonymous": false
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
@@ -2831,6 +2807,25 @@ export const TaskMarketABI = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReviewLapsed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2959,11 +2954,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "InsufficientGasForHook",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LengthMismatch",
     "inputs": []
   },
@@ -2980,6 +2970,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "ReviewWindowClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReviewWindowOpen",
     "inputs": []
   },
   {
@@ -3677,6 +3672,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "MAX_SUBMISSION_WINNERS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "defaultFeeBps",
     "inputs": [],
     "outputs": [
@@ -3790,6 +3798,30 @@ export const TaskMarketABI = [
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReservation",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "acceptBy",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -3925,6 +3957,47 @@ export const TaskMarketABI = [
             "name": "lowestBidPrice",
             "type": "uint256",
             "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTaskClock",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskClock",
+        "components": [
+          {
+            "name": "deliveredAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "decisionStartAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "revisionsUsed",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "revisionDueAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -4180,6 +4253,97 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "getTaskTerms",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.TaskTerms",
+        "components": [
+          {
+            "name": "version",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "stakeRequired",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "stakeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "penaltyTo",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.PenaltyTo"
+          },
+          {
+            "name": "reviewWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "decisionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "reopenExtensionSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "releaseAllowed",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.ReleaseAllowed"
+          },
+          {
+            "name": "releaseGraceBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "rejectOutcome",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.RejectOutcome"
+          },
+          {
+            "name": "rejectFeeBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxRevisions",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "resolutionWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "acceptWindowSecs",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTaskVerdict",
     "inputs": [
       {
@@ -4313,6 +4477,19 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "isSettling",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "liabilitiesInitialised",
     "inputs": [],
     "outputs": [
@@ -4345,6 +4522,25 @@ export const TaskMarketABI = [
         "name": "requester",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reviewDeadline",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -4559,6 +4755,34 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "termsBounds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "minWindowSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxWindowSecs",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxRejectFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxRevisions",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "totalFeesCollected",
     "inputs": [],
     "outputs": [
@@ -4595,19 +4819,6 @@ export const TaskMarketABI = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MAX_SUBMISSION_WINNERS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -4657,175 +4868,6 @@ export const TaskMarketABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getReservation",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "worker",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "acceptBy",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTaskClock",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskClock",
-        "components": [
-          {
-            "name": "deliveredAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "decisionStartAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "revisionsUsed",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "revisionDueAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTaskTerms",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.TaskTerms",
-        "components": [
-          {
-            "name": "version",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "stakeRequired",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "stakeBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "penaltyTo",
-            "type": "uint8",
-            "internalType": "enum ITMPCore.PenaltyTo"
-          },
-          {
-            "name": "reviewWindowSecs",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "decisionWindowSecs",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "reopenExtensionSecs",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "releaseAllowed",
-            "type": "uint8",
-            "internalType": "enum ITMPCore.ReleaseAllowed"
-          },
-          {
-            "name": "releaseGraceBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "rejectOutcome",
-            "type": "uint8",
-            "internalType": "enum ITMPCore.RejectOutcome"
-          },
-          {
-            "name": "rejectFeeBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxRevisions",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "resolutionWindowSecs",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "acceptWindowSecs",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isSettling",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -4914,66 +4956,6 @@ export const TaskMarketABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "reviewDeadline",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "settleLapsedReview",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "termsBounds",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "minWindowSecs",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "maxWindowSecs",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "maxRejectFeeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "maxRevisions",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -5084,25 +5066,6 @@ export const TaskMarketABI = [
   {
     "type": "event",
     "name": "ReservationLapsed",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worker",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReviewLapsed",
     "inputs": [
       {
         "name": "taskId",
@@ -5263,11 +5226,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "ReleaseNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReviewWindowOpen",
     "inputs": []
   },
   {
@@ -6686,6 +6644,1310 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "ProjectTokenNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "function",
+    "name": "callTaskHook",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "hook",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getDefaultHooksV2",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct ITMPHookV2.Attachment[]",
+        "components": [
+          {
+            "name": "hook",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "capabilities",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minDiamondVersion",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "transforming",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "configHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "codehash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "callRoles",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTaskHookVersion",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTaskHooksV2",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct ITMPHookV2.Attachment[]",
+        "components": [
+          {
+            "name": "hook",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "capabilities",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minDiamondVersion",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "transforming",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "configHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "codehash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "callRoles",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTaskSettlement",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.SettlementAmounts",
+        "components": [
+          {
+            "name": "workerPaid",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "requesterRefund",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "forfeited",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "evaluatorFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "protocolFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "hookFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "terminalStatus",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "settledAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recorded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hookCallSeq",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hookCapabilityGas",
+    "inputs": [
+      {
+        "name": "bit",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxHookFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setDefaultHooksV2",
+    "inputs": [
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setHookCapabilityGas",
+    "inputs": [
+      {
+        "name": "bit",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "gasBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxHookFeeBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "taskCallerRoles",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "withActionData",
+    "inputs": [
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "call",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "DefaultHooksV2Set",
+    "inputs": [
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookActionData",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "dataHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookAttached",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "index",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "hook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "capabilities",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "codehash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "configBytes",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookCallFailedV2",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "index",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "hook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "phase",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "failureClass",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "revertHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "seq",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookCapabilityGasSet",
+    "inputs": [
+      {
+        "name": "bit",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "gasBudget",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookSettlementApplied",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "index",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "awardCount",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "hookFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxHookFeeBpsSet",
+    "inputs": [
+      {
+        "name": "maxHookFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskHookCalled",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "hook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "roles",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dataHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TaskSettled",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amounts",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ITMPHookV2.SettlementAmounts",
+        "components": [
+          {
+            "name": "workerPaid",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "requesterRefund",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "forfeited",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "evaluatorFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "protocolFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "hookFee",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "awardCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "terminalStatus",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "settledAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "recorded",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ActionDataCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ActionDataTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCallNotDeclared",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCallRoleRefused",
+    "inputs": [
+      {
+        "name": "roles",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HookCapabilityGasOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCodeChanged",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HookIncompatible",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HookNotAttached",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookRejected",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "reason",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HookResultInvalid",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HookV1Retired",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForHooks",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MaxHookFeeBpsOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MultipleTransformingHooks",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskAlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyDefaultHooks",
+    "inputs": []
+  },
+  {
+    "type": "function",
+    "name": "hookAcceptV2",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "verdict",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.Verdict",
+        "components": [
+          {
+            "name": "issued",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "verdictType",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.VerdictType"
+          },
+          {
+            "name": "score",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "confidence",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "criteriaFlags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "evidenceHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "awards",
+            "type": "tuple[]",
+            "internalType": "struct ITMPCore.Award[]",
+            "components": [
+              {
+                "name": "worker",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "amount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "rank",
+                "type": "uint16",
+                "internalType": "uint16"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "vetoable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "disputed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "budget",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "changed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "awards",
+        "type": "tuple[]",
+        "internalType": "struct ITMPCore.Award[]",
+        "components": [
+          {
+            "name": "worker",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "rank",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      },
+      {
+        "name": "hookFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "feeHook",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hookAttach",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hookBefore",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "extra",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hookCall",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "roles",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hookCheckCompleteV1",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "verdict",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.Verdict",
+        "components": [
+          {
+            "name": "issued",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "verdictType",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.VerdictType"
+          },
+          {
+            "name": "score",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "confidence",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "criteriaFlags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "evidenceHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "awards",
+            "type": "tuple[]",
+            "internalType": "struct ITMPCore.Award[]",
+            "components": [
+              {
+                "name": "worker",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "amount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "rank",
+                "type": "uint16",
+                "internalType": "uint16"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "disputed",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hookObserve",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "vetoable",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hookReadManifest",
+    "inputs": [
+      {
+        "name": "hook",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPHookV2.Attachment",
+        "components": [
+          {
+            "name": "hook",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "capabilities",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minDiamondVersion",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "transforming",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "configHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "codehash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "callRoles",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hookSettle",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "verdict",
+        "type": "tuple",
+        "internalType": "struct ITMPCore.Verdict",
+        "components": [
+          {
+            "name": "issued",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "verdictType",
+            "type": "uint8",
+            "internalType": "enum ITMPCore.VerdictType"
+          },
+          {
+            "name": "score",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "confidence",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "criteriaFlags",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "evidenceHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "awards",
+            "type": "tuple[]",
+            "internalType": "struct ITMPCore.Award[]",
+            "components": [
+              {
+                "name": "worker",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "amount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "rank",
+                "type": "uint16",
+                "internalType": "uint16"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "HookCallFailed",
+    "inputs": [
+      {
+        "name": "hook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookRegistered",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "hookContract",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "HookCheckFundRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForHook",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotSelf",
     "inputs": []
   }
 ] as const;

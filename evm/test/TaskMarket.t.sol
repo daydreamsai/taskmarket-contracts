@@ -75,6 +75,9 @@ contract TaskMarketTest is DiamondTestHelper {
         usdc = new MockERC20();
 
         market = deployDiamond(owner, address(usdc), feeRecipient, defaultFeeBps);
+        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
+        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
+        placeAtVersion(address(market), 27);
 
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));

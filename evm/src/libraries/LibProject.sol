@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { LibSettlement } from "./LibSettlement.sol";
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
 import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
@@ -56,6 +57,8 @@ library LibProject {
     /// @notice Pays `amount` owed to the task's requester, or refunds it to the task's project.
     ///         Returns the token transfer's result, true for a refund to the project.
     function payRequester(AppStorage storage s, bytes32 taskId, uint256 amount) internal returns (bool) {
+        // Rev028: every payment back to the requester's side counts toward the settlement record.
+        LibSettlement.add(taskId, LibSettlement.REFUND, amount);
         uint256 projectId = s.taskProjects[taskId];
         if (projectId == 0) return s.usdcToken.transfer(s.tasks[taskId].requester, amount);
         return _refund(taskId, amount);

@@ -36,7 +36,7 @@ esac
 export DRY_RUN
 
 usage() {
-  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|deploy-remote-sponsored-task-hook|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
+  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|deploy-remote-sponsored-task-hook|deploy-payout-gate-hook|deploy-sponsored-task-hook-v2|deploy-remote-sponsored-task-hook-v2|set-default-hooks-v2|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
   exit 1
 }
 
@@ -63,6 +63,31 @@ case "$ACTION" in
     KEY_NAME=FORGE_DEV_PRIVATE_KEY
     REQUIRED=(FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN)
     OPTIONAL=()
+    ;;
+  deploy-payout-gate-hook)
+    SCRIPT=script/DeployHooksV2.s.sol:DeployPayoutGateHook; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_DIAMOND_ADDRESS)
+    OPTIONAL=()
+    ;;
+  deploy-sponsored-task-hook-v2)
+    SCRIPT=script/DeployHooksV2.s.sol:DeploySponsoredTaskHookV2; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_REGISTRY FORGE_SPONSORED_TASK_FEE_POLICY
+      FORGE_SPONSORED_TASK_ADMIN FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT)
+    OPTIONAL=(FORGE_SPONSORED_TASK_CREATION_FEE_USDC)
+    ;;
+  deploy-remote-sponsored-task-hook-v2)
+    SCRIPT=script/DeployHooksV2.s.sol:DeployRemoteSponsoredTaskHookV2; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN)
+    OPTIONAL=()
+    ;;
+  set-default-hooks-v2)
+    SCRIPT=script/DeployHooksV2.s.sol:SetDefaultHooksV2; SCRIPT_VERIFY=0
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_DIAMOND_ADDRESS)
+    OPTIONAL=(FORGE_DEFAULT_HOOKS_V2)
     ;;
   upgrade-sponsored-task)
     SCRIPT=script/UpgradeSponsoredTask.s.sol:UpgradeSponsoredTask; SCRIPT_VERIFY=1

@@ -7,6 +7,7 @@ import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPEvaluator } from "../src/interfaces/ITMPEvaluator.sol";
 import { ITMPFeedback } from "../src/interfaces/ITMPFeedback.sol";
 import { ITMPReservation } from "../src/interfaces/ITMPReservation.sol";
+import { ITMPHooksV2 } from "../src/interfaces/ITMPHooksV2.sol";
 import { ITMPTerms, ITMPTermsV1 } from "../src/interfaces/ITMPTerms.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
@@ -43,6 +44,9 @@ contract ReservedWorkerTest is DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), feeRecipient, 500);
+        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
+        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
+        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
         registry = new MockReputationRegistry();
@@ -101,6 +105,18 @@ contract ReservedWorkerTest is DiamondTestHelper {
 
     function _reserved() internal returns (bytes32) {
         return _create(_terms(), worker);
+    }
+
+    /// @dev rev028 callTaskHook roles: a reservation is no role (a later revision may add one);
+    ///      the reserved worker is Worker once it claims.
+    function test_CallerRolesOnReservedTask() public {
+        bytes32 taskId = _reserved();
+        ITMPHooksV2 v2 = ITMPHooksV2(address(market));
+        assertEq(v2.taskCallerRoles(taskId, worker), uint32(1) << 31, "reserved, not yet the worker");
+        assertEq(v2.taskCallerRoles(taskId, requester), 1 << 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(v2.taskCallerRoles(taskId, worker), 1 << 2, "worker after the claim");
+        assertEq(v2.taskCallerRoles(taskId, stranger), uint32(1) << 31);
     }
 
     function _withHook(MockTaskHook hook, address reserved) internal returns (bytes32) {

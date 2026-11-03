@@ -6,6 +6,7 @@ import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPFeedback } from "../interfaces/ITMPFeedback.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
+import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
 
 /// @notice Unified application storage for all TaskMarket Diamond facets.
 ///         Stored at a fixed keccak256 slot; new fields must only be appended.
@@ -131,6 +132,25 @@ struct AppStorage {
     // Rev027: the funding pool contract a project's budget lives in, set once by
     // ProjectFacet.initFundingPool and never changed. Zero until then.
     address fundingPool;
+    // Rev028: Task Hook V2, appended at the end per the storage-layout rule, in the order the rev028
+    // spec fixes. taskHookVersion is each task's dispatch version, fixed at creation: zero reads as
+    // V1, so every task created before the cut keeps V1 dispatch with no write; every later task is
+    // 2. taskHooksV2 holds a V2 task's ordered attachments (defaults first, then requester hooks).
+    // defaultHooksV2 is the owner's protocol default V2 list (at most two). hookCapabilityGas is
+    // the owner-set gas budget per capability bit (zero reads as the floor). hookCallSeq is, per
+    // task and hook index, the next after-callback sequence number.
+    mapping(bytes32 => uint8) taskHookVersion;
+    mapping(bytes32 => ITMPHookV2.Attachment[]) taskHooksV2;
+    ITMPHookV2.Attachment[] defaultHooksV2;
+    mapping(uint8 => uint256) hookCapabilityGas;
+    mapping(bytes32 => mapping(uint8 => uint64)) hookCallSeq;
+    // Rev028: the settlement record, written once when a task becomes terminal after the cut (V1
+    // and V2 tasks alike); forfeited accumulates across forfeits before that. A task that was
+    // terminal before the cut reads with recorded == false.
+    mapping(bytes32 => ITMPHookV2.SettlementAmounts) taskSettlements;
+    // Rev028: owner-set cap on a transforming hook's fee, in basis points of the awards. Zero (the
+    // default) means no hook fee may be taken.
+    uint16 maxHookFeeBps;
 }
 
 library LibAppStorage {

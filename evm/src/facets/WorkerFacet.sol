@@ -6,6 +6,7 @@ import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { LibReview } from "../libraries/LibReview.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibFeedback } from "../libraries/LibFeedback.sol";
@@ -56,6 +57,7 @@ contract WorkerFacet {
             revert ITMPCore.StakePaymentMismatch();
         }
 
+        LibHooksV2.snap(taskId, uint8(task.status));
         task.worker = worker;
         task.stakeAmount = stakeAmount;
         task.status = ITMPCore.TaskStatus.Claimed;
@@ -65,6 +67,7 @@ contract WorkerFacet {
 
         emit ITMPCore.TaskClaimed(taskId, worker, stakeAmount);
         LibEscrow.book(s, taskId, worker, ITMPEscrow.Component.WorkerStake, false);
+        LibHooks._observe(s, taskId, LibHooksV2.A_CLAIM, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -102,12 +105,14 @@ contract WorkerFacet {
         // the requester may review and select from received pitches after the window closes.
         if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
 
+        LibHooksV2.snap(taskId, uint8(task.status));
         task.worker = worker;
         task.status = ITMPCore.TaskStatus.WorkerSelected;
 
         LibHooks._checkSelectWorkerHooks(taskId, worker, s);
 
         emit ITMPCore.TaskWorkerSelected(taskId, worker);
+        LibHooks._observe(s, taskId, LibHooksV2.A_SELECT_WORKER, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -128,10 +133,12 @@ contract WorkerFacet {
         if (block.timestamp > s.taskPitchConfigs[taskId].pitchDeadline) revert ITMPCore.PitchDeadlinePassed();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (pitchHash == bytes32(0)) revert ITMPCore.EmptyPitchHash();
+        LibHooks._before(s, taskId, LibHooksV2.A_SUBMIT_PITCH, worker, pitchHash);
 
         s.taskPitchHashes[taskId].push(pitchHash);
 
         emit ITMPCore.PitchSubmitted(taskId, worker, pitchHash);
+        LibHooks._observe(s, taskId, LibHooksV2.A_SUBMIT_PITCH, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -153,10 +160,12 @@ contract WorkerFacet {
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (proofHash == bytes32(0)) revert ITMPCore.EmptyProofHash();
+        LibHooks._before(s, taskId, LibHooksV2.A_SUBMIT_PROOF, worker, proofHash);
 
         s.taskProofHashes[taskId].push(proofHash);
 
         emit ITMPCore.ProofSubmitted(taskId, worker, proofHash, proofType, metricValue);
+        LibHooks._observe(s, taskId, LibHooksV2.A_SUBMIT_PROOF, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -176,6 +185,7 @@ contract WorkerFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
+        LibHooksV2.snap(taskId, uint8(task.status));
 
         if (task.mode == TMP_BOUNTY || task.mode == TMP_BENCHMARK) {
             // Bounty and Benchmark are open contests: the task stays Open and keeps
@@ -218,6 +228,7 @@ contract WorkerFacet {
         LibHooks._checkSubmitHooks(taskId, worker, deliverable, s);
 
         emit ITMPCore.TaskSubmitted(taskId, worker, deliverable);
+        LibHooks._observe(s, taskId, LibHooksV2.A_SUBMIT_WORK, true);
         LibGuards._nonReentrantAfter(s);
     }
 

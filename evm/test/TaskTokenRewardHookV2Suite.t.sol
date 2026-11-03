@@ -1,0 +1,2981 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+// Generated from TaskTokenRewardHook.t.sol for the rev028 V2 port: the same lifecycle through
+// the diamond, with the V2 hook on V2 tasks. Tests that call V1 callbacks directly are omitted.
+
+import "forge-std/Test.sol";
+import { VmSafe } from "forge-std/Vm.sol";
+import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
+import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
+import { TaskTokenRewardHookV2 as TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHookV2.sol";
+import { RewardVault } from "../src/hooks/RewardVault.sol";
+import { EpochBudget } from "../src/hooks/EpochBudget.sol";
+import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
+import "./mocks/MockPGTRForwarder.sol";
+import { MockUSDC } from "../src/mocks/MockUSDC.sol";
+import { MockSettlingProbeHook } from "./mocks/MockSettlingProbeHook.sol";
+import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
+import { taskConfig } from "./helpers/TaskConfigHelper.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+/// @dev Minimal ERC-1271 walletV2Suite: a signature is valid when its owner key signed the hash.
+contract MockERC1271WalletV2Suite {
+    address public immutable owner;
+
+    constructor(address _owner) {
+        owner = _owner;
+    }
+
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(hash, signature);
+        return err == ECDSA.RecoverError.NoError && recovered == owner ? bytes4(0x1626ba7e) : bytes4(0xffffffff);
+    }
+}
+
+/// @dev A delegate with no ERC-1271 support, standing in for an EIP-7702 account implementation.
+contract MockPlainDelegateV2Suite {
+    function ping() external pure returns (bool) {
+        return true;
+    }
+}
+
+/// @dev A walletV2Suite whose isValidSignature always reverts.
+contract MockRevertingERC1271WalletV2Suite {
+    function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
+        revert("validator down");
+    }
+}
+
+/// @dev A delegate whose isValidSignature returns a value that is not exactly the magic value.
+contract MockNearMagicDelegateV2Suite {
+    function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
+        return bytes4(0x1626ba7f);
+    }
+}
+
+/// @dev Records the award amount checkComplete sees, to check what acceptSubmission reports.
+contract AwardRecorderHookV2Suite is ITMPHook {
+    uint256 public lastAwardAmount;
+
+    function checkFund(bytes32, ITMPCore.TaskContext calldata, bytes calldata) external pure returns (bool) {
+        return true;
+    }
+
+    function checkClaim(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
+        return true;
+    }
+
+    function checkSelectWorker(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
+        return true;
+    }
+
+    function checkSubmit(bytes32, ITMPCore.TaskContext calldata, address, bytes32) external pure returns (bool) {
+        return true;
+    }
+
+    function checkEvaluate(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
+        return true;
+    }
+
+    function checkComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata verdict)
+        external
+        returns (bool)
+    {
+        lastAwardAmount = verdict.awards[0].amount;
+        return true;
+    }
+
+    function onComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external { }
+    function onForfeit(bytes32, ITMPCore.TaskContext calldata, address) external { }
+    function onCancel(bytes32, ITMPCore.TaskContext calldata) external { }
+    function onExpire(bytes32, ITMPCore.TaskContext calldata) external { }
+
+    function supportsInterface(bytes4 id) external pure returns (bool) {
+        return id == type(ITMPHook).interfaceId || id == 0x01ffc9a7;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test suite
+// ─────────────────────────────────────────────────────────────────────────────
+
+contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
+    using stdStorage for StdStorage;
+
+    // DREAMS wei per 1 USDC. 10 DREAMS per $1 => 10e18.
+    uint256 constant DREAMS_PER_USDC = 10e18;
+    // $100 USDC reward = 100 * 1e6 (6 decimals)
+    uint256 constant REWARD_100_USDC = 100 * 1e6;
+    // expected token reward at full rate: rewardUsd * rate / 1e6 = 100e6 * 10e18 / 1e6 = 1000 DREAMS
+    uint256 constant EXPECTED_REWARD_1000_DREAMS = 1000 * 1e18;
+    uint256 constant REDUCED_REWARD_40_USDC = 40 * 1e6;
+    uint256 constant REFUNDED_REWARD_60_USDC = REWARD_100_USDC - REDUCED_REWARD_40_USDC;
+    uint256 constant EXPECTED_REDUCED_REWARD_400_DREAMS = 400 * 1e18;
+
+    uint256 constant EPOCH_DURATION = 7 days;
+    uint256 constant GLOBAL_CAP_USD = 1_000_000 * 1e6;
+    uint256 constant WORKER_CAP_USD = 100_000 * 1e6;
+    uint256 constant REQUESTER_CAP_USD = 500_000 * 1e6;
+    uint256 constant MAX_PER_TASK_USD = 10_000 * 1e6;
+    uint16 constant WORKER_SPLIT_BPS = 10_000; // setUp uses 100% worker for backward compat
+    // setUp uses a 100% bonus so bonusUsd == rewardUsd exactly, keeping every existing
+    // dollar-figure assertion below unchanged. Dedicated tests further down use a
+    // non-100% bonusBps (750 = 7.5%) to verify the two-step bonus%-then-rate math.
+    uint16 constant BONUS_BPS = 10_000;
+
+    ITMPDiamond market;
+    MockPGTRForwarder forwarder;
+    MockUSDC usdc;
+    MockUSDC dreamsToken;
+
+    RewardVault vault;
+    EpochBudget budget;
+    TaskTokenRewardHook hook;
+
+    address owner = makeAddr("owner");
+    address authorizedRelayer = makeAddr("authorizedRelayer");
+    address requester = makeAddr("requester");
+    address worker = makeAddr("worker");
+    // The key behind `worker`, using forge-std's own derivation for makeAddr. Asserted against
+    // `worker` in the withdrawal tests rather than trusted, so a forge-std change fails loudly
+    // insteadV2Suite of silently signing as somebody else.
+    uint256 workerKey = uint256(keccak256(abi.encodePacked("worker")));
+    address feeRecipient = makeAddr("feeRecipient");
+
+    /// @dev rev028: the V2 reward hook behind its own proxy, initialized like the V1 one.
+    function _deployV2(
+        address vault_,
+        address budget_,
+        address diamond_,
+        uint8 decimals_,
+        uint256 rate_,
+        uint16 bonusBps_,
+        address token_,
+        uint16 split_,
+        address relayer_,
+        address owner_
+    ) internal returns (TaskTokenRewardHook) {
+        bytes memory init = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (vault_, budget_, diamond_, decimals_, rate_, bonusBps_, token_, split_, relayer_, owner_)
+        );
+        return TaskTokenRewardHook(address(new ERC1967Proxy(address(new TaskTokenRewardHook()), init)));
+    }
+
+    function setUp() public {
+        vm.startPrank(owner);
+
+        usdc = new MockUSDC();
+        dreamsToken = new MockUSDC(); // 18-decimal mock for DREAMS
+
+        market = deployDiamond(owner, address(usdc), feeRecipient, 500);
+
+        forwarder = new MockPGTRForwarder(address(usdc));
+        market.addForwarder(address(forwarder));
+
+        vault = new RewardVault(address(dreamsToken), owner);
+        budget =
+            new EpochBudget(EPOCH_DURATION, GLOBAL_CAP_USD, WORKER_CAP_USD, REQUESTER_CAP_USD, MAX_PER_TASK_USD, owner);
+        hook = _deployV2(
+            address(vault),
+            address(budget),
+            address(market),
+            18,
+            DREAMS_PER_USDC,
+            BONUS_BPS,
+            address(dreamsToken),
+            WORKER_SPLIT_BPS,
+            authorizedRelayer,
+            owner
+        );
+
+        vault.setHook(address(hook));
+        budget.setHook(address(hook));
+
+        // Use bypass ramp (age=0 gets full rate) so existing tests are not affected by the
+        // default 2/4/8-week ramp. Ramp-specific tests override via setRamp().
+        hook.setRamp(
+            [uint40(1), uint40(2), uint40(3)], [uint16(10_000), uint16(10_000), uint16(10_000), uint16(10_000)]
+        );
+
+        // Fund vault with 100k DREAMS
+        dreamsToken.mint(owner, 100_000 * 1e18);
+        dreamsToken.transfer(address(vault), 100_000 * 1e18);
+
+        vm.stopPrank();
+
+        // Forwarder holds USDC on behalf of payers
+        usdc.mint(address(forwarder), 10_000 * 1e6);
+    }
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    function _relay(address sender, uint256 amount, bytes memory data) internal returns (bytes memory) {
+        return forwarder.relay(address(market), sender, amount, data);
+    }
+
+    function _createClaimTask() internal returns (bytes32 taskId) {
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 1 days, market.CLAIM(), 0, 0, bytes4(0)),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+    }
+
+    function _createBountyTask() internal returns (bytes32 taskId) {
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 1 days, market.BOUNTY(), 0, 0, bytes4(0)),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+    }
+
+    function _createLongClaimTask() internal returns (bytes32 taskId) {
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 365 days, market.CLAIM(), 0, 0, bytes4(0)),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+    }
+
+    function _hookArr(address h) internal pure returns (address[] memory arr) {
+        arr = new address[](1);
+        arr[0] = h;
+    }
+
+    function _createReservedTask(bytes4 mode, bytes4 auctionSubtype) internal returns (bytes32 taskId) {
+        uint256 pitchDuration = mode == market.PITCH() ? 1 days : 0;
+        uint256 bidDuration = mode == market.AUCTION() ? 1 days : 0;
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 3 days, mode, pitchDuration, bidDuration, auctionSubtype),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+    }
+
+    function _decreaseRewardAndAssertRefund(bytes32 taskId) internal {
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        uint256 diamondBefore = usdc.balanceOf(address(market));
+
+        _relay(requester, 0, abi.encodeCall(market.updateTask, (taskId, REDUCED_REWARD_40_USDC, 0, 0, 0)));
+
+        assertEq(usdc.balanceOf(requester) - requesterBefore, REFUNDED_REWARD_60_USDC);
+        assertEq(diamondBefore - usdc.balanceOf(address(market)), REFUNDED_REWARD_60_USDC);
+        assertEq(market.getTask(taskId).reward, REDUCED_REWARD_40_USDC);
+    }
+
+    function _assertReducedRewardReservation(bytes32 taskId) internal view {
+        (
+            uint256 rewardUsd,
+            uint256 usdBonusValue,
+            uint256 startPrice,
+            uint256 reservedTokenAmount,
+            address lockedRequester,
+            address lockedWorker,
+            bool reserved,
+            bool paid,
+            uint64 consumedEpoch
+        ) = hook.rewardStates(taskId);
+
+        assertEq(rewardUsd, REDUCED_REWARD_40_USDC);
+        assertEq(usdBonusValue, REDUCED_REWARD_40_USDC);
+        assertEq(startPrice, DREAMS_PER_USDC);
+        assertEq(reservedTokenAmount, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(lockedRequester, requester);
+        assertEq(lockedWorker, worker);
+        assertTrue(reserved);
+        assertFalse(paid);
+        assertEq(consumedEpoch, budget.currentEpoch());
+        assertEq(vault.taskReserve(taskId), EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(vault.totalReserved(), EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(budget.globalUsed(), REDUCED_REWARD_40_USDC);
+        assertEq(budget.requesterUsed(requester), REDUCED_REWARD_40_USDC);
+        assertEq(budget.workerUsed(worker), REDUCED_REWARD_40_USDC);
+    }
+
+    function _completeReducedRewardReservation(bytes32 taskId) internal {
+        // Reservation-time values remain authoritative even if both live knobs change later.
+        vm.startPrank(owner);
+        hook.setDreamsPerUsdc(DREAMS_PER_USDC * 3);
+        hook.setBonusBps(2_500);
+        vm.stopPrank();
+
+        bytes32 deliverable = keccak256("reduced-reward-work");
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
+        uint256 workerClaimableBefore = hook.claimable(worker);
+        uint256 hookTokenBefore = dreamsToken.balanceOf(address(hook));
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, deliverable)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, deliverable, 0)));
+
+        uint256 fee = REDUCED_REWARD_40_USDC * 500 / 10_000;
+        assertEq(usdc.balanceOf(worker) - workerUsdcBefore, REDUCED_REWARD_40_USDC - fee);
+        assertEq(usdc.balanceOf(feeRecipient) - feeRecipientBefore, fee);
+        assertEq(hook.claimable(worker) - workerClaimableBefore, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(dreamsToken.balanceOf(address(hook)) - hookTokenBefore, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.totalReserved(), 0);
+        assertEq(budget.globalUsed(), REDUCED_REWARD_40_USDC);
+        assertEq(budget.requesterUsed(requester), REDUCED_REWARD_40_USDC);
+        assertEq(budget.workerUsed(worker), REDUCED_REWARD_40_USDC);
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+
+        (
+            uint256 rewardUsd,
+            uint256 usdBonusValue,
+            uint256 startPrice,
+            uint256 reservedTokenAmount,
+            address lockedRequester,
+            address lockedWorker,
+            bool reserved,
+            bool paid,
+            uint64 consumedEpoch
+        ) = hook.rewardStates(taskId);
+        assertEq(rewardUsd, REDUCED_REWARD_40_USDC);
+        assertEq(usdBonusValue, REDUCED_REWARD_40_USDC);
+        assertEq(startPrice, DREAMS_PER_USDC);
+        assertEq(reservedTokenAmount, EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(lockedRequester, requester);
+        assertEq(lockedWorker, worker);
+        assertTrue(reserved);
+        assertTrue(paid);
+        assertEq(consumedEpoch, budget.currentEpoch());
+    }
+
+    function _exerciseBidAuctionRewardDecrease(bytes4 auctionSubtype) internal {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), auctionSubtype);
+        _decreaseRewardAndAssertRefund(taskId);
+        _relay(worker, 0, abi.encodeCall(market.submitBid, (taskId, REDUCED_REWARD_40_USDC)));
+        vm.warp(market.getTaskAuctionConfig(taskId).bidDeadline);
+        _relay(requester, 0, abi.encodeCall(market.selectLowestBidder, (taskId)));
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function _exerciseClockAuctionRewardDecrease(bytes4 auctionSubtype) internal {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), auctionSubtype);
+        _decreaseRewardAndAssertRefund(taskId);
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    // ─── ERC-165 ──────────────────────────────────────────────────────────────
+
+    // ─── Constructor validation ───────────────────────────────────────────────
+
+    function test_constructor_zeroVault_reverts() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(0),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
+        );
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        new ERC1967Proxy(implementation, initData);
+    }
+
+    function test_constructor_revertsIfTokenZero() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(0),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
+        );
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        new ERC1967Proxy(implementation, initData);
+    }
+
+    function test_constructor_revertsIfBpsOver10000() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                10_001,
+                authorizedRelayer,
+                owner
+            )
+        );
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        new ERC1967Proxy(implementation, initData);
+    }
+
+    function test_constructor_revertsIfBonusBpsOver10000() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                10_001,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
+        );
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        new ERC1967Proxy(implementation, initData);
+    }
+
+    function test_constructor_revertsIfRelayerZero() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                address(0),
+                owner
+            )
+        );
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        new ERC1967Proxy(implementation, initData);
+    }
+
+    function test_constructor_revertsIfRateZero() public {
+        address implementation = address(new TaskTokenRewardHook());
+        bytes memory initData = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(vault),
+                address(budget),
+                address(market),
+                18,
+                0,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
+        );
+        vm.expectRevert(TaskTokenRewardHook.ZeroRate.selector);
+        new ERC1967Proxy(implementation, initData);
+    }
+
+    function test_constructor_allowsZeroBonusBps() public {
+        // Unlike dreamsPerUsdc, a zero bonus is a valid initial state (bonus paused).
+        TaskTokenRewardHook freshHook = _deployV2(
+            address(vault),
+            address(budget),
+            address(market),
+            18,
+            DREAMS_PER_USDC,
+            0,
+            address(dreamsToken),
+            WORKER_SPLIT_BPS,
+            authorizedRelayer,
+            owner
+        );
+        assertEq(freshHook.bonusBps(), 0);
+    }
+
+    // ─── setDreamsPerUsdc ─────────────────────────────────────────────────────
+
+    function test_setDreamsPerUsdc_updatesRate() public {
+        vm.expectEmit(true, true, true, true);
+        emit TaskTokenRewardHook.PriceUpdated(20e18);
+        vm.prank(owner);
+        hook.setDreamsPerUsdc(20e18);
+        assertEq(hook.dreamsPerUsdc(), 20e18);
+    }
+
+    function test_setDreamsPerUsdc_revertsOnZero() public {
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.ZeroRate.selector);
+        hook.setDreamsPerUsdc(0);
+    }
+
+    function test_setDreamsPerUsdc_onlyOwner() public {
+        vm.expectRevert();
+        hook.setDreamsPerUsdc(20e18);
+    }
+
+    function test_setDreamsPerUsdc_doesNotChangeBonusBps() public {
+        vm.prank(owner);
+        hook.setDreamsPerUsdc(20e18);
+        assertEq(hook.bonusBps(), BONUS_BPS);
+    }
+
+    // ─── setBonusBps ──────────────────────────────────────────────────────────
+
+    function test_setBonusBps_updatesValue() public {
+        vm.expectEmit(true, true, true, true);
+        emit TaskTokenRewardHook.BonusBpsUpdated(750);
+        vm.prank(owner);
+        hook.setBonusBps(750);
+        assertEq(hook.bonusBps(), 750);
+    }
+
+    function test_setBonusBps_allowsZero() public {
+        vm.prank(owner);
+        hook.setBonusBps(0);
+        assertEq(hook.bonusBps(), 0);
+    }
+
+    function test_setBonusBps_revertsOnOver10000() public {
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        hook.setBonusBps(10_001);
+    }
+
+    function test_setBonusBps_onlyOwner() public {
+        vm.expectRevert();
+        hook.setBonusBps(750);
+    }
+
+    function test_setBonusBps_doesNotChangeRate() public {
+        vm.prank(owner);
+        hook.setBonusBps(750);
+        assertEq(hook.dreamsPerUsdc(), DREAMS_PER_USDC);
+    }
+
+    // ─── Claim mode happy path ─────────────────────────────────────────────────
+
+    function test_claimMode_fullHappyPath() public {
+        bytes32 taskId = _createClaimTask();
+
+        // Verify state stored
+        (uint256 rewardUsd,,,, address req,, bool reserved, bool paid,) = hook.rewardStates(taskId);
+        assertEq(rewardUsd, REWARD_100_USDC);
+        assertEq(req, requester);
+        assertFalse(reserved);
+        assertFalse(paid);
+
+        // Worker claims — rate locks, tokens reserved
+        uint256 vaultBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        (,, uint256 startPrice, uint256 reservedAmt,, address lockedWorker, bool res,,) = hook.rewardStates(taskId);
+        assertEq(startPrice, DREAMS_PER_USDC);
+        assertEq(lockedWorker, worker);
+        assertTrue(res);
+        // reserved = rewardUsd * rate / 1e6 = 100e6 * 10e18 / 1e6 = 1000 DREAMS, deterministic (no drift)
+        assertEq(reservedAmt, EXPECTED_REWARD_1000_DREAMS);
+        assertLt(vault.available(), vaultBefore);
+
+        // Worker submits
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        // Requester accepts — hook credits tokens to claimable (100% worker split in setUp)
+        uint256 workerClaimableBefore = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        uint256 workerClaimableAfter = hook.claimable(worker);
+        assertEq(workerClaimableAfter - workerClaimableBefore, EXPECTED_REWARD_1000_DREAMS);
+        // Worker walletV2Suite balance unchanged — tokens are in hook escrow
+        assertEq(dreamsToken.balanceOf(worker), 0);
+        // Locked rate means the full reservation is paid out exactly — nothing left reserved.
+        assertEq(vault.taskReserve(taskId), 0);
+
+        // Verify paid flag
+        (,,,,,,, bool paid2,) = hook.rewardStates(taskId);
+        assertTrue(paid2);
+    }
+
+    // ─── Current reward basis after an Open-task reward decrease ─────────────
+
+    function test_rewardDecrease_claimLifecycle_usesCurrentRewardForReservationAndCompletion() public {
+        bytes32 taskId = _createReservedTask(market.CLAIM(), bytes4(0));
+        _decreaseRewardAndAssertRefund(taskId);
+
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function test_rewardDecrease_pitchLifecycle_usesCurrentRewardForReservationAndCompletion() public {
+        bytes32 taskId = _createReservedTask(market.PITCH(), bytes4(0));
+        _decreaseRewardAndAssertRefund(taskId);
+
+        _relay(worker, 0, abi.encodeCall(market.submitPitch, (taskId, keccak256("reduced-reward-pitch"))));
+        _relay(requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker)));
+
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function test_rewardDecrease_englishAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseBidAuctionRewardDecrease(market.AUCTION_ENGLISH());
+    }
+
+    function test_rewardDecrease_reverseEnglishAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseBidAuctionRewardDecrease(market.AUCTION_REVERSE_ENGLISH());
+    }
+
+    function test_rewardDecrease_dutchAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseClockAuctionRewardDecrease(market.AUCTION_DUTCH());
+    }
+
+    function test_rewardDecrease_reverseDutchAuction_usesCurrentRewardForReservationAndCompletion() public {
+        _exerciseClockAuctionRewardDecrease(market.AUCTION_REVERSE_DUTCH());
+    }
+
+    // ─── Double-reservation guard (evaluator-reject reopen) ────────────────────
+    // Regression test for a bug where EvaluatorFacet.finalizeVerdict's REJECT branch
+    // reopens a claimed task (status -> Open, worker -> address(0)) without calling
+    // any reward-hook release path. A second claim then re-entered _reserveForWorker
+    // for the same taskId, and because RewardVault.reserve() is additive, the vault
+    // ended up holding two reservations while the hook only tracked the latest one —
+    // permanently orphaning the first reservation's tokens.
+    // Regression test for a fixed bug where EvaluatorFacet.finalizeVerdict's REJECT
+    // branch reopened a claimed task (status -> Open) after refunding the full escrow
+    // to the requester, without releasing the reward hook's reservation. A second
+    // claim would then stack a second reservation on top of the orphaned first one
+    // (RewardVault.reserve is additive). The fix makes REJECT terminate the task
+    // (Cancelled, matching cancelTask) and dispatch onCancel so the reservation is
+    // released through the normal path -- this test verifies both halves of that fix.
+    function test_evaluatorReject_releasesReservationAndTerminatesTask() public {
+        address evaluator = makeAddr("evaluator");
+        address worker2 = makeAddr("worker2");
+
+        bytes32 taskId = _createClaimTask();
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+
+        uint256 vaultBefore = vault.available();
+
+        // Worker claims — reserves 1000 DREAMS.
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        assertEq(vault.available(), vaultBefore - EXPECTED_REWARD_1000_DREAMS);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        // Evaluator rejects — no awards.
+        ITMPCore.Award[] memory noAwards = new ITMPCore.Award[](0);
+        _relay(
+            evaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.REJECT, 0, 1000, bytes32(0), noAwards))
+        );
+
+        // Finalize after the appeal window — task terminates, reservation releases.
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Cancelled));
+
+        assertEq(vault.taskReserve(taskId), 0, "reservation must be released via onCancel, not left dangling");
+        assertEq(vault.available(), vaultBefore, "vault tokens must not be orphaned");
+
+        (,,,,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertFalse(reserved, "reward state must reflect the released reservation");
+
+        // A cancelled task can never be reclaimed, so no double-reservation is possible.
+        vm.expectRevert(ITMPCore.TaskNotOpen.selector);
+        _relay(worker2, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+    }
+
+    // ─── Bounty mode (Path B) ─────────────────────────────────────────────────
+
+    function test_bountyMode_paysAtComplete() public {
+        bytes32 taskId = _createBountyTask();
+
+        // Worker submits (no checkClaim fires)
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertGt(hook.claimable(worker), before);
+        assertEq(dreamsToken.balanceOf(worker), 0);
+    }
+
+    // ─── Claimable escrow ─────────────────────────────────────────────────────
+
+    function test_rewardsAccumulateInClaimable() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertGt(hook.claimable(worker), 0);
+        assertEq(hook.totalClaimable(), hook.claimable(worker) + hook.claimable(requester));
+        assertEq(dreamsToken.balanceOf(worker), 0);
+    }
+
+    /// Builds the authorization exactly as a client does: EIP-191 over
+    /// `taskmarket:withdraw-dreams:<destination>:<nonce>:<validBefore>`.
+    function _signWithdraw(uint256 key, address destination, string memory nonce, uint256 validBefore)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _signWithdrawFor(key, vm.addr(key), destination, nonce, validBefore, block.chainid, address(hook));
+    }
+
+    function _signWithdrawFor(
+        uint256 key,
+        address walletV2Suite,
+        address destination,
+        string memory nonce,
+        uint256 validBefore,
+        uint256 chainId,
+        address hookAddr
+    ) internal pure returns (bytes memory) {
+        string memory message = string.concat(
+            "taskmarket:withdraw-dreams:",
+            Strings.toHexString(walletV2Suite),
+            ":",
+            Strings.toHexString(destination),
+            ":",
+            nonce,
+            ":",
+            Strings.toString(validBefore),
+            ":",
+            Strings.toString(chainId),
+            ":",
+            Strings.toHexString(hookAddr)
+        );
+        (uint8 v, bytes32 r, bytes32 sig) = vm.sign(key, MessageHashUtils.toEthSignedMessageHash(bytes(message)));
+        return abi.encodePacked(r, sig, v);
+    }
+
+    function _earnClaimable() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+    }
+
+    function test_withdrawFor_happyPath() public {
+        // Guards the key derivation: if this ever drifts, every signature below would be from
+        // some other account and the tests would pass for the wrong reason.
+        assertEq(vm.addr(workerKey), worker);
+
+        _earnClaimable();
+
+        uint256 claimableAmt = hook.claimable(worker);
+        assertGt(claimableAmt, 0);
+
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+
+        assertEq(dreamsToken.balanceOf(destination), claimableAmt);
+        assertEq(hook.claimable(worker), 0);
+        // totalClaimable decremented
+        assertEq(hook.totalClaimable(), hook.claimable(requester));
+    }
+
+    /// The finding this function exists to close: a authorizedRelayer that is authenticated but wrong --
+    /// compromised key, or a future code path that forgets the off-chain check -- must not be
+    /// able to redirect a walletV2Suite's balance. It holds a valid authorization for `destination`
+    /// and tries to pay `attacker` with it.
+    function test_withdrawFor_revertsWhenDestinationIsSwapped() public {
+        _earnClaimable();
+
+        address destination = makeAddr("destination");
+        address attacker = makeAddr("attacker");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, attacker, "nonce-1", validBefore, signature);
+
+        assertEq(dreamsToken.balanceOf(attacker), 0);
+        assertGt(hook.claimable(worker), 0);
+    }
+
+    function test_withdrawFor_revertsOnSignatureFromAnotherWallet() public {
+        _earnClaimable();
+
+        (, uint256 strangerKey) = makeAddrAndKey("stranger");
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(strangerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsOnReplay() public {
+        _earnClaimable();
+
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+
+        // Replay protection lives here rather than only in the authorizedRelayer's database: a captured
+        // authorization must not be replayable by whoever holds the relaying key.
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.WithdrawNonceUsed.selector);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsWhenExpired() public {
+        _earnClaimable();
+
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "nonce-1", validBefore);
+
+        vm.warp(validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.WithdrawAuthorizationExpired.selector);
+        hook.withdrawFor(worker, destination, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsIfNotRelayer() public {
+        _earnClaimable();
+
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, worker, "nonce-1", validBefore);
+
+        // A valid walletV2Suite signature is still not enough on its own: the authorizedRelayer relays and pays
+        // gas, so the two checks are complementary rather than alternatives.
+        vm.expectRevert(TaskTokenRewardHook.UnauthorizedRelayer.selector);
+        hook.withdrawFor(worker, worker, "nonce-1", validBefore, signature);
+    }
+
+    function test_withdrawFor_revertsIfNothingToClaim() public {
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, worker, "nonce-1", validBefore);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.NothingToClaim.selector);
+        hook.withdrawFor(worker, worker, "nonce-1", validBefore, signature);
+    }
+
+    // ─── firstSeen ────────────────────────────────────────────────────────────
+
+    function test_firstSeen_setOnCheckFund() public {
+        assertEq(hook.firstSeen(requester), 0);
+        _createClaimTask();
+        assertGt(hook.firstSeen(requester), 0);
+    }
+
+    function test_firstSeen_setOnCheckClaim() public {
+        bytes32 taskId = _createClaimTask();
+        assertEq(hook.firstSeen(worker), 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertGt(hook.firstSeen(worker), 0);
+    }
+
+    function test_firstSeen_neverOverwritten() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        uint40 seenFirst = hook.firstSeen(worker);
+        assertGt(seenFirst, 0);
+
+        // Submit and complete so worker can create another task
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // Fund forwarder and create a second task
+        usdc.mint(address(forwarder), 10_000 * 1e6);
+        vm.warp(block.timestamp + 1);
+        bytes32 taskId2 = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId2, 0)));
+
+        // firstSeen must not change
+        assertEq(hook.firstSeen(worker), seenFirst);
+    }
+
+    function test_ageMultiplier_returnsZeroForNewWallet() public {
+        // A walletV2Suite that has never interacted with the hook has firstSeen == 0 → multiplier 0.
+        // Use the default ramp (restore it first).
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+
+        bytes32 taskId = _createClaimTask(); // requester firstSeen set here
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        // worker firstSeen just set — age = 0 < 2 weeks → rampMultipliers[0] = 0
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // Worker age = 0 seconds → multiplier[0] = 0 → claimable = 0
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    // ─── Age ramp ─────────────────────────────────────────────────────────────
+
+    // Helper: complete a claim task and return worker's claimable delta.
+    function _runClaimTask(uint16 _workerSplitBps) internal returns (uint256 workerClaimed) {
+        vm.prank(owner);
+        hook.setWorkerSplitBps(_workerSplitBps);
+
+        usdc.mint(address(forwarder), REWARD_100_USDC);
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("w"))));
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("w"), 0)));
+        workerClaimed = hook.claimable(worker) - before;
+    }
+
+    function test_ageRamp_zeroBeforeTwoWeeks() public {
+        // Restore default ramp
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+
+        // Touch firstSeen now, then complete task immediately (age < 2 weeks)
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_ageRamp_quarterXBetweenTwoAndFourWeeks() public {
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+
+        // Use a 365-day task so it doesn't expire during the warp.
+        // Worker claims at T=0 (firstSeen set), then we warp into the 2–4 week window.
+        usdc.mint(address(forwarder), REWARD_100_USDC);
+        bytes32 taskId = _createLongClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        vm.warp(block.timestamp + 2 weeks + 1);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // 100% split to worker (setUp); 2500 bps = 25%: 1000 DREAMS * 0.25 = 250 DREAMS
+        assertEq(hook.claimable(worker), 250 * 1e18);
+    }
+
+    function test_ageRamp_halfXBetweenFourAndEightWeeks() public {
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+
+        usdc.mint(address(forwarder), REWARD_100_USDC);
+        bytes32 taskId = _createLongClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        vm.warp(block.timestamp + 4 weeks + 1);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // 5000 bps = 50%: 1000 DREAMS * 0.5 = 500 DREAMS
+        assertEq(hook.claimable(worker), 500 * 1e18);
+    }
+
+    function test_ageRamp_fullXAfterEightWeeks() public {
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+
+        usdc.mint(address(forwarder), REWARD_100_USDC);
+        bytes32 taskId = _createLongClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        vm.warp(block.timestamp + 8 weeks + 1);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // 10000 bps = 100%: 1000 DREAMS
+        assertEq(hook.claimable(worker), 1000 * 1e18);
+    }
+
+    function test_creditWithSplit_zeroWhenRampIsZero() public {
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // Ramp at 0% for both parties — nothing credited
+        assertEq(hook.claimable(worker), 0);
+        assertEq(hook.claimable(requester), 0);
+        assertEq(hook.totalClaimable(), 0);
+        // Tokens were transferred from vault to hook — they sit as sweepable excess
+        assertGt(dreamsToken.balanceOf(address(hook)), 0);
+    }
+
+    // ─── Worker/requester split ───────────────────────────────────────────────
+
+    function test_requesterReceivesSplit() public {
+        // Use 80/20 split; full-rate bypass ramp in setUp
+        vm.prank(owner);
+        hook.setWorkerSplitBps(8000);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // 1000 DREAMS total: worker 80% = 800, requester 20% = 200
+        assertEq(hook.claimable(worker), 800 * 1e18);
+        assertEq(hook.claimable(requester), 200 * 1e18);
+        assertEq(hook.totalClaimable(), 1000 * 1e18);
+    }
+
+    function test_workerSplitBps_configurable() public {
+        vm.prank(owner);
+        hook.setWorkerSplitBps(6000); // 60/40
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        // 1000 DREAMS total: worker 60% = 600, requester 40% = 400
+        assertEq(hook.claimable(worker), 600 * 1e18);
+        assertEq(hook.claimable(requester), 400 * 1e18);
+    }
+
+    function test_setWorkerSplitBps_revertsIfOver10000() public {
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        hook.setWorkerSplitBps(10_001);
+    }
+
+    // ─── Ban ──────────────────────────────────────────────────────────────────
+
+    function test_ban_skipsWorkerCredit() public {
+        vm.prank(owner);
+        hook.banWallet(worker);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_ban_skipsRequesterCredit() public {
+        vm.prank(owner);
+        hook.setWorkerSplitBps(8000); // ensure requester would otherwise receive 20%
+        vm.prank(owner);
+        hook.banWallet(requester);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(requester), 0);
+        assertGt(hook.claimable(worker), 0); // worker still earns
+    }
+
+    function test_ban_doesNotZeroExistingClaimable() public {
+        // Earn some rewards first, then ban — existing balance must remain withdrawable.
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        uint256 earned = hook.claimable(worker);
+        assertGt(earned, 0);
+
+        vm.prank(owner);
+        hook.banWallet(worker);
+
+        // Existing balance intact
+        assertEq(hook.claimable(worker), earned);
+
+        // The relayer can still withdraw on the worker's behalf
+        address dest = makeAddr("dest");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, dest, "nonce-banned", validBefore);
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, dest, "nonce-banned", validBefore, signature);
+        assertEq(dreamsToken.balanceOf(dest), earned);
+    }
+
+    // ─── upgradeability ───────────────────────────────────────────────────────
+
+    function test_upgrade_preservesWalletStateAcrossImplementations() public {
+        // The whole point of the proxy. Before this, shipping a hook fix meant a fresh contract
+        // with empty storage -- every walletV2Suite's `firstSeen` reset, so everyone earned nothing
+        // until they aged past the first ramp threshold again.
+        _earnClaimable();
+        uint256 balanceBefore = hook.claimable(worker);
+        uint40 seenBefore = hook.firstSeen(worker);
+        assertGt(balanceBefore, 0);
+        assertGt(seenBefore, 0);
+
+        address newImplementation = address(new TaskTokenRewardHook());
+        vm.prank(owner);
+        hook.upgradeToAndCall(newImplementation, "");
+
+        assertEq(hook.claimable(worker), balanceBefore);
+        assertEq(hook.firstSeen(worker), seenBefore);
+        assertEq(hook.totalClaimable(), hook.claimable(worker) + hook.claimable(requester));
+    }
+
+    function test_upgrade_revertsForNonOwner() public {
+        // The owner can rewrite the logic governing every walletV2Suite's balance, so this is the one
+        // check standing between that power and anyone who asks for it.
+        address newImplementation = address(new TaskTokenRewardHook());
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert();
+        hook.upgradeToAndCall(newImplementation, "");
+    }
+
+    function test_initialize_cannotBeCalledTwice() public {
+        // Re-initializing would reset ownership and configuration on a live contract.
+        vm.expectRevert();
+        hook.initialize(
+            address(vault),
+            address(budget),
+            address(market),
+            18,
+            DREAMS_PER_USDC,
+            BONUS_BPS,
+            address(dreamsToken),
+            WORKER_SPLIT_BPS,
+            authorizedRelayer,
+            owner
+        );
+    }
+
+    // ─── walletV2Suite history seeding ───────────────────────────────────────────────
+
+    function test_seedWalletHistory_restoresAgeAndBans() public {
+        vm.warp(52 weeks); // forge starts near timestamp 0; a "9 weeks ago" fixture needs a past
+        address migrated = makeAddr("migrated");
+        address bannedWallet = makeAddr("bannedWallet");
+        uint40 seenAt = uint40(block.timestamp - 9 weeks);
+
+        address[] memory wallets = new address[](2);
+        uint40[] memory firstSeenAt = new uint40[](2);
+        bool[] memory isBanned = new bool[](2);
+        wallets[0] = migrated;
+        wallets[1] = bannedWallet;
+        firstSeenAt[0] = seenAt;
+        firstSeenAt[1] = seenAt;
+        isBanned[1] = true;
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertEq(hook.firstSeen(migrated), seenAt);
+        assertEq(hook.firstSeen(bannedWallet), seenAt);
+        assertFalse(hook.banned(migrated));
+        // A ban that did not carry over would silently readmit a walletV2Suite the owner had removed.
+        assertTrue(hook.banned(bannedWallet));
+    }
+
+    function test_seedWalletHistory_neverOverwritesRealHistory() public {
+        // The guard that matters. A walletV2Suite that has already interacted with this hook has real
+        // history, and a later or repeated seed must not be able to backdate it.
+        _earnClaimable();
+        uint40 real = hook.firstSeen(worker);
+        assertGt(real, 0);
+
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = worker;
+        vm.warp(block.timestamp + 104 weeks);
+        firstSeenAt[0] = uint40(block.timestamp - 52 weeks);
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertEq(hook.firstSeen(worker), real);
+    }
+
+    function test_seedWalletHistory_ignoresZeroSentinel() public {
+        // 0 means "never seen" everywhere else in this contract; seeding it would be writing
+        // the absence of a value.
+        address walletV2Suite = makeAddr("zeroSeed");
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = walletV2Suite;
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertEq(hook.firstSeen(walletV2Suite), 0);
+    }
+
+    function test_seedWalletHistory_revertsOnLengthMismatch() public {
+        address[] memory wallets = new address[](2);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](2);
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.SeedLengthMismatch.selector);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_seedWalletHistory_revertsForNonOwner() public {
+        address[] memory wallets = new address[](0);
+        uint40[] memory firstSeenAt = new uint40[](0);
+        bool[] memory isBanned = new bool[](0);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert();
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_sealWalletHistory_isPermanent() public {
+        vm.warp(52 weeks);
+        vm.prank(owner);
+        hook.sealWalletHistory();
+        assertTrue(hook.walletHistorySealed());
+
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = makeAddr("tooLate");
+        firstSeenAt[0] = uint40(block.timestamp - 9 weeks);
+
+        // Migration is a phase, not a standing capability: an owner able to backdate walletV2Suite age
+        // forever is more power than the migration needs.
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.WalletHistoryAlreadySealed.selector);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_banWallet_emitsEventsForOffChainReconstruction() public {
+        // Without these a ban is invisible in the logs, so a walletV2Suite banned before it ever earned
+        // anything could not be found by any off-chain scan -- and would come back unbanned.
+        address walletV2Suite = makeAddr("banEvent");
+
+        vm.expectEmit(true, false, false, false);
+        emit TaskTokenRewardHook.WalletBanned(walletV2Suite);
+        vm.prank(owner);
+        hook.banWallet(walletV2Suite);
+
+        vm.expectEmit(true, false, false, false);
+        emit TaskTokenRewardHook.WalletUnbanned(walletV2Suite);
+        vm.prank(owner);
+        hook.unbanWallet(walletV2Suite);
+    }
+
+    // ─── in-flight reward state seeding ───────────────────────────────────────
+
+    function _inFlightState(address req, address wrk, uint256 reserved)
+        internal
+        pure
+        returns (TaskTokenRewardHook.RewardState memory)
+    {
+        return TaskTokenRewardHook.RewardState({
+            rewardUsd: 1_000_000,
+            usdBonusValue: 75_000,
+            startPrice: DREAMS_PER_USDC,
+            reservedTokenAmount: reserved,
+            requester: req,
+            worker: wrk,
+            reserved: true,
+            paid: false,
+            consumedEpoch: 0
+        });
+    }
+
+    function test_seedRewardStates_carriesInFlightStateSoNothingStrands() public {
+        // The point of the function. A task reserved against a previous hook can only be settled
+        // by a hook that holds its state; without this the reservation is orphaned in the vault
+        // forever and its tokens keep blocking the next swap.
+        bytes32 taskId = keccak256("in-flight");
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, 26_025_000_000_000_000);
+
+        vm.prank(owner);
+        hook.seedRewardStates(ids, states);
+
+        (uint256 rewardUsd,,, uint256 reservedTokenAmount, address req, address wrk, bool reserved, bool paid,) =
+            hook.rewardStates(taskId);
+        assertEq(rewardUsd, 1_000_000);
+        assertEq(reservedTokenAmount, 26_025_000_000_000_000);
+        assertEq(req, requester);
+        assertEq(wrk, worker);
+        assertTrue(reserved);
+        assertFalse(paid);
+    }
+
+    function test_seedRewardStates_neverOverwritesRealState() public {
+        // A task this hook already knows about has real state; a later seed must not rewrite it.
+        bytes32 taskId = _earnClaimable();
+        (uint256 realReward,,,,,,,,) = hook.rewardStates(taskId);
+        assertGt(realReward, 0);
+
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(address(0xdead), address(0xbeef), 999);
+
+        vm.prank(owner);
+        hook.seedRewardStates(ids, states);
+
+        (uint256 afterReward,,,, address req,,,,) = hook.rewardStates(taskId);
+        assertEq(afterReward, realReward);
+        assertEq(req, requester);
+    }
+
+    function test_seedRewardStates_revertsOnAlreadySettledState() public {
+        // Seeding a paid state would be inert -- every settlement path checks `paid` first -- so
+        // its presence means the wrong set is being replayed. Better to stop than to no-op.
+        bytes32 taskId = keccak256("already-paid");
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, 1);
+        states[0].paid = true;
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.RewardStateAlreadySettled.selector, taskId));
+        hook.seedRewardStates(ids, states);
+    }
+
+    function test_seedRewardStates_seedsWalletAgeForCarriedParticipants() public {
+        // A carried task's participants are known to have transacted before this hook existed,
+        // so they must not read as brand-new wallets and lose the ramp.
+        bytes32 taskId = keccak256("age-carry");
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, 1);
+
+        vm.prank(owner);
+        hook.seedRewardStates(ids, states);
+
+        assertGt(hook.firstSeen(requester), 0);
+        assertGt(hook.firstSeen(worker), 0);
+    }
+
+    function test_seedRewardStates_revertsOnLengthMismatch() public {
+        bytes32[] memory ids = new bytes32[](2);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.SeedLengthMismatch.selector);
+        hook.seedRewardStates(ids, states);
+    }
+
+    function test_seedRewardStates_revertsForNonOwner() public {
+        bytes32[] memory ids = new bytes32[](0);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](0);
+
+        vm.prank(authorizedRelayer);
+        vm.expectRevert();
+        hook.seedRewardStates(ids, states);
+    }
+
+    function test_sealRewardState_isPermanent() public {
+        vm.prank(owner);
+        hook.sealRewardState();
+        assertTrue(hook.rewardStateSealed());
+
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = keccak256("too-late");
+        states[0] = _inFlightState(requester, worker, 1);
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.RewardStateAlreadySealed.selector);
+        hook.seedRewardStates(ids, states);
+    }
+
+    // ─── setRamp validation ───────────────────────────────────────────────────
+
+    function test_setRamp_revertsOnNonIncreasingThresholds() public {
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.InvalidRamp.selector);
+        hook.setRamp(
+            [uint40(4 weeks), uint40(2 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+    }
+
+    // ─── sweepUnclaimed ───────────────────────────────────────────────────────
+
+    function test_sweepUnclaimed_cannotSweepWorkerFunds() public {
+        // Earn rewards so totalClaimable > 0; then try to sweep more than excess
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        uint256 balance = dreamsToken.balanceOf(address(hook));
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.InsufficientSweepable.selector);
+        hook.sweepUnclaimed(owner, balance); // would sweep into totalClaimable
+    }
+
+    function test_sweepUnclaimed_canSweepRampExcess() public {
+        // Use 0% ramp so all tokens become sweepable excess
+        vm.prank(owner);
+        hook.setRamp([uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(0), uint16(0), uint16(0)]);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        uint256 excess = dreamsToken.balanceOf(address(hook));
+        assertGt(excess, 0);
+        assertEq(hook.totalClaimable(), 0);
+
+        uint256 ownerBefore = dreamsToken.balanceOf(owner);
+        vm.prank(owner);
+        hook.sweepUnclaimed(owner, excess); // should succeed
+        assertEq(dreamsToken.balanceOf(owner) - ownerBefore, excess);
+    }
+
+    // ─── Locked-rate vs current-rate settlement ──────────────────────────────
+
+    function test_checkComplete_usesLockedPriceForClaim() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        // Rate changes after the worker has claimed (locked at claim time).
+        vm.prank(owner);
+        hook.setDreamsPerUsdc(DREAMS_PER_USDC * 5);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 credited = hook.claimable(worker) - before;
+
+        // Payout uses the rate locked at claim time, not the updated rate.
+        assertEq(credited, EXPECTED_REWARD_1000_DREAMS);
+    }
+
+    function test_checkComplete_usesCurrentPriceForBounty() public {
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        // Bounty has no lock — rate change before completion affects payout.
+        vm.prank(owner);
+        hook.setDreamsPerUsdc(DREAMS_PER_USDC * 2);
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 credited = hook.claimable(worker) - before;
+
+        assertEq(credited, EXPECTED_REWARD_1000_DREAMS * 2);
+    }
+
+    function test_checkComplete_usesLockedBonusBpsForClaim() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        // bonusBps changes after the worker has claimed (locked at claim time).
+        vm.prank(owner);
+        hook.setBonusBps(0);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 credited = hook.claimable(worker) - before;
+
+        // Payout uses the bonusBps locked at claim time (100% from setUp), not the
+        // updated (now-zero) bonusBps.
+        assertEq(credited, EXPECTED_REWARD_1000_DREAMS);
+    }
+
+    function test_checkComplete_usesCurrentBonusBpsForBounty() public {
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        // Bounty has no lock — bonusBps change before completion affects payout.
+        vm.prank(owner);
+        hook.setBonusBps(5_000); // 50%
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 credited = hook.claimable(worker) - before;
+
+        assertEq(credited, EXPECTED_REWARD_1000_DREAMS / 2);
+    }
+
+    function test_checkComplete_bounty_zeroBonusBps_skipsTokenReward() public {
+        // Unlike dreamsPerUsdc, bonusBps == 0 is reachable through the real setter.
+        vm.prank(owner);
+        hook.setBonusBps(0);
+
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        uint256 workerClaimBefore = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore);
+        assertEq(hook.claimable(worker), workerClaimBefore);
+    }
+
+    function test_claimTask_zeroBonusBps_reservesNothing() public {
+        vm.prank(owner);
+        hook.setBonusBps(0);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        (, uint256 usdBonusValue, uint256 startPrice, uint256 reservedAmt,,, bool reserved,,) =
+            hook.rewardStates(taskId);
+        assertEq(usdBonusValue, 0);
+        // Rate still locks even though the bonus is zero — the two are independent.
+        assertEq(startPrice, DREAMS_PER_USDC);
+        assertEq(reservedAmt, 0);
+        assertTrue(reserved);
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    // ─── Bonus % applied before rate conversion (non-100% bonus) ─────────────
+
+    function test_bonusBps_appliedBeforeRateConversion() public {
+        // 7.5% bonus (matches the platform fee default) insteadV2Suite of setUp's 100%.
+        vm.prank(owner);
+        hook.setBonusBps(750);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        (, uint256 usdBonusValue,,,,,,,) = hook.rewardStates(taskId);
+        // $100 * 7.5% = $7.50 (7.5e6 USDC base units)
+        assertEq(usdBonusValue, 7.5e6);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 credited = hook.claimable(worker) - before;
+
+        // $7.50 * 10 DREAMS/USDC = 75 DREAMS
+        assertEq(credited, 75 * 1e18);
+    }
+
+    function test_bonusBps_epochBudgetConsumesBonusValueNotRawReward() public {
+        // With a 7.5% bonus, the epoch budget should be consumed for $7.50, not $100 —
+        // the caps bound actual DREAMS emission value, not raw task volume.
+        vm.prank(owner);
+        hook.setBonusBps(750);
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        assertEq(budget.workerUsed(worker), 7.5e6);
+        assertEq(budget.requesterUsed(requester), 7.5e6);
+        assertEq(budget.globalUsed(), 7.5e6);
+    }
+
+    // Neither the constructor nor setDreamsPerUsdc allow a zero rate, so the defensive
+    // "no rate configured" branches are only reachable via a direct storage write —
+    // exercised here with stdstore to simulate an unset/misconfigured rate.
+
+    function test_checkComplete_bounty_zeroRate_skipsTokenReward() public {
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        stdstore.target(address(hook)).sig("dreamsPerUsdc()").checked_write(uint256(0));
+
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        uint256 workerClaimBefore = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore);
+        assertEq(hook.claimable(worker), workerClaimBefore);
+    }
+
+    function test_claimTask_zeroRate_reservesNothing() public {
+        stdstore.target(address(hook)).sig("dreamsPerUsdc()").checked_write(uint256(0));
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        (,, uint256 startPrice, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertEq(startPrice, 0);
+        assertEq(reservedAmt, 0);
+        assertTrue(reserved);
+        assertEq(vault.taskReserve(taskId), 0);
+
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore);
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    // ─── Worker mismatch ─────────────────────────────────────────────────────
+
+    function test_workerMismatch_revertsAtSubmit() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        address wrongWorker = makeAddr("wrongWorker");
+        vm.expectRevert();
+        _relay(wrongWorker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+    }
+
+    // ─── Double payment blocked ───────────────────────────────────────────────
+
+    // ─── Forfeit releases reserve ─────────────────────────────────────────────
+
+    function test_forfeit_releasesReserve() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        uint256 reservedBefore = vault.taskReserve(taskId);
+        assertGt(reservedBefore, 0);
+
+        vm.warp(block.timestamp + 2 days);
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    // ─── Cancel on unclaimed task: onCancel fires, no reserve to release ───────
+
+    function test_cancel_noReserve_noRevert() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    function test_expire_releasesReserve() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        uint256 reservedBefore = vault.taskReserve(taskId);
+        assertGt(reservedBefore, 0);
+
+        vm.warp(block.timestamp + 2 days);
+        market.refundExpired(taskId, 0);
+
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    // ─── Reserve release uses USD budget accounting ──────────────────────────
+
+    function test_forfeit_releasesUsdBudgetNotTokenAmount() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        assertEq(budget.workerUsed(worker), REWARD_100_USDC);
+
+        vm.warp(block.timestamp + 2 days);
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+
+        // Budget usage (USD) released back to zero, distinct from the token reserve.
+        assertEq(budget.workerUsed(worker), 0);
+    }
+
+    // ─── Epoch budget exceeded ────────────────────────────────────────────────
+
+    function test_epochBudget_globalCapExceeded_claimSucceedsNoReservation() public {
+        vm.prank(owner);
+        budget.setGlobalCapUsd(1); // 1 unit USD — too small for any reward
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    function test_epochBudget_capsInUsd() public {
+        // Caps are denominated in USDC base units — a $100 reward consumes 100e6, not
+        // a DREAMS-wei amount.
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+
+        assertEq(budget.workerUsed(worker), REWARD_100_USDC);
+        assertEq(budget.requesterUsed(requester), REWARD_100_USDC);
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+    }
+
+    // ─── Epoch rollover resets per-account usage ──────────────────────────────
+
+    function test_epochRollover_resetsUsage() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("w"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("w"), 0)));
+
+        assertGt(budget.workerUsed(worker), 0);
+
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        assertEq(budget.workerUsed(worker), 0);
+        assertEq(budget.requesterUsed(requester), 0);
+        assertEq(budget.globalUsed(), 0);
+        assertEq(budget.remaining(requester, worker), MAX_PER_TASK_USD);
+    }
+
+    // ─── Vault insufficient ───────────────────────────────────────────────────
+
+    function _drainVault() internal {
+        uint256 avail = vault.available();
+        vm.prank(owner);
+        vault.withdraw(owner, avail);
+        assertEq(vault.available(), 0);
+    }
+
+    function _assertNoReservationNoStrandedBudget(bytes32 taskId) internal view {
+        (,,, uint256 reservedAmt,, address lockedWorker, bool reserved,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0, "no token reward owed against an empty vault");
+        assertTrue(reserved);
+        assertEq(lockedWorker, worker);
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(budget.workerUsed(worker), 0, "epoch budget released");
+        assertEq(budget.requesterUsed(requester), 0);
+        assertEq(budget.globalUsed(), 0);
+    }
+
+    function _completeAndAssertUsdcWithoutBonus(bytes32 taskId) internal {
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore);
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_vaultInsufficient_claimSucceedsWithoutReservation() public {
+        _drainVault();
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _assertNoReservationNoStrandedBudget(taskId);
+        _completeAndAssertUsdcWithoutBonus(taskId);
+    }
+
+    function test_vaultInsufficient_selectWorkerSucceedsWithoutReservation() public {
+        _drainVault();
+        bytes32 taskId = _createReservedTask(market.PITCH(), bytes4(0));
+        _relay(worker, 0, abi.encodeCall(market.submitPitch, (taskId, keccak256("pitch"))));
+        _relay(requester, 0, abi.encodeCall(market.selectWorker, (taskId, worker)));
+        _assertNoReservationNoStrandedBudget(taskId);
+        _completeAndAssertUsdcWithoutBonus(taskId);
+    }
+
+    function test_vaultInsufficient_bounty_skipsBonusNotUSDP() public {
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 avail = vault.available();
+        vm.prank(owner);
+        vault.withdraw(owner, avail);
+
+        uint256 workerUsdcBefore = usdc.balanceOf(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertGt(usdc.balanceOf(worker), workerUsdcBefore);
+    }
+
+    // Partial-fill round-trip: vault has SOME tokens available, but fewer than the
+    // full USD-capped tokenReward. checkComplete must scale tokenReward down to
+    // vaultAvail and recompute cappedUsd = tokenReward * 1e6 / rate so EpochBudget is
+    // only consumed for what was actually paid out, not what was originally capped.
+    function test_vaultInsufficient_bounty_partialFill_recomputesUsdRoundTrip() public {
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        // Full payout would be rewardUsd(100e6) * bonusBps(100%) -> usdBonusValue=100e6,
+        // then * rate(10e18) / 1e6 = 1000e18 DREAMS. Drain the vault down to 400e18
+        // available (a partial fill), leaving enough that cappedUsd doesn't round to 0.
+        uint256 avail = vault.available();
+        uint256 partialAvail = 400 * 1e18;
+        vm.prank(owner);
+        vault.withdraw(owner, avail - partialAvail);
+        assertEq(vault.available(), partialAvail);
+
+        // Expected recomputed USD basis: 400e18 * 1e6 / 10e18 = 40e6 (40 USDC), not the
+        // original 100e6 the budget check would otherwise have consumed.
+        uint256 expectedRecomputedUsd = 40 * 1e6;
+
+        vm.expectEmit(true, true, false, true);
+        emit TaskTokenRewardHook.RewardPaid(
+            taskId, worker, REWARD_100_USDC, expectedRecomputedUsd, DREAMS_PER_USDC, partialAvail
+        );
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(worker), partialAvail, "worker must be credited exactly the vault-limited amount");
+        assertEq(vault.available(), 0, "vault must be fully drained by the partial-fill payment");
+    }
+
+    // Multi-winner Bounty: one winner's per-worker EpochBudget is already exhausted
+    // (cappedUsd resolves to 0 for them), the other winner has full budget headroom.
+    // The exhausted winner's shortfall must `continue` past them without reverting
+    // the loop or blocking payment to the other winner.
+    function test_bounty_multiWinner_oneWorkerShortfall_doesNotBlockOthers() public {
+        address worker2 = makeAddr("worker2");
+
+        // Exhaust worker (worker1)'s entire per-worker epoch budget ahead of time, so
+        // their cappedUsd for this task resolves to 0 via _min3(..., 0, ...). Lower the
+        // worker cap first so a single checkAndConsume call (bounded by maxUsdPerTask)
+        // can exhaust it without needing many chunked calls.
+        vm.prank(owner);
+        budget.setWorkerCapUsd(1 * 1e6);
+        vm.prank(address(hook));
+        budget.checkAndConsume(requester, worker, 1 * 1e6);
+        assertEq(budget.remaining(requester, worker), 0);
+
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("A"))));
+        _relay(worker2, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("B"))));
+
+        address[] memory workers = new address[](2);
+        workers[0] = worker;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 5000; // 50 USDC
+        shares[1] = 5000; // 50 USDC
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A");
+        deliverables[1] = keccak256("B");
+
+        uint256 worker2ClaimableBefore = hook.claimable(worker2);
+        uint256 worker2UsdcBefore = usdc.balanceOf(worker2);
+
+        // Must not revert despite worker's shortfall, and both workers' USDC payout
+        // must still land regardless of the DREAMS-bonus outcome.
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, deliverables, 0)));
+
+        assertEq(hook.claimable(worker), 0, "shortfall worker must receive no DREAMS bonus");
+        assertGt(hook.claimable(worker2), worker2ClaimableBefore, "other worker's DREAMS bonus must not be blocked");
+        assertGt(usdc.balanceOf(worker2), worker2UsdcBefore, "USDC payout must land for the unaffected worker");
+    }
+
+    // ─── EpochBudget branch coverage ─────────────────────────────────────────
+
+    function test_epochBudget_taskCapExceeded_direct() public {
+        vm.prank(address(hook));
+        vm.expectRevert(
+            abi.encodeWithSelector(EpochBudget.TaskCapExceeded.selector, MAX_PER_TASK_USD + 1, MAX_PER_TASK_USD)
+        );
+        budget.checkAndConsume(requester, worker, MAX_PER_TASK_USD + 1);
+    }
+
+    function test_epochBudget_workerCapExceeded_direct() public {
+        vm.prank(owner);
+        budget.setWorkerCapUsd(100 * 1e6);
+        vm.prank(address(hook));
+        vm.expectRevert(abi.encodeWithSelector(EpochBudget.WorkerCapExceeded.selector, worker, 200 * 1e6, 100 * 1e6));
+        budget.checkAndConsume(requester, worker, 200 * 1e6);
+    }
+
+    function test_epochBudget_requesterCapExceeded_direct() public {
+        vm.prank(owner);
+        budget.setRequesterCapUsd(100 * 1e6);
+        vm.prank(address(hook));
+        vm.expectRevert(
+            abi.encodeWithSelector(EpochBudget.RequesterCapExceeded.selector, requester, 200 * 1e6, 100 * 1e6)
+        );
+        budget.checkAndConsume(requester, worker, 200 * 1e6);
+    }
+
+    function test_epochBudget_release_noOp_whenAmountExceedsUsed() public {
+        // Hoist this out of the prank'd call: vm.prank only applies to the very next
+        // external call, and evaluating budget.currentEpoch() inline as an argument would
+        // consume it before release() runs, leaving release() to execute as the test
+        // contract insteadV2Suite of the hook and revert with OnlyHook.
+        uint64 epoch = budget.currentEpoch();
+        vm.prank(address(hook));
+        budget.release(requester, worker, 999 * 1e6, epoch);
+        assertEq(budget.workerUsed(worker), 0);
+    }
+
+    function test_epochBudget_setEpochDuration_zeroReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(EpochBudget.EpochDurationZero.selector);
+        budget.setEpochDuration(0);
+    }
+
+    function test_epochBudget_setGlobalCap_overflowReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(EpochBudget.CapExceedsUint192.selector);
+        budget.setGlobalCapUsd(uint256(type(uint192).max) + 1);
+    }
+
+    function test_epochBudget_setWorkerCap_overflowReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(EpochBudget.CapExceedsUint192.selector);
+        budget.setWorkerCapUsd(uint256(type(uint192).max) + 1);
+    }
+
+    function test_epochBudget_setRequesterCap_overflowReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(EpochBudget.CapExceedsUint192.selector);
+        budget.setRequesterCapUsd(uint256(type(uint192).max) + 1);
+    }
+
+    function test_epochBudget_setMaxUsdPerTask_overflowReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(EpochBudget.CapExceedsUint192.selector);
+        budget.setMaxUsdPerTask(uint256(type(uint192).max) + 1);
+    }
+
+    // ─── Bounty budget/vault clamp units ──────────────────────────────────────
+
+    function test_bounty_budgetCapClampsBeforeConversion() public {
+        // Cap the per-task USD budget below the task reward so the payout is scaled
+        // down in USD terms, then converted to tokens — not clamped in token units.
+        vm.prank(owner);
+        budget.setMaxUsdPerTask(REWARD_100_USDC / 2); // cap at $50
+
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        uint256 before = hook.claimable(worker);
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        uint256 credited = hook.claimable(worker) - before;
+
+        // $50 * 10 DREAMS/USDC = 500 DREAMS
+        assertEq(credited, 500 * 1e18);
+    }
+
+    // ─── Additional branch-coverage tests ────────────────────────────────────
+
+    // ─── Retryable reserve release ────────────────────────────────────────────
+
+    bytes32 constant VAULT_RELEASED_SIG = keccak256("RewardVaultReleased(bytes32,uint256)");
+    bytes32 constant BUDGET_RELEASED_SIG = keccak256("RewardBudgetReleased(bytes32,uint256)");
+    bytes32 constant RESERVE_RELEASED_SIG = keccak256("RewardReserveReleased(bytes32,uint256)");
+    bytes32 constant RELEASE_FAILED_SIG = keccak256("RewardReleaseFailed(bytes32,uint8)");
+    bytes32 constant REWARD_PAID_SIG = keccak256("RewardPaid(bytes32,address,uint256,uint256,uint256,uint256)");
+
+    function _claimedPastExpiry() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+        vm.warp(block.timestamp + 2 days);
+    }
+
+    function _failVault() internal {
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(RewardVault.release.selector), "vault down");
+    }
+
+    function _failBudget() internal {
+        vm.mockCallRevert(address(budget), abi.encodeWithSelector(EpochBudget.release.selector), "budget down");
+    }
+
+    function _count(Vm.Log[] memory logs, bytes32 sig) internal view returns (uint256 n) {
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == sig) n++;
+        }
+    }
+
+    function _failedDependency(Vm.Log[] memory logs) internal view returns (uint8 dep) {
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == RELEASE_FAILED_SIG) {
+                return abi.decode(logs[i].data, (uint8));
+            }
+        }
+        revert("no failure event");
+    }
+
+    function _assertProgress(bytes32 taskId, bool vaultDone, bool budgetDone) internal view {
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertEq(p.tokenAmount, EXPECTED_REWARD_1000_DREAMS, "progress token amount");
+        assertEq(p.usdAmount, REWARD_100_USDC, "progress usd amount");
+        assertEq(p.worker, worker);
+        assertEq(p.requester, requester);
+        assertEq(p.vaultReleased, vaultDone, "vaultReleased");
+        assertEq(p.budgetReleased, budgetDone, "budgetReleased");
+        (,,, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0);
+        assertFalse(reserved);
+    }
+
+    function _assertFullyReleased(bytes32 taskId, uint256 availBefore) internal view {
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.totalReserved(), 0);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), 0);
+        assertEq(budget.workerUsed(worker), 0);
+        assertEq(budget.requesterUsed(requester), 0);
+    }
+
+    function test_release_bothSucceed_emitsEachStepAndCompletion() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        vm.recordLogs();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        assertEq(_count(logs, RELEASE_FAILED_SIG), 0);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_release_vaultOnlyFailure_keepsVaultPendingAndRecovers() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failVault();
+        vm.recordLogs();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 0);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0, "no completion while vault is pending");
+        assertEq(_failedDependency(logs), uint8(TaskTokenRewardHook.ReleaseDependency.Vault));
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        assertEq(vault.available(), availBefore);
+        assertEq(budget.globalUsed(), 0);
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0, "budget is not released twice");
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_budgetOnlyFailure_keepsBudgetPendingAndRecovers() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failBudget();
+        vm.recordLogs();
+        market.refundExpired(taskId, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0);
+        assertEq(_failedDependency(logs), uint8(TaskTokenRewardHook.ReleaseDependency.Budget));
+        _assertProgress(taskId, true, false);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 0, "vault is not released twice");
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_bothFail_repeatedRecovery() public {
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+        _failVault();
+        _failBudget();
+        vm.recordLogs();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, RELEASE_FAILED_SIG), 2);
+        assertEq(_count(logs, VAULT_RELEASED_SIG) + _count(logs, BUDGET_RELEASED_SIG), 0);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0);
+        _assertProgress(taskId, false, false);
+
+        // Still failing: recovery changes nothing and reports both failures again.
+        vm.recordLogs();
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, RELEASE_FAILED_SIG), 2);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0);
+        _assertProgress(taskId, false, false);
+        assertEq(vault.available(), availBefore);
+
+        // Vault recovers first.
+        vm.clearMockedCalls();
+        _failBudget();
+        hook.recoverReserve(taskId);
+        _assertProgress(taskId, true, false);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+
+        vm.clearMockedCalls();
+        hook.recoverReserve(taskId);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+        _assertFullyReleased(taskId, availBefore);
+    }
+
+    function test_release_settleLapsedReview_vaultFailure_recovers() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+        vm.warp(market.reviewDeadline(taskId) + 1);
+
+        // onComplete pays a lapsed review's bonus; make the payment fail so it releases insteadV2Suite.
+        _failVaultPay();
+        _failVault();
+        vm.recordLogs();
+        market.settleLapsedReview(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 0);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 1);
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 0, "no completion while vault is pending");
+        assertEq(_failedDependency(logs), uint8(TaskTokenRewardHook.ReleaseDependency.Vault));
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "vault reservation still held");
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0, "budget is not released twice");
+        assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+
+        // The release completed and the reservation is settled, so a further call is not due.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function _failVaultPay() internal {
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(RewardVault.pay.selector), "pay down");
+    }
+
+    function test_checkComplete_vaultPayFails_releaseFails_recovers() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+
+        _failVaultPay();
+        _failVault();
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        assertEq(
+            uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted), "USDC settlement not blocked"
+        );
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "vault reservation still held");
+        assertEq(hook.claimable(worker), 0, "no bonus credited");
+
+        vm.clearMockedCalls();
+        vm.recordLogs();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_count(logs, VAULT_RELEASED_SIG), 1);
+        assertEq(_count(logs, BUDGET_RELEASED_SIG), 0, "budget is not released twice");
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+
+        // Paid out with nothing pending: a release is no longer due.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_checkComplete_vaultPayFails_releaseSucceeds_nothingPending() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+
+        _failVaultPay();
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        _assertProgress(taskId, true, true);
+        _assertFullyReleased(taskId, availBefore);
+        // Paid out with nothing pending: a release is no longer due.
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    /// @dev While the first worker's release is still pending, later workers reserve nothing:
+    ///      a fresh reservation could not move into the occupied progress record on the next
+    ///      reopen and would be orphaned in the vault once a later worker overwrote it.
+    function test_reclaim_whileReleasePending_reservesNothingAndOrphansNothing() public {
+        address worker2 = makeAddr("worker2");
+        address worker3 = makeAddr("worker3");
+        bytes32 taskId = _claimedPastExpiry();
+        uint256 availBefore = vault.available();
+
+        // First reopen: the vault release fails and stays pending.
+        _failVault();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        _assertProgress(taskId, false, true);
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Open), "reopened");
+
+        // Second worker claims while the vault is still failing: the retry fails, so no reservation.
+        _relay(worker2, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        (,,, uint256 reservedAmt,,, bool reserved,,) = hook.rewardStates(taskId);
+        assertTrue(reserved, "worker2 locked in");
+        assertEq(reservedAmt, 0, "worker2 reserves nothing while a release is pending");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "only the first reservation held");
+        assertFalse(hook.releaseProgress(taskId).vaultReleased, "original release still pending");
+
+        // Second reopen with the vault still failing, then a third worker claims.
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        _relay(worker3, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        (,,, reservedAmt,,,,,) = hook.rewardStates(taskId);
+        assertEq(reservedAmt, 0, "worker3 reserves nothing while a release is pending");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "still only the first reservation");
+
+        // The task expires with the vault still down, then the vault recovers.
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.refundExpired(taskId, 0);
+        vm.clearMockedCalls();
+        hook.recoverReserve(taskId);
+
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertTrue(p.vaultReleased && p.budgetReleased, "original release complete");
+        assertEq(p.tokenAmount, EXPECTED_REWARD_1000_DREAMS, "progress is the first worker's release");
+        assertEq(vault.taskReserve(taskId), 0, "nothing orphaned under the task");
+        assertEq(vault.totalReserved(), 0, "nothing orphaned in the vault");
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS);
+        assertEq(budget.globalUsed(), 0);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.NothingToRecover.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    // ─── isSettling: a co-hook cannot release a reservation mid-settlement ────
+
+    /// @dev Claim task whose hooks are `probe` first, then the reward hook, claimed and delivered.
+    function _deliveredWithProbe(MockSettlingProbeHook probe) internal returns (bytes32 taskId) {
+        address[] memory hooks = new address[](2);
+        hooks[0] = address(probe);
+        hooks[1] = address(hook);
+        taskId = abi.decode(
+            _relay(
+                requester,
+                REWARD_100_USDC,
+                abi.encodeCall(
+                    market.createTask,
+                    (
+                        taskConfig(REWARD_100_USDC, 1 days, market.CLAIM(), 0, 0, bytes4(0)),
+                        ITMPCore.HookConfig({ contracts: hooks, data: "" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig(),
+                        stakeTerms(false, 0)
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "reserved");
+    }
+
+    function test_isSettling_falseAtRest() public view {
+        assertFalse(market.isSettling());
+    }
+
+    // ─── Award-scaled reserved bonus ──────────────────────────────────────────
+
+    address internal awardEvaluator = makeAddr("award-evaluator");
+
+    function _assignAwardEvaluator(bytes32 taskId, uint16 feeBps) internal {
+        _relay(
+            requester,
+            0,
+            abi.encodeCall(
+                market.assignEvaluator, (taskId, awardEvaluator, 0, feeBps, uint32(2 days), uint32(1 days), address(0))
+            )
+        );
+    }
+
+    function _evaluateAndFinalize(bytes32 taskId, ITMPCore.Award[] memory awards) internal {
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), awards))
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+    }
+
+    function _singleAward(address w, uint256 amount) internal pure returns (ITMPCore.Award[] memory a) {
+        a = new ITMPCore.Award[](1);
+        a[0] = ITMPCore.Award({ worker: w, amount: amount, rank: 1 });
+    }
+
+    function test_auctionBonus_sizedOnAcceptedPriceNotCap() public {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), market.AUCTION_DUTCH());
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, 1)));
+        (uint256 rewardUsd, uint256 usdBonusValue,, uint256 reservedTokens,,,,,) = hook.rewardStates(taskId);
+        assertEq(rewardUsd, 1, "basis is the accepted price");
+        assertEq(usdBonusValue, 1, "bonus sized on 1 base unit");
+        assertEq(reservedTokens, DREAMS_PER_USDC / 1e6, "reservation sized on 1 base unit");
+
+        bytes32 d = keccak256("work");
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, d)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, d, 0)));
+        assertEq(hook.claimable(worker), DREAMS_PER_USDC / 1e6, "credit follows the accepted price");
+        assertEq(vault.totalReserved(), 0);
+    }
+
+    function test_auctionBonus_reducedPriceLifecycle() public {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), market.AUCTION_DUTCH());
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        _assertReducedRewardReservation(taskId);
+        _completeReducedRewardReservation(taskId);
+    }
+
+    function test_reservedBonus_emptyApproveReleasesReservation() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        uint256 availBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 requesterBefore = usdc.balanceOf(requester);
+
+        _evaluateAndFinalize(taskId, new ITMPCore.Award[](0));
+
+        assertEq(usdc.balanceOf(requester) - requesterBefore, REWARD_100_USDC, "requester refunded");
+        assertEq(hook.claimable(worker), 0, "no bonus for a zero award");
+        assertEq(hook.claimable(requester), 0, "no requester split for a zero award");
+        assertEq(vault.taskReserve(taskId), 0, "reservation released");
+        assertEq(vault.available(), availBefore, "vault made whole");
+        assertEq(budget.workerUsed(worker), 0, "epoch budget released");
+    }
+
+    function test_reservedBonus_awardToOtherWorkerReleasesReservation() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _evaluateAndFinalize(taskId, _singleAward(makeAddr("someone-else"), 0));
+        assertEq(hook.claimable(worker), 0);
+        assertEq(vault.taskReserve(taskId), 0);
+    }
+
+    function test_reservedBonus_partialAwardScalesBonus() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        uint256 availBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+
+        _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC / 4));
+
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 4, "quarter award, quarter bonus");
+        assertEq(vault.taskReserve(taskId), 0, "remainder released");
+        assertEq(vault.available(), availBefore - EXPECTED_REWARD_1000_DREAMS / 4);
+        assertEq(budget.workerUsed(worker), REWARD_100_USDC / 4, "budget keeps only the paid part");
+        (, uint256 usdBonusValue,, uint256 reservedTokens,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+        assertEq(usdBonusValue, REWARD_100_USDC / 4);
+        assertEq(reservedTokens, EXPECTED_REWARD_1000_DREAMS / 4);
+    }
+
+    function test_reservedBonus_fullAwardNetOfEvaluatorFeePaysFullBonus() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 1000);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC * 9 / 10));
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "everything awardable was awarded");
+    }
+
+    // ─── Reserved bonus paid on onComplete ────────────────────────────────────
+
+    function test_onComplete_settleLapsedReviewPaysReservedBonus() public {
+        bytes32 taskId = _createLongClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(market.reviewDeadline(taskId) + 1);
+
+        market.settleLapsedReview(taskId);
+
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "lapsed review still earns the bonus");
+        assertEq(vault.taskReserve(taskId), 0);
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    function test_onComplete_auctionLapsedReviewPaysOnAcceptedPrice() public {
+        bytes32 taskId = _createReservedTask(market.AUCTION(), market.AUCTION_DUTCH());
+        _relay(worker, 0, abi.encodeCall(market.acceptAuction, (taskId, REDUCED_REWARD_40_USDC)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(market.reviewDeadline(taskId) + 1);
+        market.settleLapsedReview(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REDUCED_REWARD_400_DREAMS);
+        assertEq(vault.totalReserved(), 0);
+    }
+
+    function test_onComplete_pastExpiryFinalizePaysAwardedBonus() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate,
+                (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), _singleAward(worker, REWARD_100_USDC / 2))
+            )
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "half award, half bonus");
+        assertEq(vault.taskReserve(taskId), 0, "remainder released");
+    }
+
+    function test_onComplete_pastExpiryZeroAwardReleases() public {
+        bytes32 taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        uint256 availBefore = vault.available();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), new ITMPCore.Award[](0))
+            )
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(hook.claimable(worker), 0);
+        assertEq(vault.available(), availBefore);
+    }
+
+    // ─── Bounded Bounty award loop ────────────────────────────────────────────
+
+    function _evaluatedBounty() internal returns (bytes32 taskId) {
+        bytes memory result = _relay(
+            requester,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, 3 days, market.BOUNTY(), 0, 0, bytes4(0)),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+        _assignAwardEvaluator(taskId, 0);
+    }
+
+    function _bountyWinner(uint256 i) internal returns (address) {
+        return makeAddr(string(abi.encodePacked("bounty-winner-", vm.toString(i))));
+    }
+
+    /// @dev `nonzero` winners submit and get 1 USDC each; `zeros` more fresh addresses get 0.
+    function _manyAwardVerdict(bytes32 taskId, uint256 nonzero, uint256 zeros) internal {
+        ITMPCore.Award[] memory a = new ITMPCore.Award[](nonzero + zeros);
+        for (uint256 i; i < nonzero + zeros; ++i) {
+            address w = _bountyWinner(i);
+            if (i < nonzero) {
+                _relay(w, 0, abi.encodeCall(market.submitWork, (taskId, keccak256(abi.encode(i)))));
+                a[i] = ITMPCore.Award({ worker: w, amount: 1e6, rank: uint16(i + 1) });
+            } else {
+                a[i] = ITMPCore.Award({ worker: w, amount: 0, rank: uint16(i + 1) });
+            }
+        }
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.PARTIAL, 0, 1000, bytes32(0), a))
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+    }
+
+    function test_bountyEmptyAwardsFinalizesBeforeExpiry() public {
+        bytes32 taskId = _evaluatedBounty();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 0, 1000, bytes32(0), new ITMPCore.Award[](0))
+            )
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+        assertLt(block.timestamp, market.getTask(taskId).expiryTime, "still before expiry");
+        uint256 requesterBefore = usdc.balanceOf(requester);
+        market.finalizeVerdict(taskId);
+        assertEq(usdc.balanceOf(requester) - requesterBefore, REWARD_100_USDC, "requester refunded");
+    }
+
+    function test_bountyManyAwardsFinalizeAndCapBonuses() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 12, 0);
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        // Winners are new wallets, so the ramp credits nothing; count bonuses through the vault.
+        assertGt(dreamsToken.balanceOf(address(hook)), 0, "the first winners got a bonus");
+        assertLe(dreamsToken.balanceOf(address(hook)), 8 * 10e18, "at most the cap paid");
+        assertEq(usdc.balanceOf(_bountyWinner(11)), 1e6 - 1e6 * 500 / 10_000, "every winner still paid USDC");
+    }
+
+    function test_bountyZeroAwardPaddingFinalizesWithoutStateWrites() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 1, 49);
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.firstSeen(_bountyWinner(1)), 0, "zero award writes nothing");
+        assertEq(hook.firstSeen(_bountyWinner(49)), 0, "zero award writes nothing");
+        assertGt(hook.firstSeen(_bountyWinner(0)), 0);
+    }
+
+    // ─── ERC-1271 withdrawals ─────────────────────────────────────────────────
+
+    function _creditContractWallet(address walletV2Suite) internal {
+        bytes32 taskId = _createClaimTask();
+        _relay(address(walletV2Suite), 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        bytes32 d = keccak256("contract-walletV2Suite-work");
+        _relay(address(walletV2Suite), 0, abi.encodeCall(market.submitWork, (taskId, d)));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, address(walletV2Suite), d, 0)));
+    }
+
+    function test_withdrawFor_erc1271WalletWithdraws() public {
+        MockERC1271WalletV2Suite walletV2Suite = new MockERC1271WalletV2Suite(vm.addr(workerKey));
+        _creditContractWallet(address(walletV2Suite));
+        uint256 amount = hook.claimable(address(walletV2Suite));
+        assertGt(amount, 0, "contract walletV2Suite credited");
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdrawFor(
+            workerKey, address(walletV2Suite), destination, "scw-1", validBefore, block.chainid, address(hook)
+        );
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(address(walletV2Suite), destination, "scw-1", validBefore, signature);
+
+        assertEq(dreamsToken.balanceOf(destination), amount);
+        assertEq(hook.claimable(address(walletV2Suite)), 0);
+    }
+
+    function test_withdrawFor_erc1271WalletRejectsOtherSigner() public {
+        MockERC1271WalletV2Suite walletV2Suite = new MockERC1271WalletV2Suite(vm.addr(workerKey));
+        _creditContractWallet(address(walletV2Suite));
+        uint256 amount = hook.claimable(address(walletV2Suite));
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdrawFor(
+            uint256(keccak256("not-the-owner")),
+            address(walletV2Suite),
+            destination,
+            "scw-1",
+            validBefore,
+            block.chainid,
+            address(hook)
+        );
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(address(walletV2Suite), destination, "scw-1", validBefore, signature);
+        assertEq(hook.claimable(address(walletV2Suite)), amount);
+    }
+
+    function test_withdrawFor_revertingValidatorRevertsInvalidSignature() public {
+        MockRevertingERC1271WalletV2Suite walletV2Suite = new MockRevertingERC1271WalletV2Suite();
+        _creditContractWallet(address(walletV2Suite));
+        uint256 amount = hook.claimable(address(walletV2Suite));
+        assertGt(amount, 0, "contract walletV2Suite credited");
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdrawFor(
+            workerKey, address(walletV2Suite), destination, "scw-1", validBefore, block.chainid, address(hook)
+        );
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(address(walletV2Suite), destination, "scw-1", validBefore, signature);
+        assertEq(hook.claimable(address(walletV2Suite)), amount);
+    }
+    // ─── EIP-7702 withdrawals ─────────────────────────────────────────────────
+
+    function test_withdrawFor_eip7702DelegatedEoaWithdraws() public {
+        _earnClaimable();
+        uint256 amount = hook.claimable(worker);
+        assertGt(amount, 0);
+        vm.signAndAttachDelegation(address(new MockPlainDelegateV2Suite()), workerKey);
+        assertGt(worker.code.length, 0, "worker now has code");
+
+        address destination = makeAddr("7702-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(workerKey, destination, "7702-1", validBefore);
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "7702-1", validBefore, signature);
+        assertEq(dreamsToken.balanceOf(destination), amount);
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    function test_withdrawFor_eip7702RejectsOtherSignerAndNearMagic() public {
+        _earnClaimable();
+        uint256 amount = hook.claimable(worker);
+        vm.signAndAttachDelegation(address(new MockNearMagicDelegateV2Suite()), workerKey);
+
+        address destination = makeAddr("7702-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature = _signWithdraw(uint256(keccak256("not-the-owner")), destination, "7702-1", validBefore);
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "7702-1", validBefore, signature);
+        assertEq(hook.claimable(worker), amount);
+    }
+
+    function test_withdrawFor_eip7702DelegateErc1271SessionKeyWithdraws() public {
+        _earnClaimable();
+        uint256 amount = hook.claimable(worker);
+        assertGt(amount, 0);
+        // The delegate accepts a session key's signature, which ECDSA against the worker rejects,
+        // so only the delegate's ERC-1271 answer can authorise this withdraw.
+        uint256 sessionKey = uint256(keccak256("7702-session-key"));
+        vm.signAndAttachDelegation(address(new MockERC1271WalletV2Suite(vm.addr(sessionKey))), workerKey);
+
+        address destination = makeAddr("7702-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory signature =
+            _signWithdrawFor(sessionKey, worker, destination, "7702-1271", validBefore, block.chainid, address(hook));
+        vm.prank(authorizedRelayer);
+        hook.withdrawFor(worker, destination, "7702-1271", validBefore, signature);
+        assertEq(dreamsToken.balanceOf(destination), amount);
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    // ─── Bounty bonus after expiry ────────────────────────────────────────────
+
+    function _bountyEvaluatedWithAward(uint256 award) internal returns (bytes32 taskId) {
+        taskId = _evaluatedBounty();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate,
+                (taskId, ITMPCore.VerdictType.PARTIAL, 0, 1000, bytes32(0), _singleAward(worker, award))
+            )
+        );
+    }
+
+    function test_onComplete_bountyPastExpiryFinalizePaysBonus() public {
+        bytes32 taskId = _bountyEvaluatedWithAward(REWARD_100_USDC / 2);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        market.finalizeVerdict(taskId);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "bonus on the award");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "budget consumed once");
+        assertEq(budget.workerUsed(worker), REWARD_100_USDC / 2);
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+    }
+
+    function test_onComplete_bountyBeforeExpiryPaysOnce() public {
+        bytes32 taskId = _bountyEvaluatedWithAward(REWARD_100_USDC / 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertLt(block.timestamp, market.getTask(taskId).expiryTime, "check hooks run");
+        market.finalizeVerdict(taskId);
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "paid by checkComplete only");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "not consumed twice");
+    }
+
+    // ─── Bounty recovery gas floor ────────────────────────────────────────────
+
+    /// @dev A Bounty with `winners` first-time winners, finalized past expiry with onComplete
+    ///      failing, so the bonus is left for recoverReserve.
+    function _bountyFailedOnComplete(uint256 winners) internal returns (bytes32 taskId) {
+        taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, winners, 0);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertFalse(paid, "paid rolled back");
+    }
+
+    /// @dev A full Bounty verdict (MAX_SUBMISSION_WINNERS awards): `zerosBefore` zero awards,
+    ///      then MAX_BONUS_AWARDS first-time winners at 1 USDC, then nonzero awards past the
+    ///      MAX_BONUS_AWARDS cap. Every winner submits, so the diamond accepts the verdict.
+    function _fullBountyFailedOnComplete(uint256 zerosBefore) internal returns (bytes32 taskId) {
+        uint256 total = 50; // LibTaskMarket.MAX_SUBMISSION_WINNERS
+        uint256 paidCount = hook.MAX_BONUS_AWARDS();
+        taskId = _evaluatedBounty();
+        ITMPCore.Award[] memory a = new ITMPCore.Award[](total);
+        for (uint256 i; i < total; ++i) {
+            address w = _bountyWinner(i);
+            bool zero = i < zerosBefore;
+            if (!zero) _relay(w, 0, abi.encodeCall(market.submitWork, (taskId, keccak256(abi.encode(i)))));
+            a[i] = ITMPCore.Award({ worker: w, amount: zero ? 0 : 1e6, rank: uint16(i + 1) });
+        }
+        assertLe((total - zerosBefore) * 1e6, REWARD_100_USDC, "awards fit the reward");
+        assertGt(total - zerosBefore, paidCount, "some awards are past the cap");
+        _relay(
+            awardEvaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.PARTIAL, 0, 1000, bytes32(0), a))
+        );
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+    }
+
+    /// @dev Smallest gas limit at which recoverReserve gets past the RECOVER_BOUNTY_MIN_GAS check,
+    ///      found by bisection with state rolled back after each probe.
+    function _recoverThreshold(bytes32 taskId) internal returns (uint256 lo) {
+        uint256 minGas = hook.RECOVER_BOUNTY_MIN_GAS();
+        lo = minGas;
+        uint256 hi = minGas + 200_000;
+        while (lo < hi) {
+            uint256 mid = (lo + hi) / 2;
+            uint256 snap = vm.snapshotState();
+            (bool ok, bytes memory ret) =
+                address(hook).call{ gas: mid }(abi.encodeCall(TaskTokenRewardHook.recoverReserve, (taskId)));
+            vm.revertToState(snap);
+            bool short = !ok && ret.length >= 4 && bytes4(ret) == TaskTokenRewardHook.InsufficientRecoveryGas.selector;
+            if (short) lo = mid + 1;
+            else hi = mid;
+        }
+    }
+
+    /// @dev Slot of `rewardStates[taskId]` in the hook's namespaced storage (field 13).
+    function _rewardStateSlot(bytes32 taskId) internal pure returns (uint256) {
+        uint256 base = uint256(keccak256("taskmarket.tokenrewardhook.storage.v1"));
+        return uint256(keccak256(abi.encode(taskId, base + 13)));
+    }
+
+    function test_onComplete_bountyPastExpiryCapsBonuses() public {
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 12, 0);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        vm.recordLogs();
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        uint256 winnersPaid = _count(vm.getRecordedLogs(), REWARD_PAID_SIG);
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
+        assertGt(winnersPaid, 0, "the first winners got a bonus");
+        assertLe(winnersPaid, hook.MAX_BONUS_AWARDS(), "at most the cap paid");
+        assertEq(dreamsToken.balanceOf(address(hook)), winnersPaid * 10e18);
+        assertEq(budget.globalUsed(), winnersPaid * 1e6, "budget matches what was paid");
+    }
+
+    /// @dev Skips a test whose assertions pin gas costs of the optimised build. `forge coverage`
+    ///      compiles with `--ir-minimum` and instruments every branch, so each award costs more
+    ///      and fewer winners fit the same stipend (5 insteadV2Suite of 7 or 8, every coverage run).
+    ///      The gas these tests pin is the deployed build's; the ordinary test run checks it.
+    function _skipUnderCoverage() internal {
+        if (vm.isContext(VmSafe.ForgeContext.Coverage)) vm.skip(true);
+    }
+
+    function test_checkComplete_bountyFirstTimeWinnersWithinStipend() public {
+        _skipUnderCoverage();
+        bytes32 taskId = _evaluatedBounty();
+        _manyAwardVerdict(taskId, 12, 0);
+        vm.recordLogs();
+        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
+        uint256 winnersPaid = _count(vm.getRecordedLogs(), REWARD_PAID_SIG);
+        // The first winner also pays the cold access to the vault, budget and token, so later
+        // winners cost less. Pinned so a gas change that moves the count is noticed.
+        assertEq(winnersPaid, 7, "first-time winners inside the stipend");
+    }
+
+    // ─── Partial payout whose release fails, then recovered ───────────────────
+
+    function test_partialPayout_releaseFails_thenRecovered() public {
+        bytes32 taskId = _createLongClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 availBefore = vault.available();
+
+        _failVault();
+        _evaluateAndFinalize(taskId, _singleAward(worker, REWARD_100_USDC / 2));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "half the bonus paid");
+        TaskTokenRewardHook.ReleaseProgress memory p = hook.releaseProgress(taskId);
+        assertEq(p.tokenAmount, EXPECTED_REWARD_1000_DREAMS / 2, "unpaid half pending");
+        assertFalse(p.vaultReleased, "vault release failed");
+        assertTrue(p.budgetReleased, "budget released");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS / 2, "unpaid half still reserved");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "only the paid half consumed");
+
+        vm.clearMockedCalls();
+        vm.prank(makeAddr("anyone"));
+        hook.recoverReserve(taskId);
+        p = hook.releaseProgress(taskId);
+        assertTrue(p.vaultReleased && p.budgetReleased);
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(vault.totalReserved(), 0);
+        assertEq(vault.available(), availBefore + EXPECTED_REWARD_1000_DREAMS / 2, "unpaid half back in the vault");
+        assertEq(budget.globalUsed(), REWARD_100_USDC / 2, "budget not released twice");
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS / 2, "payout untouched");
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
+        hook.recoverReserve(taskId);
+    }
+
+    // ─── recoverReserve pays after a failed onComplete ────────────────────────
+
+    function _failOnComplete() internal {
+        vm.mockCallRevert(address(hook), abi.encodeWithSelector(ITMPHook.onComplete.selector), "onComplete down");
+    }
+
+    function _lapsedWithFailedOnComplete() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(market.reviewDeadline(taskId) + 1);
+        _failOnComplete();
+        market.settleLapsedReview(taskId);
+        vm.clearMockedCalls();
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Accepted));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "reservation still held");
+        assertEq(hook.claimable(worker), 0);
+    }
+
+    // ─── Withdraw message domain ──────────────────────────────────────────────
+
+    function test_withdrawFor_ownerSignatureForOneContractWalletRejectedForAnother() public {
+        MockERC1271WalletV2Suite walletA = new MockERC1271WalletV2Suite(vm.addr(workerKey));
+        MockERC1271WalletV2Suite walletB = new MockERC1271WalletV2Suite(vm.addr(workerKey));
+        _creditContractWallet(address(walletB));
+        uint256 amount = hook.claimable(address(walletB));
+        assertGt(amount, 0);
+
+        address destination = makeAddr("scw-destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory forA = _signWithdrawFor(
+            workerKey, address(walletA), destination, "d-1", validBefore, block.chainid, address(hook)
+        );
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(address(walletB), destination, "d-1", validBefore, forA);
+        assertEq(hook.claimable(address(walletB)), amount);
+    }
+
+    function test_withdrawFor_rejectsSignatureForAnotherChain() public {
+        _earnClaimable();
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory sig =
+            _signWithdrawFor(workerKey, worker, destination, "c-1", validBefore, block.chainid + 1, address(hook));
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "c-1", validBefore, sig);
+    }
+
+    function test_withdrawFor_rejectsSignatureForAnotherHook() public {
+        _earnClaimable();
+        address destination = makeAddr("destination");
+        uint256 validBefore = block.timestamp + 1 hours;
+        bytes memory sig =
+            _signWithdrawFor(workerKey, worker, destination, "h-1", validBefore, block.chainid, makeAddr("other-hook"));
+        vm.prank(authorizedRelayer);
+        vm.expectRevert(TaskTokenRewardHook.InvalidWithdrawSignature.selector);
+        hook.withdrawFor(worker, destination, "h-1", validBefore, sig);
+    }
+}

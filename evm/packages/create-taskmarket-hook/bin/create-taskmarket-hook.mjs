@@ -3,7 +3,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 
-const usage = `Usage: create-taskmarket-hook <project-name> --taskmarket <0x-address> [--hook-name <SolidityName>] [--network <base-sepolia|tempo-moderato>]
+const usage = `Usage: create-taskmarket-hook <project-name> --taskmarket <0x-address> [--hook-name <SolidityName>] [--network <base-sepolia|tempo-moderato>] [--hook-version <1|2>]
 
 Example:
   npx create-taskmarket-hook my-hook --taskmarket 0x1111111111111111111111111111111111111111 --hook-name MyHook`;
@@ -24,7 +24,8 @@ function parseArgs(args) {
     if (
       flag !== "--taskmarket" &&
       flag !== "--hook-name" &&
-      flag !== "--network"
+      flag !== "--network" &&
+      flag !== "--hook-version"
     )
       throw new Error(`unknown option: ${flag}`);
     options[flag] = value;
@@ -34,6 +35,7 @@ function parseArgs(args) {
     taskmarket: options["--taskmarket"],
     hookName: options["--hook-name"],
     network: options["--network"],
+    hookVersion: options["--hook-version"],
   };
 }
 
@@ -46,8 +48,7 @@ function solidityName(projectName) {
 }
 
 const maxFileComponentBytes = 255;
-const windowsReservedName =
-  /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const windowsReservedName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 function isPortableFileComponent(component) {
   return (
@@ -368,6 +369,10 @@ contract {{HOOK_NAME}}LifecycleTest is DiamondTestHelper {
         vm.startPrank(OWNER);
         usdc = new MockERC20("Mock USDC", "USDC", 6, OWNER);
         market = deployDiamond(OWNER, address(usdc), FEE_RECIPIENT, 500);
+        // This hook implements the V1 ITMPHook interface. From diamond revision rev028 on, new
+        // tasks take Task Hook V2 hooks only, and V1 hooks serve tasks created before that cut,
+        // so the lifecycle runs on a diamond placed at rev027.
+        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
         usdc.mint(address(forwarder), 10_000e6);
@@ -489,6 +494,126 @@ Register the deployed hook when creating a Taskmarket task. Hooks are immutable 
 `,
 };
 
+// Task Hook V2 (rev028), generated with --hook-version 2. BaseTMPHookV2 owns onlyDiamond, ERC-165
+// and the allow-by-default before-callbacks, so the generated hook only declares and overrides the
+// callbacks it uses. V1 stays the default until the pinned taskmarket-contracts commit contains the
+// V2 sources; until then a generated V2 project builds only against a checkout that has them.
+const templateV2 = {
+  "remappings.txt": template["remappings.txt"],
+  ".gitignore": template[".gitignore"],
+  "script/Deploy.s.sol": template["script/Deploy.s.sol"],
+  "src/{{HOOK_NAME}}.sol": `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {BaseTMPHookV2} from "@taskmarket/contracts/src/hooks/base/BaseTMPHookV2.sol";
+
+/// @notice A safe starting point for a Taskmarket Task Hook V2.
+/// @dev BaseTMPHookV2 restricts every callback to the configured Taskmarket Diamond, exposes it as
+///      \`diamond()\`, answers ERC-165 for ITMPHookV2, reports \`minDiamondVersion() == 28\`, allows
+///      every before-callback by default and ignores every after-callback. The diamond calls only
+///      the callbacks whose capability bit the hook declares, and records the hook's codehash at
+///      attach: deploy a new hook rather than upgrading one in place. A before-callback allows by
+///      returning its own selector and vetoes by reverting. After-callbacks are best-effort and
+///      carry a sequence number, so a missed call can be detected and reconciled against
+///      getTaskSettlement.
+contract {{HOOK_NAME}} is BaseTMPHookV2 {
+    /// @notice Capability bit 21: afterComplete. Bits 0-15 are the before-callbacks (Create .. Rate),
+    ///         21-24 afterComplete, afterCancel, afterExpire, afterForfeit, 25 afterAction.
+    uint32 public constant CAPABILITIES = uint32(1) << 21;
+
+    event TaskCompleted(bytes32 indexed taskId, address indexed requester, uint128 workerPaid, uint64 seq);
+
+    constructor(address taskmarket_) BaseTMPHookV2(taskmarket_) {}
+
+    /// @notice Declare only the callbacks this hook implements. Here: the after-complete callback.
+    function hookCapabilities() external pure override returns (uint32) {
+        return CAPABILITIES;
+    }
+
+    function afterComplete(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata amounts, uint64 seq)
+        external
+        override
+        onlyDiamond
+    {
+        emit TaskCompleted(taskId, ctx.requester, amounts.workerPaid, seq);
+    }
+}
+`,
+  "test/{{HOOK_NAME}}.t.sol": `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {ITMPHookV2} from "@taskmarket/contracts/src/interfaces/ITMPHookV2.sol";
+import {BaseTMPHookV2} from "@taskmarket/contracts/src/hooks/base/BaseTMPHookV2.sol";
+import {{{HOOK_NAME}}} from "../src/{{HOOK_NAME}}.sol";
+
+contract {{HOOK_NAME}}Test is Test {
+    address constant TASKMARKET = address(bytes20(hex"{{TASKMARKET_HEX}}"));
+    {{HOOK_NAME}} hook;
+
+    function setUp() public {
+        hook = new {{HOOK_NAME}}(TASKMARKET);
+    }
+
+    function testSupportsHookV2Interface() public view {
+        assertTrue(hook.supportsInterface(type(ITMPHookV2).interfaceId));
+    }
+
+    function testDeclaresOnlyAfterComplete() public view {
+        assertEq(hook.hookCapabilities(), uint32(1) << 21);
+    }
+
+    function testRequiresRev028Diamond() public view {
+        assertEq(hook.minDiamondVersion(), 28);
+    }
+
+    function testAfterCompleteAcceptsConfiguredTaskmarket() public {
+        vm.prank(TASKMARKET);
+        hook.afterComplete(bytes32(0), _context(), _amounts(), 0);
+    }
+
+    function testAfterCompleteRejectsEveryoneElse() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(BaseTMPHookV2.BaseTMPHookV2__UnauthorizedCaller.selector, address(this))
+        );
+        hook.afterComplete(bytes32(0), _context(), _amounts(), 0);
+    }
+
+    function _context() internal pure returns (ITMPHookV2.TaskContextV2 memory ctx) {}
+
+    function _amounts() internal pure returns (ITMPHookV2.SettlementAmounts memory amounts) {}
+}
+`,
+  "README.md": `# {{PROJECT_NAME}}
+
+A Taskmarket Task Hook V2 project generated by \`create-taskmarket-hook\`.
+
+The starter hook extends \`BaseTMPHookV2\` from the Taskmarket contracts (rev028 and later), which accepts calls **only** from the Taskmarket deployment configured at generation time: \`{{TASKMARKET_ADDRESS}}\` (readable as \`diamond()\`). Declare the callbacks your hook implements in \`hookCapabilities()\`; the diamond calls nothing else. Override the matching \`before*\` callback (keep \`onlyDiamond\`; return its own selector to allow, revert to veto) or \`after*\` callback to observe it. Bits 0-15 are the before-callbacks from Create to Rate, 21-24 \`afterComplete\`, \`afterCancel\`, \`afterExpire\` and \`afterForfeit\`, and 25 \`afterAction\`. \`beforeCreate\` receives the hook's own configuration bytes. After-callbacks are best-effort and carry a sequence number and the amounts that moved; reconcile a missed one with \`getTaskSettlement(taskId)\`.
+
+The diamond records the hook's runtime codehash when a task attaches it and refuses vetoable actions if the code changes, so deploy a new hook rather than upgrading one in place.
+
+## Install
+
+Prerequisites: Node.js 18+, [Foundry](https://book.getfoundry.sh/getting-started/installation), and Git.
+
+\`\`\`sh
+${installCommands.join("\n")}
+cp .env.example .env
+\`\`\`
+
+## Build and test
+
+\`\`\`sh
+forge build
+forge test -j 1
+\`\`\`
+
+{{DEPLOY_SECTION}}
+
+Attach the deployed hook when creating a Taskmarket task. The attachment is fixed for the life of the task, and before-callbacks can block task actions, so test your policy thoroughly before using it in production. Non-vetoable exits (forfeit, expiry refund, timeouts, lapsed review, finalize after expiry and dispute resolution) always complete whatever the hook does.
+`,
+};
+
 async function main() {
   let parsed;
   try {
@@ -501,6 +626,7 @@ async function main() {
     taskmarket,
     hookName = projectName && solidityName(projectName),
     network = "base-sepolia",
+    hookVersion = "1",
   } = parsed;
   if (!projectName || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(projectName))
     return fail("project name must be lowercase kebab-case");
@@ -517,6 +643,9 @@ async function main() {
   if (!Object.hasOwn(networks, network))
     return fail("--network must be base-sepolia or tempo-moderato");
 
+  if (hookVersion !== "1" && hookVersion !== "2")
+    return fail("--hook-version must be 1 or 2");
+
   const target = path.resolve(process.cwd(), projectName);
   try {
     await access(target, constants.F_OK);
@@ -525,7 +654,10 @@ async function main() {
     /* expected */
   }
   const files = render(
-    { ...networks[network].files, ...template },
+    {
+      ...networks[network].files,
+      ...(hookVersion === "1" ? template : templateV2),
+    },
     {
       projectName,
       taskmarket: taskmarket.toLowerCase(),

@@ -1,10 +1,11 @@
 # Taskmarket hook manifest
 
 `taskmarket-hook.json` is a portable declaration for an external ERC-8195 /
-Taskmarket hook. Validate version 1 manifests against
+Taskmarket hook, V1 (`ITMPHooks`) or V2 (`ITMPHookV2`, rev028). Validate schema 2.0.0
+manifests against
 [`evm/schemas/taskmarket-hook.schema.json`](../evm/schemas/taskmarket-hook.schema.json), served
 after release at
-`https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json`, and with:
+`https://taskmarket.dev/schemas/taskmarket-hook/2.0.0/schema.json`, and with:
 
 ```sh
 pnpm validate:hook-manifest -- path/to/taskmarket-hook.json
@@ -14,6 +15,11 @@ Run commands from the EVM package root (`packages/contracts/evm` in the official
 `evm/` in the public mirror).
 The official monorepo byte-for-byte checks its hosted web asset against this canonical
 source so the URL cannot drift from the published schema.
+
+Schema 2.0.0 is the only accepted version. The retired 1.0.0 schema stays published at
+`https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json` so old links resolve, but
+the validator rejects a `1.0.0` manifest with an error naming 2.0.0. To migrate one, set
+`manifestVersion` to `"2.0.0"` and add `"hookVersion": 1`.
 
 The manifest is deliberately descriptive. Four fields must not be conflated:
 
@@ -110,9 +116,31 @@ evidence.
 
 ## Callbacks and modes
 
-`callbacks` may only declare the Taskmarket interface callbacks: `checkFund`,
-`checkClaim`, `checkSelectWorker`, `checkSubmit`, `checkEvaluate`, `checkComplete`,
-`onComplete`, `onForfeit`, `onCancel`, and `onExpire`. `taskModes` is the declared
+`hookVersion` selects the callback vocabulary. A V1 manifest (`hookVersion: 1`) may only
+declare the `ITMPHooks` callbacks: `checkFund`, `checkClaim`, `checkSelectWorker`,
+`checkSubmit`, `checkEvaluate`, `checkComplete`, `onComplete`, `onForfeit`, `onCancel`, and
+`onExpire`, and must not declare the V2 fields below.
+
+A V2 manifest (`hookVersion: 2`) declares `ITMPHookV2` callbacks: `beforeCreate`,
+`beforeAssignEvaluator`, `beforeUpdate`, `beforeClaim`, `beforeSubmitPitch`,
+`beforeSelectWorker`, `beforeSubmitProof`, `beforeSubmitBid`, `beforeAcceptAuction`,
+`beforeSubmitWork`, `beforeRejectSubmission`, `beforeEvaluate`, `beforeAppeal`,
+`beforeAccept`, `beforeCancel`, `beforeRate`, `afterComplete`, `afterCancel`,
+`afterExpire`, `afterForfeit`, and `afterAction`. It also requires:
+
+- `capabilities`: the `uint32` that `hookCapabilities()` returns. Bits 0-15 are the
+  before-callbacks in the order above (bit = action id), 21-24 `afterComplete`,
+  `afterCancel`, `afterExpire`, `afterForfeit`, 25 `afterAction`, 26 award reallocation and
+  27 a hook fee. Bits 16-20 and 28-31 are reserved and must be zero. The validator requires
+  `callbacks` to match the callback bits exactly (see `rev028-task-hook-v2-and-dispute-context.md`
+  under `specs/erc8195/`).
+- `minDiamondVersion`: the `uint16` that `minDiamondVersion()` returns, 28 or later.
+- `configSchema`: the ABI parameters of the tuple the configuration bytes encode, as a list
+  of `{ "name", "type", "components" }` in Solidity ABI JSON shape. `components` is required
+  for a `tuple` type and forbidden otherwise; tuples nest at most three levels; `[]` means no
+  configuration.
+
+The ABI type pattern and nesting limit match the reader that serves `configSchema`. `taskModes` is the declared
 compatibility set: `bounty`, `claim`, `pitch`, `auction`, or `benchmark`.
 
 ## hookData is publisher-attested metadata
@@ -168,9 +196,9 @@ methodology. A `candidate` protocol-default claim requires evidence. A
 latter must list every declared deployment. Keep security assumptions, audits, and known
 limitations in `security.notes`.
 
-## Unpublished version 1 migration
+## Unpublished schema 1.0.0 migration
 
-The version 1 schema was corrected before publication, so there is no compatibility
+The 1.0.0 schema was corrected before publication, so there is no compatibility
 branch for the ambiguous draft shape. Builders must make these mechanical migrations:
 
 - Move root `gas.estimates` into every `deployments[].gas.estimates`, emit a complete
@@ -189,4 +217,5 @@ pnpm validate:hook-manifest -- tools/hook-manifest/fixtures/valid/simple-immutab
 pnpm validate:hook-manifest -- tools/hook-manifest/fixtures/valid/advanced-proxy.json
 pnpm validate:hook-manifest -- tools/hook-manifest/fixtures/valid/multi-chain-proxies.json
 pnpm validate:hook-manifest -- tools/hook-manifest/fixtures/valid/portal-ready.json
+pnpm validate:hook-manifest -- tools/hook-manifest/fixtures/valid/simple-v2.json
 ```

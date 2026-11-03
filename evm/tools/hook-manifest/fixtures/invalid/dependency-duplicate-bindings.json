@@ -1,5 +1,6 @@
 {
-  "manifestVersion": "1.0.0",
+  "manifestVersion": "2.0.0",
+  "hookVersion": 1,
   "identity": {
     "name": "Duplicate dependency bindings",
     "slug": "duplicate-dependency-bindings",

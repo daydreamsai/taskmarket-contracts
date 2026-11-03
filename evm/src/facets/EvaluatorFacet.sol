@@ -7,6 +7,9 @@ import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
+import { LibSettlement } from "../libraries/LibSettlement.sol";
+import { LibPayout } from "../libraries/LibPayout.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -59,6 +62,7 @@ contract EvaluatorFacet {
         LibGuards._requireRequester(s, taskId, requester);
         LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
+        LibHooks._before(s, taskId, LibHooksV2.A_ASSIGN_EVALUATOR, evaluator, bytes32(0));
 
         // Rev027: a project task draws the stake from its project's pool (LibProject.topUp), and
         // projectPrepaid tells the funding check below to expect it with no forwarded payment.
@@ -84,6 +88,7 @@ contract EvaluatorFacet {
         if (drawn) s.projectPrepaid = 0;
 
         LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.EvaluatorStake, false);
+        LibHooks._observe(s, taskId, LibHooksV2.A_ASSIGN_EVALUATOR, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -124,6 +129,7 @@ contract EvaluatorFacet {
         }
 
         _validateAwardRecipients(task, taskId, awards, s);
+        LibHooksV2.snap(taskId, uint8(task.status));
 
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
         v.issued = true;
@@ -163,6 +169,7 @@ contract EvaluatorFacet {
             }
         }
         LibEscrow.release(s, taskId, balanceBefore);
+        LibHooks._observe(s, taskId, LibHooksV2.A_EVALUATE, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -173,6 +180,7 @@ contract EvaluatorFacet {
         LibGuards._requireForwarder(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
 
         address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -198,12 +206,14 @@ contract EvaluatorFacet {
         // Refusing the appeal leaves the verdict to finalize when the appeal window closes.
         address dr = s.taskEvaluatorConfigs[taskId].disputeResolver;
         if (dr == address(0)) revert ITMPCore.NoDisputeResolver();
+        LibHooks._before(s, taskId, LibHooksV2.A_APPEAL, worker, bytes32(0));
 
         task.status = ITMPCore.TaskStatus.Disputed;
         LibTerms.extendOnAppeal(s, taskId);
         emit ITMPEvaluator.TaskAppealed(taskId, worker);
         emit ITMPEvaluator.TaskDisputed(taskId, dr);
 
+        LibHooks._observe(s, taskId, LibHooksV2.A_APPEAL, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -213,6 +223,7 @@ contract EvaluatorFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
         uint256 balanceBefore = LibEscrow.balance(s);
 
         ITMPCore.Task storage task = s.tasks[taskId];
@@ -257,9 +268,11 @@ contract EvaluatorFacet {
         _forfeitClaimStake(taskId, task, claimant, s);
         if (evalFee > 0) {
             if (!s.usdcToken.transfer(evaluatorAddr, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
+            LibSettlement.add(taskId, LibSettlement.EVALUATOR_FEE, evalFee);
         }
         emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
-        LibHooks._onCancelHooks(taskId, s);
+        if (block.timestamp <= task.expiryTime) LibHooks._onCancelHooksStrict(taskId);
+        else LibHooks._onCancelHooks(taskId, s);
     }
 
     /// @dev Settles a Claim worker's stake when a verdict or a dispute resolution ends the task.
@@ -351,6 +364,7 @@ contract EvaluatorFacet {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
+        LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
         uint256 balanceBefore = LibEscrow.balance(s);
 
         // Permissionless: once the evaluation window has passed anyone, including the worker, may
@@ -383,6 +397,9 @@ contract EvaluatorFacet {
 
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, forfeited);
         LibEscrow.release(s, taskId, balanceBefore);
+        // Rev028: the evaluator's forfeited stake joins the task's running forfeited total.
+        LibSettlement.add(taskId, LibSettlement.FORFEITED, forfeited);
+        LibHooks._onEvaluatorForfeit(s, taskId, timedOutEvaluator);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -456,12 +473,38 @@ contract EvaluatorFacet {
 
         uint256 remaining = _awardBudget(task, taskId, s);
         ITMPCore.Verdict memory verdictMem = s.taskVerdicts[taskId];
+        // Rev028: a dispute resolution is settling a Disputed task; check hooks are shown that state.
+        bool disputed = task.status == ITMPCore.TaskStatus.Disputed;
+        LibHooksV2.snap(taskId, uint8(task.status));
+
+        // Rev028: a V2 task's beforeAccept (vetoable on the accept path, best effort on dispute
+        // resolution and after expiry), and the transforming hook's result if any.
+        uint16 hookFeeBps = 0;
+        address feeHook = address(0);
+        {
+            (bool changed, ITMPCore.Award[] memory result, uint16 bps, address hook) =
+                LibHooks._acceptV2(s, taskId, verdictMem, runCheckHooks && !disputed, disputed, remaining);
+            if (changed) {
+                if (result.length > 0) {
+                    verdictMem.awards = result;
+                    // getVerdict reports the awards that were paid, not the ones the hook replaced.
+                    delete v.awards;
+                    for (uint256 i; i < result.length; ++i) {
+                        v.awards.push(result[i]);
+                    }
+                }
+                (hookFeeBps, feeHook) = (bps, hook);
+            }
+        }
+        ITMPCore.Award[] memory awards = verdictMem.awards;
+        awardLen = awards.length;
 
         task.status = ITMPCore.TaskStatus.Accepted;
         bool selectedWorker = false;
         for (uint256 i; i < awardLen; ++i) {
-            if (v.awards[i].amount == 0) continue;
-            task.worker = v.awards[i].worker;
+            // slither-disable-next-line incorrect-equality
+            if (awards[i].amount == 0) continue;
+            task.worker = awards[i].worker;
             selectedWorker = true;
             break;
         }
@@ -473,17 +516,23 @@ contract EvaluatorFacet {
         // Commit award accounting (worker stats + fees) and validate escrow before the check hook;
         // transfers happen after. Accounting and distribution live in separate frames to avoid
         // stack-too-deep under --ir-minimum coverage compilation.
-        uint256 totalAwarded = _commitEvalAccounting(taskId, v, task.feeBps, remaining, s);
+        uint256 totalAwarded = _commitEvalAccounting(taskId, awards, task.feeBps, remaining, s);
 
         // An auction escrows the price cap but budgets awards against the accepted price, so the
         // unused cap goes back to the requester with the rest of the unawarded budget.
         if (task.mode == AUCTION) remaining += task.reward - task.stakeAmount;
 
-        if (runCheckHooks) LibHooks._checkCompleteHooks(taskId, s, verdictMem);
-        _distributeEvalAwards(taskId, task.requester, v, task.feeBps, remaining, totalAwarded, s);
+        if (runCheckHooks) LibHooks._checkCompleteHooks(taskId, s, verdictMem, disputed);
+        LibPayout.transferAwards(s, taskId, task.requester, awards, task.feeBps, hookFeeBps, feeHook);
+        if (remaining > totalAwarded) {
+            if (!LibProject.payRequester(s, taskId, remaining - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
+        }
         _settleClaimStake(taskId, task, totalAwarded > 0, s);
         _payEvaluatorFee(taskId, task, feeToEvaluator, s);
-        LibHooks._onCompleteHooks(taskId, s, verdictMem);
+        // A verdict settled before expiry is a non-exit action; a ruling or a settlement after expiry
+        // never waits on hook gas.
+        if (runCheckHooks && !disputed) LibHooks._onCompleteHooksStrict(taskId, verdictMem);
+        else LibHooks._onCompleteHooks(taskId, s, verdictMem);
     }
 
     /// @dev The fee stays in escrow from evaluate until the verdict is final. A verdict an appeal
@@ -497,6 +546,7 @@ contract EvaluatorFacet {
         if (evalFee == 0) return;
         if (toEvaluator) {
             if (!s.usdcToken.transfer(evalCfg.evaluator, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
+            LibSettlement.add(taskId, LibSettlement.EVALUATOR_FEE, evalFee);
         } else if (!LibProject.payRequester(s, taskId, evalFee)) {
             revert ITMPCore.EvaluatorPaymentFailed();
         }
@@ -505,53 +555,23 @@ contract EvaluatorFacet {
     /// @dev Tallies awards, increments worker stats, commits fees, and validates escrow. No transfers.
     function _commitEvalAccounting(
         bytes32 taskId,
-        ITMPCore.Verdict storage v,
+        ITMPCore.Award[] memory awards,
         uint16 feeBps,
         uint256 remaining,
         AppStorage storage s
     ) private returns (uint256 totalAwarded) {
-        uint256 n = v.awards.length;
+        uint256 n = awards.length;
         uint256 totalFee = 0;
         for (uint256 i; i < n; ++i) {
-            uint256 amt = v.awards[i].amount;
+            uint256 amt = awards[i].amount;
+            // slither-disable-next-line incorrect-equality
             if (amt == 0) continue;
             totalAwarded += amt;
             totalFee += (amt * feeBps) / 10000;
-            s.workerStats[v.awards[i].worker].completedTasks++;
-            s.taskAwarded[taskId][v.awards[i].worker] = true;
+            s.workerStats[awards[i].worker].completedTasks++;
+            s.taskAwarded[taskId][awards[i].worker] = true;
         }
         if (totalAwarded > remaining) revert ITMPCore.AwardsExceedEscrow();
         if (totalFee > 0) s.totalFeesCollected += totalFee;
-    }
-
-    /// @dev Transfers per-winner nets, the aggregate fee, and any escrow excess. Isolated in its own
-    ///      frame so the payout-loop locals do not pressure the orchestrator's stack.
-    function _distributeEvalAwards(
-        bytes32 taskId,
-        address requester,
-        ITMPCore.Verdict storage v,
-        uint16 feeBps,
-        uint256 remaining,
-        uint256 totalAwarded,
-        AppStorage storage s
-    ) private {
-        uint256 n = v.awards.length;
-        uint256 totalFee = 0;
-        // Multi-winner payouts require iterating recipients. State fully committed before loop (CEI).
-        // slither-disable-next-line calls-loop
-        for (uint256 i; i < n; ++i) {
-            uint256 amt = v.awards[i].amount;
-            if (amt == 0) continue;
-            uint256 fee = (amt * feeBps) / 10000;
-            totalFee += fee;
-            if (!s.usdcToken.transfer(v.awards[i].worker, amt - fee)) revert ITMPCore.WorkerPaymentFailed();
-            emit ITMPCore.TaskCompleted(taskId, requester, v.awards[i].worker, amt - fee, fee);
-        }
-        if (totalFee > 0) {
-            if (!s.usdcToken.transfer(s.feeRecipient, totalFee)) revert ITMPCore.FeeTransferFailed();
-        }
-        if (remaining > totalAwarded) {
-            if (!LibProject.payRequester(s, taskId, remaining - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
-        }
     }
 }

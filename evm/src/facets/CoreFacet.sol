@@ -2,6 +2,9 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
+import { LibSettlement } from "../libraries/LibSettlement.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
@@ -131,6 +134,7 @@ contract CoreFacet {
         address requester = LibGuards._effectiveSender(s);
         taskId =
             LibTaskCreation.create(s, requester, config, hookConfig, content, evaluatorConfig, terms, reservedWorker);
+        LibHooks._observe(s, taskId, LibHooksV2.A_CREATE, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -177,6 +181,7 @@ contract CoreFacet {
         // boundary that unwinds the transfer, because the whole transaction unwinds with it.
         // Callers leave a field unchanged by passing 0, so this rejects nothing legitimate.
         if (newReward != 0 && newReward == task.reward) revert ITMPCore.NoRewardChange();
+        LibHooks._before(s, taskId, LibHooksV2.A_UPDATE, address(0), bytes32(0));
 
         uint256 refund = 0;
         // The forwarder must have moved exactly the increase into escrow, and nothing on an update
@@ -215,6 +220,8 @@ contract CoreFacet {
         if (refund > 0) {
             uint256 balanceBefore = LibEscrow.balance(s);
             if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.USDCRefundFailed();
+            // Rev028: a reward decrease settles nothing; keep it out of the settlement record.
+            LibSettlement.clear(taskId);
             LibEscrow.release(s, taskId, balanceBefore);
         } else if (newReward > originalReward) {
             LibEscrow.book(s, taskId, requester, ITMPEscrow.Component.RewardIncrease, false);
@@ -226,6 +233,7 @@ contract CoreFacet {
             || (newPitchDeadline != 0 && newPitchDeadline != originalPitchDeadline && task.mode == PITCH);
 
         if (changed) emit ITMPCore.TaskUpdated(taskId, task.reward, task.expiryTime);
+        LibHooks._observe(s, taskId, LibHooksV2.A_UPDATE, true);
         LibGuards._nonReentrantAfter(s);
     }
 }

@@ -139,6 +139,7 @@ contract MockTaskHook is ITMPHook {
 
     function checkComplete(bytes32 taskId, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata)
         external
+        virtual
         override
         returns (bool)
     {
@@ -152,7 +153,7 @@ contract MockTaskHook is ITMPHook {
         return !rejectOnCheckComplete;
     }
 
-    function onComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external override {
+    function onComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external virtual override {
         onCompleteCalls++;
     }
 

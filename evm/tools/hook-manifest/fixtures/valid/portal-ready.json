@@ -1,5 +1,6 @@
 {
-  "manifestVersion": "1.0.0",
+  "manifestVersion": "2.0.0",
+  "hookVersion": 1,
   "identity": {
     "name": "Approved configuration",
     "slug": "approved-configuration",
@@ -71,5 +72,5 @@
     "evidence": "https://github.com/daydreamsai/taskmarket/actions"
   },
   "protocolDefault": { "status": "not-default" },
-  "x-schema": "https://taskmarket.dev/schemas/taskmarket-hook/1.0.0/schema.json"
+  "x-schema": "https://taskmarket.dev/schemas/taskmarket-hook/2.0.0/schema.json"
 }
