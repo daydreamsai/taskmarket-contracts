@@ -1,6 +1,8 @@
 # Foundry
 cache/
 out/
+out-solar/
+cache-solar/
 broadcast/
 lcov.info
 
