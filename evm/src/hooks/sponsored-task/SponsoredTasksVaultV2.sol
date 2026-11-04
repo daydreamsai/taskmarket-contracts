@@ -32,7 +32,7 @@ import { ISponsoredTasksVault } from "./interfaces/ISponsoredTasksVault.sol";
 ///      and a `deadline`: a signature works once, only on this vault and chain, only before its
 ///      deadline, and only while its signer is still the owner. Completing an ownership transfer
 ///      also advances the nonce. Advancing the nonce with
-///      `cancelOwnerSignatures` revokes every outstanding signed action.
+///      `cancelOwnerSignaturesUpTo` revokes every outstanding signed action below a chosen nonce.
 /// @dev A relayer that submits one of these calls only pays its gas. It cannot change what was
 ///      signed, and every token movement pays the recipient or the vault the signer named.
 contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable, EIP712Upgradeable, ReentrancyGuard {
@@ -42,6 +42,8 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         "ClaimTo(bytes32 vaultId,uint64 epoch,bytes32 allocationId,bytes32 taskId,uint256 index,address worker,address destination,uint256 amount,uint256 nonce,uint256 deadline)"
     );
     uint32 public constant VAULT_VERSION = 2;
+    /// @notice The most cancelOwnerSignaturesUpTo can move the owner nonce forward in one call.
+    uint256 public constant MAX_OWNER_NONCE_JUMP = 1_000_000;
 
     bytes32 public constant CONFIGURE_MANAGER_TYPEHASH = keccak256(
         "ConfigureManager(bytes32 vaultId,address manager,uint256 cap,bool active,uint256 nonce,uint256 deadline)"
@@ -118,6 +120,8 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     error OwnershipRenunciationDisabled();
     error OwnerSignatureExpired(uint256 deadline);
     error InvalidOwnerSignature();
+    error OwnerNonceNotAdvanced(uint256 current, uint256 requested);
+    error OwnerNonceJumpTooLarge(uint256 current, uint256 requested);
 
     event VaultInitialized(
         bytes32 indexed vaultId,
@@ -178,6 +182,7 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         uint256 affectedClaimable
     );
     event OwnerSignatureUsed(address indexed owner, uint256 indexed nonce);
+    event OwnerSignaturesCancelled(address indexed owner, uint256 previousNonce, uint256 newNonce);
 
     modifier onlyController() {
         if (msg.sender != controller) revert OnlyController(msg.sender);
@@ -867,11 +872,28 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         return _emergencyExitVault(vaultOwner, recipient);
     }
 
-    /// @notice Revokes every outstanding signed owner action by advancing the nonce.
+    /// @notice Revokes the signed owner action at the current nonce by advancing it by one. It
+    ///         cannot revoke a signature made for a later nonce, and it makes the next queued
+    ///         signature valid; use `cancelOwnerSignaturesUpTo` to revoke a range.
     function cancelOwnerSignatures() external onlyOwner {
         uint256 nonce = ownerNonce;
         ownerNonce = nonce + 1;
         emit OwnerSignatureUsed(msg.sender, nonce);
+        emit OwnerSignaturesCancelled(msg.sender, nonce, nonce + 1);
+    }
+
+    /// @notice Revokes every signed owner action whose nonce is below `newNonce`, including ones
+    ///         signed ahead for future nonces, by moving the nonce to `newNonce`. A signature at
+    ///         `newNonce` or later stays valid, so pick a value above every nonce you signed.
+    function cancelOwnerSignaturesUpTo(uint256 newNonce) external onlyOwner {
+        uint256 nonce = ownerNonce;
+        if (newNonce <= nonce) revert OwnerNonceNotAdvanced(nonce, newNonce);
+        // A huge jump would make every later `nonce + 1` revert and brick the signed actions and
+        // ownership transfer, so the nonce can move forward by a bounded amount.
+        if (newNonce - nonce > MAX_OWNER_NONCE_JUMP) revert OwnerNonceJumpTooLarge(nonce, newNonce);
+        ownerNonce = newNonce;
+        emit OwnerSignatureUsed(msg.sender, nonce);
+        emit OwnerSignaturesCancelled(msg.sender, nonce, newNonce);
     }
 
     /// @dev Every completed ownership transfer advances `ownerNonce`, so a signature an earlier

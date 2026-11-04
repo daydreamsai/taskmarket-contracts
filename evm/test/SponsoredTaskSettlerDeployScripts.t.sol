@@ -30,6 +30,7 @@ contract SponsoredTaskSettlerDeployScriptsTest is Test {
         vm.setEnv("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", "750");
         vm.setEnv("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", vm.toString(address(0xFEE)));
         vm.setEnv("FORGE_DIAMOND_ADDRESS", vm.toString(address(0xD1A)));
+        vm.etch(address(0xD1A), hex"00"); // the remote hook script refuses a diamond without code
     }
 
     function test_DeploySettler_AdminOwnsSettlerAndFactoryIsControlledBySettler() public {
@@ -73,6 +74,13 @@ contract SponsoredTaskSettlerDeployScriptsTest is Test {
         vm.setEnv("FORGE_SPONSORED_TASK_SETTLER_ADMIN", vm.toString(vm.addr(DEPLOYER_KEY)));
         DeploySponsoredTaskSettler script = new DeploySponsoredTaskSettler();
         vm.expectRevert(bytes("Settler: admin must be a contract"));
+        script.run();
+    }
+
+    function test_RevertWhen_DeployRemoteHook_DiamondIsNotAContract() public {
+        vm.etch(address(0xD1A), "");
+        DeployRemoteSponsoredTaskHook script = new DeployRemoteSponsoredTaskHook();
+        vm.expectRevert(bytes("Remote hook: diamond must be a contract"));
         script.run();
     }
 

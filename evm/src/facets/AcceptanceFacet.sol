@@ -32,7 +32,7 @@ contract AcceptanceFacet {
     /// @param requesterAgentId ERC-8004 agentId of requester (0 if unknown); used for giveFeedback
     function acceptSubmission(bytes32 taskId, address worker, bytes32 deliverable, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         uint256 balanceBefore = LibEscrow.balance(s);
@@ -40,6 +40,9 @@ contract AcceptanceFacet {
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         LibGuards._requireRequester(s, taskId, requester);
+        // Rev028: an operator or the project owner may act for the requester, but the reputation
+        // signal, the self-award check and the events belong to the task's requester of record.
+        requester = task.requester;
 
         bytes4 mode = task.mode;
         LibHooksV2.snap(taskId, uint8(task.status));
@@ -103,7 +106,7 @@ contract AcceptanceFacet {
         }
         _returnStakeAndPriceCap(taskId, task, s);
 
-        if (worker == requester) {
+        if (LibProject.isActingParty(s, taskId, worker)) {
             emit ITMPCore.SelfAward(taskId, requester, worker);
         }
         if (mode == BOUNTY || mode == BENCHMARK) {
@@ -144,7 +147,7 @@ contract AcceptanceFacet {
             revert ITMPCore.TooManyWinners();
         }
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         uint256 balanceBefore = LibEscrow.balance(s);
@@ -251,6 +254,8 @@ contract AcceptanceFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         LibGuards._requireRequester(s, taskId, requester);
         LibHooksV2.snap(taskId, uint8(task.status));
+        // Rev028: credit the requester of record, not the delegate acting for it.
+        requester = task.requester;
         if (task.mode != BOUNTY && task.mode != BENCHMARK) revert ITMPCore.MultiSubmissionOnlyForBountyBenchmark();
         if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) revert ITMPCore.UseEvaluate();
         if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
@@ -317,7 +322,7 @@ contract AcceptanceFacet {
         }
         bool anySelfAward = false;
         for (uint256 i; i < awards.length; ++i) {
-            if (awards[i].amount > 0 && awards[i].worker == requester) {
+            if (awards[i].amount > 0 && LibProject.isActingParty(s, taskId, awards[i].worker)) {
                 emit ITMPCore.SelfAward(taskId, requester, awards[i].worker);
                 anySelfAward = true;
             }
@@ -454,6 +459,7 @@ contract AcceptanceFacet {
     function settleLapsedReview(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         LibGuards._nonReentrantBefore(s);
         LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
         uint256 balanceBefore = LibEscrow.balance(s);

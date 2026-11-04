@@ -52,7 +52,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
         address[] memory settlers = new address[](1);
         settlers[0] = vm.addr(SETTLER_KEY);
-        settler = new SponsoredTaskSettler(address(this), settlers, 1);
+        settler = new SponsoredTaskSettler(address(this), settlers, 1, registry);
         SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(settler),
             address(feePolicy),
@@ -252,6 +252,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         vm.chainId(REMOTE_CHAIN_ID);
         SponsoredTaskSettler.ReserveRequest memory r = SponsoredTaskSettler.ReserveRequest({
             vault: c.vault,
+            vaultId: c.vaultId,
             allocationId: c.allocationId,
             taskChainId: TASK_CHAIN_ID,
             taskId: TASK_ID,
@@ -355,6 +356,36 @@ contract RemoteSponsoredTaskHookTest is Test {
         assertEq(hook.outcome(auctionTask).sponsoredTaskTotal, 9_250);
     }
 
+    /// A project operator creates a task whose requester of record is the project owner. The
+    /// commitment must name the operator as the manager the remote vault charges, while the task's
+    /// own callbacks, which carry the owner as requester, still bind to it.
+    function testOperatorTaskCommitsTheOperatorAsManager() public {
+        address operator = address(0x0BE1);
+        market.setCreator(TASK_ID, operator);
+        _fund();
+
+        RemoteSponsoredTaskHook.Commitment memory c = hook.commitment(TASK_ID);
+        assertEq(c.manager, operator);
+        assertEq(c.requester, MANAGER);
+
+        ITMPCore.Award[] memory awards = _twoAwards();
+        _commitAccepted(awards);
+        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.CompletionCommitted));
+        hook.finalizeSettlement(TASK_ID, awards);
+        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.SettlementPrepared));
+    }
+
+    /// A verdict finalized after expiry skips checkComplete in every mode; a bounty with a stored
+    /// verdict must reconcile.
+    function testReconcileUncommittedBountyOnStoredVerdict() public {
+        _fund();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        market.setVerdict(TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, _twoAwards()));
+        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHook.HookStatus.Committed));
+        assertEq(uint8(hook.reconcile(TASK_ID)), uint8(RemoteSponsoredTaskHook.HookStatus.SettlementPrepared));
+        assertEq(hook.outcome(TASK_ID).sponsoredTaskTotal, 9_250);
+    }
+
     function testReconcileRequiresAwardsForUncommittedBounty() public {
         _fund();
         market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
@@ -384,6 +415,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         vm.chainId(REMOTE_CHAIN_ID);
         SponsoredTaskSettler.ReserveRequest memory r = SponsoredTaskSettler.ReserveRequest({
             vault: c.vault,
+            vaultId: c.vaultId,
             allocationId: c.allocationId,
             taskChainId: TASK_CHAIN_ID,
             taskId: TASK_ID,

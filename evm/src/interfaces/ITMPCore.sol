@@ -124,10 +124,15 @@ interface ITMPCore is IERC165 {
     error StakeBpsTooHigh();
     error RewardMustBeGreaterThanZero();
     error DurationMustBeGreaterThanZero();
+    error DurationTooLong();
+    error BidDeadlineAfterExpiry();
+    error AppealWindowTooLong();
     error PitchDeadlineMustBeGreaterThanZero();
     error BidDeadlineMustBeGreaterThanZero();
     error EmptyPitchHash();
     error EmptyProofHash();
+    /// @notice Rev028: a delivery names a nonzero deliverable hash.
+    error EmptyDeliverable();
     error RatingMustBe0To100();
     error NoWinners();
     error LengthMismatch();
@@ -689,7 +694,7 @@ interface ITMPCore is IERC165 {
     ///         latest entry in taskSubmissionHashes[taskId][worker]. Reverts SubmissionNotFound
     ///         if any winner has no prior submitWork call.
     ///         One TaskCompleted event MUST be emitted per (worker, share) pair.
-    ///         Duplicate worker addresses are allowed; the requester is the authority on who gets paid.
+    ///         Duplicate worker addresses are rejected (DuplicateAwardWorker); each winner appears once.
     ///         MUST revert for modes with a single locked worker.
     /// @param taskId           Task identifier
     /// @param workers          Recipient addresses (length >= 1)

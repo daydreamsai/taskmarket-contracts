@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { LibSettlement } from "./LibSettlement.sol";
 import { AppStorage } from "./LibAppStorage.sol";
+import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
 import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
 import { IFundingPoolManager } from "../interfaces/IFundingPoolManager.sol";
@@ -52,6 +53,26 @@ library LibProject {
         if (newExpiry > latestExpiry(s, projectId) || !isOpen(s, poolOf(projectId))) {
             revert ITMPProject.ProjectTaskPastGrace();
         }
+    }
+
+    /// @notice The one place a task's expiry is raised by a lifecycle step (reserved acceptance,
+    ///         reopen, review, revision request, evaluation, appeal). Raises expiryTime to `wanted`
+    ///         if it is later than the current expiry, but a project task is held to the project's
+    ///         latest expiry (end date plus task grace) and is not raised at all once the project's
+    ///         pool has settled. The step still happens; only the extension is clamped.
+    function extendExpiry(AppStorage storage s, bytes32 taskId, uint256 wanted) internal {
+        ITMPCore.Task storage task = s.tasks[taskId];
+        uint256 current = task.expiryTime;
+        if (wanted <= current) return;
+        uint256 projectId = s.taskProjects[taskId];
+        if (projectId != 0) {
+            if (!isOpen(s, poolOf(projectId))) return;
+            uint256 latest = latestExpiry(s, projectId);
+            if (wanted > latest) wanted = latest;
+            if (wanted <= current) return;
+        }
+        task.expiryTime = wanted;
+        emit ITMPCore.TaskExpiryExtended(taskId, wanted);
     }
 
     /// @notice Pays `amount` owed to the task's requester, or refunds it to the task's project.
@@ -119,7 +140,20 @@ library LibProject {
         if (amount == 0) return;
         address fundingPool = s.fundingPool;
         if (!s.usdcToken.transfer(fundingPool, amount)) revert ITMPProject.FundingTransferFailed();
-        IFundingPoolManager(fundingPool).refund(poolOf(projectId), amount);
+        bytes32 poolId = poolOf(projectId);
+        IFundingPoolManager(fundingPool).refund(poolId, amount);
+        // The refunded money is available again, so it leaves outstanding in the same call. Hooks
+        // run before LibEscrow.release, and would otherwise see it counted in both and mint or
+        // price shares against the doubled value. The rest of the task's draw leaves at release. When
+        // the refund includes money that was never drawn from the pool (a forfeited worker stake), the
+        // draw is reduced by that part too, so outstanding reads low until release; the total over the
+        // task's life is correct.
+        uint256 drawn = s.taskPoolDraws[taskId];
+        uint256 applied = amount > drawn ? drawn : amount;
+        if (applied != 0) {
+            s.taskPoolDraws[taskId] = drawn - applied;
+            IFundingPoolManager(fundingPool).finish(poolId, applied);
+        }
         emit ITMPProject.ProjectRefunded(projectId, taskId, amount);
     }
 
@@ -198,6 +232,27 @@ library LibProject {
         if (operator == address(0)) return;
         ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
         g.committed = g.committed > amount ? g.committed - amount : 0;
+    }
+
+    /// @notice Rev028: whether `who` is a party that may act as the requester of `taskId`: the
+    ///         requester of record, and for a project task also its operator and the project's
+    ///         owner. The self-dealing guards (evaluator, dispute resolver, reserved worker) test
+    ///         against all of them, because the requester of record alone is not who acts. The zero
+    ///         address is never a party.
+    function isActingParty(AppStorage storage s, bytes32 taskId, address who) internal view returns (bool) {
+        if (who == address(0)) return false;
+        if (who == s.tasks[taskId].requester) return true;
+        uint256 projectId = s.taskProjects[taskId];
+        if (projectId == 0) return false;
+        return who == s.taskOperators[taskId] || who == s.projects[projectId].owner;
+    }
+
+    /// @notice Reverts InvalidWorker when `worker` is the requester of record, the operator or the owner
+    ///         of a project task: whoever acts for a project task cannot also be its worker, or they
+    ///         could accept their own work and draw on the backers' pool. A task outside a project is
+    ///         unchanged.
+    function requireNotActingParty(AppStorage storage s, bytes32 taskId, address worker) internal view {
+        if (s.taskProjects[taskId] != 0 && isActingParty(s, taskId, worker)) revert ITMPCore.InvalidWorker();
     }
 
     /// @notice Whether `caller` may act as the requester of an operator-created project task. The

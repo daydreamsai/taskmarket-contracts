@@ -4,6 +4,9 @@ pragma solidity ^0.8.24;
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {
+    Ownable2StepUpgradeable
+} from "openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol";
 import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
@@ -16,6 +19,7 @@ import { ITMPDiamond } from "../interfaces/ITMPDiamond.sol";
 
 import { TMP_AUCTION, TMP_BENCHMARK, TMP_BOUNTY, TMP_CLAIM, TMP_PITCH } from "../interfaces/ITMPModes.sol";
 import { IRewardVault } from "../interfaces/IRewardVault.sol";
+import { IRewardVaultToken } from "../interfaces/IRewardVaultToken.sol";
 import { EpochBudget } from "./EpochBudget.sol";
 
 interface ISettlementStatus {
@@ -50,7 +54,7 @@ interface ISettlementStatus {
 ///
 ///         For Bounty tasks: bonusBps, rate, and payment all happen atomically at
 ///         completion with no pre-reservation.
-contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
+contract TaskTokenRewardHook is ITMPHook, Ownable2StepUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
     struct RewardState {
@@ -137,6 +141,19 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         // One-way: once true, in-flight reward state can never be seeded again.
         bool rewardStateSealed;
         mapping(bytes32 => ReleaseProgress) releaseProgress;
+        // Rev028: the vault and budget a task's reservation was made against, so replacing either
+        // with setVault/setEpochBudget cannot retarget a release or payout still owed on the old
+        // one. `reserveDependencies` is written when a reservation is made; `releaseDependencies`
+        // is the copy that goes with a due release in `releaseProgress`. Zero means the task
+        // predates this field and the current dependency is used.
+        mapping(bytes32 => Dependencies) reserveDependencies;
+        mapping(bytes32 => Dependencies) releaseDependencies;
+    }
+
+    /// @dev Addresses, not typed references, so a zero value reads as "not recorded".
+    struct Dependencies {
+        address vault;
+        address budget;
     }
 
     /// @notice Most nonzero Bounty awards that earn a bonus in one verdict.
@@ -280,6 +297,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         return _s().rewardStateSealed;
     }
 
+    error OwnershipRenunciationDisabled();
     event RewardConfigured(bytes32 indexed taskId, uint256 rewardUsd);
     event RewardReserved(bytes32 indexed taskId, address indexed worker, uint256 startPrice, uint256 reservedAmount);
     event RewardPaid(
@@ -309,6 +327,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     event BonusBpsUpdated(uint16 bonusBps);
 
     error ZeroAddress();
+    error VaultTokenMismatch(address expected, address actual);
     error ZeroRate();
     error RewardAlreadyPaid(bytes32 taskId);
     error RewardNotReserved(bytes32 taskId);
@@ -854,6 +873,12 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///      it should sit behind whatever multisig or timelock the owner key sits behind.
     function _authorizeUpgrade(address) internal override onlyOwner { }
 
+    /// @dev Ownership moves in two steps and is never renounced: a one-step transfer to a wrong
+    ///      address, or a renounce, would permanently lose upgrade authority.
+    function renounceOwnership() public pure override {
+        revert OwnershipRenunciationDisabled();
+    }
+
     function banWallet(address wallet) external onlyOwner {
         _s().banned[wallet] = true;
         emit WalletBanned(wallet);
@@ -907,7 +932,14 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         emit BonusBpsUpdated(_bonusBps);
     }
 
+    /// @notice Points the hook at a new reward vault. The vault must pay the same token this hook
+    ///         credits: rewards are credited to `claimable` in `token`, so a vault of another
+    ///         token would back them with the wrong asset. A reservation made on the previous vault
+    ///         is still released or paid against it.
     function setVault(address _vault) external onlyOwner {
+        if (_vault == address(0)) revert ZeroAddress();
+        address vaultToken = IRewardVaultToken(_vault).token();
+        if (vaultToken != _s().token) revert VaultTokenMismatch(_s().token, vaultToken);
         _s().vault = IRewardVault(_vault);
     }
 
@@ -971,9 +1003,9 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         RewardState storage state = _s().rewardStates[taskId];
 
         // Guard against double-reservation: a task can return to Open after already
-        // being reserved once (e.g. EvaluatorFacet.finalizeVerdict's REJECT branch
-        // reopens a claimed task without calling any reward-hook release path), and
-        // then be claimed/selected again. Release any stale reservation first so the
+        // being reserved once (e.g. forfeitAndReopen, or a rejected delivery whose reject
+        // outcome is Reopen, returns a claimed task to Open without calling any
+        // reward-hook release path), and then be claimed/selected again. Release any stale reservation first so the
         // _s().vault and EpochBudget accounting for the old worker never gets orphaned or
         // double-consumed when this function reserves fresh for the new worker below.
         // _s().vault.release/_s().epochBudget.release are pure internal-accounting calls on
@@ -1009,28 +1041,32 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         state.reserved = true;
         state.reservedTokenAmount = 0;
 
-        if (rate == 0 || bonusUsd == 0) {
+        // Rev028: a bonus that converts to zero tokens reserves nothing, so it must not consume
+        // epoch budget either: with no reserved tokens a later cancel or expiry has no release to
+        // hand the consumed budget back.
+        uint256 tokenAmount = bonusUsd * rate / 1e6;
+        if (rate == 0 || bonusUsd == 0 || tokenAmount == 0) {
             // No rate/bonus configured — no _s().token reward owed, but USDC flow is never blocked.
             emit RewardReserved(taskId, worker, rate, 0);
             return true;
         }
-
-        uint256 tokenAmount = bonusUsd * rate / 1e6;
 
         // TOCTOU guard: budget may be exhausted between remaining() and checkAndConsume.
         // reservedTokenAmount stays 0 on failure so no _s().token reward is owed without
         // blocking USDC payout. _s().epochBudget is a trusted owner-set contract with no
         // callback mechanism, so the reentrancy-no-eth finding is a false positive.
         // slither-disable-next-line reentrancy-no-eth
-        try _s().epochBudget.checkAndConsume(requester, worker, bonusUsd) returns (uint64 epoch) {
+        try _s().epochBudget.checkAndConsume(taskId, requester, worker, bonusUsd) returns (uint64 epoch) {
             // The Diamond turns any check-hook revert into HookCheckClaimRejected, so a short
             // vault must skip the bonus rather than block claimTask/selectWorker. The consumed
             // budget is handed back, leaving the same state as the budget-exhausted branch.
             try _s().vault.reserve(taskId, tokenAmount) {
                 state.reservedTokenAmount = tokenAmount;
                 state.consumedEpoch = epoch;
+                _s().reserveDependencies[taskId] =
+                    Dependencies({ vault: address(_s().vault), budget: address(_s().epochBudget) });
             } catch {
-                try _s().epochBudget.release(requester, worker, bonusUsd, epoch) { } catch { }
+                try _s().epochBudget.release(taskId, requester, worker, bonusUsd, epoch) { } catch { }
             }
         } catch { }
 
@@ -1058,9 +1094,20 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             vaultReleased: false,
             budgetReleased: false
         });
+        _s().releaseDependencies[taskId] = _s().reserveDependencies[taskId];
         state.reserved = false;
         state.reservedTokenAmount = 0;
         _attemptRelease(taskId);
+    }
+
+    /// @dev The vault a reservation was made against, or the current one for a task that
+    ///      predates the record.
+    function _vaultFor(Dependencies storage deps) internal view returns (IRewardVault) {
+        return deps.vault == address(0) ? _s().vault : IRewardVault(deps.vault);
+    }
+
+    function _budgetFor(Dependencies storage deps) internal view returns (EpochBudget) {
+        return deps.budget == address(0) ? _s().epochBudget : EpochBudget(deps.budget);
     }
 
     function _releasePending(bytes32 taskId) internal view returns (bool) {
@@ -1075,9 +1122,10 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
     ///      would have returned has already reset.
     function _attemptRelease(bytes32 taskId) internal {
         ReleaseProgress storage p = _s().releaseProgress[taskId];
+        Dependencies storage deps = _s().releaseDependencies[taskId];
         if (!p.vaultReleased) {
             p.vaultReleased = true;
-            try _s().vault.release(taskId, p.tokenAmount) {
+            try _vaultFor(deps).release(taskId, p.tokenAmount) {
                 emit RewardVaultReleased(taskId, p.tokenAmount);
             } catch {
                 p.vaultReleased = false;
@@ -1086,7 +1134,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         }
         if (!p.budgetReleased) {
             p.budgetReleased = true;
-            try _s().epochBudget.release(p.requester, p.worker, p.usdAmount, p.consumedEpoch) {
+            try _budgetFor(deps).release(taskId, p.requester, p.worker, p.usdAmount, p.consumedEpoch) {
                 emit RewardBudgetReleased(taskId, p.usdAmount);
             } catch {
                 p.budgetReleased = false;
@@ -1124,7 +1172,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
         // the USDC payout proceed rather than blocking settlement.
         bool paid = false;
         if (tokenReward > 0) {
-            try _s().vault.pay(taskId, address(this), tokenReward) {
+            try _vaultFor(_s().reserveDependencies[taskId]).pay(taskId, address(this), tokenReward) {
                 paid = true;
             } catch { }
         }
@@ -1185,12 +1233,14 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             address worker = awards[i].worker;
             _touchFirstSeen(worker);
             uint256 workerBonusUsd = workerUsd * bonus / 10000;
-            uint256 budgetRemaining = _s().epochBudget.remaining(requester, worker);
-            uint256 taskCapUsd = _s().epochBudget.maxUsdPerTask();
-            uint256 cappedUsd = _min3(workerBonusUsd, budgetRemaining, taskCapUsd);
+            // Includes what the task's other winners have already consumed of its per-task cap.
+            uint256 budgetRemaining = _s().epochBudget.remaining(taskId, requester, worker);
+            uint256 cappedUsd = workerBonusUsd < budgetRemaining ? workerBonusUsd : budgetRemaining;
             if (cappedUsd == 0) continue; // budget exhausted; skip for this worker
 
             uint256 tokenReward = cappedUsd * rate / 1e6;
+            // A bonus that rounds to zero tokens pays nothing and must not consume budget.
+            if (tokenReward == 0) continue;
             uint256 vaultAvail = _s().vault.available();
             if (tokenReward > vaultAvail) {
                 // Vault can't cover the full USD-capped amount; scale down and
@@ -1225,7 +1275,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
             // call, outside any Diamond settlement. If `_s().token` is ever changed to a
             // callback-capable token, this ordering must be revisited.
             uint64 consumeEpoch = 0;
-            try _s().epochBudget.checkAndConsume(requester, worker, cappedUsd) returns (uint64 epoch) {
+            try _s().epochBudget.checkAndConsume(taskId, requester, worker, cappedUsd) returns (uint64 epoch) {
                 consumeEpoch = epoch;
             } catch {
                 continue;
@@ -1241,7 +1291,7 @@ contract TaskTokenRewardHook is ITMPHook, OwnableUpgradeable, UUPSUpgradeable {
                 _creditWithSplit(requester, worker, tokenReward);
                 emit RewardPaid(taskId, worker, workerUsd, cappedUsd, rate, tokenReward);
             } else {
-                try _s().epochBudget.release(requester, worker, cappedUsd, consumeEpoch) { } catch { }
+                try _s().epochBudget.release(taskId, requester, worker, cappedUsd, consumeEpoch) { } catch { }
             }
         }
     }

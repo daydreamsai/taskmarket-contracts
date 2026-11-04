@@ -150,11 +150,21 @@ contract Rev028Upgrade is Script {
 
     /// @notice ProjectFacet, and RegistryFacet, which takes over the settlement views.
     function cutThree() public returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](2);
+        cuts = new IDiamondCut.FacetCut[](4);
+        address projectFacet = address(new ProjectFacet());
+        // acceptGrant now takes the terms hash: Replace what rev027 routes, Add the new selector and
+        // Remove the old one (a Replace of an unrouted selector reverts, and the old selector would
+        // otherwise stay routed to a facet that no longer has it).
         cuts[0] = IDiamondCut.FacetCut(
-            address(new ProjectFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.projectFacetSelectors()
+            projectFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.projectFacetSelectorsRev027Routed()
         );
         cuts[1] = IDiamondCut.FacetCut(
+            projectFacet, IDiamondCut.FacetCutAction.Add, FacetSelectors.projectSelectorsAddedRev028()
+        );
+        bytes4[] memory oldAcceptGrant = new bytes4[](1);
+        oldAcceptGrant[0] = FacetSelectors.acceptGrantSelectorRev027();
+        cuts[2] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, oldAcceptGrant);
+        cuts[3] = IDiamondCut.FacetCut(
             address(new RegistryFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.registryFacetSelectors()
         );
     }

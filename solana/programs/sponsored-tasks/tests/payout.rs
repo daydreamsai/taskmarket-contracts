@@ -329,3 +329,92 @@ fn bindings_are_per_chain_and_relayed_by_anyone_while_paused() {
     assert_eq!(tempo.payout, on_tempo);
     assert_eq!(tempo.task_chain_id, TEMPO_CHAIN_ID);
 }
+
+#[test]
+fn attested_binding_needs_the_settler_threshold() {
+    let mut env = Env::with_threshold(2, 2);
+    let agent = [0x77u8; 20];
+    let payout = Pubkey::new_unique();
+    let payer = env.payer.pubkey();
+    let first = env.settlers[0].insecure_clone();
+    let second = env.settlers[1].insecure_clone();
+
+    let one = bind_payout_attested_ix(&payer, &[&first], TASK_CHAIN_ID, agent, payout, 1);
+    assert_error(env.send(&[one], &[&first]), E::SettlerThresholdNotMet);
+    let outsider = Keypair::new();
+    let wrong = bind_payout_attested_ix(
+        &payer,
+        &[&first, &outsider],
+        TASK_CHAIN_ID,
+        agent,
+        payout,
+        1,
+    );
+    assert_error(
+        env.send(&[wrong], &[&first, &outsider]),
+        E::SettlerThresholdNotMet,
+    );
+
+    let both = bind_payout_attested_ix(&payer, &[&first, &second], TASK_CHAIN_ID, agent, payout, 1);
+    env.send(&[both], &[&first, &second]).unwrap();
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent));
+    assert_eq!((binding.payout, binding.nonce), (payout, 1));
+    assert_eq!(env.events::<PayoutBound>()[0].agent, agent);
+}
+
+#[test]
+fn attested_and_signed_bindings_share_one_nonce_sequence() {
+    let mut env = Env::new();
+    let agent = Agent::new();
+    let payer = env.payer.pubkey();
+    let s = env.settlers[0].insecure_clone();
+    let attested = Pubkey::new_unique();
+    let signed = Pubkey::new_unique();
+    let attest = |env: &mut Env, payout: Pubkey, nonce: u64| {
+        env.send(
+            &[bind_payout_attested_ix(
+                &payer,
+                &[&s],
+                TASK_CHAIN_ID,
+                agent.address,
+                payout,
+                nonce,
+            )],
+            &[&s],
+        )
+    };
+
+    attest(&mut env, attested, 1).unwrap();
+    // A replay, a skipped step and a jump to the maximum are all refused.
+    for bad in [1, 3, u64::MAX] {
+        assert_error(
+            attest(&mut env, Pubkey::new_unique(), bad),
+            E::InvalidAttestedNonce,
+        );
+    }
+    // The agent's own signature with a higher nonce takes the binding back.
+    bind(
+        &mut env,
+        TASK_CHAIN_ID,
+        agent.address,
+        signed,
+        3,
+        agent.sign(TASK_CHAIN_ID, &signed, 3),
+    )
+    .unwrap();
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
+    assert_eq!((binding.payout, binding.nonce), (signed, 3));
+    // The attested sequence continues from the signed nonce.
+    assert_error(attest(&mut env, attested, 2), E::InvalidAttestedNonce);
+    attest(&mut env, attested, 4).unwrap();
+}
+
+#[test]
+fn a_first_attested_binding_starts_at_nonce_one() {
+    let mut env = Env::new();
+    let payer = env.payer.pubkey();
+    let s = env.settlers[0].insecure_clone();
+    let agent = [0x55u8; 20];
+    let ix = bind_payout_attested_ix(&payer, &[&s], TASK_CHAIN_ID, agent, Pubkey::new_unique(), 7);
+    assert_error(env.send(&[ix], &[&s]), E::InvalidAttestedNonce);
+}

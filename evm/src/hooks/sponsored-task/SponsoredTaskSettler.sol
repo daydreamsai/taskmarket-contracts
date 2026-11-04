@@ -9,6 +9,7 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { ISponsoredTasksVault } from "./interfaces/ISponsoredTasksVault.sol";
+import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol";
 import { ISponsoredTaskSettlerAuthority } from "./interfaces/ISponsoredTaskSettlerAuthority.sol";
 
 /// @title SponsoredTaskSettler
@@ -31,8 +32,11 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     uint64 public constant TIMELOCK_DELAY = 48 hours;
     uint256 public constant MAX_SETTLERS = 16;
 
+    /// @notice The registry whose factories create the vaults this settler may control.
+    ISponsoredTaskRegistry public immutable registry;
+
     bytes32 public constant RESERVE_TYPEHASH = keccak256(
-        "Reserve(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash)"
+        "Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash)"
     );
     bytes32 public constant RELEASE_TYPEHASH = keccak256(
         "Release(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce)"
@@ -53,6 +57,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     ///      `abi.encode(RESERVE_TYPEHASH, request)` is the EIP-712 struct encoding.
     struct ReserveRequest {
         address vault;
+        bytes32 vaultId;
         bytes32 allocationId;
         uint256 taskChainId;
         bytes32 taskId;
@@ -101,6 +106,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         uint256 sponsoredTaskTotal;
         uint256 feeTotal;
         uint256 distributedGross;
+        /// @dev The digest of the pending or finalized root, kept so a revoke can mark it.
+        bytes32 settleDigestOf;
     }
 
     address[] private _settlers;
@@ -113,6 +120,10 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     mapping(address vault => mapping(bytes32 allocationId => Allocation record)) private _allocations;
     /// @notice Settle digests already accepted. A revoked root's signatures can never be replayed.
     mapping(bytes32 digest => bool used) public settleDigestUsed;
+    /// @notice Settle digests whose root the owner revoked. A revoked digest stays used, so its
+    ///         signatures cannot be replayed, until the owner reopens it with
+    ///         `reopenRevokedSettlement`.
+    mapping(bytes32 digest => bool revoked) public settleDigestRevoked;
 
     bytes32 public pendingSettlersHash;
     uint64 public pendingSettlersEta;
@@ -134,6 +145,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     error InvalidAllocationId(bytes32 expected, bytes32 provided);
     error InvalidTask();
     error VaultNotControlled(address vault);
+    error VaultNotRegistered(address vault);
+    error VaultIdMismatch(bytes32 expected, bytes32 provided);
     error AllocationWrongState(address vault, bytes32 allocationId, AllocationState state);
     error CommitmentMismatch(address vault, bytes32 allocationId);
     error EpochMismatch(uint64 expected, uint64 provided);
@@ -141,6 +154,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     error SettlementExceedsAllocation(uint256 distributed, uint256 gross);
     error SettlementFeeTooHigh(uint256 provided, uint256 maximum);
     error SettlementAlreadyUsed(bytes32 digest);
+    error SettlementNotRevoked(bytes32 digest);
     error ClaimDelayNotElapsed(uint256 claimableAt);
     error NothingScheduled();
     error ScheduledChangeMismatch();
@@ -187,6 +201,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         bytes32 rewardsRoot,
         uint256 sponsoredTaskTotal
     );
+    event SettlementReopened(bytes32 indexed digest);
     event SettlersChangeScheduled(address[] settlers, uint8 threshold, uint64 eta);
     event SettlersChangeCancelled();
     event SettlersChanged(address[] settlers, uint8 threshold);
@@ -200,10 +215,18 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     /// @param initialOwner The admin, normally a Safe. It pauses, revokes and schedules changes.
     /// @param initialSettlers Strictly ascending, nonzero settler addresses.
     /// @param initialThreshold How many of them must sign each authorization.
-    constructor(address initialOwner, address[] memory initialSettlers, uint8 initialThreshold)
-        EIP712(DOMAIN_NAME, DOMAIN_VERSION)
-        Ownable(initialOwner)
-    {
+    /// @param registry_ The vault registry. A vault is accepted only if the registry lists it, so a
+    ///        contract that merely reports this settler as its controller is never trusted.
+    constructor(
+        address initialOwner,
+        address[] memory initialSettlers,
+        uint8 initialThreshold,
+        ISponsoredTaskRegistry registry_
+    ) EIP712(DOMAIN_NAME, DOMAIN_VERSION) Ownable(initialOwner) {
+        if (address(registry_).code.length == 0) {
+            revert InvalidContract(address(registry_));
+        }
+        registry = registry_;
         _validateSettlers(initialSettlers, initialThreshold);
         _applySettlers(initialSettlers, initialThreshold);
         claimDelaySeconds = DEFAULT_CLAIM_DELAY_SECONDS;
@@ -219,6 +242,10 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         _authorize(keccak256(abi.encode(RESERVE_TYPEHASH, request)), signatures);
         _requireAllocationId(request.allocationId, request.taskChainId, request.taskId);
         _requireControlledVault(request.vault);
+        // The task chain committed to a vault id. Award leaves are hashed with it and the vault
+        // verifies claims against its own id, so a vault whose id differs would strand every award.
+        bytes32 actualVaultId = ISponsoredTasksVault(request.vault).vaultId();
+        if (actualVaultId != request.vaultId) revert VaultIdMismatch(actualVaultId, request.vaultId);
 
         Allocation storage record = _allocations[request.vault][request.allocationId];
         if (record.state != AllocationState.None) {
@@ -298,6 +325,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
 
         settleDigestUsed[digest] = true;
         record.state = AllocationState.Pending;
+        record.settleDigestOf = digest;
         record.settledAt = uint64(block.timestamp);
         record.rewardsRoot = request.rewardsRoot;
         record.leafCount = request.leafCount;
@@ -356,6 +384,8 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         if (record.state != AllocationState.Pending) revert AllocationWrongState(vault, allocationId, record.state);
         bytes32 root = record.rewardsRoot;
         uint256 total = record.sponsoredTaskTotal;
+        settleDigestRevoked[record.settleDigestOf] = true;
+        record.settleDigestOf = bytes32(0);
         record.state = AllocationState.Reserved;
         record.settledAt = 0;
         record.rewardsRoot = bytes32(0);
@@ -364,6 +394,17 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         record.feeTotal = 0;
         record.distributedGross = 0;
         emit SettlementRevoked(vault, allocationId, record.taskId, root, total);
+    }
+
+    /// @notice Lets a revoked settle digest be submitted again, for the case where the revoked root
+    ///         was the correct one and no other root can settle the allocation. The digest is not bound to
+    ///         a deadline, so any threshold signatures already collected for it become valid again:
+    ///         only reopen a digest whose signed root is the one you want settled.
+    function reopenRevokedSettlement(bytes32 digest) external onlyOwner {
+        if (!settleDigestRevoked[digest]) revert SettlementNotRevoked(digest);
+        delete settleDigestRevoked[digest];
+        delete settleDigestUsed[digest];
+        emit SettlementReopened(digest);
     }
 
     function pause() external onlyOwner {
@@ -565,6 +606,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
 
     function _requireControlledVault(address vault) private view {
         if (vault.code.length == 0) revert InvalidContract(vault);
+        if (!registry.isVault(vault)) revert VaultNotRegistered(vault);
         if (ISponsoredTasksVault(vault).controller() != address(this)) revert VaultNotControlled(vault);
     }
 

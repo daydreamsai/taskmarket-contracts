@@ -80,8 +80,22 @@ every field the terms hash covers (`reward`, `duration`, `mode`, `pitchDuration`
 call and the live protocol state (`RegistryFacet.defaultFeeBps()`, `getDefaultHooks()`) — none of
 it depends on anything the chain assigns only once the task is mined, since `duration`,
 `pitchDuration` and `bidDuration` are relative offsets from `metadata.createdAt`, not absolute
-timestamps. An off-chain implementation of this hash must be tested against
-`keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms))` directly, using the pinned
+timestamps.
+
+Since rev028 the commitment is two hashes combined. The second covers the task's settlement
+policy as `getTaskTerms` stores it (`penaltyTo`, `reviewWindowSecs`, `decisionWindowSecs`,
+`reopenExtensionSecs`, `releaseAllowed`, `releaseGraceBps`, `rejectOutcome`, `rejectFeeBps`,
+`maxRevisions`, `resolutionWindowSecs`, `acceptWindowSecs`; `stakeRequired` and `stakeBps` are in
+the first hash already). The value `taskTermsHash` must equal is
+`keccak256(abi.encode(TERMS_HASH_TYPEHASH, keccak256(abi.encode(TASK_TERMS_TYPEHASH, terms)),
+keccak256(abi.encode(SETTLEMENT_TERMS_TYPEHASH, settlementTerms))))`.
+
+The hooks charge the vault manager allowance of the account that created the task: for a project
+task that is the creator reported by `taskCreatedBy` (an operator, or the owner), not the
+requester of record.
+
+An off-chain implementation of this hash must be tested against
+that combined value directly, using the pinned
 vector in `test/SponsoredTaskTerms.t.sol` (`test_hash_matchesPinnedVector`) on both sides, rather
 than trusted by inspection: a wrong field name or ABI type produces a hash that differs only at
 `TaskTermsMismatch`, not at compile or build time.
@@ -175,8 +189,10 @@ the reward is shown, not only in a detail view.
   discovered only after a revert.
 - **Sequential per-worker claim nonces.** `claimTo` requires a strictly increasing
   `claimNonces[worker]`; relaying two of a worker's pending claims out of order reverts the
-  later one and invalidates every other outstanding signature for that worker. A relayer must
-  serialize claims per worker.
+  later one (`InvalidClaimNonce`), which spends nothing and stays usable once the earlier claims
+  have been relayed. Spending a nonce only retires signatures that carry that same nonce or a
+  lower one; the signatures for higher nonces stay valid. There is no way to revoke a worker's
+  other outstanding signatures at once. A relayer must serialize claims per worker.
 - **Dust awards are silently dropped from the Merkle tree.** An award whose net amount rounds
   to zero after fees gets no leaf; `leafCount` can be smaller than `awardCount`.
 - **Sponsored task amounts are not proportional to USDC awards.** An `APPROVE` verdict

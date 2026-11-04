@@ -152,6 +152,26 @@ library LibHooks {
         }
     }
 
+    /// @notice Calls onExpire on every V1 hook without ever reverting for want of gas, so an expiry
+    ///         refund never depends on hook gas. The first hook is guaranteed one full stipend (one
+    ///         stipend, which any caller can supply); each later hook runs only while a full stipend
+    ///         remains and is otherwise skipped with HookCallFailed. Hooks are bounded by MAX_HOOKS
+    ///         stipends of up to MAX_HOOK_GAS_STIPEND each, so demanding all of them up front could
+    ///         exceed a transaction's gas cap. V2 exit callbacks behave the same way.
+    function _dispatchExpireHooksBestEffort(address[] memory hooks, bytes memory callData) internal {
+        uint256 stipend = _hookGasStipend(LibAppStorage.appStorage());
+        uint256 needed = (stipend * 64) / 63 + HOOK_GAS_MARGIN;
+        for (uint256 i; i < hooks.length; i++) {
+            if (gasleft() < needed) {
+                if (i == 0) revert ITMPCore.InsufficientGasForHook();
+                emit ITMPCore.HookCallFailed(hooks[i]);
+                continue;
+            }
+            (bool ok,) = _safeHookCall(hooks[i], callData);
+            if (!ok) emit ITMPCore.HookCallFailed(hooks[i]);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Rev028: typed dispatch through HookDispatchFacet
     // -------------------------------------------------------------------------
@@ -227,12 +247,21 @@ library LibHooks {
     }
 
     /// @notice V1 checkComplete. On a dispute resolution (`disputed`) the context passed to the
-    ///         hooks shows currentState == Disputed (rev028).
+    ///         hooks shows currentState == Disputed and their verdict cannot block the resolution (rev028).
     function _checkCompleteHooks(bytes32 taskId, AppStorage storage s, ITMPCore.Verdict memory verdict, bool disputed)
         internal
     {
         if (_isV2(s, taskId) || s.taskHooks[taskId].length == 0) return;
-        _self(abi.encodeCall(ITMPHookDispatch.hookCheckCompleteV1, (taskId, verdict, disputed)));
+        bytes memory callData = abi.encodeCall(ITMPHookDispatch.hookCheckCompleteV1, (taskId, verdict, disputed));
+        if (disputed) {
+            // Rev028: on a dispute resolution the hooks are shown the Disputed state but cannot veto
+            // the resolver's ruling, as for a V2 task. A rejection or failure is ignored.
+            // slither-disable-next-line low-level-calls,unchecked-lowlevel
+            (bool ok,) = address(this).call(callData);
+            ok;
+            return;
+        }
+        _self(callData);
     }
 
     /// @notice V2 beforeAccept and the transforming hook's validated result, for a V2 task.

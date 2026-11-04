@@ -41,6 +41,23 @@ signature: [u8; 65])`
 - Event: `PayoutBound { task_chain_id, agent, payout, nonce }`.
 - Open while the program is paused: it moves no funds.
 
+## Attested binding for contract-wallet agents
+
+A smart contract wallet cannot produce a secp256k1 signature over the digest above; it proves
+control with an ERC-1271 signature that only its own chain can verify. For such an agent, the
+settlers check the ERC-1271 signature of the same typed data on the agent's chain and attest the
+binding with `bind_payout_attested(task_chain_id, agent, payout, nonce)`, signed by the settler
+threshold like `settle` (signers as remaining accounts; `SettlerThresholdNotMet` otherwise).
+
+- It writes the same `PayoutBinding` account and emits the same `PayoutBound` event.
+- The attested nonce must be the current binding's nonce plus one (1 for a first binding) and
+  never `u64::MAX` (`InvalidAttestedNonce`), so settlers advance the sequence one step at a time
+  and cannot lock the agent out of its own signed `bind_payout`. Both paths share one sequence: a
+  signed binding with a higher nonce replaces an attested one, and an attestation continues from
+  whatever nonce is stored.
+- Open while paused. It adds no trust beyond what the settlers already hold, since they decide
+  which worker address each award leaf names.
+
 ## Test vector
 
 Signed with viem by the test-only key `0x1111...11` (32 bytes of `0x11`) for the program id

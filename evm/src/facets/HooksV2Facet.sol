@@ -102,6 +102,7 @@ contract HooksV2Facet is ITMPHooksV2 {
     function callTaskHook(bytes32 taskId, address hook, bytes calldata data) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         LibGuards._nonReentrantBefore(s);
         address caller = LibGuards._effectiveSender(s);
         ITMPCore.TaskStatus st = s.tasks[taskId].status;

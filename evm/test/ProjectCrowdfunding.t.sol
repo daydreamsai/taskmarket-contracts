@@ -10,6 +10,7 @@ import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
+import { MockPoolProbeHook } from "./mocks/MockPoolProbeHook.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
@@ -1257,5 +1258,125 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertLe(paid, potIn, "claims never exceed the pot");
         assertLe(potIn - paid, n + 1, "dust is under one base unit per backer");
         assertEq(_booked(), potIn - paid, "only the dust stays booked");
+    }
+
+    // -------------------------------------------------------------------------
+    // Hooks see one count of a refund (rev028)
+    // -------------------------------------------------------------------------
+
+    function _hookedCall(uint256 reward, bytes4 mode, address hook, address reserved)
+        internal
+        view
+        returns (bytes memory)
+    {
+        ITMPCore.TaskTerms memory t;
+        t.version = 2;
+        t.penaltyTo = ITMPCore.PenaltyTo.Requester;
+        address[] memory hooks = new address[](1);
+        hooks[0] = hook;
+        return abi.encodeCall(
+            projects.createProjectTask,
+            (
+                id,
+                taskConfig(reward, DURATION, mode),
+                ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                t,
+                reserved
+            )
+        );
+    }
+
+    function _hooked(uint256 reward, bytes4 mode, address reserved) internal returns (bytes32, MockPoolProbeHook) {
+        MockPoolProbeHook hook = new MockPoolProbeHook(address(market), pools, pool);
+        bytes32 taskId = abi.decode(_relay(owner, 0, _hookedCall(reward, mode, address(hook), reserved)), (bytes32));
+        return (taskId, hook);
+    }
+
+    /// @dev A refund is available again the moment the pool books it, so it must already have left
+    ///      outstanding when an after-hook runs. Before rev028 the hook saw it in both, and a
+    ///      backer funding from the hook bought shares at a value inflated by the refund.
+    function test_Hooks_SeeTheRefundOnce_OnCancel() public {
+        _backAll();
+        (bytes32 taskId, MockPoolProbeHook hook) = _hooked(REWARD, TMP_BOUNTY, address(0));
+        usdc.mint(address(hook), 1e6);
+        hook.arm(usdc, 1e6);
+        _cancel(taskId);
+        assertFalse(hook.fundSucceeded(), "a hook cannot fund mid-settlement");
+        assertEq(hook.calls(), 1, "onCancel ran");
+        assertEq(hook.seenValue(), FUNDED, "the hook saw the pool's real value, not the refund twice");
+        assertEq(hook.seenShares(), FUNDED * SCALE, "no shares were minted against the refund");
+        assertEq(_p().outstanding, 0);
+        assertEq(_p().available, FUNDED);
+    }
+
+    /// @dev The payout of an accepted task leaves outstanding at release, after the hooks, so the
+    ///      pool lags the settlement while they run. A hook that funds then is refused.
+    function test_Hooks_CannotFundTheLaggingPool_OnAccept() public {
+        (bytes32 taskId, MockPoolProbeHook hook) = _hooked(REWARD, TMP_BOUNTY, address(0));
+        usdc.mint(address(hook), 1e6);
+        hook.arm(usdc, 1e6);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        _relay(owner, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, WORK, 0)));
+        assertEq(hook.calls(), 1, "onComplete ran");
+        assertFalse(hook.fundSucceeded(), "no shares were priced mid-settlement");
+        assertEq(bytes4(hook.fundRevert()), bytes4(keccak256("PoolSettling()")));
+        assertEq(_p().totalShares, BUDGET * SCALE);
+        assertEq(_p().outstanding, 0);
+        _assertSolvent();
+    }
+
+    function test_Hooks_SeeThePayoutLag_OnAccept() public {
+        (bytes32 taskId, MockPoolProbeHook hook) = _hooked(REWARD, TMP_BOUNTY, address(0));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        _relay(owner, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, WORK, 0)));
+        assertEq(hook.calls(), 1, "onComplete ran");
+        assertEq(hook.seenValue(), BUDGET, "the payout leaves outstanding at release, after the hook");
+        assertEq(_p().outstanding, 0);
+        _assertSolvent();
+    }
+
+    /// @dev An evaluator's reject verdict refunds the reward to the pool once finalised.
+    function test_Hooks_SeeTheRefundOnce_OnVerdict() public {
+        MockPoolProbeHook hook = new MockPoolProbeHook(address(market), pools, pool);
+        bytes32 taskId = abi.decode(_relay(owner, 0, _hookedCall(4e6, TMP_CLAIM, address(hook), address(0))), (bytes32));
+        _relay(owner, 0, abi.encodeCall(market.assignEvaluator, (taskId, EVALUATOR, 2e6, 0, 3 days, 2 days, RESOLVER)));
+        _relay(worker, 1e6, abi.encodeCall(market.claimTask, (taskId, 1e6)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        _verdict(taskId, ITMPCore.VerdictType.REJECT, new ITMPCore.Award[](0));
+        vm.warp(block.timestamp + 3 days);
+        market.finalizeVerdict(taskId);
+        _assertSolvent();
+        assertEq(_p().outstanding, 0, "nothing stays outstanding");
+        assertEq(_p().totalShares, BUDGET * SCALE, "no shares were minted");
+        assertLe(hook.seenValue(), BUDGET, "the hook never saw more than the pool holds");
+    }
+
+    /// @dev refundExpired bypasses hooks by rule, so this checks the pool alone: the refund leaves
+    ///      outstanding in the same call that books it.
+    function test_Expiry_RefundLeavesOutstandingAtOnce() public {
+        _backAll();
+        (bytes32 taskId,) = _hooked(REWARD, TMP_BOUNTY, address(0));
+        vm.warp(block.timestamp + DURATION + 1);
+        market.refundExpired(taskId, 0);
+        _assertSolvent();
+        assertEq(_p().outstanding, 0);
+        assertEq(_p().available, FUNDED);
+        assertEq(_p().totalShares, FUNDED * SCALE);
+    }
+
+    function test_Hooks_SeeTheRefundOnce_OnReservationDecline() public {
+        _backAll();
+        (bytes32 taskId, MockPoolProbeHook hook) = _hooked(REWARD, TMP_CLAIM, worker);
+        usdc.mint(address(hook), 1e6);
+        hook.arm(usdc, 1e6);
+        _relay(worker, 0, abi.encodeCall(market.declineReservation, (taskId, 0)));
+        assertFalse(hook.fundSucceeded(), "a hook cannot fund mid-settlement");
+        _assertSolvent();
+        assertEq(hook.calls(), 1, "onCancel ran");
+        assertEq(hook.seenValue(), FUNDED, "the decline's refund was counted once");
+        assertEq(hook.seenShares(), FUNDED * SCALE);
+        assertEq(_p().outstanding, 0);
     }
 }

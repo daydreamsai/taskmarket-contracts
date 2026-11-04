@@ -312,7 +312,15 @@ contract SponsoredTaskHookV2DiamondTest is DiamondTestHelper {
             tagsHash: keccak256(abi.encode(new bytes32[](0))),
             hooksHash: keccak256(abi.encode(hooks))
         });
-        return keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, t));
+        // Default settlement terms: every window and outcome is left at its zero (protocol default).
+        SponsoredTaskTerms.SettlementTerms memory settlement;
+        return keccak256(
+            abi.encode(
+                SponsoredTaskTerms.TERMS_HASH_TYPEHASH,
+                keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, t)),
+                keccak256(abi.encode(SponsoredTaskTerms.SETTLEMENT_TERMS_TYPEHASH, settlement))
+            )
+        );
     }
 
     function test_SponsoredBountyWithGate() public {

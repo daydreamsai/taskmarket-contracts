@@ -1787,6 +1787,22 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(vault.taskReserve(taskId), 0);
     }
 
+    // Rev028: a bonus that converts to zero tokens reserves nothing, so it must not leave epoch
+    // budget consumed that a cancel cannot hand back.
+    function test_zeroTokenReservation_doesNotConsumeBudget() public {
+        vm.startPrank(owner);
+        hook.setDreamsPerUsdc(1);
+        hook.setBonusBps(1);
+        vm.stopPrank();
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(budget.globalUsed(), 0, "no budget consumed for a zero-token reservation");
+        assertEq(budget.workerUsed(worker), 0);
+        assertEq(budget.requesterUsed(requester), 0);
+    }
+
     function test_expire_releasesReserve() public {
         bytes32 taskId = _createClaimTask();
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
@@ -1960,7 +1976,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.prank(owner);
         budget.setWorkerCapUsd(1 * 1e6);
         vm.prank(address(hook));
-        budget.checkAndConsume(requester, worker, 1 * 1e6);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, 1 * 1e6);
         assertEq(budget.remaining(requester, worker), 0);
 
         bytes32 taskId = _createBountyTask();
@@ -1989,6 +2005,33 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertGt(usdc.balanceOf(worker2), worker2UsdcBefore, "USDC payout must land for the unaffected worker");
     }
 
+    // A bounty's winners share one per-task emission cap. Before rev028 each winner got the whole
+    // cap, so a two-winner bounty could emit twice what a one-winner bounty could.
+    function test_bounty_perTaskCapIsSharedAcrossWinners() public {
+        address worker2 = makeAddr("worker2");
+        vm.prank(owner);
+        budget.setMaxUsdPerTask(60 * 1e6);
+
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("A"))));
+        _relay(worker2, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("B"))));
+
+        address[] memory workers = new address[](2);
+        workers[0] = worker;
+        workers[1] = worker2;
+        uint16[] memory shares = new uint16[](2);
+        shares[0] = 5000; // 50 USDC
+        shares[1] = 5000; // 50 USDC
+        bytes32[] memory deliverables = new bytes32[](2);
+        deliverables[0] = keccak256("A");
+        deliverables[1] = keccak256("B");
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, deliverables, 0)));
+
+        assertEq(budget.taskUsed(taskId), 60 * 1e6, "the task emitted exactly its cap");
+        assertEq(hook.claimable(worker), 500 * 1e18, "first winner takes 50 USD of bonus");
+        assertEq(hook.claimable(worker2), 100 * 1e18, "second winner gets only the 10 USD left under the cap");
+    }
+
     // ─── EpochBudget branch coverage ─────────────────────────────────────────
 
     function test_epochBudget_taskCapExceeded_direct() public {
@@ -1996,7 +2039,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.expectRevert(
             abi.encodeWithSelector(EpochBudget.TaskCapExceeded.selector, MAX_PER_TASK_USD + 1, MAX_PER_TASK_USD)
         );
-        budget.checkAndConsume(requester, worker, MAX_PER_TASK_USD + 1);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, MAX_PER_TASK_USD + 1);
     }
 
     function test_epochBudget_workerCapExceeded_direct() public {
@@ -2004,7 +2047,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         budget.setWorkerCapUsd(100 * 1e6);
         vm.prank(address(hook));
         vm.expectRevert(abi.encodeWithSelector(EpochBudget.WorkerCapExceeded.selector, worker, 200 * 1e6, 100 * 1e6));
-        budget.checkAndConsume(requester, worker, 200 * 1e6);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, 200 * 1e6);
     }
 
     function test_epochBudget_requesterCapExceeded_direct() public {
@@ -2014,7 +2057,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         vm.expectRevert(
             abi.encodeWithSelector(EpochBudget.RequesterCapExceeded.selector, requester, 200 * 1e6, 100 * 1e6)
         );
-        budget.checkAndConsume(requester, worker, 200 * 1e6);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, 200 * 1e6);
     }
 
     function test_epochBudget_release_noOp_whenAmountExceedsUsed() public {
@@ -2024,7 +2067,7 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         // contract instead of the hook and revert with OnlyHook.
         uint64 epoch = budget.currentEpoch();
         vm.prank(address(hook));
-        budget.release(requester, worker, 999 * 1e6, epoch);
+        budget.release(keccak256("direct-task"), requester, worker, 999 * 1e6, epoch);
         assertEq(budget.workerUsed(worker), 0);
     }
 
@@ -2223,6 +2266,75 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         assertEq(_count(logs, RESERVE_RELEASED_SIG), 1);
         _assertProgress(taskId, true, true);
         _assertFullyReleased(taskId, availBefore);
+    }
+
+    // ─── Rev028: replacing a dependency ──────────────────────────────────────
+
+    function test_setVault_rejectsAVaultThatPaysAnotherToken() public {
+        MockUSDC otherToken = new MockUSDC();
+        RewardVault wrongTokenVault = new RewardVault(address(otherToken), owner);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TaskTokenRewardHook.VaultTokenMismatch.selector, address(dreamsToken), address(otherToken)
+            )
+        );
+        hook.setVault(address(wrongTokenVault));
+        assertEq(address(hook.vault()), address(vault), "vault unchanged");
+
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.ZeroAddress.selector);
+        hook.setVault(address(0));
+
+        RewardVault sameTokenVault = new RewardVault(address(dreamsToken), owner);
+        vm.prank(owner);
+        hook.setVault(address(sameTokenVault));
+        assertEq(address(hook.vault()), address(sameTokenVault));
+    }
+
+    /// A release still owed on the vault a task was reserved on must not follow setVault to the new
+    /// vault, where the same call reverts for want of a reservation and strands the old one.
+    function test_replacedVault_doesNotRetargetAnOutstandingRelease() public {
+        bytes32 taskId = _claimedPastExpiry();
+        _failVault();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        _assertProgress(taskId, false, true);
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        vm.clearMockedCalls();
+
+        RewardVault replacement = new RewardVault(address(dreamsToken), owner);
+        vm.startPrank(owner);
+        replacement.setHook(address(hook));
+        hook.setVault(address(replacement));
+        vm.stopPrank();
+
+        hook.recoverReserve(taskId);
+        assertEq(vault.taskReserve(taskId), 0, "released on the vault it was reserved on");
+        assertEq(vault.totalReserved(), 0);
+        assertTrue(hook.releaseProgress(taskId).vaultReleased);
+        assertEq(replacement.totalReserved(), 0);
+    }
+
+    function test_replacedBudget_doesNotRetargetAnOutstandingRelease() public {
+        bytes32 taskId = _claimedPastExpiry();
+        _failBudget();
+        _relay(requester, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        _assertProgress(taskId, true, false);
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+        vm.clearMockedCalls();
+
+        EpochBudget replacement = new EpochBudget(
+            EPOCH_DURATION, GLOBAL_CAP_USD, WORKER_CAP_USD, REQUESTER_CAP_USD, MAX_PER_TASK_USD, owner
+        );
+        vm.startPrank(owner);
+        replacement.setHook(address(hook));
+        hook.setEpochBudget(address(replacement));
+        vm.stopPrank();
+
+        hook.recoverReserve(taskId);
+        assertEq(budget.globalUsed(), 0, "released on the budget it was consumed from");
+        assertEq(budget.taskUsed(taskId), 0);
+        assertEq(replacement.globalUsed(), 0);
     }
 
     function test_release_budgetOnlyFailure_keepsBudgetPendingAndRecovers() public {

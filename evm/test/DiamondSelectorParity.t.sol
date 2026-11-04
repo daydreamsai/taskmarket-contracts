@@ -142,7 +142,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     }
 
     function _rev027Selectors() internal pure returns (bytes4[] memory s) {
-        s = FacetSelectors.selectorsAddedRev027();
+        s = FacetSelectors.selectorsAddedRev027OnRev028();
     }
 
     function _rev026Selectors() internal pure returns (bytes4[] memory s) {

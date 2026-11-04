@@ -18,6 +18,18 @@ pub struct AdminChanged {
 }
 
 #[event]
+pub struct AdminProposed {
+    pub admin: Pubkey,
+    pub pending_admin: Pubkey,
+}
+
+#[event]
+pub struct FeeSet {
+    pub fee_bps: u16,
+    pub fee_recipient: Pubkey,
+}
+
+#[event]
 pub struct SettlersChanged {
     pub settlers: Vec<Pubkey>,
     pub threshold: u8,
@@ -53,6 +65,14 @@ pub struct ManagerConfigured {
     pub reserved: u64,
     pub spent: u64,
     pub active: bool,
+}
+
+#[event]
+pub struct ManagerRemoved {
+    pub vault: Pubkey,
+    pub manager: ManagerKey,
+    pub cap: u64,
+    pub spent: u64,
 }
 
 #[event]

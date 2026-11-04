@@ -42,7 +42,7 @@ library LibReview {
         return due != 0 && block.timestamp <= due;
     }
 
-    /// @notice Normalize the task's terms and return the end of its current review window.
+    /// @notice Read the task's terms and return the end of its current review window.
     ///         Reverts DeliverableRequired when no delivery is under review.
     function requireUnderReview(AppStorage storage s, bytes32 taskId)
         internal
@@ -72,7 +72,8 @@ library LibReview {
 
     /// @notice Whether a Bounty or Benchmark without an evaluator still has live submissions past
     ///         its decision deadline, `max(expiryTime, decisionStartAt) + decisionWindowSecs`.
-    ///         Normalizes a pre-rev025 task first, which seeds `decisionStartAt` at now.
+    ///         `decisionStartAt` is read as stored; it is set only for a task normalized at the
+    ///         rev025 cut and is zero otherwise. This function seeds nothing.
     function decisionLapsed(AppStorage storage s, bytes32 taskId, ITMPCore.Task storage task) internal returns (bool) {
         if (task.mode != TMP_BOUNTY && task.mode != TMP_BENCHMARK) return false;
         if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) return false;

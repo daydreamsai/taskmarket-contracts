@@ -147,6 +147,7 @@ contract ProjectFacet {
         taskId =
             LibTaskCreation.create(s, requester, config, hookConfig, content, evaluatorConfig, terms, reservedWorker);
         _link(s, projectId, taskId);
+        _requireNoSelfDealing(s, taskId, evaluatorConfig.evaluator, evaluatorConfig.disputeResolver, reservedWorker);
         // A project task runs at most until the project's end date plus its task grace period.
         if (s.tasks[taskId].expiryTime > LibProject.latestExpiry(s, projectId)) {
             revert ITMPProject.ProjectTaskPastGrace();
@@ -170,6 +171,7 @@ contract ProjectFacet {
     /// @notice See ITMPProject.
     function grantOperator(uint256 projectId, address operator, ITMPProject.GrantTerms calldata terms) external {
         AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         ITMPProject.ProjectRecord storage p = _project(s, projectId);
         if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
@@ -183,8 +185,9 @@ contract ProjectFacet {
     }
 
     /// @notice See ITMPProject.
-    function acceptGrant(uint256 projectId) external {
+    function acceptGrant(uint256 projectId, bytes32 termsHash) external {
         AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         _project(s, projectId);
         address operator = LibGuards._effectiveSender(s);
@@ -192,6 +195,8 @@ contract ProjectFacet {
         if (!g.exists) revert ITMPProject.GrantNotFound();
         if (g.revoked) revert ITMPProject.GrantRevoked();
         if (g.accepted) revert ITMPProject.GrantAlreadyAccepted();
+        bytes32 current = keccak256(abi.encode(g.terms));
+        if (current != termsHash) revert ITMPProject.GrantTermsMismatch(current, termsHash);
         g.accepted = true;
         emit ITMPProject.GrantAccepted(projectId, operator);
     }
@@ -199,6 +204,7 @@ contract ProjectFacet {
     /// @notice See ITMPProject.
     function revokeOperator(uint256 projectId, address operator) external {
         AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         ITMPProject.ProjectRecord storage p = _project(s, projectId);
         if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
@@ -290,6 +296,26 @@ contract ProjectFacet {
                     == ITMPProject.RequesterOfRecord.Operator
         ) requester = operator;
         s.projectPrepaid = amount;
+        // Rev028: the creator is recorded before the task's hooks run, which happens inside create,
+        // so a checkFund hook can charge whoever actually called rather than the requester of
+        // record. `_link` writes the same value again once the task exists.
+        s.taskCreators[LibTaskCreation.nextTaskId(s, requester)] = caller;
+    }
+
+    /// @dev Rev028: the requester of record is the owner or the operator, but either may act for
+    ///      the task, so neither may be its evaluator, its dispute resolver or its reserved worker.
+    function _requireNoSelfDealing(
+        AppStorage storage s,
+        bytes32 taskId,
+        address evaluator,
+        address disputeResolver,
+        address reservedWorker
+    ) private view {
+        if (LibProject.isActingParty(s, taskId, evaluator)) {
+            revert ITMPCore.EvaluatorCannotBeRequester();
+        }
+        if (LibProject.isActingParty(s, taskId, disputeResolver)) revert ITMPCore.DisputeResolverCannotBeRequester();
+        if (LibProject.isActingParty(s, taskId, reservedWorker)) revert ITMPCore.InvalidWorker();
     }
 
     function _link(AppStorage storage s, uint256 projectId, bytes32 taskId) private {

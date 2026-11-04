@@ -271,27 +271,22 @@ contract AllowlistedWorkerHookDiamondIntegrationTest is DiamondTestHelper {
         assertEq(market.getTask(taskId).worker, ALLOWED_WORKER);
     }
 
-    function test_DiamondRejectsUnallowlistedDisputeAwardAndAllowsRetry() public {
+    /// @dev Rev028: a V1 check hook is shown the Disputed state on a resolution but cannot veto it, so
+    ///      the requester's allowlist hook rejecting an award does not leave the original verdict
+    ///      standing. Award recipients are still pinned to the claimant by the diamond.
+    function test_DiamondResolveDisputeIgnoresACheckHookVeto() public {
         bytes32 taskId = _createTaskWithEvaluator(TMP_CLAIM, DISPUTE_RESOLVER);
         _relay(ALLOWED_WORKER, abi.encodeCall(market.claimTask, (taskId, 0)));
         _relay(ALLOWED_WORKER, abi.encodeCall(market.submitWork, (taskId, keccak256("allowed-claim-work"))));
         _evaluate(taskId, _allowedAwards());
         _relay(ALLOWED_WORKER, abi.encodeCall(market.appeal, (taskId)));
 
-        vm.expectRevert(ITMPCore.HookCheckCompleteRejected.selector);
+        // The allowlist hook rejects this award set; the resolution still settles.
         _relay(
             DISPUTE_RESOLVER,
             abi.encodeCall(
                 market.resolveDispute, (taskId, ITMPCore.VerdictType.APPROVE, _zeroFirstUnallowlistedAwards())
             )
-        );
-
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Disputed));
-        assertEq(market.getTask(taskId).worker, ALLOWED_WORKER);
-
-        _relay(
-            DISPUTE_RESOLVER,
-            abi.encodeCall(market.resolveDispute, (taskId, ITMPCore.VerdictType.APPROVE, _allowedAwards()))
         );
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
         assertEq(market.getTask(taskId).worker, ALLOWED_WORKER);
@@ -385,7 +380,7 @@ contract AllowlistedWorkerHookDiamondIntegrationTest is DiamondTestHelper {
         address[] memory hooks = new address[](1);
         hooks[0] = address(hook);
         uint256 pitchDeadline = mode == TMP_PITCH ? DURATION : 0;
-        uint256 bidDeadline = mode == TMP_AUCTION ? DURATION : 0;
+        uint256 bidDeadline = mode == TMP_AUCTION ? DURATION - 1 : 0;
 
         return forwarder.relay(
             address(market),

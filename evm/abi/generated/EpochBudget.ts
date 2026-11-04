@@ -48,6 +48,11 @@ export const EpochBudgetABI = [
     "name": "checkAndConsume",
     "inputs": [
       {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "requester",
         "type": "address",
         "internalType": "address"
@@ -181,6 +186,11 @@ export const EpochBudgetABI = [
     "name": "release",
     "inputs": [
       {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "requester",
         "type": "address",
         "internalType": "address"
@@ -203,6 +213,35 @@ export const EpochBudgetABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "remaining",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -344,6 +383,44 @@ export const EpochBudgetABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "taskRemaining",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "taskUsed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -492,6 +569,31 @@ export const EpochBudgetABI = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TaskConsumed",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "taskTotal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "CapExceedsUint192",
     "inputs": []
@@ -575,7 +677,7 @@ export const EpochBudgetABI = [
         "internalType": "uint256"
       },
       {
-        "name": "cap",
+        "name": "remaining",
         "type": "uint256",
         "internalType": "uint256"
       }

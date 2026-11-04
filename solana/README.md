@@ -28,9 +28,9 @@ Accounts, all program-derived:
 
 | Account | Seeds | Holds |
 | ------- | ----- | ----- |
-| `Config` | `"config"` | admin, settler set and threshold, pause flag, fee bps and recipient, claim delay |
+| `Config` | `"config"` | admin, pending admin, settler set and threshold, pause flag, fee bps and recipient, claim delay |
 | `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
-| `Reservation` | `"task", vault, task_chain_id (u64 LE), task_id` | epoch, task chain commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time |
+| `Reservation` | `"task", vault, task_chain_id (u64 LE), task_id` | epoch, task chain commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time, claim delay |
 | `ClaimReceipt` | `"claim", reservation, leaf_index (u32 LE)` | exists once the leaf is paid; the double-claim guard |
 | `PayoutBinding` | `"payout", task_chain_id (u64 LE), agent (20 bytes)` | the agent's Solana payout address and the binding's nonce |
 
@@ -40,21 +40,24 @@ Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance
 | Instruction | Signer | Paused | Notes |
 | ----------- | ------ | ------ | ----- |
 | `init_config` | program upgrade authority | - | once; names the admin and settlers |
-| `set_admin` | admin | open | hands the admin role to a new key |
+| `set_admin` | admin | open | proposes a new admin key; zero cancels |
+| `accept_admin` | proposed admin | open | completes the rotation `set_admin` proposed |
+| `set_fee` | admin | open | sets the fee basis points and the fee recipient |
 | `set_settlers` | admin | open | replaces the settler set and threshold |
 | `pause` | admin | open | sets or clears the pause flag |
-| `set_claim_delay` | admin | open | sets the seconds claims wait after `settle` (default 3600, never zero) |
+| `set_claim_delay` | admin | open | sets the seconds claims wait after `settle` (default 3600, never zero); a settlement keeps the delay it was installed with |
 | `create_vault` | sponsor | blocked | SPL Token or Token-2022; rejects transfer-fee, transfer-hook, permanent-delegate, non-transferable and confidential-transfer mints |
 | `fund` | anyone | open | `transfer_checked`, then checks the vault received the exact amount |
-| `set_managers` | sponsor | open | allowance never below reserved plus spent |
+| `set_managers` | sponsor | open | allowance never below reserved plus spent; a full list replaces an inactive manager with nothing reserved |
 | `reserve` | settler threshold | blocked | the manager's chain must be the task's chain; bounded by the manager allowance the sponsor set and the available balance |
 | `release` | settler threshold | open | returns a reservation to the vault; repeating it is a no-op |
 | `settle` | settler threshold | blocked | installs the award root, net total and fee of a reserved task; the rest of the reservation returns to the vault; a second settle fails |
 | `claim` | anyone (relayer) | blocked | pays an award leaf, proven against the settled root, to the worker's `PayoutBinding` address; creates the leaf's `ClaimReceipt` |
 | `claim_fee` | config fee recipient | open | pays a settled reservation's fee to any token account of the mint, once |
-| `revoke_settlement` | admin | open | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance; touches only that reservation, so it needs no pause |
+| `revoke_settlement` | admin | open | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance, and fails unless the vault and the manager's cap still back the restored reservation; touches only that reservation, so it needs no pause |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
 | `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
+| `bind_payout_attested` | settler threshold | open | the same binding for a contract-wallet agent, attested by the settlers after they verify its ERC-1271 signature; nonce is the current one plus one |
 
 Settler signatures are passed as signer accounts after the named accounts. Every state change
 emits an event through `emit_cpi!`. Settlement, claims and the award leaf format are in

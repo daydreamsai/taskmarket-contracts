@@ -5,6 +5,7 @@ import { Script, console } from "forge-std/Script.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import { ScriptBounds } from "./lib/ScriptBounds.sol";
 import { PayoutGateHook } from "../src/hooks/payout-gate/PayoutGateHook.sol";
 import { SponsoredTaskHookV2 } from "../src/hooks/sponsored-task/SponsoredTaskHookV2.sol";
 import { RemoteSponsoredTaskHookV2 } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHookV2.sol";
@@ -180,9 +181,9 @@ contract DeployRewardHookV2 is Script {
                 diamond,
                 IERC20Metadata(token).decimals(),
                 vm.envUint("FORGE_DREAMS_PER_USDC") * 1e18,
-                uint16(vm.envUint("FORGE_BONUS_BPS")),
+                ScriptBounds.bps(vm.envUint("FORGE_BONUS_BPS"), "FORGE_BONUS_BPS"),
                 token,
-                uint16(vm.envOr("FORGE_WORKER_SPLIT_BPS", uint256(8000))),
+                ScriptBounds.bps(vm.envOr("FORGE_WORKER_SPLIT_BPS", uint256(8000)), "FORGE_WORKER_SPLIT_BPS"),
                 IAuthorizedRelayerV2(vm.envAddress("FORGE_PGTR_FORWARDER")).authorizedRelayer(),
                 owner
             )

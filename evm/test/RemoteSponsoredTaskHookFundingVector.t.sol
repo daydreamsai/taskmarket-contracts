@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
+import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
@@ -82,5 +83,22 @@ contract RemoteSponsoredTaskHookFundingVectorTest is Test {
 
         market.primeTask(taskId, manager, address(usdc), REWARD, TMP_BOUNTY, hookAddress);
         market.setContent(taskId, bytes32(0), "");
+        market.setTaskTerms(taskId, _settlement(json, key));
+    }
+
+    /// @dev The settlement terms the created task stores, as the vector records them.
+    function _settlement(string memory json, string memory key) private pure returns (ITMPCore.TaskTerms memory t) {
+        string memory k = string.concat(key, ".settlement.");
+        t.penaltyTo = ITMPCore.PenaltyTo(vm.parseJsonUint(json, string.concat(k, "penaltyTo")));
+        t.reviewWindowSecs = uint32(vm.parseJsonUint(json, string.concat(k, "reviewWindowSecs")));
+        t.decisionWindowSecs = uint32(vm.parseJsonUint(json, string.concat(k, "decisionWindowSecs")));
+        t.reopenExtensionSecs = uint32(vm.parseJsonUint(json, string.concat(k, "reopenExtensionSecs")));
+        t.releaseAllowed = ITMPCore.ReleaseAllowed(vm.parseJsonUint(json, string.concat(k, "releaseAllowed")));
+        t.releaseGraceBps = uint16(vm.parseJsonUint(json, string.concat(k, "releaseGraceBps")));
+        t.rejectOutcome = ITMPCore.RejectOutcome(vm.parseJsonUint(json, string.concat(k, "rejectOutcome")));
+        t.rejectFeeBps = uint16(vm.parseJsonUint(json, string.concat(k, "rejectFeeBps")));
+        t.maxRevisions = uint8(vm.parseJsonUint(json, string.concat(k, "maxRevisions")));
+        t.resolutionWindowSecs = uint32(vm.parseJsonUint(json, string.concat(k, "resolutionWindowSecs")));
+        t.acceptWindowSecs = uint32(vm.parseJsonUint(json, string.concat(k, "acceptWindowSecs")));
     }
 }

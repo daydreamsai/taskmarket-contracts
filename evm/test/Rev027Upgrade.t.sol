@@ -104,7 +104,7 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
     }
 
     function _rev027Added() internal pure returns (bytes4[] memory s) {
-        s = FacetSelectors.selectorsAddedRev027();
+        s = FacetSelectors.selectorsAddedRev027OnRev028();
     }
 
     /// @dev A rev026 diamond: no rev027 selector routed, version 26.
@@ -162,7 +162,7 @@ contract Rev027UpgradeTest is Test, DiamondTestHelper {
         }
         address projectFacet = loupe.facetAddress(ITMPProject.createProject.selector);
         assertNotEq(projectFacet, address(0), "ProjectFacet routed");
-        bytes4[] memory projectSelectors = FacetSelectors.projectFacetSelectors();
+        bytes4[] memory projectSelectors = FacetSelectors.projectFacetSelectorsRev027();
         for (uint256 i; i < projectSelectors.length; ++i) {
             assertEq(loupe.facetAddress(projectSelectors[i]), projectFacet, "project selector on ProjectFacet");
         }

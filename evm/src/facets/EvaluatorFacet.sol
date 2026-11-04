@@ -27,8 +27,9 @@ contract EvaluatorFacet {
 
     /// @notice Assign an evaluator to an open task that was created without one.
     ///         Only the requester may call this, only while the task is Open.
-    ///         A stake arrives with the forwarded payment when the forwarder reports one (which must
-    ///         equal stakeAmount); otherwise it is pulled from the requester via transferFrom.
+    ///         A stake arrives with the forwarded payment, which the forwarder must report and which
+    ///         must equal stakeAmount; this function never calls transferFrom on the requester.
+    ///         A project task draws the stake from its project's pool instead.
     /// @dev A requester who knows at creation time that the task needs an evaluator should pass
     ///      the configuration to `createTask` instead: the task is claimable the instant
     ///      `createTask` mines, so a second transaction races the first worker to claim and can
@@ -38,7 +39,7 @@ contract EvaluatorFacet {
     ///      would change the terms the worker committed to.
     /// @param taskId               Task identifier
     /// @param evaluator            Evaluator address
-    /// @param stakeAmount          Evaluator stake: the relayed payment through a paying forwarder, else pulled from the requester (0 = no stake)
+    /// @param stakeAmount          Evaluator stake: the relayed payment through a paying forwarder, or drawn from the project pool (0 = no stake)
     /// @param feeBps               Evaluator fee in basis points (max 10000)
     /// @param evaluationWindowSecs Seconds from assignment for evaluator to submit verdict
     /// @param appealWindowSecs     Seconds after verdict for worker to appeal
@@ -63,6 +64,15 @@ contract EvaluatorFacet {
         LibTerms.requireTermsOpen(s, taskId, task);
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         LibHooks._before(s, taskId, LibHooksV2.A_ASSIGN_EVALUATOR, evaluator, bytes32(0));
+        // Rev028: neither the requester of record nor, on a project task, its operator or the
+        // project owner may judge the task they can act for.
+        if (LibProject.isActingParty(s, taskId, evaluator)) revert ITMPCore.EvaluatorCannotBeRequester();
+        if (LibProject.isActingParty(s, taskId, disputeResolver)) revert ITMPCore.DisputeResolverCannotBeRequester();
+        // Rev028: an evaluator is a term of the offer, so it is frozen while a reservation is
+        // pending, exactly as updateTask freezes the reward and deadlines.
+        if (s.reservedWorkers[taskId] != address(0) && block.timestamp <= LibTerms.acceptBy(s, taskId)) {
+            revert ITMPCore.ReservationPending();
+        }
 
         // Rev027: a project task draws the stake from its project's pool (LibProject.topUp), and
         // projectPrepaid tells the funding check below to expect it with no forwarded payment.
@@ -109,7 +119,7 @@ contract EvaluatorFacet {
         ITMPCore.Award[] calldata awards
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         uint256 balanceBefore = LibEscrow.balance(s);
@@ -154,9 +164,7 @@ contract EvaluatorFacet {
         evalCfg.evaluatorStake = 0;
         uint256 appealDeadline = block.timestamp + evalCfg.appealWindow;
         s.phaseDeadline[taskId] = appealDeadline;
-        if (appealDeadline > task.expiryTime) {
-            task.expiryTime = appealDeadline;
-        }
+        LibProject.extendExpiry(s, taskId, appealDeadline);
         task.status = ITMPCore.TaskStatus.Appealing;
 
         LibHooks._checkEvaluateHooks(taskId, evaluatorAddr, s);
@@ -177,7 +185,7 @@ contract EvaluatorFacet {
     ///         Only task.worker may call this while status == Appealing and within the window.
     function appeal(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
@@ -222,6 +230,7 @@ contract EvaluatorFacet {
     function finalizeVerdict(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         LibGuards._nonReentrantBefore(s);
         LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
         uint256 balanceBefore = LibEscrow.balance(s);
@@ -317,6 +326,7 @@ contract EvaluatorFacet {
     {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         LibGuards._nonReentrantBefore(s);
         uint256 balanceBefore = LibEscrow.balance(s);
 
@@ -336,6 +346,9 @@ contract EvaluatorFacet {
             v.awards.push(awards[i]);
         }
 
+        // A V2 task's beforeAccept is best effort on a resolution (see _payAwards), so the requester's
+        // hook cannot veto the resolver's decision there. Legacy V1 check hooks still run and are
+        // shown the Disputed state.
         _payAwards(taskId, task, v, s, upheld, true);
         LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
@@ -363,6 +376,7 @@ contract EvaluatorFacet {
     function evaluatorTimeout(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         LibGuards._nonReentrantBefore(s);
         LibHooksV2.snap(taskId, uint8(s.tasks[taskId].status));
         uint256 balanceBefore = LibEscrow.balance(s);
@@ -568,8 +582,11 @@ contract EvaluatorFacet {
             if (amt == 0) continue;
             totalAwarded += amt;
             totalFee += (amt * feeBps) / 10000;
-            s.workerStats[awards[i].worker].completedTasks++;
-            s.taskAwarded[taskId][awards[i].worker] = true;
+            // Rev028: a worker named twice in one verdict completes the task once.
+            if (!s.taskAwarded[taskId][awards[i].worker]) {
+                s.workerStats[awards[i].worker].completedTasks++;
+                s.taskAwarded[taskId][awards[i].worker] = true;
+            }
         }
         if (totalAwarded > remaining) revert ITMPCore.AwardsExceedEscrow();
         if (totalFee > 0) s.totalFeesCollected += totalFee;

@@ -4,10 +4,14 @@ pragma solidity ^0.8.24;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    Ownable2StepUpgradeable
+} from "openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol";
 import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../../interfaces/ITMPDiamond.sol";
+import { ITMPProject } from "../../interfaces/ITMPProject.sol";
 import { TMP_AUCTION } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHookV2 } from "../base/BaseTMPHookV2.sol";
 import { SponsoredTaskTypes } from "./SponsoredTaskTypes.sol";
@@ -33,7 +37,7 @@ import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
 ///      pattern already used by this protocol's default token reward hook. Vaults it talks
 ///      to are immutable EIP-1167 clones; this hook holds no upgrade authority over a vault
 ///      owner's tokens.
-contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeable, UUPSUpgradeable {
+contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgradeable, UUPSUpgradeable {
     using Math for uint256;
 
     uint8 public constant HOOK_DATA_VERSION = 1;
@@ -90,6 +94,9 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
         uint256 feeTotal;
         uint256 distributedGross;
         HookStatus status;
+        /// @dev Rev028: the task's requester of record. `manager` is the account the vault charges,
+        ///      which differs from it for a project task an operator created. Appended last.
+        address requester;
     }
 
     IERC20 public immutable usdc;
@@ -133,6 +140,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
     error AwardsRequired(bytes32 taskId);
     error SettlementMismatch(bytes32 taskId);
 
+    error OwnershipRenunciationDisabled();
     event SponsoredTaskFunded(
         bytes32 indexed taskId,
         bytes32 indexed vaultId,
@@ -200,6 +208,12 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner { }
+
+    /// @dev Ownership moves in two steps and is never renounced: a one-step transfer to a wrong
+    ///      address, or a renounce, would permanently lose upgrade authority.
+    function renounceOwnership() public pure override {
+        revert OwnershipRenunciationDisabled();
+    }
 
     /// @dev Split into two getters rather than one returning the full 19-field `TaskAllocation`
     ///      -- a single external function returning the whole struct trips `forge coverage
@@ -316,7 +330,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
         ) return allocation.status;
 
         ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
-        if (task.id != taskId || task.requester != allocation.manager) revert InvalidHookContext(taskId);
+        if (task.id != taskId || task.requester != allocation.requester) revert InvalidHookContext(taskId);
 
         if (task.status == ITMPCore.TaskStatus.Cancelled || task.status == ITMPCore.TaskStatus.Expired) {
             if (allocation.status == HookStatus.Reserved) allocation.status = HookStatus.ReleaseCommitted;
@@ -330,11 +344,11 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
             if (settled != HookStatus.CompletionCommitted) return settled;
         }
 
-        // An accepted auction with no completion commitment: Taskmarket accepted it without running
-        // checkComplete (a verdict finalized after the task's expiry skips the check hooks).
-        if (allocation.status == HookStatus.Reserved && task.mode == TMP_AUCTION && task.worker != address(0)) {
-            return _reconcileUncommittedAuction(taskId, allocation, task);
-        }
+        // An accepted task with no completion commitment: Taskmarket accepted it without running
+        // checkComplete (a verdict finalized after the task's expiry skips the check hooks), in any
+        // mode. A stored evaluator verdict is committed as issued; an auction with none pays its
+        // sole worker the accepted price. Any other mode with no verdict has nothing to rebuild.
+        if (allocation.status == HookStatus.Reserved) return _reconcileUncommitted(taskId, allocation, task);
 
         revert AwardsRequired(taskId);
     }
@@ -376,14 +390,15 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
 
         if (request.allocationId != bytes32(0)) revert InvalidFundingRequest();
         bytes32 allocationId = taskId;
-        _reserveLocal(taskId, ctx.requester, request, termsHash);
+        address manager = _chargedManager(taskId, ctx.requester);
+        _reserveLocal(taskId, manager, request, termsHash);
 
         bytes32 existingTask = _s().taskByAllocation[request.vault][allocationId];
         if (existingTask != bytes32(0)) {
             revert AllocationBindingConflict(request.vault, allocationId, existingTask);
         }
 
-        _recordAllocation(taskId, allocationId, ctx.requester, request, termsHash);
+        _recordAllocation(taskId, allocationId, manager, ctx.requester, request, termsHash);
         return true;
     }
 
@@ -395,6 +410,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
         bytes32 taskId,
         bytes32 allocationId,
         address manager,
+        address requester,
         FundingRequest memory request,
         bytes32 termsHash
     ) private {
@@ -417,7 +433,8 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
             sponsoredTaskTotal: 0,
             feeTotal: 0,
             distributedGross: 0,
-            status: HookStatus.Reserved
+            status: HookStatus.Reserved,
+            requester: requester
         });
         _s().taskByAllocation[request.vault][allocationId] = taskId;
 
@@ -462,7 +479,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
 
     function _onComplete(bytes32 taskId, ITMPCore.TaskContext memory ctx, ITMPCore.Verdict memory verdict) internal {
         TaskAllocation storage allocation = _s().taskAllocations[taskId];
-        if (allocation.status == HookStatus.None || allocation.manager != ctx.requester) return;
+        if (allocation.status == HookStatus.None || allocation.requester != ctx.requester) return;
         if (allocation.status == HookStatus.Reserved) _commitCompletion(taskId, allocation, ctx, verdict);
     }
 
@@ -476,7 +493,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
 
     function _onForfeit(bytes32 taskId, ITMPCore.TaskContext memory ctx, address worker) internal {
         TaskAllocation storage allocation = _s().taskAllocations[taskId];
-        if (allocation.status != HookStatus.Reserved || allocation.manager != ctx.requester) return;
+        if (allocation.status != HookStatus.Reserved || allocation.requester != ctx.requester) return;
         emit ForfeitReservationRetained(taskId, allocation.allocationId, worker);
     }
 
@@ -487,13 +504,15 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
         ITMPCore.Verdict memory verdict
     ) private {
         if (!verdict.issued) revert VerdictNotIssued();
-        uint256 payoutPool = _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps);
         ITMPCore.Award[] memory awards = verdict.awards;
         uint256 count = awards.length;
+        // The count guard runs before the payout pool is read, so an oversized verdict releases the
+        // sponsorship without spending more of the hook's gas first.
         if (count > MAX_AWARDS) {
             _releaseForAwardOverflow(taskId, allocation, count);
             return;
         }
+        uint256 payoutPool = _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps);
         bytes32 digest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdict.verdictType, awards);
 
         if (allocation.status == HookStatus.CompletionCommitted) {
@@ -555,11 +574,15 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
     ///      as issued (its type and awards, against the same native pool), so a PARTIAL verdict
     ///      scales the sponsorship exactly as it would have at checkComplete. Without a stored
     ///      verdict the sole worker is paid the accepted price (stakeAmount), as an APPROVE.
-    function _reconcileUncommittedAuction(bytes32 taskId, TaskAllocation storage allocation, ITMPCore.Task memory task)
+    function _reconcileUncommitted(bytes32 taskId, TaskAllocation storage allocation, ITMPCore.Task memory task)
         private
         returns (HookStatus)
     {
         ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
+        // Nothing to rebuild without a stored verdict, unless it is an auction with a worker.
+        if (!verdict.issued && !(task.mode == TMP_AUCTION && task.worker != address(0))) {
+            revert AwardsRequired(taskId);
+        }
         ITMPCore.VerdictType verdictType = ITMPCore.VerdictType.APPROVE;
         ITMPCore.Award[] memory awards;
         if (verdict.issued) {
@@ -594,7 +617,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
         uint256 payoutPool
     ) private {
         uint256 count = awards.length;
-        // Only ever called from `_reconcileUncommittedAuction`, which releases an oversized stored
+        // Only ever called from `_reconcileUncommitted`, which releases an oversized stored
         // verdict through `_releaseForAwardOverflow` first, so `count` never exceeds `MAX_AWARDS`.
         allocation.verdictType = verdictType;
         allocation.awardsDigest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdictType, awards);
@@ -743,7 +766,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
     {
         TaskAllocation storage allocation = _s().taskAllocations[taskId];
         if (
-            allocation.status == HookStatus.None || allocation.manager != ctx.requester || ctx.taskId != taskId
+            allocation.status == HookStatus.None || allocation.requester != ctx.requester || ctx.taskId != taskId
                 || ctx.currentState != expected
         ) return;
         if (allocation.status == HookStatus.Released || allocation.status == HookStatus.DefaultedByOwner) return;
@@ -824,7 +847,14 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
         returns (TaskAllocation storage allocation)
     {
         allocation = _requireAllocation(taskId);
-        if (ctx.taskId != taskId || ctx.requester != allocation.manager) revert InvalidHookContext(taskId);
+        if (ctx.taskId != taskId || ctx.requester != allocation.requester) revert InvalidHookContext(taskId);
+    }
+
+    /// @dev Who a funded task charges: the account that actually created it. See
+    ///      `SponsoredTaskHook._chargedManager`.
+    function _chargedManager(bytes32 taskId, address requester) private view returns (address) {
+        address creator = ITMPProject(diamond).taskCreatedBy(taskId);
+        return creator == address(0) ? requester : creator;
     }
 
     /// @dev Inlines what `SponsoredTaskTerms.currentHash`/`.hash` used to do, rather than calling
@@ -873,7 +903,33 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, OwnableUpgradeab
             tagsHash: keccak256(abi.encode(ctx.tags)),
             hooksHash: keccak256(abi.encode(hooks))
         });
-        return keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms));
+        return keccak256(
+            abi.encode(
+                SponsoredTaskTerms.TERMS_HASH_TYPEHASH,
+                keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms)),
+                _settlementTermsHash(market, taskId)
+            )
+        );
+    }
+
+    /// @dev The second half of the terms commitment: the task's settlement policy as stored by the
+    ///      Diamond. See `SponsoredTaskTerms.SETTLEMENT_TERMS_TYPEHASH`.
+    function _settlementTermsHash(ITMPDiamond market, bytes32 taskId) private view returns (bytes32) {
+        // The Diamond returns TaskTerms as 14 static words (version, stakeRequired, stakeBps, then the
+        // settlement terms). Words 3 to 13 are exactly the settlement fields, in the order of
+        // SETTLEMENT_TERMS_TYPEHASH, so they are hashed from the raw return data: decoding the whole
+        // struct would only add range checks (and bytes) for values the Diamond itself produced.
+        (bool ok, bytes memory ret) = address(market).staticcall(abi.encodeCall(ITMPDiamond.getTaskTerms, (taskId)));
+        if (!ok || ret.length != 14 * 32) revert InvalidHookContext(taskId);
+        bytes memory data = new bytes(12 * 32);
+        bytes32 typehash = SponsoredTaskTerms.SETTLEMENT_TERMS_TYPEHASH;
+        assembly ("memory-safe") {
+            mstore(add(data, 32), typehash)
+            for { let i := 0 } lt(i, 11) { i := add(i, 1) } {
+                mstore(add(data, add(64, mul(i, 32))), mload(add(ret, add(128, mul(i, 32)))))
+            }
+        }
+        return keccak256(data);
     }
 
     // -------------------------------------------------------------------------

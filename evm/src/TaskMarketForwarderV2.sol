@@ -8,6 +8,10 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { IPGTRForwarder } from "./interfaces/IPGTRForwarder.sol";
 import { IPGTRPaymentForwarder } from "./interfaces/IPGTRPaymentForwarder.sol";
 
+interface IEscrowTokenSource {
+    function usdcToken() external view returns (address);
+}
+
 /**
  * @title TaskMarketForwarderV2
  * @notice PGTR forwarder for TaskMarket (ERC-8194) that also exposes the payment amount
@@ -42,11 +46,18 @@ contract TaskMarketForwarderV2 is IPGTRPaymentForwarder, ReentrancyGuard {
     error InvalidAddress();
     error NoActiveForwardedCall();
     error CalldataTooShort();
+    error TaskMarketNotContract();
+    error EscrowTokenMismatch();
 
     constructor(address _usdc, address _taskMarket, address _authorizedRelayer) {
         if (_usdc == address(0)) revert InvalidAddress();
         if (_taskMarket == address(0)) revert InvalidAddress();
         if (_authorizedRelayer == address(0)) revert InvalidAddress();
+        // A codeless destination would make every relay "succeed" while the pulled payment sits at
+        // an address nothing can read, and a token other than the diamond's escrow token would
+        // move funds the diamond never accounts for.
+        if (_taskMarket.code.length == 0) revert TaskMarketNotContract();
+        if (IEscrowTokenSource(_taskMarket).usdcToken() != _usdc) revert EscrowTokenMismatch();
         usdc = IERC20(_usdc);
         taskMarket = _taskMarket;
         authorizedRelayer = _authorizedRelayer;
@@ -103,7 +114,11 @@ contract TaskMarketForwarderV2 is IPGTRPaymentForwarder, ReentrancyGuard {
      * @param paymentAmount   USDC amount to pull from msg.sender into TaskMarket escrow.
      *                        Pass 0 for operations with no payment (e.g. submitWork).
      * @param validBefore     Unix timestamp after which this receipt is invalid.
-     * @param receiptNonce    Unique bytes32 per (pgtrSender, operation) to prevent replay.
+     * @param receiptNonce    Unique bytes32 per (pgtrSender, operation). The consumed-receipt key is the
+     *                        whole tuple (chain id, actor, amount, nonce, validBefore, target, selector),
+     *                        so a nonce only blocks an exact repeat of the same receipt. The relayer must
+     *                        keep nonces unique per operation, since the same nonce with a different
+     *                        amount or validBefore is a different receipt.
      * @param data            ABI-encoded calldata for the TaskMarket function.
      */
     function relay(

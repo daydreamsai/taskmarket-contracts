@@ -27,6 +27,26 @@ contract MockTaskmarketForSponsoredTask {
     mapping(bytes32 => address[]) private _hooks;
     mapping(bytes32 => bytes32[]) private _tags;
     mapping(bytes32 => address) private _paymentTokens;
+    mapping(bytes32 => ITMPCore.TaskTerms) private _terms;
+    mapping(bytes32 => address) private _creators;
+
+    /// @dev Models a project task created by an operator: `taskCreatedBy` reports `creator` while
+    ///      the task's requester stays whoever `primeTask` named.
+    function setCreator(bytes32 taskId, address creator) external {
+        _creators[taskId] = creator;
+    }
+
+    function taskCreatedBy(bytes32 taskId) external view returns (address) {
+        return _creators[taskId];
+    }
+
+    function setTaskTerms(bytes32 taskId, ITMPCore.TaskTerms calldata terms) external {
+        _terms[taskId] = terms;
+    }
+
+    function getTaskTerms(bytes32 taskId) external view returns (ITMPCore.TaskTerms memory) {
+        return _terms[taskId];
+    }
 
     function primeTask(
         bytes32 taskId,
@@ -284,6 +304,60 @@ contract SponsoredTaskHookTest is Test {
         market.setReward(TASK_ID, NATIVE_REWARD + 1);
         bytes32 changed = hook.currentTaskTermsHash(TASK_ID);
         assertTrue(original != changed);
+    }
+
+    function testTaskTermsCommitmentBindsSettlementPolicy() external {
+        bytes32 original = hook.currentTaskTermsHash(TASK_ID);
+        ITMPCore.TaskTerms memory terms;
+        terms.reviewWindowSecs = 3 days;
+        market.setTaskTerms(TASK_ID, terms);
+        bytes32 withReview = hook.currentTaskTermsHash(TASK_ID);
+        assertTrue(original != withReview);
+
+        terms.maxRevisions = 4;
+        market.setTaskTerms(TASK_ID, terms);
+        assertTrue(withReview != hook.currentTaskTermsHash(TASK_ID));
+
+        // A funding request committed to one settlement policy is rejected once it differs.
+        terms.reviewWindowSecs = 3 days;
+        terms.maxRevisions = 4;
+        market.setTaskTerms(TASK_ID, terms);
+        bytes memory hookData = _localHookData(TASK_ID);
+        terms.reviewWindowSecs = 1 days;
+        market.setTaskTerms(TASK_ID, terms);
+        vm.expectPartialRevert(SponsoredTaskHook.TaskTermsMismatch.selector);
+        market.callCheckFund(hook, TASK_ID, hookData);
+    }
+
+    /// A project operator creates a task whose requester of record is the project owner. The
+    /// sponsorship must spend the operator's manager allowance, never the owner's.
+    function testOperatorTaskChargesTheOperatorsAllowanceNotTheOwners() external {
+        address operator = address(0x0BE1);
+        vault.configureManager(operator, GROSS, true);
+        market.setCreator(TASK_ID, operator);
+        uint256 ownerRemaining = vault.managerRemaining(MANAGER);
+
+        _fundLocal();
+
+        SponsoredTaskTypes.Allocation memory reserved = _vaultAllocation(vault, TASK_ID);
+        assertEq(reserved.manager, operator);
+        assertEq(vault.managerRemaining(MANAGER), ownerRemaining, "owner allowance untouched");
+        assertEq(vault.managerRemaining(operator), 0, "operator allowance spent");
+
+        // The task's callbacks still arrive with the owner as requester and still bind.
+        ITMPCore.Award[] memory awards = _twoAwards(700_000, 300_000);
+        _commitAccepted(ITMPCore.VerdictType.APPROVE, awards);
+        hook.finalizeSettlement(TASK_ID, awards);
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHook.HookStatus.SettlementPrepared));
+    }
+
+    function testOperatorTaskWithoutAnActiveManagerAccountIsRefusedEvenIfTheOwnerHasAllowance() external {
+        address operator = address(0x0BE2);
+        market.setCreator(TASK_ID, operator);
+        bytes memory hookData = _localHookData(TASK_ID);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ManagerNotActive.selector, operator));
+        market.callCheckFund(hook, TASK_ID, hookData);
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHook.HookStatus.None));
     }
 
     function testManagerWithoutUsdcCanStillCreateATask() external {
@@ -626,6 +700,21 @@ contract SponsoredTaskHookTest is Test {
         SponsoredTaskTypes.Allocation memory settled = _vaultAllocation(vault, claimTaskId);
         assertEq(settled.distributedGross, GROSS);
         assertEq(settled.sponsoredTaskOutstanding, 9_950);
+    }
+
+    /// A verdict finalized after the task's expiry skips checkComplete in every mode, not only
+    /// auctions. A bounty accepted that way, with its stored verdict, must reconcile.
+    function testBountyAcceptedWithoutCheckCompleteReconcilesOnStoredVerdict() external {
+        _fundLocal();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        ITMPCore.Award[] memory awards = _twoAwards(700_000, 300_000);
+        market.setVerdict(TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, awards));
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHook.HookStatus.Reserved));
+
+        assertEq(uint8(hook.reconcile(TASK_ID)), uint8(SponsoredTaskHook.HookStatus.SettlementPrepared));
+        SponsoredTaskTypes.Allocation memory settled = _vaultAllocation(vault, TASK_ID);
+        assertEq(settled.distributedGross, GROSS);
+        assertEq(_allocationAwardCount(hook, TASK_ID), 2);
     }
 
     function testAcceptedMultiAwardWithoutStoredVerdictStillRequiresAwards() external {

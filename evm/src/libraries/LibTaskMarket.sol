@@ -5,6 +5,7 @@ import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
 import { LibGuards } from "./LibGuards.sol";
+import { LibTerms } from "./LibTerms.sol";
 import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibTaskMarket — evaluator configuration, appeal window and feedback gas helpers
@@ -76,6 +77,8 @@ library LibTaskMarket {
         if (evalCfg.evaluator != address(0)) revert ITMPCore.EvaluatorAlreadyAssigned();
         if (cfg.evaluatorFeeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
         if (cfg.appealWindow < _minAppealWindowSecs(s)) revert ITMPCore.AppealWindowTooShort();
+        (, uint32 maxWindow,,) = LibTerms.bounds(s);
+        if (cfg.appealWindow > maxWindow) revert ITMPCore.AppealWindowTooLong();
         // Rev025: evaluatorTimeout is permissionless, so a very short window would let the worker
         // submit and time out the evaluator a block later, forfeiting the evaluator stake and
         // skipping evaluation. The floor is per chain and separate from termsBounds, which bounds

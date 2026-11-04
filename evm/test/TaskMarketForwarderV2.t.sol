@@ -21,6 +21,11 @@ contract PaymentProbe {
     uint256 public seenAmount;
     address public seenSender;
     bool public reentryBlocked;
+    address public usdcToken;
+
+    function setUsdcToken(address token) external {
+        usdcToken = token;
+    }
 
     function setForwarder(TaskMarketForwarderV2 f) external {
         forwarder = f;
@@ -131,8 +136,20 @@ contract TaskMarketForwarderV2Test is DiamondTestHelper {
         v2.pgtrPaymentAmount();
     }
 
+    function test_RevertWhen_Deploy_TaskMarketHasNoCode() public {
+        vm.expectRevert(TaskMarketForwarderV2.TaskMarketNotContract.selector);
+        new TaskMarketForwarderV2(address(usdc), address(0xBEEF), server);
+    }
+
+    function test_RevertWhen_Deploy_TokenIsNotTheDiamondEscrowToken() public {
+        MockUSDC other = new MockUSDC();
+        vm.expectRevert(TaskMarketForwarderV2.EscrowTokenMismatch.selector);
+        new TaskMarketForwarderV2(address(other), address(market), server);
+    }
+
     function test_PaymentAmount_SetDuringRelay_ResetAfter_ReentryBlocked() public {
         PaymentProbe probe = new PaymentProbe();
+        probe.setUsdcToken(address(usdc));
         TaskMarketForwarderV2 f = new TaskMarketForwarderV2(address(usdc), address(probe), address(probe));
         probe.setForwarder(f);
         usdc.mint(address(probe), STAKE);

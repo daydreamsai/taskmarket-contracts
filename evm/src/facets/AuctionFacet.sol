@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHook } from "../interfaces/ITMPHook.sol";
@@ -32,7 +33,7 @@ contract AuctionFacet {
     /// @param price  Bid price in USDC base units (must be <= maxPrice)
     function submitBid(bytes32 taskId, uint256 price) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -40,6 +41,7 @@ contract AuctionFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        LibProject.requireNotActingParty(s, taskId, worker);
         if (task.mode != AUCTION) revert ITMPCore.NotAnAuctionTask();
         if (!(auctionCfg.auctionSubtype == AUCTION_ENGLISH || auctionCfg.auctionSubtype == AUCTION_REVERSE_ENGLISH)) {
             revert ITMPCore.NotABidAuction();
@@ -74,7 +76,7 @@ contract AuctionFacet {
     /// @param taskId Task identifier
     function selectLowestBidder(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -109,7 +111,7 @@ contract AuctionFacet {
     /// @param price  Accepted price in USDC base units (must be <= task maxPrice)
     function acceptAuction(bytes32 taskId, uint256 price) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -117,6 +119,7 @@ contract AuctionFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        LibProject.requireNotActingParty(s, taskId, worker);
         if (task.mode != AUCTION) revert ITMPCore.NotAnAuctionTask();
         if (!(auctionCfg.auctionSubtype == AUCTION_DUTCH || auctionCfg.auctionSubtype == AUCTION_REVERSE_DUTCH)) {
             revert ITMPCore.NotAClockPriceAuction();

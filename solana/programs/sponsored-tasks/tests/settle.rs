@@ -523,3 +523,94 @@ fn award_leaf_and_proof_match_the_shared_test_vector() {
         assert!(!verify_award_proof(&proof, &root, wrong));
     }
 }
+
+#[test]
+fn revoke_fails_when_the_vault_can_no_longer_back_the_restored_reservation() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let s = settler(&env);
+    let payer = env.payer.pubkey();
+    // Settling 100 of the 400 returns 300 to the available balance.
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(ROOT, 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    // Another task takes all of it.
+    env.send(
+        &[f.reserve_ix(&payer, &[&s], task_id(2), 900, manager(1))],
+        &[&s],
+    )
+    .unwrap();
+    let admin = env.admin.insecure_clone();
+    assert_error(
+        env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin]),
+        E::InsufficientAvailable,
+    );
+    let vault = env.vault(&f.vault);
+    assert_eq!((vault.total_reserved, vault.total_settled), (900, 100));
+    assert_eq!(env.reservation(&r).state, ReservationState::Settled);
+}
+
+#[test]
+fn revoke_fails_when_the_manager_allowance_was_lowered_after_settling() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let s = settler(&env);
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(ROOT, 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    // The sponsor lowers the allowance to what the manager has spent.
+    let sponsor = f.sponsor.insecure_clone();
+    env.send(
+        &[f.set_managers_ix(
+            &sponsor.pubkey(),
+            vec![sponsored_tasks::state::ManagerInput {
+                key: manager(1),
+                cap: 100,
+                active: true,
+            }],
+        )],
+        &[&sponsor],
+    )
+    .unwrap();
+    let admin = env.admin.insecure_clone();
+    assert_error(
+        env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin]),
+        E::ManagerAllowanceExceeded,
+    );
+    assert_eq!(env.reservation(&r).state, ReservationState::Settled);
+}
+
+#[test]
+fn a_settlement_keeps_the_claim_delay_it_was_installed_with() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let s = settler(&env);
+    env.warp_to(10_000);
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(ROOT, 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    assert_eq!(env.reservation(&r).claim_delay_seconds, 3_600);
+
+    // Collapsing the delay afterwards does not shorten the root already installed.
+    let admin = env.admin.insecure_clone();
+    env.send(&[set_claim_delay_ix(&admin.pubkey(), 1)], &[&admin])
+        .unwrap();
+    assert_eq!(env.reservation(&r).claim_delay_seconds, 3_600);
+
+    // A revoked and re-installed root takes the delay in force at the new settle.
+    env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
+        .unwrap();
+    assert_eq!(env.reservation(&r).claim_delay_seconds, 0);
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(ROOT, 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    assert_eq!(env.reservation(&r).claim_delay_seconds, 1);
+}

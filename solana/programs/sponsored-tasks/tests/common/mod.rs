@@ -938,3 +938,60 @@ impl Env {
         }
     }
 }
+
+pub fn accept_admin_ix(pending_admin: &Pubkey) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: accounts::AcceptAdmin {
+            config: config_pda(),
+            pending_admin: *pending_admin,
+            event_authority: event_authority(),
+            program: ID,
+        }
+        .to_account_metas(None),
+        data: instruction::AcceptAdmin {}.data(),
+    }
+}
+
+pub fn set_fee_ix(admin: &Pubkey, fee_bps: u16, fee_recipient: Pubkey) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: admin_accounts(admin),
+        data: instruction::SetFee {
+            fee_bps,
+            fee_recipient,
+        }
+        .data(),
+    }
+}
+
+pub fn bind_payout_attested_ix(
+    payer: &Pubkey,
+    settlers: &[&Keypair],
+    task_chain_id: u64,
+    agent: [u8; 20],
+    payout: Pubkey,
+    nonce: u64,
+) -> Instruction {
+    let mut accounts = accounts::BindPayoutAttested {
+        config: config_pda(),
+        binding: payout_pda(task_chain_id, &agent),
+        payer: *payer,
+        system_program: anchor_lang::system_program::ID,
+        event_authority: event_authority(),
+        program: ID,
+    }
+    .to_account_metas(None);
+    accounts.extend(settler_metas(settlers));
+    Instruction {
+        program_id: ID,
+        accounts,
+        data: instruction::BindPayoutAttested {
+            task_chain_id,
+            agent,
+            payout,
+            nonce,
+        }
+        .data(),
+    }
+}

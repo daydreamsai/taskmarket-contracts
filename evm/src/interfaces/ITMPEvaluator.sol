@@ -41,9 +41,9 @@ interface ITMPEvaluator is IERC165 {
 
     /// @notice Assign an evaluator to an open task.
     ///         Only the requester may call this, only while the task is Open.
-    ///         If stakeAmount > 0, the contract pulls that amount from the requester
-    ///         via transferFrom at assignment time. The requester must have approved
-    ///         the contract for at least stakeAmount before calling.
+    ///         The stake is not pulled by this contract: it arrives with the payment the calling
+    ///         forwarder relays for this call, which must equal stakeAmount (otherwise the call
+    ///         reverts). For a project task the stake is drawn from the project's pool instead.
     ///         The stake is returned to the evaluator upon calling evaluate(), or
     ///         forfeited to the fee recipient if evaluatorTimeout() is called.
     ///         Rev025: reverts EvaluationWindowTooShort when evaluationWindowSecs is below
@@ -81,7 +81,8 @@ interface ITMPEvaluator is IERC165 {
     /// @notice Finalize the verdict after the appeal window has expired.
     ///         Anyone may call this once block.timestamp >= appeal deadline.
     ///         APPROVE/PARTIAL: pays workers per stored awards, transitions to Accepted.
-    ///         REJECT: refunds requester, reopens task (transitions to Open).
+    ///         REJECT: pays the evaluator fee, refunds the remainder to the requester and cancels the
+    ///         task (terminal Cancelled, as cancelTask does); it is not reopened.
     function finalizeVerdict(bytes32 taskId) external;
 
     /// @notice Resolve a disputed task.

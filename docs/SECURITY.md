@@ -157,8 +157,10 @@ reviewers do not assume the contracts enforce them.
 
 `TaskMarketForwarder.relay` reverts unless `msg.sender == authorizedRelayer` (immutable, set at
 construction). It checks receipt expiry (`validBefore`) and replay (`consumedReceipts`, keyed on
-chain id, actor, amount, nonce, target and selector), pulls `paymentAmount` USDC from the relayer
+chain id, actor, amount, nonce, `validBefore`, target and selector), pulls `paymentAmount` USDC from the relayer
 into the diamond, and records `pgtrSenderAddr` as the actor the diamond reads via `pgtrSender()`.
+The nonce alone is not the replay key: the same nonce with a different amount or `validBefore` is a
+different receipt, so the relayer must keep nonces unique per operation.
 
 It verifies no user signature. Users are authenticated off-chain: the relayer accepts a request
 only after the user has paid for it (an x402 payment from the user's wallet), and it then relays

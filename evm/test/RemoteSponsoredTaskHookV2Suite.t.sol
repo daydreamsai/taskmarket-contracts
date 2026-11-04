@@ -56,7 +56,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
         address[] memory settlers = new address[](1);
         settlers[0] = vm.addr(SETTLER_KEY);
-        settler = new SponsoredTaskSettler(address(this), settlers, 1);
+        settler = new SponsoredTaskSettler(address(this), settlers, 1, registry);
         SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(settler),
             address(feePolicy),
@@ -256,6 +256,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         vm.chainId(REMOTE_CHAIN_ID);
         SponsoredTaskSettler.ReserveRequest memory r = SponsoredTaskSettler.ReserveRequest({
             vault: c.vault,
+            vaultId: c.vaultId,
             allocationId: c.allocationId,
             taskChainId: TASK_CHAIN_ID,
             taskId: TASK_ID,
@@ -388,6 +389,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         vm.chainId(REMOTE_CHAIN_ID);
         SponsoredTaskSettler.ReserveRequest memory r = SponsoredTaskSettler.ReserveRequest({
             vault: c.vault,
+            vaultId: c.vaultId,
             allocationId: c.allocationId,
             taskChainId: TASK_CHAIN_ID,
             taskId: TASK_ID,

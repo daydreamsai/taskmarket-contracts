@@ -24,6 +24,7 @@ contract DeployRemoteSponsoredTaskHook is Script {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
+        require(diamond.code.length != 0, "Remote hook: diamond must be a contract");
         address admin = vm.envAddress("FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN");
         require(admin.code.length != 0, "Remote hook: admin must be a contract");
         require(admin != deployer, "Remote hook: admin must not be the deployer");

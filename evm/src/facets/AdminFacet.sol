@@ -206,7 +206,7 @@ contract AdminFacet is Initializable {
         LibEscrow.requireSolvent(s);
     }
 
-    /// @notice Mark the backfill complete once the runbook has reconciled the surplus against the
+    /// @notice Mark the backfill complete once the owner has reconciled the surplus against the
     ///         escrow monitor (owner only). Opens the surplus sweep; backfillLiabilities stays
     ///         open for a task the backfill missed.
     function completeLiabilities() external onlyOwner {

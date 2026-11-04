@@ -204,6 +204,11 @@ contract CoreFacet {
         }
         if (newExpiryTime != 0) {
             if (newExpiryTime <= block.timestamp) revert ITMPCore.ExpiryMustBeInFuture();
+            // Rev028: the creation cap on task duration holds for an edit too, so a requester cannot
+            // push expiry far out after a worker has claimed or overflow the settlement sums.
+            if (newExpiryTime > block.timestamp + LibTaskCreation.MAX_TASK_DURATION) {
+                revert ITMPCore.DurationTooLong();
+            }
             // Rev027: a project task's expiry may not be extended past the project's end date
             // plus its task grace period, nor at all once the project's pool has settled.
             if (newExpiryTime > originalExpiryTime) LibProject.requireExtensionAllowed(s, taskId, newExpiryTime);
@@ -212,6 +217,13 @@ contract CoreFacet {
         if (newBidDeadline != 0 && task.mode == AUCTION) {
             if (newBidDeadline <= block.timestamp) revert ITMPCore.BidDeadlineMustBeInFuture();
             s.taskAuctionConfigs[taskId].bidDeadline = newBidDeadline;
+        }
+        // Rev028: bidding must close before the task expires. Creation enforces this; an edit
+        // to either value must keep it, or the auction outlives the task and cannot pick a winner.
+        if (task.mode == AUCTION && (newBidDeadline != 0 || newExpiryTime != 0)) {
+            if (s.taskAuctionConfigs[taskId].bidDeadline >= task.expiryTime) {
+                revert ITMPCore.BidDeadlineAfterExpiry();
+            }
         }
         if (newPitchDeadline != 0 && task.mode == PITCH) {
             if (newPitchDeadline <= block.timestamp) revert ITMPCore.PitchDeadlineMustBeInFuture();

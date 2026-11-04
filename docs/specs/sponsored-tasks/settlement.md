@@ -91,6 +91,23 @@ sets it with `set_claim_delay` (open while paused; zero and values above `i64::M
 only a `Config` written before the field existed can hold, reads as that default. The field is
 appended after every earlier `Config` field so the existing layout is unchanged.
 
+`settle` copies the delay in force into the reservation (`Reservation.claim_delay_seconds`), and
+claims and `claim_fee` wait that recorded delay. A later `set_claim_delay` therefore applies to
+settlements installed after it and never shortens the window of a root already installed;
+`revoke_settlement` clears the recorded delay with the root.
+
+`revoke_settlement` restores the reservation to `Reserved`, and the restore must be backed: it fails
+with `InsufficientAvailable` unless the vault's tokens still cover every live reservation plus the
+unclaimed awards after the restore (settling returned the unawarded remainder to the available
+balance, and other reservations may have taken it), and with `ManagerAllowanceExceeded` when the
+manager's cap is below its reserved plus spent amounts after the restore. A failed revoke leaves
+the settlement installed and claimable once the delay passes, so the admin must act inside the
+claim delay. When the solvency check fails, the admin asks the sponsor to `fund` the vault by the
+shortfall (or to raise the manager's cap, for `ManagerAllowanceExceeded`), or has the settlers
+`release` other unsettled reservations to free backing, and then calls `revoke_settlement` again.
+If that cannot happen before the delay ends, the admin pauses the program, which blocks `claim`,
+while the room is made; `revoke_settlement` itself needs no pause.
+
 `revoke_settlement` works throughout the delay, whether or not the program is paused. It clears
 `root` and `settled_at` and returns the reservation to `Reserved`, so a revoked root can never be
 claimed against: a later claim fails on the reservation state, and a corrected root starts a new
@@ -131,7 +148,8 @@ program pays only the token account owned by the address in the worker's `Payout
 the worker signed for (see [`payout-binding.md`](payout-binding.md)); the relayer cannot choose
 the destination.
 
-**Fee.** Fee terms are global in `Config` and read at settle. The fee recipient is read from
-`Config` at `claim_fee`, so rotating it redirects unpaid fees. The fee is carved from the awarded
+**Fee.** Fee terms are global in `Config` and read at settle. The admin rotates the basis points
+and the recipient with `set_fee` (open while paused). The fee recipient is read from `Config` at
+`claim_fee`, so rotating it redirects unpaid fees. The fee is carved from the awarded
 gross and counted in `total_settled` with the net awards, so it stays backed by the vault's
 tokens until `claim_fee` pays it.

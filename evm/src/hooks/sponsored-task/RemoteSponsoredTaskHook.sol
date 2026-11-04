@@ -3,10 +3,14 @@ pragma solidity ^0.8.24;
 
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    Ownable2StepUpgradeable
+} from "openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol";
 import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../../interfaces/ITMPDiamond.sol";
+import { ITMPProject } from "../../interfaces/ITMPProject.sol";
 import { TMP_AUCTION } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHook } from "../base/BaseTMPHook.sol";
 import { SponsoredTaskSettlement } from "./libraries/SponsoredTaskSettlement.sol";
@@ -27,7 +31,7 @@ import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
 ///      Creating a task charges no fee; the one-time fee is paid when the remote vault is created.
 ///
 ///      UUPS-upgradeable with fixed-slot storage, the same pattern `SponsoredTaskHook` uses.
-contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgradeable, UUPSUpgradeable {
+contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, Ownable2StepUpgradeable, UUPSUpgradeable {
     uint8 public constant HOOK_DATA_VERSION = 1;
     /// @dev Same gas-safety bound as `SponsoredTaskHook.MAX_AWARDS`: the completion commitment loops
     ///      over awards inside the Diamond's fixed hook gas stipend.
@@ -72,6 +76,11 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
         address feeRecipient;
         uint256 grossAmount;
         bytes32 termsHash;
+        /// @dev Rev028: the task's requester of record. `manager` is the account the remote vault
+        ///      charges, which differs from it for a project task an operator created. Appended
+        ///      last; zero on a commitment recorded before this field existed, where the two were
+        ///      equal.
+        address requester;
     }
 
     struct Outcome {
@@ -118,6 +127,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     error ZeroAddress();
     error InvalidContract(address target);
 
+    error OwnershipRenunciationDisabled();
     event RemoteSponsoredTaskCommitted(
         bytes32 indexed taskId,
         bytes32 indexed vaultId,
@@ -175,6 +185,12 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner { }
+
+    /// @dev Ownership moves in two steps and is never renounced: a one-step transfer to a wrong
+    ///      address, or a renounce, would permanently lose upgrade authority.
+    function renounceOwnership() public pure override {
+        revert OwnershipRenunciationDisabled();
+    }
 
     // ---------------------------------------------------------------------------------------------
     // Views
@@ -254,7 +270,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
         ) return o.status;
 
         ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
-        if (task.id != taskId || task.requester != c.manager) revert InvalidHookContext(taskId);
+        if (task.id != taskId || task.requester != _requesterOf(c)) revert InvalidHookContext(taskId);
 
         if (task.status == ITMPCore.TaskStatus.Cancelled || task.status == ITMPCore.TaskStatus.Expired) {
             _commitRelease(taskId);
@@ -275,10 +291,15 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
             return o.status;
         }
 
-        // An accepted auction with no completion commitment (a verdict finalized after expiry
-        // skips the check hooks): commit what checkComplete would have committed.
-        if (o.status == HookStatus.Committed && task.mode == TMP_AUCTION && task.worker != address(0)) {
+        // An accepted task with no completion commitment, in any mode (a verdict finalized after
+        // expiry skips the check hooks): commit what checkComplete would have committed. A stored
+        // evaluator verdict is used as issued; an auction with none pays its sole worker the
+        // accepted price. Any other mode with no verdict has nothing to rebuild.
+        if (o.status == HookStatus.Committed) {
             ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
+            if (!verdict.issued && (task.mode != TMP_AUCTION || task.worker == address(0))) {
+                revert AwardsRequired(taskId);
+            }
             ITMPCore.VerdictType verdictType = ITMPCore.VerdictType.APPROVE;
             ITMPCore.Award[] memory awards;
             if (verdict.issued) {
@@ -328,7 +349,8 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
         }
         _s().taskByCommitment[key] = taskId;
 
-        _recordCommitment(taskId, ctx.requester, request);
+        _recordCommitment(taskId, _chargedManager(taskId, ctx.requester), request);
+        _s().commitments[taskId].requester = ctx.requester;
         return true;
     }
 
@@ -347,7 +369,8 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
             feeBps: request.feeBps,
             feeRecipient: request.feeRecipient,
             grossAmount: request.grossAmount,
-            termsHash: request.taskTermsHash
+            termsHash: request.taskTermsHash,
+            requester: address(0) // set by _checkFund; see Commitment.requester
         });
         _s().outcomes[taskId].status = HookStatus.Committed;
         emit RemoteSponsoredTaskCommitted(
@@ -394,7 +417,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
         override
     {
         Commitment storage c = _s().commitments[taskId];
-        if (c.manager == address(0) || c.manager != ctx.requester) return;
+        if (c.manager == address(0) || _requesterOf(c) != ctx.requester) return;
         if (_s().outcomes[taskId].status == HookStatus.Committed) _commitCompletion(taskId, ctx, verdict);
     }
 
@@ -408,7 +431,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
 
     function _onForfeit(bytes32 taskId, ITMPCore.TaskContext calldata ctx, address worker) internal override {
         Commitment storage c = _s().commitments[taskId];
-        if (_s().outcomes[taskId].status != HookStatus.Committed || c.manager != ctx.requester) return;
+        if (_s().outcomes[taskId].status != HookStatus.Committed || _requesterOf(c) != ctx.requester) return;
         emit ForfeitReservationRetained(taskId, c.allocationId, worker);
     }
 
@@ -420,9 +443,20 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
         private
     {
         if (!verdict.issued) revert VerdictNotIssued();
+        Outcome storage o = _s().outcomes[taskId];
+        // The award-count guard runs on the calldata length before the payout pool is read or the
+        // awards are copied to memory, so an oversized verdict cannot spend the hook's gas stipend
+        // first and leave the sponsorship unreleased.
+        if (o.status == HookStatus.AwardCountExceeded) return;
+        if (o.status == HookStatus.Committed && verdict.awards.length > MAX_AWARDS) {
+            o.status = HookStatus.AwardCountExceeded;
+            emit SponsoredTaskUnsettleableAwardCount(
+                taskId, _s().commitments[taskId].allocationId, verdict.awards.length
+            );
+            return;
+        }
         uint256 pool = _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps);
         ITMPCore.Award[] memory awards = verdict.awards;
-        Outcome storage o = _s().outcomes[taskId];
         if (o.status == HookStatus.CompletionCommitted) {
             bytes32 digest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdict.verdictType, awards);
             if (
@@ -527,7 +561,7 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
         private
     {
         Commitment storage c = _s().commitments[taskId];
-        if (c.manager == address(0) || c.manager != ctx.requester || ctx.taskId != taskId) return;
+        if (c.manager == address(0) || _requesterOf(c) != ctx.requester || ctx.taskId != taskId) return;
         if (ctx.currentState != expected) return;
         HookStatus status = _s().outcomes[taskId].status;
         if (status != HookStatus.Committed && status != HookStatus.CompletionCommitted) return;
@@ -578,7 +612,25 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
 
     function _requireMatchingCommitment(bytes32 taskId, ITMPCore.TaskContext calldata ctx) private view {
         Commitment storage c = _requireCommitment(taskId);
-        if (ctx.taskId != taskId || ctx.requester != c.manager) revert InvalidHookContext(taskId);
+        if (ctx.taskId != taskId || ctx.requester != _requesterOf(c)) revert InvalidHookContext(taskId);
+    }
+
+    /// @dev The task's requester of record. `manager` is who the remote vault charges, which for a
+    ///      project task created by an operator is the operator, not the requester. A commitment
+    ///      recorded before `requester` existed has it zero, and there the two were the same.
+    function _requesterOf(Commitment storage c) private view returns (address) {
+        address requester = c.requester;
+        return requester == address(0) ? c.manager : requester;
+    }
+
+    /// @dev Who a funded task charges: the account that actually created it. See
+    ///      `SponsoredTaskHook._chargedManager`.
+    function _chargedManager(bytes32 taskId, address requester) private view returns (address) {
+        try ITMPProject(diamond).taskCreatedBy(taskId) returns (address creator) {
+            return creator == address(0) ? requester : creator;
+        } catch {
+            return requester;
+        }
     }
 
     /// @dev The same inline terms hash as `SponsoredTaskHook._currentTermsHash`; see its comment on
@@ -620,6 +672,32 @@ contract RemoteSponsoredTaskHook is BaseTMPHook, ReentrancyGuard, OwnableUpgrade
             tagsHash: keccak256(abi.encode(ctx.tags)),
             hooksHash: keccak256(abi.encode(hooks))
         });
-        return keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms));
+        return keccak256(
+            abi.encode(
+                SponsoredTaskTerms.TERMS_HASH_TYPEHASH,
+                keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms)),
+                _settlementTermsHash(market, taskId)
+            )
+        );
+    }
+
+    /// @dev The second half of the terms commitment: the task's settlement policy as stored by the
+    ///      Diamond. See `SponsoredTaskTerms.SETTLEMENT_TERMS_TYPEHASH`.
+    function _settlementTermsHash(ITMPDiamond market, bytes32 taskId) private view returns (bytes32) {
+        ITMPCore.TaskTerms memory t = market.getTaskTerms(taskId);
+        SponsoredTaskTerms.SettlementTerms memory settlement = SponsoredTaskTerms.SettlementTerms({
+            penaltyTo: uint8(t.penaltyTo),
+            reviewWindowSecs: t.reviewWindowSecs,
+            decisionWindowSecs: t.decisionWindowSecs,
+            reopenExtensionSecs: t.reopenExtensionSecs,
+            releaseAllowed: uint8(t.releaseAllowed),
+            releaseGraceBps: t.releaseGraceBps,
+            rejectOutcome: uint8(t.rejectOutcome),
+            rejectFeeBps: t.rejectFeeBps,
+            maxRevisions: t.maxRevisions,
+            resolutionWindowSecs: t.resolutionWindowSecs,
+            acceptWindowSecs: t.acceptWindowSecs
+        });
+        return keccak256(abi.encode(SponsoredTaskTerms.SETTLEMENT_TERMS_TYPEHASH, settlement));
     }
 }

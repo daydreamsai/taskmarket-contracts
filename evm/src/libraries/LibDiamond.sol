@@ -42,6 +42,8 @@ library LibDiamond {
     error NotContractOwner(address caller, address owner);
     error NotPendingOwner(address caller, address pendingOwner);
     error InitFunctionReverted(address initAddress, bytes data);
+    /// @notice Rev028: init calldata was given with no init address to run it on.
+    error InitCalldataWithoutInit();
     error IncorrectFacetCutAction();
     error NoSelectorsGiven();
     error FunctionAlreadyExists(bytes4 selector);
@@ -203,7 +205,11 @@ library LibDiamond {
     }
 
     function _initializeDiamondCut(address _init, bytes memory _calldata) internal {
-        if (_init == address(0)) return;
+        if (_init == address(0)) {
+            // Calldata with nowhere to run it is a mistaken cut, not a no-op to skip silently.
+            if (_calldata.length != 0) revert InitCalldataWithoutInit();
+            return;
+        }
         enforceHasContractCode(_init);
         // solhint-disable-next-line avoid-low-level-calls
         (bool success, bytes memory error) = _init.delegatecall(_calldata);

@@ -8,8 +8,9 @@ import { DeployTarget } from "../lib/DeployTarget.sol";
 /// @title Rev026Backfill -- book every live pre-rev026 task after Rev026Upgrade
 /// @dev Not a RevNNNUpgrade step: it does not change diamondVersion and may be re-run, since
 ///      backfillLiabilities skips unknown, terminal and already-booked IDs. It never calls
-///      completeLiabilities; the runbook does, after reconciling the printed surplus
-///      against the escrow monitor. It also runs after completeLiabilities, which leaves
+///      completeLiabilities; the owner does, after reconciling the printed surplus
+///      against the escrow monitor (see docs/specs/erc8195/rev026-escrow-liabilities-and-solvency.md,
+///      "Reconciliation procedure"). It also runs after completeLiabilities, which leaves
 ///      backfillLiabilities open to book a live task the first run missed.
 /// @dev Required env vars:
 ///      FORGE_DEV_PRIVATE_KEY      -- owner key (must match Diamond owner)

@@ -90,6 +90,17 @@ payout to fail the solvency check. Keeping the backfill open lets the owner reco
 return its escrow to the diamond, then book it. The solvency check refuses the booking until the
 escrow is back.
 
+### Reconciliation procedure
+
+1. Export the IDs of every live (non-terminal) task from the indexer and run `Rev026Backfill`
+   with them. Repeat until it books nothing new; it may be re-run at any time.
+2. Read `balanceOf(diamond) - totalLiabilities` (the surplus, also printed by the script).
+3. Compare it with the off-chain escrow monitor's figure for money held outside any live task. A gap can also be legitimate surplus that is not task money, such as protocol fees waiting to be swept, if the monitor's figure leaves them out.
+   Any gap means a live task is missing from the export or a stray transfer sits in the diamond:
+   book the missing task (return its escrow first if a sweep already took it), then repeat from
+   step 2.
+4. Call `completeLiabilities` only when the surplus matches. It opens `sweepSurplus`.
+
 ### Forwarders must report the payment
 
 Every funding path (`createTask`, `assignEvaluator`, `claimTask` and an `updateTask` reward

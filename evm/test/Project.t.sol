@@ -539,6 +539,158 @@ contract ProjectTest is DiamondTestHelper {
         _assertBooked();
     }
 
+    // -------------------------------------------------------------------------
+    // Rev028: expiry bounds
+    // -------------------------------------------------------------------------
+
+    function _plainCreate(ITMPCore.TaskConfig memory cfg, ITMPCore.TaskEvaluatorConfig memory ev, uint256 payment)
+        internal
+        returns (bytes memory)
+    {
+        return _relay(
+            owner,
+            payment,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    cfg,
+                    ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    ev,
+                    _v2Terms()
+                )
+            )
+        );
+    }
+
+    function test_Rev028_ReservedAcceptanceClampedToProjectLatestExpiry() public {
+        uint64 endsAt = uint64(block.timestamp) + 8 days;
+        uint256 projectId = abi.decode(
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, 12 hours))),
+            (uint256)
+        );
+        bytes memory data = abi.encodeCall(
+            projects.createProjectTask,
+            (
+                projectId,
+                taskConfig(REWARD, DURATION, TMP_CLAIM),
+                ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                _v2Terms(),
+                worker
+            )
+        );
+        bytes32 taskId = abi.decode(_relay(owner, 0, data), (bytes32));
+        vm.warp(block.timestamp + 2 days);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        // now + 7 days = day 9, past the latest expiry of day 8.5.
+        assertEq(market.getTask(taskId).expiryTime, uint256(endsAt) + 12 hours);
+    }
+
+    function test_Rev028_ReviewWindowClampedToProjectLatestExpiry() public {
+        uint64 endsAt = uint64(block.timestamp) + 8 days;
+        uint256 projectId = abi.decode(
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, 12 hours))),
+            (uint256)
+        );
+        ITMPCore.TaskEvaluatorConfig memory ev = noEvaluatorConfig();
+        ev.evaluator = evaluator;
+        ev.evaluationWindow = 3 days;
+        ev.appealWindow = 1 days;
+        bytes32 taskId = abi.decode(
+            _relay(
+                owner,
+                0,
+                abi.encodeCall(
+                    projects.createProjectTask,
+                    (
+                        projectId,
+                        taskConfig(REWARD, 7 days, TMP_CLAIM),
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        ev,
+                        _v2Terms(),
+                        address(0)
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        vm.warp(block.timestamp + 6 days);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        // The review window ends on day 9, past the latest expiry of day 8.5: expiry stops at day 8.5.
+        assertEq(market.getTask(taskId).expiryTime, uint256(endsAt) + 12 hours);
+    }
+
+    function test_Rev028_RevisionThatCannotFitBeforeProjectExpiryReverts() public {
+        uint64 endsAt = uint64(block.timestamp) + 8 days;
+        uint256 projectId = abi.decode(
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, 12 hours))),
+            (uint256)
+        );
+        bytes32 taskId = abi.decode(
+            _relay(
+                owner,
+                0,
+                abi.encodeCall(
+                    projects.createProjectTask,
+                    (
+                        projectId,
+                        taskConfig(REWARD, 7 days, TMP_CLAIM),
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig(),
+                        _v2Terms(),
+                        address(0)
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        vm.warp(block.timestamp + 6 days);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        // The review window runs past the project's latest expiry, so a revision could not be delivered.
+        vm.expectRevert(ITMPCore.RevisionsExhausted.selector);
+        _relay(owner, 0, abi.encodeCall(market.requestRevision, (taskId)));
+    }
+
+    function test_Rev028_MaxDurationTaskStillSettles() public {
+        uint256 maxDuration = 365 days;
+        bytes32 taskId = abi.decode(
+            _plainCreate(taskConfig(REWARD, maxDuration, TMP_BOUNTY), noEvaluatorConfig(), REWARD), (bytes32)
+        );
+        vm.warp(block.timestamp + maxDuration + 1);
+        _relay(owner, 0, abi.encodeCall(market.refundExpired, (taskId, 0)));
+        assertEq(usdc.balanceOf(owner), REWARD);
+    }
+
+    function test_Rev028_DurationAboveMaxReverts() public {
+        vm.expectRevert(ITMPCore.DurationTooLong.selector);
+        _plainCreate(taskConfig(REWARD, 365 days + 1, TMP_BOUNTY), noEvaluatorConfig(), REWARD);
+    }
+
+    function test_Rev028_BidDeadlineAtOrAfterExpiryReverts() public {
+        vm.expectRevert(ITMPCore.BidDeadlineAfterExpiry.selector);
+        _plainCreate(
+            taskConfig(REWARD, DURATION, TMP_AUCTION, 0, DURATION, TMP_AUCTION_DUTCH), noEvaluatorConfig(), REWARD
+        );
+        _plainCreate(
+            taskConfig(REWARD, DURATION, TMP_AUCTION, 0, DURATION - 1, TMP_AUCTION_DUTCH), noEvaluatorConfig(), REWARD
+        );
+    }
+
+    function test_Rev028_AppealWindowAboveMaxReverts() public {
+        ITMPCore.TaskEvaluatorConfig memory ev = noEvaluatorConfig();
+        ev.evaluator = evaluator;
+        ev.evaluationWindow = 3 days;
+        ev.appealWindow = 31 days;
+        vm.expectRevert(ITMPCore.AppealWindowTooLong.selector);
+        _plainCreate(taskConfig(REWARD, DURATION, TMP_CLAIM), ev, REWARD);
+    }
+
     function _v2Terms() internal pure returns (ITMPCore.TaskTerms memory t) {
         t.version = 2;
     }

@@ -472,7 +472,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
             else if (kind == LibHooksV2.KIND_CANCEL) v1 = abi.encodeCall(ITMPHook.onCancel, (taskId, c));
             else if (kind == LibHooksV2.KIND_EXPIRE) v1 = abi.encodeCall(ITMPHook.onExpire, (taskId, c));
             else v1 = abi.encodeCall(ITMPHook.onForfeit, (taskId, c, who));
-            LibHooks._dispatchAfterHooksFullGas(hooks, v1);
+            // An expiry refund never depends on hook gas (rev028); the other exits keep the full-gas rule.
+            if (kind == LibHooksV2.KIND_EXPIRE) LibHooks._dispatchExpireHooksBestEffort(hooks, v1);
+            else LibHooks._dispatchAfterHooksFullGas(hooks, v1);
             return;
         }
         if (s.taskHooksV2[taskId].length == 0) return;

@@ -29,6 +29,9 @@ pub struct Config {
     /// Seconds after `settle` before `claim` and `claim_fee` pay against the installed root.
     /// Zero (unset) reads as `DEFAULT_CLAIM_DELAY_SECONDS`; `set_claim_delay` never stores zero.
     pub claim_delay_seconds: u64,
+    /// Key proposed by `set_admin`; becomes the admin when it signs `accept_admin`. Zero when
+    /// no rotation is pending.
+    pub pending_admin: Pubkey,
 }
 
 impl Config {
@@ -150,6 +153,9 @@ pub struct Reservation {
     pub bump: u8,
     /// Unix time `settle` installed `root`; zero while no root is installed.
     pub settled_at: i64,
+    /// Claim delay in force when `settle` installed `root`; later `set_claim_delay` calls do not
+    /// change it. Zero while no root is installed.
+    pub claim_delay_seconds: u64,
 }
 
 impl Reservation {

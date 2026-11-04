@@ -133,6 +133,7 @@ interface ITMPProject {
     error GrantAlreadyAccepted();
     error GrantRevoked();
     error GrantNotFound();
+    error GrantTermsMismatch(bytes32 expected, bytes32 actual);
     error OperatorCapExceeded(uint256 remaining, uint256 needed);
     /// @notice Only the diamond itself may call this function.
     error NotDiamond();
@@ -219,8 +220,10 @@ interface ITMPProject {
     function grantOperator(uint256 projectId, address operator, GrantTerms calldata terms) external;
 
     /// @notice The operator accepts its grant as recorded, which freezes the terms. The operator
-    ///         can spend only after this.
-    function acceptGrant(uint256 projectId) external;
+    ///         can spend only after this. `termsHash` is `keccak256(abi.encode(terms))` of the
+    ///         terms the operator reviewed; it must equal the stored terms, so terms the owner
+    ///         replaced after the operator read them cannot be accepted by mistake.
+    function acceptGrant(uint256 projectId, bytes32 termsHash) external;
 
     /// @notice The owner ends an operator's right to create tasks. What happens to the tasks it
     ///         already created follows the grant's revokeRemovesControl. Owner only.

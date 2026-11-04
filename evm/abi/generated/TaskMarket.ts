@@ -129,6 +129,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "InitCalldataWithoutInit",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InitFunctionReverted",
     "inputs": [
       {
@@ -2277,7 +2282,17 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "AppealWindowTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AppealWindowTooShort",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BidDeadlineAfterExpiry",
     "inputs": []
   },
   {
@@ -2303,6 +2318,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "DurationMustBeGreaterThanZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DurationTooLong",
     "inputs": []
   },
   {
@@ -5610,6 +5630,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "EmptyDeliverable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EmptyPitchHash",
     "inputs": []
   },
@@ -5646,6 +5671,11 @@ export const TaskMarketABI = [
         "name": "projectId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "termsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -6595,6 +6625,22 @@ export const TaskMarketABI = [
     "type": "error",
     "name": "GrantNotFound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GrantTermsMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "actual",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",

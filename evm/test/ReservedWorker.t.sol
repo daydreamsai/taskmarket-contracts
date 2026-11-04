@@ -653,6 +653,8 @@ contract ReservedWorkerTest is DiamondTestHelper {
 
     function test_Evaluator_OnlyBeforeTheClaim() public {
         bytes32 taskId = _reserved();
+        // Rev028: the evaluator is a term of the offer, frozen while the reservation is pending.
+        vm.expectRevert(ITMPCore.ReservationPending.selector);
         _relay(
             requester,
             0,
@@ -660,7 +662,6 @@ contract ReservedWorkerTest is DiamondTestHelper {
                 market.assignEvaluator, (taskId, evaluator, 0, 0, uint32(2 days), uint32(1 days), address(0))
             )
         );
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, evaluator, "assigned before the claim");
 
         bytes32 claimed = _reserved();
         _claim(claimed, worker, 0);

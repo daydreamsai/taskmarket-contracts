@@ -26,8 +26,11 @@ library LibPayout {
             if (amt == 0) continue;
             total += amt;
             totalFee += (amt * feeBps) / 10000;
-            s.workerStats[awards[i].worker].completedTasks++;
-            s.taskAwarded[taskId][awards[i].worker] = true;
+            // A worker named twice in one verdict completes the task once.
+            if (!s.taskAwarded[taskId][awards[i].worker]) {
+                s.workerStats[awards[i].worker].completedTasks++;
+                s.taskAwarded[taskId][awards[i].worker] = true;
+            }
         }
         if (totalFee > 0) s.totalFeesCollected += totalFee;
         transferAwards(s, taskId, requester, awards, feeBps, hookFeeBps, feeHook);

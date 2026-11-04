@@ -333,6 +333,56 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
         vault.configureManagerBySig(manager, 500e6, true, deadline, sig);
     }
 
+    function test_CancelOwnerSignaturesUpToRevokesFutureNonceSignatures() public {
+        uint256 deadline = vm.getBlockTimestamp() + 1 hours;
+        // Signed ahead for nonces 0 and 2, so the plain cancel could not revoke the second.
+        bytes memory first = _configureSig(ownerKey, manager, 500e6, true, 0, deadline);
+        bytes memory ahead = _configureSig(ownerKey, manager, 700e6, true, 2, deadline);
+
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit SponsoredTasksVaultV2.OwnerSignaturesCancelled(vaultOwner, 0, 3);
+        vm.prank(vaultOwner);
+        vault.cancelOwnerSignaturesUpTo(3);
+        assertEq(vault.ownerNonce(), 3);
+
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidOwnerSignature.selector);
+        vault.configureManagerBySig(manager, 500e6, true, deadline, first);
+
+        // The nonce-2 signature is also dead, because the vault is now past it.
+        vm.expectRevert(SponsoredTasksVaultV2.InvalidOwnerSignature.selector);
+        vault.configureManagerBySig(manager, 700e6, true, deadline, ahead);
+    }
+
+    function test_RevertWhen_CancelUpToDoesNotAdvanceTheNonce() public {
+        vm.startPrank(vaultOwner);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.OwnerNonceNotAdvanced.selector, 0, 0));
+        vault.cancelOwnerSignaturesUpTo(0);
+        vault.cancelOwnerSignaturesUpTo(2);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.OwnerNonceNotAdvanced.selector, 2, 2));
+        vault.cancelOwnerSignaturesUpTo(2);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_CancelUpToJumpsTooFar() public {
+        uint256 maxJump = vault.MAX_OWNER_NONCE_JUMP();
+        vm.startPrank(vaultOwner);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.OwnerNonceJumpTooLarge.selector, 0, maxJump + 1));
+        vault.cancelOwnerSignaturesUpTo(maxJump + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTasksVaultV2.OwnerNonceJumpTooLarge.selector, 0, type(uint256).max)
+        );
+        vault.cancelOwnerSignaturesUpTo(type(uint256).max);
+        vault.cancelOwnerSignaturesUpTo(maxJump);
+        vm.stopPrank();
+        assertEq(vault.ownerNonce(), maxJump);
+    }
+
+    function test_RevertWhen_NonOwnerCancelsSignaturesUpTo() public {
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer));
+        vault.cancelOwnerSignaturesUpTo(5);
+    }
+
     function test_RevertWhen_NonOwnerCancelsSignatures() public {
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer));

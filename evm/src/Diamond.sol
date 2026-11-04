@@ -20,13 +20,13 @@ contract Diamond {
         LibDiamond.diamondCut(_diamondCut, _init, _calldata);
     }
 
-    // Receive ETH (no function matched, no calldata)
-    receive() external payable { }
+    // Rev028: no receive() and a non-payable fallback. The diamond holds only USDC and no facet
+    // can disburse native ETH, so a call that carries value reverts rather than strands it.
 
     // Route all calls to the appropriate facet via delegatecall.
     // slither-disable-next-line delegatecall-loop
     // solhint-disable-next-line no-complex-fallback
-    fallback() external payable {
+    fallback() external {
         LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
         address facet = ds.selectorToFacetAndPosition[msg.sig].facetAddress;
         require(facet != address(0), "Diamond: function not found");

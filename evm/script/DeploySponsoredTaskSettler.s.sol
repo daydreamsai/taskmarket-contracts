@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
+import { ScriptBounds } from "./lib/ScriptBounds.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SponsoredTaskCreationFee } from "../src/hooks/sponsored-task/SponsoredTaskCreationFee.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
@@ -37,7 +38,9 @@ contract DeploySponsoredTaskSettler is Script {
         require(admin.code.length != 0, "Settler: admin must be a contract");
         require(admin != deployer, "Settler: admin must not be the deployer");
         address[] memory settlers = sortAddresses(vm.envAddress("FORGE_SPONSORED_TASK_SETTLER_ADDRESSES", ","));
-        uint8 threshold = uint8(vm.envOr("FORGE_SPONSORED_TASK_SETTLER_THRESHOLD", uint256(1)));
+        uint8 threshold = ScriptBounds.toUint8(
+            vm.envOr("FORGE_SPONSORED_TASK_SETTLER_THRESHOLD", uint256(1)), "FORGE_SPONSORED_TASK_SETTLER_THRESHOLD"
+        );
 
         IERC20 feeToken = IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS"));
         uint256 creationFee = vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000));
@@ -47,10 +50,12 @@ contract DeploySponsoredTaskSettler is Script {
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(deployer);
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(
             admin,
-            uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0))),
+            ScriptBounds.bps(
+                vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0)), "FORGE_SPONSORED_TASK_TOKEN_FEE_BPS"
+            ),
             vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", address(0))
         );
-        SponsoredTaskSettler settler = new SponsoredTaskSettler(admin, settlers, threshold);
+        SponsoredTaskSettler settler = new SponsoredTaskSettler(admin, settlers, threshold, registry);
         SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
             address(settler),
             address(feePolicy),

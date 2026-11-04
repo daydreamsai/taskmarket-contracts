@@ -211,7 +211,10 @@ contract ReleaseClaimTest is DiamondTestHelper {
     }
 
     function test_Release_NotClaimMode_Reverts() public {
-        bytes32 taskId = _create(TMP_PITCH, _terms(), address(0));
+        // Stake terms are valid on a Claim task only, so the Pitch task carries none.
+        ITMPCore.TaskTerms memory t;
+        t.version = 1;
+        bytes32 taskId = _create(TMP_PITCH, t, address(0));
         _expectRelayRevert(worker, abi.encodeCall(market.releaseClaim, (taskId)), ITMPCore.NotAClaimTask.selector);
     }
 

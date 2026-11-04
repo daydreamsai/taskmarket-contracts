@@ -33,10 +33,12 @@ instructions, every account constraint and PDA derivation, and the helpers they 
 | Instruction | Authority | Invariants to break |
 | --- | --- | --- |
 | `init_config` | program upgrade authority, once | Anyone other than the upgrade authority initializes `Config`; a second init; a settler set with duplicates, more than 5 keys or a threshold of 0 or above its size (`validate_settlers`); `fee_bps` above 10,000. |
-| `set_admin`, `set_settlers`, `pause`, `set_claim_delay` | admin | A non-admin changes any of them; a claim delay of zero is stored. |
+| `set_admin`, `set_settlers`, `pause`, `set_claim_delay`, `set_fee` | admin | A non-admin changes any of them; a claim delay of zero is stored; `fee_bps` above 10,000. |
+| `accept_admin` | proposed admin | Anyone but the key `set_admin` proposed takes the admin role; the role moves without the proposed key signing. |
 | `create_vault` | sponsor | A vault over a mint with a refused Token-2022 extension (below); a vault whose token account is not the `Vault` PDA's associated account; a collision between two sponsors' `vault_id`s. |
 | `fund` | anyone | The vault credits more than it received (`TransferAmountMismatch` must catch every shortfall); funding an exited vault. |
-| `set_managers` | sponsor | A manager's cap set below what it has reserved plus spent; more than 8 managers; a non-sponsor edits managers. |
+| `set_managers` | sponsor | A manager's cap set below what it has reserved plus spent; more than 8 managers unless an inactive manager with nothing reserved is replaced; a non-sponsor edits managers. |
+| `bind_payout_attested` | settler threshold | A binding written without the settler threshold; a replacement without a higher nonce. |
 | `reserve` | settler threshold | Reserving above the available balance or the manager's remaining allowance; a manager on another chain than the task (`ManagerChainMismatch`); a deadline in the past; two reservations for one task. |
 | `release` | settler threshold | Returning funds twice; releasing a settled reservation; acting across epochs. |
 | `settle` | settler threshold | A root whose totals exceed the reservation; a fee above `Config::fee_bps` of the distributed amount; inconsistent `settled_total`, `fee_total` and `distributed_gross`; a second settle; settling another vault's reservation or across an epoch. |

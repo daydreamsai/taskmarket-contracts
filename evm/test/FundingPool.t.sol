@@ -19,6 +19,12 @@ contract MockPoolDiamond {
         usdcToken = token_;
     }
 
+    bool public isSettling;
+
+    function setSettling(bool v) external {
+        isSettling = v;
+    }
+
     function setOwner(address owner_) external {
         owner = owner_;
     }
@@ -432,6 +438,38 @@ contract FundingPoolTest is FundingPoolBase {
     }
 
     // ------------------------------------------------------------ generation
+
+    /// @dev A direct fund inside a Diamond settlement is refused; creditFunding (the Diamond's own
+    ///      call) and funding outside a settlement are not.
+    function test_RevertWhen_Fund_WhileTheDiamondIsSettling() public {
+        diamond.setSettling(true);
+        usdc.mint(alice, 1e6);
+        vm.startPrank(alice);
+        usdc.approve(address(pools), 1e6);
+        vm.expectRevert(FundingPool.PoolSettling.selector);
+        pools.fund(pool, 1e6, address(0));
+        vm.stopPrank();
+        _creditFunding(pool, bob, 1e6);
+        diamond.setSettling(false);
+        _fund(pool, alice, 1e6);
+    }
+
+    /// @dev Dust: draining a pool to one base unit instead of nothing used to
+    ///      multiply the share supply by the funded amount each cycle until a credit overflowed
+    ///      and funding reverted for good. A value that small against the supply now starts a
+    ///      new generation too.
+    function test_DustLeft_NeverBricksFunding() public {
+        _spendDone(pool, BUDGET - 1);
+        for (uint256 i; i < 20; ++i) {
+            uint256 amount = 1000e6;
+            _fund(pool, alice, amount);
+            _spendDone(pool, amount);
+            assertEq(_info(pool).available + _info(pool).outstanding, 1, "one unit of dust stays");
+        }
+        assertGt(_info(pool).generation, 0, "the dust started new generations");
+        _fund(pool, bob, 5e6);
+        assertGt(pools.sharesOf(pool, bob), 0);
+    }
 
     function test_DrainAndRefill_NeverBricksFunding() public {
         _spendDone(pool, BUDGET);

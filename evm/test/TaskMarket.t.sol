@@ -1737,12 +1737,12 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(uint256(task.status), uint256(ITMPCore.TaskStatus.Expired));
     }
 
-    function test_RefundExpired_Auction_ClaimedNoDeliverable_ForfeitsEvaluatorStake() public {
+    function test_RefundExpired_Auction_ClaimedNoDeliverable_RefundsEvaluatorStake() public {
         // An evaluator can be assigned to an auction task while it's still Open (assignEvaluator
         // only requires TaskStatus.Open, not a particular mode). If the worker then claims the
         // auction but never submits, the task never reaches Review -- evaluate() never runs, so
-        // the evaluator's stake is never returned. The no-deliverable refund path must forfeit
-        // it (matching the existing Review-state precedent) instead of leaving it stranded.
+        // the evaluator's stake is never returned. The evaluator never had a deliverable to act
+        // on, so the refund path (rev028) returns the stake to the requester.
         uint256 stakeAmount = REWARD / 10;
         uint256 acceptPrice = 40 * 10 ** 6;
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
@@ -1767,17 +1767,17 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 feeRecipientBefore = usdc.balanceOf(feeRecipient);
 
         vm.expectEmit(true, true, false, true);
-        emit ITMPEvaluator.EvaluatorTimedOut(taskId, evaluator, stakeAmount);
+        emit ITMPEvaluator.EvaluatorStakeRefunded(taskId, requester, stakeAmount);
 
         market.refundExpired(taskId, 0);
 
         assertEq(usdc.balanceOf(worker1), worker1BalanceBefore, "worker must not be paid without a deliverable");
-        assertEq(usdc.balanceOf(requester), requesterBefore + REWARD, "requester must get the full reward back");
         assertEq(
-            usdc.balanceOf(feeRecipient),
-            feeRecipientBefore + stakeAmount,
-            "evaluator stake must be forfeited, not stranded"
+            usdc.balanceOf(requester),
+            requesterBefore + REWARD + stakeAmount,
+            "requester must get the reward and the evaluator stake back"
         );
+        assertEq(usdc.balanceOf(feeRecipient), feeRecipientBefore, "evaluator stake must not be forfeited");
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluatorStake, 0, "stake zeroed");
     }
 
@@ -2061,6 +2061,16 @@ contract TaskMarketTest is DiamondTestHelper {
         assertEq(market.getTask(taskId).expiryTime, newExpiry);
     }
 
+    function test_RevertWhen_UpdateTask_ExpiryBeyondTheDurationCap() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        vm.expectRevert(ITMPCore.DurationTooLong.selector);
+        _updateTask(taskId, requester, 0, 0, block.timestamp + 365 days + 1, 0, 0);
+        vm.expectRevert(ITMPCore.DurationTooLong.selector);
+        _updateTask(taskId, requester, 0, 0, type(uint256).max, 0, 0);
+        _updateTask(taskId, requester, 0, 0, block.timestamp + 365 days, 0, 0);
+        assertEq(market.getTask(taskId).expiryTime, block.timestamp + 365 days);
+    }
+
     function test_RevertWhen_UpdateTask_ExpiryInPast() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         vm.warp(block.timestamp + 1000);
@@ -2080,6 +2090,19 @@ contract TaskMarketTest is DiamondTestHelper {
         vm.warp(block.timestamp + 1000);
         vm.expectRevert(ITMPCore.BidDeadlineMustBeInFuture.selector);
         _updateTask(taskId, requester, 0, 0, 0, block.timestamp - 1, 0);
+    }
+
+    function test_RevertWhen_UpdateTask_BidDeadlineAtOrAfterExpiry() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_ENGLISH());
+        uint256 expiry = market.getTask(taskId).expiryTime;
+        vm.expectRevert(ITMPCore.BidDeadlineAfterExpiry.selector);
+        _updateTask(taskId, requester, 0, 0, 0, expiry, 0);
+    }
+
+    function test_RevertWhen_UpdateTask_ExpiryShortenedBelowBidDeadline() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 2 days, market.AUCTION_ENGLISH());
+        vm.expectRevert(ITMPCore.BidDeadlineAfterExpiry.selector);
+        _updateTask(taskId, requester, 0, 0, block.timestamp + 1 days, 0, 0);
     }
 
     function test_UpdateTask_PitchDeadline() public {
@@ -5514,7 +5537,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
     function test_RevertWhen_SubmitBid_LimitReached() public {
         bytes32 taskId =
-            _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 14 days, market.AUCTION_ENGLISH());
+            _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, DURATION - 1, market.AUCTION_ENGLISH());
         uint256 limit = market.MAX_BIDS_PER_TASK();
         // AppStorage is at keccak256("taskmarket.appstorage.v1"). taskBids is at offset 5 within
         // the struct. For mapping(bytes32 => Bid[]) at slot p, the array length for key k is at

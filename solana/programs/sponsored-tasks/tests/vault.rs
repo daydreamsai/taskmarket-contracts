@@ -76,24 +76,102 @@ fn init_config_runs_once() {
 }
 
 #[test]
-fn set_admin_rotates_admin() {
+fn set_admin_proposes_and_accept_admin_completes_the_rotation() {
     let mut env = Env::new();
     let admin = env.admin.insecure_clone();
     let next = Keypair::new();
     env.svm.airdrop(&next.pubkey(), 1_000_000_000).unwrap();
     env.send(&[set_admin_ix(&admin.pubkey(), next.pubkey())], &[&admin])
         .unwrap();
+    // Proposed only: the old admin still holds the role.
+    assert_eq!(env.config().admin, admin.pubkey());
+    assert_eq!(env.config().pending_admin, next.pubkey());
+    let proposed = env.events::<AdminProposed>();
+    assert_eq!(proposed[0].admin, admin.pubkey());
+    assert_eq!(proposed[0].pending_admin, next.pubkey());
+    env.send(&[pause_ix(&admin.pubkey(), true)], &[&admin])
+        .unwrap();
+    assert_error(
+        env.send(&[pause_ix(&next.pubkey(), false)], &[&next]),
+        E::NotAdmin,
+    );
+
+    env.send(&[accept_admin_ix(&next.pubkey())], &[&next])
+        .unwrap();
     assert_eq!(env.config().admin, next.pubkey());
+    assert_eq!(env.config().pending_admin, Pubkey::default());
     let events = env.events::<AdminChanged>();
     assert_eq!(events[0].previous, admin.pubkey());
     assert_eq!(events[0].admin, next.pubkey());
 
     assert_error(
-        env.send(&[pause_ix(&admin.pubkey(), true)], &[&admin]),
+        env.send(&[pause_ix(&admin.pubkey(), false)], &[&admin]),
         E::NotAdmin,
     );
-    env.send(&[pause_ix(&next.pubkey(), true)], &[&next])
+    env.send(&[pause_ix(&next.pubkey(), false)], &[&next])
         .unwrap();
+}
+
+#[test]
+fn accept_admin_needs_the_proposed_key() {
+    let mut env = Env::new();
+    let admin = env.admin.insecure_clone();
+    let intruder = env.settlers[0].insecure_clone();
+    // Nothing proposed: not even the zero key can accept.
+    assert_error(
+        env.send(&[accept_admin_ix(&intruder.pubkey())], &[&intruder]),
+        E::NotPendingAdmin,
+    );
+    let next = Keypair::new();
+    env.send(&[set_admin_ix(&admin.pubkey(), next.pubkey())], &[&admin])
+        .unwrap();
+    assert_error(
+        env.send(&[accept_admin_ix(&intruder.pubkey())], &[&intruder]),
+        E::NotPendingAdmin,
+    );
+    // A new proposal replaces the pending key.
+    let other = Keypair::new();
+    env.send(&[set_admin_ix(&admin.pubkey(), other.pubkey())], &[&admin])
+        .unwrap();
+    assert_error(
+        env.send(&[accept_admin_ix(&next.pubkey())], &[&next]),
+        E::NotPendingAdmin,
+    );
+    assert_eq!(env.config().admin, admin.pubkey());
+}
+
+#[test]
+fn set_fee_rotates_fee_and_recipient_for_the_admin_only() {
+    let mut env = Env::new();
+    let admin = env.admin.insecure_clone();
+    let recipient = Pubkey::new_unique();
+    env.send(&[set_fee_ix(&admin.pubkey(), 100, recipient)], &[&admin])
+        .unwrap();
+    let config = env.config();
+    assert_eq!((config.fee_bps, config.fee_recipient), (100, recipient));
+    let events = env.events::<FeeSet>();
+    assert_eq!(
+        (events[0].fee_bps, events[0].fee_recipient),
+        (100, recipient)
+    );
+
+    let intruder = env.settlers[0].insecure_clone();
+    assert_error(
+        env.send(
+            &[set_fee_ix(&intruder.pubkey(), 1, recipient)],
+            &[&intruder],
+        ),
+        E::NotAdmin,
+    );
+    assert_error(
+        env.send(&[set_fee_ix(&admin.pubkey(), 10_001, recipient)], &[&admin]),
+        E::InvalidFeeBps,
+    );
+    // Open while paused.
+    env.pause(true);
+    env.send(&[set_fee_ix(&admin.pubkey(), 0, recipient)], &[&admin])
+        .unwrap();
+    assert_eq!(env.config().fee_bps, 0);
 }
 
 #[test]
@@ -1124,4 +1202,189 @@ fn revoke_settlement_rejects_claimed_or_unsettled_or_non_admin() {
         env.send(&[f.revoke_ix(&settler.pubkey(), r)], &[&settler]),
         E::NotAdmin,
     );
+}
+
+#[test]
+fn set_managers_replaces_a_retired_manager_when_the_list_is_full() {
+    let mut env = Env::new();
+    let f = env.vault_fixture(SPL_TOKEN, 0);
+    let sponsor = f.sponsor.insecure_clone();
+    let full = (0..8).map(|n| input(manager(n), 1, true)).collect();
+    env.send(&[f.set_managers_ix(&sponsor.pubkey(), full)], &[&sponsor])
+        .unwrap();
+
+    // Every slot is active, so a ninth manager still does not fit.
+    assert_error(
+        env.send(
+            &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(8), 1, true)])],
+            &[&sponsor],
+        ),
+        E::TooManyManagers,
+    );
+
+    // Switching one off frees its slot for the next manager.
+    env.send(
+        &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(3), 1, false)])],
+        &[&sponsor],
+    )
+    .unwrap();
+    env.send(
+        &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(8), 1, true)])],
+        &[&sponsor],
+    )
+    .unwrap();
+    let managers = env.vault(&f.vault).managers;
+    assert_eq!(managers.len(), 8);
+    assert!(!managers.iter().any(|m| m.key == manager(3)));
+    assert!(managers.iter().any(|m| m.key == manager(8) && m.active));
+    let removed = env.events::<ManagerRemoved>();
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].manager, manager(3));
+}
+
+#[test]
+fn set_managers_keeps_a_retired_manager_that_still_has_a_reservation() {
+    let mut env = Env::new();
+    let (f, _r) = env.reserved_vault(100);
+    let sponsor = f.sponsor.insecure_clone();
+    let mut inputs: Vec<ManagerInput> = (2..9).map(|n| input(manager(n), 1, true)).collect();
+    inputs.insert(0, input(manager(1), 1_000, false));
+    env.send(&[f.set_managers_ix(&sponsor.pubkey(), inputs)], &[&sponsor])
+        .unwrap();
+    assert_error(
+        env.send(
+            &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(9), 1, true)])],
+            &[&sponsor],
+        ),
+        E::TooManyManagers,
+    );
+}
+
+#[test]
+fn create_vault_succeeds_when_the_token_account_already_exists() {
+    let mut env = Env::new();
+    let mint = env.create_mint(&SPL_TOKEN);
+    let sponsor = Keypair::new();
+    env.svm.airdrop(&sponsor.pubkey(), 10_000_000_000).unwrap();
+    let vault_id = 7;
+    let vault = vault_pda(&mint, &sponsor.pubkey(), vault_id);
+    let payer = env.payer.insecure_clone();
+    let precreate =
+        spl_associated_token_account_interface::instruction::create_associated_token_account(
+            &payer.pubkey(),
+            &vault,
+            &mint,
+            &SPL_TOKEN,
+        );
+    env.send(&[precreate], &[]).unwrap();
+    env.send(
+        &[create_vault_ix(
+            &sponsor.pubkey(),
+            &mint,
+            &SPL_TOKEN,
+            vault_id,
+        )],
+        &[&sponsor],
+    )
+    .unwrap();
+    let state = env.vault(&vault);
+    assert_eq!(state.status, VaultStatus::Active);
+    assert_eq!(
+        state.token_account,
+        spl_associated_token_account_interface::address::get_associated_token_address_with_program_id(
+            &vault, &mint, &SPL_TOKEN
+        )
+    );
+}
+
+#[test]
+fn set_fee_is_refused_for_a_non_admin() {
+    let mut env = Env::new();
+    let intruder = env.settlers[0].insecure_clone();
+    assert_error(
+        env.send(
+            &[set_fee_ix(&intruder.pubkey(), 1, intruder.pubkey())],
+            &[&intruder],
+        ),
+        E::NotAdmin,
+    );
+    assert_eq!(env.config().fee_bps, 750);
+}
+
+#[test]
+fn set_admin_with_the_zero_key_cancels_a_pending_proposal() {
+    let mut env = Env::new();
+    let admin = env.admin.insecure_clone();
+    let next = Keypair::new();
+    env.send(&[set_admin_ix(&admin.pubkey(), next.pubkey())], &[&admin])
+        .unwrap();
+    env.send(
+        &[set_admin_ix(&admin.pubkey(), Pubkey::default())],
+        &[&admin],
+    )
+    .unwrap();
+    assert_eq!(env.config().pending_admin, Pubkey::default());
+    assert_error(
+        env.send(&[accept_admin_ix(&next.pubkey())], &[&next]),
+        E::NotPendingAdmin,
+    );
+    assert_eq!(env.config().admin, admin.pubkey());
+}
+
+#[test]
+fn a_stale_admin_proposal_is_replaced_by_the_newer_one() {
+    let mut env = Env::new();
+    let admin = env.admin.insecure_clone();
+    let stale = Keypair::new();
+    let fresh = Keypair::new();
+    env.svm.airdrop(&fresh.pubkey(), 1_000_000_000).unwrap();
+    env.send(&[set_admin_ix(&admin.pubkey(), stale.pubkey())], &[&admin])
+        .unwrap();
+    env.send(&[set_admin_ix(&admin.pubkey(), fresh.pubkey())], &[&admin])
+        .unwrap();
+    assert_error(
+        env.send(&[accept_admin_ix(&stale.pubkey())], &[&stale]),
+        E::NotPendingAdmin,
+    );
+    env.send(&[accept_admin_ix(&fresh.pubkey())], &[&fresh])
+        .unwrap();
+    assert_eq!(env.config().admin, fresh.pubkey());
+}
+
+#[test]
+fn a_manager_with_a_settled_reservation_cannot_be_replaced() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let s = env.settlers[0].insecure_clone();
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards([7; 32], 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    let sponsor = f.sponsor.insecure_clone();
+    // Fill the list: manager(1) switched off, seven others active.
+    let mut inputs: Vec<ManagerInput> = (2..9).map(|n| input(manager(n), 1, true)).collect();
+    inputs.insert(0, input(manager(1), 1_000, false));
+    env.send(&[f.set_managers_ix(&sponsor.pubkey(), inputs)], &[&sponsor])
+        .unwrap();
+    // It is inactive with nothing reserved, but it has spent: not replaceable.
+    assert_error(
+        env.send(
+            &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(9), 1, true)])],
+            &[&sponsor],
+        ),
+        E::TooManyManagers,
+    );
+    // Revoke restores against the manager and the corrected root settles again.
+    let admin = env.admin.insecure_clone();
+    env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
+        .unwrap();
+    let m = env.vault(&f.vault).managers[0];
+    assert_eq!((m.key, m.reserved, m.spent), (manager(1), 400, 0));
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards([8; 32], 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    assert_eq!(env.reservation(&r).root, [8; 32]);
 }

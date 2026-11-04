@@ -610,3 +610,130 @@ Covered by `test/TaskHookV2.t.sol` and `test/Rev028Upgrade.t.sol`:
 - The dispute context on V1 and V2.
 - The payout gate end to end.
 - The upgrade, with a pre-cut V1 task keeping V1 dispatch.
+
+## Security fixes in this release
+
+Rev028 also carries the fixes from an external security review of the contracts. Each entry states
+the rule and the reason. They are grouped by the area they touch.
+
+### Expiry and time bounds
+
+- **One rule for every expiry extension.** Reopen, reserved acceptance, evaluator review, revision
+  request, appeal, `evaluate` and `submitWork` all raise `expiryTime` through one helper. A project
+  task's expiry never exceeds the project end date plus the task grace period, and is not raised at
+  all once the project's pool has settled. The step itself still happens and only the extension is
+  clamped, because reverting an accept, appeal or reopen would strand escrow and workers. The one
+  exception is `requestRevision`: it reverts `RevisionsExhausted` when the revision window would run
+  past the clamped expiry, because the worker could not deliver the revision before the task expires.
+  `updateTask` keeps its explicit revert.
+- **Task duration is capped at one year at creation.** Every later addition to `expiryTime` is a
+  bounded window (review, appeal, reopen, resolution), so the sums built from it cannot overflow and
+  freeze settlement.
+- **`appealWindow` has an upper bound,** the `termsBounds` maximum window (30 days by default).
+  Without it an evaluator verdict could hold escrow in `Appealing` for years.
+- **An auction's bid deadline must be before the task's expiry,** at creation and when the task is
+  updated. Bidding past expiry cannot select a winner.
+
+### Deliverables
+
+- **A zero deliverable hash is rejected** in `submitWork`. A zero hash on a revision resubmission
+  erased the delivery and reset the review clock, and the settlement guards read a zero hash as
+  undelivered.
+
+### Documentation corrections
+
+Interface and NatSpec text now matches the code for `acceptSubmissions` (duplicate winners are
+rejected), `assignEvaluator` (the stake arrives with the forwarded payment, there is no `transferFrom`
+pull), `claimTo` (nonces are sequential per worker and an out-of-order relay reverts), `finalizeVerdict`
+(a REJECT pays the evaluator fee, refunds the requester and cancels terminally), the review library
+comments, and the forwarder's replay key (it includes `validBefore`; the relayer must keep nonces unique
+per operation). The rev026 reconciliation procedure is written into the rev026 spec.
+
+### Deploy scripts
+
+- The sponsored-task guard timelock deploy script treats an unset or zero `TIMELOCK_ADMIN` as no
+  standing admin, rejects the deployer as admin, logs the admin, and verifies the role assignments
+  after deployment.
+- The sponsored-task, payout and reward hooks deployed by the scripts range-check basis-point and
+  small-integer settings at full width before narrowing them, so an out-of-range value reverts instead of
+  wrapping into range. A remote hook deploy refuses a diamond address with no code.
+
+### Evaluator stake, hooks and settlement
+
+- **An evaluator that never had a deliverable to act on gets its stake back.** When a task expires with
+  nothing delivered (Claim, Pitch, Auction, Bounty or Benchmark, claimed or not), the evaluator stake
+  returns to the requester, as it already did when a reservation lapsed. Forfeiture to the fee recipient
+  stays for a delivered task whose evaluator failed to act, through `evaluatorTimeout`. Forfeiting a
+  stake from a party that could not have acted punishes the wrong side.
+- **A hook cannot overrule a dispute resolution.** A V2 task's `beforeAccept` is best effort on a
+  resolution. A legacy V1 task's check hooks are still shown the `Disputed` state on a resolution, so a
+  gate can release it, but their rejection no longer blocks the ruling. Otherwise the party the
+  worker is escaping from could decide the dispute.
+- **A task whose hooks can veto delivery cannot forbid release.** `releaseClaim` ignores
+  `ReleaseAllowed.Disallowed` when a V1 hook is attached (every V1 hook has `checkSubmit`) or a V2 hook
+  declares the `beforeSubmitWork` capability. Without a veto power over delivery the term holds. The
+  worker could otherwise neither deliver nor leave and would forfeit the stake at expiry.
+- **Expiry refunds never depend on hook gas.** V2 exit callbacks are skipped with a failure event when
+  a full stipend is not left. A V1 task's expiry callbacks behave the same way after the first hook,
+  which is guaranteed one full stipend. A permissionless caller can therefore cause later exit hooks to
+  be skipped by supplying little gas, so hooks must reconcile from the settlement record.
+- **The sponsored-task hooks check the award count first.** An oversized verdict releases the
+  sponsorship (or marks it unsettleable) before the payout pool is read, so it cannot spend the hook's
+  gas stipend first.
+
+### Funding pool
+
+- **A refund leaves outstanding in the same call that books it as available.** Hooks run before the
+  escrow release, so a refund left in both would be seen twice and shares priced against the doubled
+  value. When the refund includes money that was never drawn from the pool (a forfeited worker stake),
+  outstanding reads low until release; the total over the task's life is correct.
+- **Direct `FundingPool.fund` reverts while the diamond is settling.** Payouts to workers also leave
+  outstanding only at release, so shares priced inside a settlement hook use a stale value. The
+  diamond's own `creditFunding` and `creditOpening` are unaffected.
+- **Dust resets the share generation.** The pool starts a new generation when its value is zero or the
+  supply per unit of value passes 1e30, so a pool drained to one base unit cannot make the next mint
+  overflow and block funding. The dust stays in the pool.
+
+### Sponsored tasks and the reward hook
+
+- **A project task charges the allowance of whoever created it,** not the requester of record. The
+  creator is recorded for the predicted task id before the hooks run. The requester of record is kept
+  separately for the callbacks.
+- **The sponsorship commitment covers the settlement policy.** The terms hash is two hashes combined:
+  the task terms and the settlement terms (penalty destination, review, decision, resolution and accept
+  windows, release and revision terms, reject outcome and fee).
+- **The remote reserve is signed over the vault id,** and the settler requires the vault's own id to
+  match. The settler accepts only vaults its registry lists. An owner can reopen a revoked settle digest;
+  settlement still needs the settler threshold of signatures.
+- **A verdict finalized after expiry skips `checkComplete`,** so `reconcile` commits a stored evaluator
+  verdict for any mode.
+- **The DREAMS emission cap is per task and cumulative.** `EpochBudget` checks a running total per task
+  id, so a task with several winners cannot emit more than the cap. A reservation records the vault and
+  budget it was made on, so replacing either cannot retarget an outstanding release. `setVault` requires
+  a vault that pays the hook's token. A bonus that converts to zero tokens reserves nothing and
+  consumes no budget, in the reservation and in both bounty loops.
+- **Hook upgrade authority moves in two steps and cannot be renounced.** Vault owner signatures can be
+  cancelled up to a chosen nonce, within a bounded jump. The forwarder checks at construction that its
+  destination has code and that the diamond escrows its token.
+
+### Facets and entrypoints
+
+- **An evaluator is a term of a reservation.** `assignEvaluator` reverts while a reservation is pending.
+  A worker whose stake is forfeited is barred from the task, as after a release or a rejection.
+- **Acting parties cannot deal with themselves.** On a project task the requester of record, the
+  operator and the owner cannot be the evaluator, the dispute resolver, the reserved worker, or the
+  worker through claim, selection, bid or submit. Delegated acceptance credits the requester of record and
+  flags an award to any acting party as a self-award.
+- **A worker named several times in one verdict completes the task once,** on the evaluator path and for
+  hook-transformed awards.
+- **A relayed call that books nothing must carry no payment.** Every relayed non-funding entrypoint,
+  `callTaskHook` included, and the permissionless ones when relayed, reject a nonzero forwarder payment.
+  The diamond refuses native ETH.
+- **Updating a task keeps its bounds.** An expiry set by `updateTask` is held to the same one-year cap
+  as at creation, and an auction's bid deadline stays before its expiry.
+- **Grants are forwarder-only,** and `acceptGrant` takes the hash of the grant terms the operator read,
+  so terms the owner replaces afterwards cannot be accepted by mistake. Its selector changed, so the
+  upgrade adds the new selector and removes the old one.
+- **Stake terms apply only to Claim tasks,** the only mode that collects a worker stake.
+- **`diamondCut` with init calldata and no init address reverts,** and `selectWorker` rejects the zero
+  address. The claim release grace boundary is computed without multiplying the raw span.

@@ -226,6 +226,11 @@
   },
   {
     "type": "error",
+    "name": "EscrowTokenMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -269,6 +274,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "TaskMarketNotContract",
+    "inputs": []
   },
   {
     "type": "error",

@@ -113,8 +113,8 @@ per-task `hookData` payload is needed.
 | `forfeitAndReopen` | `onForfeit` | Same as cancel. |
 
 **Multi-winner (Bounty) path:** `verdict.awards` lists each winner's pre-fee USDC
-amount. Each winner's USD basis is capped by `min(workerUsd, epochBudget.remaining(...),
-epochBudget.maxUsdPerTask())`, converted to tokens at the current rate, then further
+amount. Each winner's USD basis is capped by `min(workerUsd, epochBudget.remaining(taskId, ...))`,
+where `remaining` already counts what the task's earlier winners consumed of its per-task cap, converted to tokens at the current rate, then further
 clamped to the vault's available balance (recomputing the USD amount actually consumed
 if the vault clamp binds). A shortfall for one winner never blocks payment to the
 others or blocks the underlying USDC payout.
@@ -173,9 +173,12 @@ the DREAMS/USDC rate moves:
 | Per-requester USD per epoch | `setRequesterCapUsd` |
 | Max USD per task | `setMaxUsdPerTask` |
 
-`checkAndConsume(requester, worker, usdAmount)` reverts if any cap would be exceeded;
-`release(requester, worker, usdAmount)` reverses a previous consumption (cancel/expire/
-forfeit, or a settlement paying less than reserved). Epochs are time-based:
+`checkAndConsume(taskId, requester, worker, usdAmount)` reverts if any cap would be exceeded;
+`release(taskId, requester, worker, usdAmount, consumedEpoch)` reverses a previous consumption
+(cancel/expire/forfeit, or a settlement paying less than reserved). Since rev028 the per-task cap
+is checked against the task's running total across all its winners (`taskUsed(taskId)`), not
+against each call alone, and the hook releases against the vault and budget a reservation was
+made on even if `setVault` or `setEpochBudget` has since replaced them. Epochs are time-based:
 `(block.timestamp - epochStart) / epochDuration`, rolled over lazily on the next call.
 
 Caps are always checked/consumed/released against `usdBonusValue` (the bonus amount

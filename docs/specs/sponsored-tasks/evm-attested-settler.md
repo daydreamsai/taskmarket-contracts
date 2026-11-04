@@ -30,7 +30,8 @@ whose controller is the settler.
 | `release(ReleaseRequest, bytes[])`                                   | anyone, with settler signatures | open    | calls `vault.releaseTask`; a second release is a no-op                                   |
 | `settle(SettleRequest, bytes[])`                                     | anyone, with settler signatures | blocked | stores the root as pending with `settledAt`; does not touch the vault                    |
 | `finalize(vault, allocationId)`                                      | anyone                          | blocked | once `block.timestamp >= settledAt + claimDelaySeconds`, calls `vault.installSettlement` |
-| `revokeSettlement(vault, allocationId)`                              | owner                           | open    | deletes a pending root; the allocation returns to reserved                               |
+| `revokeSettlement(vault, allocationId)`                              | owner                           | open    | deletes a pending root; the allocation returns to reserved; its digest stays used        |
+| `reopenRevokedSettlement(digest)`                                    | owner                           | open    | lets a revoked digest be submitted again; valid settler signatures are still required    |
 | `pause`, `unpause`                                                   | owner                           | --      | immediate                                                                                |
 | `setSettlers(address[], uint8)` / `applySettlers` / `cancelSettlers` | owner schedules, anyone applies | --      | 48h timelock                                                                             |
 | `setAuthority(address)` / `applyAuthority` / `cancelAuthority`       | owner schedules, anyone applies | --      | 48h timelock                                                                             |
@@ -46,7 +47,7 @@ EIP-712 domain: `{ name: "Taskmarket Sponsored Settler", version: "1", chainId: 
 chain>, verifyingContract: <settler> }`.
 
 ```text
-Reserve(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
+Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
         uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,
         address feeRecipient,bytes32 termsHash)
 Release(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,

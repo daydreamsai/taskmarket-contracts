@@ -165,7 +165,7 @@ contract MockTaskHook is ITMPHook {
         onCancelCalls++;
     }
 
-    function onExpire(bytes32, ITMPCore.TaskContext calldata) external override {
+    function onExpire(bytes32, ITMPCore.TaskContext calldata) external virtual override {
         onExpireCalls++;
     }
 }

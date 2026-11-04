@@ -19,7 +19,9 @@ contract DeploySponsoredTaskGuardTimelock is Script {
     ///      TIMELOCK_DEPLOYER_KEY -- private key broadcasting this deployment.
     ///      TIMELOCK_SAFE         -- the Safe address that will propose/execute/cancel.
     ///      TIMELOCK_MIN_DELAY    -- seconds between a proposal and its earliest execution.
-    ///      TIMELOCK_ADMIN        -- optional; see contract-level note. Defaults to address(0).
+    ///      TIMELOCK_ADMIN        -- optional; see contract-level note. Unset or address(0) means no
+    ///                               standing admin. A non-zero value must not be the deployer, and
+    ///                               is logged and checked to hold DEFAULT_ADMIN_ROLE after deploy.
     function run() external returns (address timelock) {
         uint256 deployerKey = vm.envUint("TIMELOCK_DEPLOYER_KEY");
         address safe = vm.envAddress("TIMELOCK_SAFE");
@@ -28,6 +30,7 @@ contract DeploySponsoredTaskGuardTimelock is Script {
 
         require(safe.code.length != 0, "DeployGuardTimelock: TIMELOCK_SAFE must be a contract");
         require(minDelay > 0, "DeployGuardTimelock: TIMELOCK_MIN_DELAY must be > 0");
+        require(admin != vm.addr(deployerKey), "DeployGuardTimelock: TIMELOCK_ADMIN must not be the deployer");
 
         address[] memory proposers = new address[](1);
         proposers[0] = safe;
@@ -42,8 +45,16 @@ contract DeploySponsoredTaskGuardTimelock is Script {
         require(timelock.code.length != 0, "DeployGuardTimelock: no code at deployed address");
         require(controller.getMinDelay() == minDelay, "DeployGuardTimelock: minDelay mismatch");
 
+        bytes32 adminRole = controller.DEFAULT_ADMIN_ROLE();
+        require(controller.hasRole(adminRole, timelock), "DeployGuardTimelock: timelock is not its own admin");
+        require(!controller.hasRole(adminRole, vm.addr(deployerKey)), "DeployGuardTimelock: deployer holds admin");
+        if (admin != address(0)) {
+            require(controller.hasRole(adminRole, admin), "DeployGuardTimelock: TIMELOCK_ADMIN not granted");
+        }
+
         console2.log("TimelockController deployed", timelock);
         console2.log("Proposer/executor (Safe)", safe);
         console2.log("Min delay (seconds)", minDelay);
+        console2.log("Standing admin (address(0) = none)", admin);
     }
 }

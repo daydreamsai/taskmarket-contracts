@@ -8,6 +8,7 @@ import { ITMPEscrow } from "../interfaces/ITMPEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { LibReview } from "../libraries/LibReview.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibFeedback } from "../libraries/LibFeedback.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -44,6 +45,7 @@ contract WorkerFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (worker == address(0)) revert ITMPCore.InvalidWorker();
+        LibProject.requireNotActingParty(s, taskId, worker);
         if (task.mode != TMP_CLAIM) revert ITMPCore.NotAClaimTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
@@ -80,10 +82,7 @@ contract WorkerFacet {
         if (worker != s.reservedWorkers[taskId]) revert ITMPCore.NotReservedWorker();
         if (block.timestamp > LibTerms.acceptBy(s, taskId)) revert ITMPCore.AcceptWindowClosed();
         uint256 newExpiry = block.timestamp + (task.expiryTime - s.taskMetadata[taskId].createdAt);
-        if (newExpiry != task.expiryTime) {
-            task.expiryTime = newExpiry;
-            emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
-        }
+        LibProject.extendExpiry(s, taskId, newExpiry);
     }
 
     /// @notice Select a worker for Pitch mode. The requester is the authenticated actor (pgtrSender).
@@ -91,13 +90,15 @@ contract WorkerFacet {
     /// @param worker Selected worker address
     function selectWorker(bytes32 taskId, address worker) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
         address requester = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         LibGuards._requireRequester(s, taskId, requester);
+        if (worker == address(0)) revert ITMPCore.InvalidWorker();
+        LibProject.requireNotActingParty(s, taskId, worker);
         if (task.mode != TMP_PITCH) revert ITMPCore.NotAPitchTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
@@ -121,7 +122,7 @@ contract WorkerFacet {
     /// @param pitchHash Content hash (typically keccak256(abi.encode(taskId, worker, pitchText)))
     function submitPitch(bytes32 taskId, bytes32 pitchHash) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -149,7 +150,7 @@ contract WorkerFacet {
     /// @param metricValue Task-specific numeric score
     function submitProof(bytes32 taskId, bytes32 proofHash, bytes32 proofType, uint256 metricValue) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -177,15 +178,19 @@ contract WorkerFacet {
     // solhint-disable-next-line code-complexity
     function submitWork(bytes32 taskId, bytes32 deliverable) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
         address worker = LibGuards._effectiveSender(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
+        LibProject.requireNotActingParty(s, taskId, worker);
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         LibHooksV2.snap(taskId, uint8(task.status));
+        // Rev028: a zero hash on a revision resubmission would erase the delivery and restart the
+        // review clock, and it names nothing for a reviewer to judge in any mode.
+        if (deliverable == bytes32(0)) revert ITMPCore.EmptyDeliverable();
 
         if (task.mode == TMP_BOUNTY || task.mode == TMP_BENCHMARK) {
             // Bounty and Benchmark are open contests: the task stays Open and keeps
@@ -220,9 +225,7 @@ contract WorkerFacet {
             task.status = ITMPCore.TaskStatus.Review;
             uint256 reviewDeadline = block.timestamp + evalCfg.evaluationWindow;
             s.phaseDeadline[taskId] = reviewDeadline;
-            if (reviewDeadline > task.expiryTime) {
-                task.expiryTime = reviewDeadline;
-            }
+            LibProject.extendExpiry(s, taskId, reviewDeadline);
         }
 
         LibHooks._checkSubmitHooks(taskId, worker, deliverable, s);

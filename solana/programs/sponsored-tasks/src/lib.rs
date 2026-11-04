@@ -63,6 +63,7 @@ pub mod sponsored_tasks {
         config.fee_recipient = fee_recipient;
         config.bump = ctx.bumps.config;
         config.claim_delay_seconds = DEFAULT_CLAIM_DELAY_SECONDS;
+        config.pending_admin = Pubkey::default();
         emit_cpi!(ConfigInitialized {
             admin,
             settlers,
@@ -73,12 +74,42 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
+    /// Admin-only. Proposes `new_admin`; the role moves only when that key signs
+    /// `accept_admin`, so a mistyped key cannot take the containment authority. Proposing
+    /// again replaces the pending key, and the zero key cancels the proposal.
     pub fn set_admin(ctx: Context<AdminConfig>, new_admin: Pubkey) -> Result<()> {
-        let previous = ctx.accounts.config.admin;
-        ctx.accounts.config.admin = new_admin;
+        ctx.accounts.config.pending_admin = new_admin;
+        emit_cpi!(AdminProposed {
+            admin: ctx.accounts.config.admin,
+            pending_admin: new_admin,
+        });
+        Ok(())
+    }
+
+    /// Signed by the proposed admin. Completes the rotation `set_admin` began.
+    pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        let previous = config.admin;
+        config.admin = ctx.accounts.pending_admin.key();
+        config.pending_admin = Pubkey::default();
         emit_cpi!(AdminChanged {
             previous,
-            admin: new_admin,
+            admin: config.admin,
+        });
+        Ok(())
+    }
+
+    /// Admin-only and open while paused. Replaces the fee basis points and fee recipient.
+    /// Settlements already installed keep the fee they carved; `claim_fee` pays the recipient
+    /// in force when it is called.
+    pub fn set_fee(ctx: Context<AdminConfig>, fee_bps: u16, fee_recipient: Pubkey) -> Result<()> {
+        require!(fee_bps <= MAX_FEE_BPS, SponsoredTasksError::InvalidFeeBps);
+        let config = &mut ctx.accounts.config;
+        config.fee_bps = fee_bps;
+        config.fee_recipient = fee_recipient;
+        emit_cpi!(FeeSet {
+            fee_bps,
+            fee_recipient
         });
         Ok(())
     }
@@ -105,7 +136,9 @@ pub mod sponsored_tasks {
     }
 
     /// Admin-only and open while paused. Sets how long after `settle` claims wait, so the root
-    /// watcher can flag a forged root and the admin can revoke it before it pays.
+    /// watcher can flag a forged root and the admin can revoke it before it pays. Each
+    /// settlement keeps the delay in force when it was installed; changing it later does not
+    /// shorten the window of a root already installed.
     pub fn set_claim_delay(ctx: Context<AdminConfig>, claim_delay_seconds: u64) -> Result<()> {
         require!(
             claim_delay_seconds > 0 && claim_delay_seconds <= i64::MAX as u64,
@@ -197,7 +230,9 @@ pub mod sponsored_tasks {
     }
 
     /// Adds or updates managers; an existing manager's cap may not drop below what it has
-    /// already reserved or spent.
+    /// already reserved or spent. Adding a manager to a full list replaces the first one that
+    /// is inactive with nothing reserved and nothing spent: a manager with spent history may
+    /// still have a settled reservation that `revoke_settlement` must restore against it.
     pub fn set_managers(ctx: Context<SetManagers>, managers: Vec<ManagerInput>) -> Result<()> {
         let vault_key = ctx.accounts.vault.key();
         let vault = &mut ctx.accounts.vault;
@@ -218,10 +253,22 @@ pub mod sponsored_tasks {
                     *existing
                 }
                 None => {
-                    require!(
-                        vault.managers.len() < MAX_MANAGERS,
-                        SponsoredTasksError::TooManyManagers
-                    );
+                    if vault.managers.len() >= MAX_MANAGERS {
+                        // A full list frees the first manager that is switched off and holds
+                        // no open reservation, so retired managers never exhaust the capacity.
+                        let slot = vault
+                            .managers
+                            .iter()
+                            .position(|m| !m.active && m.reserved == 0 && m.spent == 0)
+                            .ok_or(SponsoredTasksError::TooManyManagers)?;
+                        let removed = vault.managers.remove(slot);
+                        emit_cpi!(ManagerRemoved {
+                            vault: vault_key,
+                            manager: removed.key,
+                            cap: removed.cap,
+                            spent: removed.spent,
+                        });
+                    }
                     let manager = Manager {
                         key: input.key,
                         cap: input.cap,
@@ -320,6 +367,7 @@ pub mod sponsored_tasks {
         reservation.fee_claimed = false;
         reservation.bump = ctx.bumps.reservation;
         reservation.settled_at = 0;
+        reservation.claim_delay_seconds = 0;
         emit_cpi!(TaskReserved {
             vault: vault_key,
             reservation: reservation.key(),
@@ -393,6 +441,7 @@ pub mod sponsored_tasks {
         require_settlers(config, ctx.remaining_accounts)?;
         require!(!config.paused, SponsoredTasksError::Paused);
         let fee_bps = config.fee_bps;
+        let claim_delay_seconds = config.claim_delay();
 
         let vault_key = ctx.accounts.vault.key();
         let vault = &mut ctx.accounts.vault;
@@ -455,6 +504,7 @@ pub mod sponsored_tasks {
         reservation.settled_total = settled_total;
         reservation.fee_total = fee_total;
         reservation.settled_at = Clock::get()?.unix_timestamp;
+        reservation.claim_delay_seconds = claim_delay_seconds;
         emit_cpi!(SettlementInstalled {
             vault: vault_key,
             reservation: reservation.key(),
@@ -499,7 +549,7 @@ pub mod sponsored_tasks {
             reservation.state == ReservationState::Settled,
             SponsoredTasksError::ReservationWrongState
         );
-        require_claim_delay_elapsed(&ctx.accounts.config, reservation)?;
+        require_claim_delay_elapsed(reservation)?;
         require!(
             leaf_index < reservation.leaf_count,
             SponsoredTasksError::ClaimIndexOutOfBounds
@@ -599,7 +649,7 @@ pub mod sponsored_tasks {
             reservation.state == ReservationState::Settled,
             SponsoredTasksError::ReservationWrongState
         );
-        require_claim_delay_elapsed(&ctx.accounts.config, reservation)?;
+        require_claim_delay_elapsed(reservation)?;
         let amount = reservation.fee_total;
         require!(
             amount > 0 && !reservation.fee_claimed,
@@ -663,25 +713,51 @@ pub mod sponsored_tasks {
             .checked_add(reservation.fee_total)
             .ok_or(SponsoredTasksError::Overflow)?;
         let amount = reservation.amount;
+        let reserved_after = vault
+            .total_reserved
+            .checked_add(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        let settled_after = vault
+            .total_settled
+            .checked_sub(distributed_gross)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        // Settling returned `amount - distributed_gross` to the available balance, and other
+        // reservations may have taken it since. Restoring the reservation must leave the
+        // vault able to back every live reservation and unclaimed award.
+        let backing = vault
+            .total_funded
+            .saturating_sub(vault.total_withdrawn)
+            .saturating_sub(vault.total_claimed);
+        let committed = reserved_after
+            .checked_add(settled_after.saturating_sub(vault.total_claimed))
+            .ok_or(SponsoredTasksError::Overflow)?;
+        require!(
+            committed <= backing,
+            SponsoredTasksError::InsufficientAvailable
+        );
+        // The manager's allowance may have been lowered after the settlement.
         if let Some(account) = vault
             .managers
             .iter_mut()
             .find(|m| m.key == reservation.manager)
         {
-            account.reserved = account
+            let reserved = account
                 .reserved
                 .checked_add(amount)
                 .ok_or(SponsoredTasksError::Overflow)?;
-            account.spent = account.spent.saturating_sub(distributed_gross);
+            let spent = account.spent.saturating_sub(distributed_gross);
+            require!(
+                reserved
+                    .checked_add(spent)
+                    .ok_or(SponsoredTasksError::Overflow)?
+                    <= account.cap,
+                SponsoredTasksError::ManagerAllowanceExceeded
+            );
+            account.reserved = reserved;
+            account.spent = spent;
         }
-        vault.total_settled = vault
-            .total_settled
-            .checked_sub(distributed_gross)
-            .ok_or(SponsoredTasksError::Overflow)?;
-        vault.total_reserved = vault
-            .total_reserved
-            .checked_add(amount)
-            .ok_or(SponsoredTasksError::Overflow)?;
+        vault.total_settled = settled_after;
+        vault.total_reserved = reserved_after;
         let root = reservation.root;
         reservation.state = ReservationState::Reserved;
         reservation.root = [0; 32];
@@ -689,6 +765,7 @@ pub mod sponsored_tasks {
         reservation.settled_total = 0;
         reservation.fee_total = 0;
         reservation.settled_at = 0;
+        reservation.claim_delay_seconds = 0;
         emit_cpi!(SettlementRevoked {
             vault: vault_key,
             reservation: reservation.key(),
@@ -715,16 +792,57 @@ pub mod sponsored_tasks {
             recover_evm_address(&digest, &signature)? == agent,
             SponsoredTasksError::InvalidPayoutSignature
         );
-        let binding = &mut ctx.accounts.binding;
-        // A fresh account is zeroed; the seeds tie an existing one to this agent.
-        if binding.agent == agent {
-            require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
-        }
-        binding.task_chain_id = task_chain_id;
-        binding.agent = agent;
-        binding.payout = payout;
-        binding.nonce = nonce;
-        binding.bump = ctx.bumps.binding;
+        write_binding(
+            &mut ctx.accounts.binding,
+            ctx.bumps.binding,
+            task_chain_id,
+            agent,
+            payout,
+            nonce,
+        )?;
+        emit_cpi!(PayoutBound {
+            task_chain_id,
+            agent,
+            payout,
+            nonce,
+        });
+        Ok(())
+    }
+
+    /// Settler-gated and open while paused. Binds the payout address of an agent that cannot
+    /// sign with a plain EVM key, such as a smart contract wallet that proves control with an
+    /// ERC-1271 signature the program cannot verify. The settlers check that signature on the
+    /// agent's chain and attest the binding with the settler threshold. The nonce must be the
+    /// current one plus one (1 for a first binding) and never `u64::MAX`, so the agent's own signed binding with a higher nonce still
+    /// replaces an attested one.
+    pub fn bind_payout_attested(
+        ctx: Context<BindPayoutAttested>,
+        task_chain_id: u64,
+        agent: [u8; 20],
+        payout: Pubkey,
+        nonce: u64,
+    ) -> Result<()> {
+        require_settlers(&ctx.accounts.config, ctx.remaining_accounts)?;
+        // The settlers advance the sequence one step at a time, so an attestation can never
+        // jump the nonce ahead and lock the agent's own signed `bind_payout` out.
+        let binding = &ctx.accounts.binding;
+        let current = if binding.agent == agent {
+            binding.nonce
+        } else {
+            0
+        };
+        require!(
+            current.checked_add(1) == Some(nonce) && nonce != u64::MAX,
+            SponsoredTasksError::InvalidAttestedNonce
+        );
+        write_binding(
+            &mut ctx.accounts.binding,
+            ctx.bumps.binding,
+            task_chain_id,
+            agent,
+            payout,
+            nonce,
+        )?;
         emit_cpi!(PayoutBound {
             task_chain_id,
             agent,
@@ -792,15 +910,36 @@ pub mod sponsored_tasks {
     }
 }
 
-/// Claims against a root wait `Config::claim_delay` seconds after `settle` installed it.
-fn require_claim_delay_elapsed(config: &Config, reservation: &Reservation) -> Result<()> {
+/// Claims against a root wait the claim delay `settle` recorded, counted from the time it
+/// installed the root.
+fn require_claim_delay_elapsed(reservation: &Reservation) -> Result<()> {
     let claimable_at = reservation
         .settled_at
-        .saturating_add(config.claim_delay() as i64);
+        .saturating_add(reservation.claim_delay_seconds.min(i64::MAX as u64) as i64);
     require!(
         Clock::get()?.unix_timestamp >= claimable_at,
         SponsoredTasksError::ClaimDelayNotElapsed
     );
+    Ok(())
+}
+
+fn write_binding(
+    binding: &mut Account<PayoutBinding>,
+    bump: u8,
+    task_chain_id: u64,
+    agent: [u8; 20],
+    payout: Pubkey,
+    nonce: u64,
+) -> Result<()> {
+    // A fresh account is zeroed; the seeds tie an existing one to this agent.
+    if binding.agent == agent {
+        require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
+    }
+    binding.task_chain_id = task_chain_id;
+    binding.agent = agent;
+    binding.payout = payout;
+    binding.nonce = nonce;
+    binding.bump = bump;
     Ok(())
 }
 
@@ -1024,8 +1163,11 @@ pub struct CreateVault<'info> {
         bump
     )]
     pub vault: Account<'info, Vault>,
+    // `init_if_needed`: anyone can create a vault's associated token account ahead of time.
+    // Anchor checks an existing one for this mint, owner and token program; only the vault
+    // PDA can change an associated account's authority, delegate or close authority.
     #[account(
-        init,
+        init_if_needed,
         payer = sponsor,
         associated_token::mint = mint,
         associated_token::authority = vault,
@@ -1197,6 +1339,40 @@ pub struct BindPayout<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+#[instruction(task_chain_id: u64, agent: [u8; 20])]
+pub struct BindPayoutAttested<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = 8 + PayoutBinding::INIT_SPACE,
+        seeds = [PAYOUT_SEED, &task_chain_id.to_le_bytes(), &agent],
+        bump
+    )]
+    pub binding: Account<'info, PayoutBinding>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct AcceptAdmin<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.pending_admin != Pubkey::default()
+            && config.pending_admin == pending_admin.key()
+            @ SponsoredTasksError::NotPendingAdmin
+    )]
+    pub config: Account<'info, Config>,
+    pub pending_admin: Signer<'info>,
 }
 
 #[event_cpi]

@@ -213,7 +213,20 @@ library FacetSelectors {
                 _concat(coreFacetSelectorsAddedRev027(), workerFacetSelectorsAddedRev027()),
                 _concat(settlementFacetSelectorsAddedRev027(), feedbackFacetSelectorsAddedRev027())
             ),
-            projectFacetSelectors()
+            projectFacetSelectorsRev027()
+        );
+    }
+
+    /// @dev The selectors rev027 added that a rev028 diamond still routes: selectorsAddedRev027 without
+    ///      acceptGrant, which rev028 swapped (see projectSelectorsAddedRev028). For tests that strip a
+    ///      current diamond back to rev026.
+    function selectorsAddedRev027OnRev028() internal pure returns (bytes4[] memory s) {
+        s = _concat(
+            _concat(
+                _concat(coreFacetSelectorsAddedRev027(), workerFacetSelectorsAddedRev027()),
+                _concat(settlementFacetSelectorsAddedRev027(), feedbackFacetSelectorsAddedRev027())
+            ),
+            projectFacetSelectorsRev027Routed()
         );
     }
 
@@ -534,7 +547,44 @@ library FacetSelectors {
 
     /// @dev rev028: every selector rev028 Adds.
     function selectorsAddedRev028() internal pure returns (bytes4[] memory s) {
-        s = _concat(hookDispatchFacetSelectors(), hooksV2FacetSelectors());
+        s = _concat(_concat(hookDispatchFacetSelectors(), hooksV2FacetSelectors()), projectSelectorsAddedRev028());
+    }
+
+    /// @dev rev028: acceptGrant gained the terms hash argument. The new selector is an Add and the
+    ///      rev027 selector is Removed, since a Replace of a selector the diamond does not route
+    ///      reverts FunctionNotFound and the old selector would otherwise stay routed.
+    function projectSelectorsAddedRev028() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = ProjectFacet.acceptGrant.selector;
+    }
+
+    /// @dev rev027: the ProjectFacet selectors as rev027 routed them, with acceptGrant(uint256).
+    function projectFacetSelectorsRev027() internal pure returns (bytes4[] memory s) {
+        s = projectFacetSelectors();
+        bytes4 current = ProjectFacet.acceptGrant.selector;
+        for (uint256 i; i < s.length; i++) {
+            if (s[i] == current) {
+                s[i] = acceptGrantSelectorRev027();
+                return s;
+            }
+        }
+        revert("acceptGrant selector missing");
+    }
+
+    /// @dev rev028: the acceptGrant(uint256) selector rev027 routes and rev028 removes.
+    function acceptGrantSelectorRev027() internal pure returns (bytes4) {
+        return bytes4(keccak256("acceptGrant(uint256)"));
+    }
+
+    /// @dev rev028: the ProjectFacet selectors a rev027 diamond already routes, for a Replace.
+    function projectFacetSelectorsRev027Routed() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory all = projectFacetSelectors();
+        s = new bytes4[](all.length - 1);
+        uint256 n;
+        for (uint256 i; i < all.length; ++i) {
+            if (all[i] == ProjectFacet.acceptGrant.selector) continue;
+            s[n++] = all[i];
+        }
     }
 
     /// @dev rev028: the internal hook dispatch, callable only by the diamond itself. Every

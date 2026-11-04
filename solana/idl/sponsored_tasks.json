@@ -8,6 +8,54 @@
   },
   "instructions": [
     {
+      "name": "accept_admin",
+      "docs": [
+        "Signed by the proposed admin. Completes the rotation `set_admin` began."
+      ],
+      "discriminator": [
+        112,
+        42,
+        45,
+        90,
+        116,
+        181,
+        13,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending_admin",
+          "signer": true
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "bind_payout",
       "docs": [
         "Binds an agent's Solana payout address from the agent's EIP-712 signature over",
@@ -99,6 +147,112 @@
               65
             ]
           }
+        }
+      ]
+    },
+    {
+      "name": "bind_payout_attested",
+      "docs": [
+        "Settler-gated and open while paused. Binds the payout address of an agent that cannot",
+        "sign with a plain EVM key, such as a smart contract wallet that proves control with an",
+        "ERC-1271 signature the program cannot verify. The settlers check that signature on the",
+        "agent's chain and attest the binding with the settler threshold. The nonce must be the",
+        "current one plus one (1 for a first binding) and never `u64::MAX`, so the agent's own signed binding with a higher nonce still",
+        "replaces an attested one."
+      ],
+      "discriminator": [
+        204,
+        53,
+        36,
+        249,
+        241,
+        140,
+        169,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  121,
+                  111,
+                  117,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "task_chain_id"
+              },
+              {
+                "kind": "arg",
+                "path": "agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "task_chain_id",
+          "type": "u64"
+        },
+        {
+          "name": "agent",
+          "type": {
+            "array": [
+              "u8",
+              20
+            ]
+          }
+        },
+        {
+          "name": "payout",
+          "type": "pubkey"
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
         }
       ]
     },
@@ -990,6 +1144,11 @@
     },
     {
       "name": "set_admin",
+      "docs": [
+        "Admin-only. Proposes `new_admin`; the role moves only when that key signs",
+        "`accept_admin`, so a mistyped key cannot take the containment authority. Proposing",
+        "again replaces the pending key, and the zero key cancels the proposal."
+      ],
       "discriminator": [
         251,
         163,
@@ -1045,7 +1204,9 @@
       "name": "set_claim_delay",
       "docs": [
         "Admin-only and open while paused. Sets how long after `settle` claims wait, so the root",
-        "watcher can flag a forged root and the admin can revoke it before it pays."
+        "watcher can flag a forged root and the admin can revoke it before it pays. Each",
+        "settlement keeps the delay in force when it was installed; changing it later does not",
+        "shorten the window of a root already installed."
       ],
       "discriminator": [
         233,
@@ -1099,10 +1260,74 @@
       ]
     },
     {
+      "name": "set_fee",
+      "docs": [
+        "Admin-only and open while paused. Replaces the fee basis points and fee recipient.",
+        "Settlements already installed keep the fee they carved; `claim_fee` pays the recipient",
+        "in force when it is called."
+      ],
+      "discriminator": [
+        18,
+        154,
+        24,
+        18,
+        237,
+        214,
+        19,
+        80
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "set_managers",
       "docs": [
         "Adds or updates managers; an existing manager's cap may not drop below what it has",
-        "already reserved or spent."
+        "already reserved or spent. Adding a manager to a full list replaces the first one that",
+        "is inactive with nothing reserved and nothing spent: a manager with spent history may",
+        "still have a settled reservation that `revoke_settlement` must restore against it."
       ],
       "discriminator": [
         193,
@@ -1371,6 +1596,19 @@
       ]
     },
     {
+      "name": "AdminProposed",
+      "discriminator": [
+        129,
+        249,
+        226,
+        227,
+        199,
+        82,
+        110,
+        243
+      ]
+    },
+    {
       "name": "ClaimDelaySet",
       "discriminator": [
         164,
@@ -1410,6 +1648,19 @@
       ]
     },
     {
+      "name": "FeeSet",
+      "discriminator": [
+        113,
+        74,
+        216,
+        72,
+        193,
+        87,
+        4,
+        232
+      ]
+    },
+    {
       "name": "ManagerConfigured",
       "discriminator": [
         139,
@@ -1420,6 +1671,19 @@
         87,
         179,
         215
+      ]
+    },
+    {
+      "name": "ManagerRemoved",
+      "discriminator": [
+        66,
+        207,
+        129,
+        195,
+        19,
+        142,
+        75,
+        244
       ]
     },
     {
@@ -1741,6 +2005,16 @@
       "code": 6034,
       "name": "ClaimDelayNotElapsed",
       "msg": "The settlement's claim delay has not passed"
+    },
+    {
+      "code": 6035,
+      "name": "NotPendingAdmin",
+      "msg": "Caller is not the proposed admin"
+    },
+    {
+      "code": 6036,
+      "name": "InvalidAttestedNonce",
+      "msg": "Attested payout nonce must be the current nonce plus one and below u64::MAX"
     }
   ],
   "types": [
@@ -1755,6 +2029,22 @@
           },
           {
             "name": "admin",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AdminProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_admin",
             "type": "pubkey"
           }
         ]
@@ -1843,6 +2133,14 @@
               "Zero (unset) reads as `DEFAULT_CLAIM_DELAY_SECONDS`; `set_claim_delay` never stores zero."
             ],
             "type": "u64"
+          },
+          {
+            "name": "pending_admin",
+            "docs": [
+              "Key proposed by `set_admin`; becomes the admin when it signs `accept_admin`. Zero when",
+              "no rotation is pending."
+            ],
+            "type": "pubkey"
           }
         ]
       }
@@ -1914,6 +2212,22 @@
           {
             "name": "amount",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
           }
         ]
       }
@@ -2033,6 +2347,34 @@
                 20
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ManagerRemoved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "manager",
+            "type": {
+              "defined": {
+                "name": "ManagerKey"
+              }
+            }
+          },
+          {
+            "name": "cap",
+            "type": "u64"
+          },
+          {
+            "name": "spent",
+            "type": "u64"
           }
         ]
       }
@@ -2235,6 +2577,14 @@
               "Unix time `settle` installed `root`; zero while no root is installed."
             ],
             "type": "i64"
+          },
+          {
+            "name": "claim_delay_seconds",
+            "docs": [
+              "Claim delay in force when `settle` installed `root`; later `set_claim_delay` calls do not",
+              "change it. Zero while no root is installed."
+            ],
+            "type": "u64"
           }
         ]
       }

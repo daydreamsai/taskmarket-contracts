@@ -6,6 +6,7 @@ import { Vm } from "forge-std/Vm.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPHooksV2 } from "../src/interfaces/ITMPHooksV2.sol";
+import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
 import { ITMPHookDispatch } from "../src/interfaces/ITMPHookDispatch.sol";
 import { IDiamondCut } from "../src/interfaces/IDiamondCut.sol";
 import { IDiamondLoupe } from "../src/interfaces/IDiamondLoupe.sol";
@@ -17,6 +18,7 @@ import { Rev028Upgrade } from "../script/upgrades/Rev028Upgrade.s.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { MockTaskHook } from "./mocks/MockTaskHook.sol";
 import { MockTaskHookV2 } from "./mocks/MockTaskHookV2.sol";
+import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
@@ -25,6 +27,16 @@ import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 /// @dev Builds a diamond holding a live V1 task with a V1 hook, strips the rev028 selectors to
 ///      stand in for a rev027 diamond, runs the cut, and checks the routing, the version, that the
 ///      pre-cut task keeps V1 dispatch to its end and is recorded, and that new tasks are V2.
+/// @dev A V1 hook whose onExpire burns the gas it is given.
+contract ExpireGasBurnerV1 is MockTaskHook {
+    function onExpire(bytes32 taskId, ITMPCore.TaskContext calldata ctx) external override {
+        taskId;
+        ctx;
+        uint256 stop = gasleft() - 900_000;
+        while (gasleft() > stop) { }
+    }
+}
+
 contract Rev028UpgradeTest is Test, DiamondTestHelper {
     uint256 internal constant OWNER_KEY = 0xA11CE;
     uint256 internal constant REWARD = 100e6;
@@ -39,6 +51,7 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
     MockUSDC internal usdc;
     MockTaskHook internal v1Hook;
     bytes32 internal preCutTask;
+    bytes32 internal preCutBurnerTask;
 
     function setUp() public {
         owner = vm.addr(OWNER_KEY);
@@ -56,11 +69,17 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         address[] memory hooks = new address[](1);
         hooks[0] = address(v1Hook);
         preCutTask = _create(hooks);
+        address[] memory burners = new address[](4);
+        for (uint256 i; i < burners.length; ++i) {
+            burners[i] = address(new ExpireGasBurnerV1());
+        }
+        preCutBurnerTask = _create(burners);
 
         // rev027 routing: no rev028 Adds, and settleLapsedReview and the settlement views on
         // SettlementFacet, where rev027 served them.
         address settlementFacet = IDiamondLoupe(address(market)).facetAddress(ITMPDiamond.refundExpired.selector);
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        address projectFacetBefore = IDiamondLoupe(address(market)).facetAddress(ITMPProject.createProject.selector);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] =
             IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, FacetSelectors.selectorsAddedRev028());
         cuts[1] = IDiamondCut.FacetCut(
@@ -71,6 +90,10 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         cuts[2] = IDiamondCut.FacetCut(
             settlementFacet, IDiamondCut.FacetCutAction.Replace, FacetSelectors.settlementViewSelectorsMovedRev028()
         );
+        // rev027 routed acceptGrant(uint256), which rev028 replaces with acceptGrant(uint256,bytes32).
+        bytes4[] memory oldAcceptGrant = new bytes4[](1);
+        oldAcceptGrant[0] = FacetSelectors.acceptGrantSelectorRev027();
+        cuts[3] = IDiamondCut.FacetCut(projectFacetBefore, IDiamondCut.FacetCutAction.Add, oldAcceptGrant);
         vm.prank(owner);
         IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
 
@@ -121,6 +144,30 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         assertNotEq(loupe.facetAddress(ITMPDiamond.resolveDispute.selector), evaluatorBefore, "EvaluatorFacet replaced");
         assertNotEq(loupe.facetAddress(ITMPDiamond.getTaskHooks.selector), registryBefore, "RegistryFacet replaced");
         assertNotEq(loupe.facetAddress(AdminFacet.diamondVersion.selector), adminBefore, "AdminFacet replaced");
+    }
+
+    function test_Upgrade_SwapsTheAcceptGrantSelector() public {
+        IDiamondLoupe loupe = IDiamondLoupe(address(market));
+        assertNotEq(loupe.facetAddress(FacetSelectors.acceptGrantSelectorRev027()), address(0), "rev027 routes it");
+        assertEq(loupe.facetAddress(ITMPProject.acceptGrant.selector), address(0), "new selector unrouted at rev027");
+
+        new Rev028Upgrade().run();
+
+        assertEq(loupe.facetAddress(FacetSelectors.acceptGrantSelectorRev027()), address(0), "old selector removed");
+        assertEq(
+            loupe.facetAddress(ITMPProject.acceptGrant.selector),
+            loupe.facetAddress(ITMPProject.createProject.selector),
+            "new selector routed to ProjectFacet"
+        );
+    }
+
+    function test_PreCutTask_ExpiryRefundIsNotBlockedByAggregateHookGas() public {
+        new Rev028Upgrade().run();
+        assertEq(ITMPHooksV2(address(market)).getTaskHookVersion(preCutBurnerTask), 0, "still V1");
+        vm.warp(block.timestamp + 8 days);
+        // Four hooks each burn about a stipend; supplying less than all four need still refunds.
+        market.refundExpired{ gas: 3_400_000 }(preCutBurnerTask, 0);
+        assertEq(uint8(market.getTaskState(preCutBurnerTask)), uint8(ITMPCore.TaskStatus.Expired));
     }
 
     function test_PreCutTaskKeepsV1DispatchAndIsRecorded() public {

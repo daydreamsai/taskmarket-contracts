@@ -63,4 +63,5 @@ interface IFundingPoolManager {
 interface IDiamondForPool {
     function owner() external view returns (address);
     function usdcToken() external view returns (address);
+    function isSettling() external view returns (bool);
 }

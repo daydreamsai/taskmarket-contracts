@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import { BaseTMPHookV2 } from "../src/hooks/base/BaseTMPHookV2.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
@@ -14,6 +15,27 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+
+/// @dev Records who the Diamond reports as a task's creator at the moment checkFund runs.
+contract CreatorProbeHook is BaseTMPHookV2 {
+    mapping(bytes32 taskId => address creator) public seenCreator;
+
+    constructor(address diamond_) BaseTMPHookV2(diamond_) { }
+
+    function hookCapabilities() external pure override returns (uint32) {
+        return 1; // beforeCreate
+    }
+
+    function beforeCreate(bytes32 taskId, TaskContextV2 calldata, bytes calldata, bytes calldata)
+        external
+        override
+        onlyDiamond
+        returns (bytes4)
+    {
+        seenCreator[taskId] = ITMPProject(diamond).taskCreatedBy(taskId);
+        return this.beforeCreate.selector;
+    }
+}
 
 /// @dev rev027: operators spend a project's budget under grant terms the owner states and the
 ///      operator accepts. Covers each term, the rejections, the cap and its release by refunds, and
@@ -83,7 +105,11 @@ contract ProjectGrantsTest is DiamondTestHelper {
     }
 
     function _accept(address op) internal {
-        _relay(op, 0, abi.encodeCall(projects.acceptGrant, (id)));
+        _relay(op, 0, abi.encodeCall(projects.acceptGrant, (id, _storedTermsHash(op))));
+    }
+
+    function _storedTermsHash(address op) internal view returns (bytes32) {
+        return keccak256(abi.encode(projects.getGrant(id, op).terms));
     }
 
     function _grantAndAccept(address op, ITMPProject.GrantTerms memory t) internal {
@@ -200,16 +226,39 @@ contract ProjectGrantsTest is DiamondTestHelper {
 
     function test_RevertWhen_Accept_NoGrantOrAlreadyAcceptedOrRevoked() public {
         vm.expectRevert(ITMPProject.GrantNotFound.selector);
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id)));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, bytes32(0))));
 
         _grantAndAccept(operator, _wideOpen());
+        bytes32 acceptedHash = _storedTermsHash(operator);
         vm.expectRevert(ITMPProject.GrantAlreadyAccepted.selector);
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id)));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, acceptedHash)));
 
         _grant(otherOperator, _wideOpen());
         _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, otherOperator)));
         vm.expectRevert(ITMPProject.GrantRevoked.selector);
-        _relay(otherOperator, 0, abi.encodeCall(projects.acceptGrant, (id)));
+        _relay(otherOperator, 0, abi.encodeCall(projects.acceptGrant, (id, bytes32(0))));
+    }
+
+    /// @dev The owner swaps the terms after the operator read them; accepting the old hash reverts
+    ///      and the operator can accept only the terms it now sees.
+    function test_RevertWhen_Accept_TermsSwappedAfterOperatorReadThem() public {
+        ITMPProject.GrantTerms memory reviewed = _terms(1e6, ITMPProject.RequesterOfRecord.Owner, false, false);
+        _grant(operator, reviewed);
+        bytes32 reviewedHash = keccak256(abi.encode(reviewed));
+
+        ITMPProject.GrantTerms memory swapped = _terms(0, ITMPProject.RequesterOfRecord.Operator, true, true);
+        _grant(operator, swapped);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITMPProject.GrantTermsMismatch.selector, keccak256(abi.encode(swapped)), reviewedHash
+            )
+        );
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, reviewedHash)));
+        assertFalse(projects.getGrant(id, operator).accepted);
+
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(swapped)))));
+        assertTrue(projects.getGrant(id, operator).accepted);
     }
 
     function test_RevertWhen_Revoke_NotOwnerOrNoGrantOrTwice() public {
@@ -241,6 +290,40 @@ contract ProjectGrantsTest is DiamondTestHelper {
         assertEq(projects.getProject(id).available, BUDGET - REWARD);
         assertEq(projects.getGrant(id, operator).committed, REWARD);
         assertEq(usdc.balanceOf(address(market)), market.totalLiabilities());
+    }
+
+    /// Rev028: a checkFund hook must be able to see who actually created a project task while the
+    /// task is being created, since the requester of record is the owner by default and a
+    /// sponsorship hook charges the creator's allowance, not the owner's.
+    function test_CheckFundHook_SeesTheCreatorNotTheRequesterOfRecord() public {
+        _grantAndAccept(operator, _wideOpen());
+        CreatorProbeHook probe = new CreatorProbeHook(address(market));
+
+        bytes32 operatorTask = abi.decode(_relay(operator, 0, _taskCallWithHook(REWARD, address(probe))), (bytes32));
+        assertEq(market.getTask(operatorTask).requester, owner);
+        assertEq(probe.seenCreator(operatorTask), operator, "hook saw the operator, not the owner");
+
+        bytes32 ownerTask = abi.decode(_relay(owner, 0, _taskCallWithHook(REWARD, address(probe))), (bytes32));
+        assertEq(probe.seenCreator(ownerTask), owner);
+    }
+
+    function _taskCallWithHook(uint256 reward, address hook) internal view returns (bytes memory) {
+        ITMPCore.TaskTerms memory t;
+        t.version = 2;
+        address[] memory hooks = new address[](1);
+        hooks[0] = hook;
+        return abi.encodeCall(
+            projects.createProjectTask,
+            (
+                id,
+                taskConfig(reward, 7 days, TMP_BOUNTY),
+                ITMPCore.HookConfig({ contracts: hooks, data: hex"" }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                t,
+                address(0)
+            )
+        );
     }
 
     function test_Operator_AsRequesterOfRecord() public {

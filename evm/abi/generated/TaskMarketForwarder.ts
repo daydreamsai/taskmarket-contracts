@@ -234,6 +234,11 @@ export const TaskMarketForwarderABI = [
   },
   {
     "type": "error",
+    "name": "EscrowTokenMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -277,6 +282,11 @@ export const TaskMarketForwarderABI = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "TaskMarketNotContract",
+    "inputs": []
   },
   {
     "type": "error",

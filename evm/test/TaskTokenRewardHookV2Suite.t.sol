@@ -553,6 +553,22 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         assertEq(freshHook.bonusBps(), 0);
     }
 
+    // A bonus that converts to zero tokens reserves nothing, so it must not leave epoch budget
+    // consumed that a cancel cannot hand back.
+    function test_zeroTokenReservation_doesNotConsumeBudget() public {
+        vm.startPrank(owner);
+        hook.setDreamsPerUsdc(1);
+        hook.setBonusBps(1);
+        vm.stopPrank();
+
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), 0);
+        assertEq(budget.globalUsed(), 0, "no budget consumed for a zero-token reservation");
+        assertEq(budget.workerUsed(worker), 0);
+        assertEq(budget.requesterUsed(requester), 0);
+    }
+
     // ─── setDreamsPerUsdc ─────────────────────────────────────────────────────
 
     function test_setDreamsPerUsdc_updatesRate() public {
@@ -1912,7 +1928,7 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         vm.prank(owner);
         budget.setWorkerCapUsd(1 * 1e6);
         vm.prank(address(hook));
-        budget.checkAndConsume(requester, worker, 1 * 1e6);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, 1 * 1e6);
         assertEq(budget.remaining(requester, worker), 0);
 
         bytes32 taskId = _createBountyTask();
@@ -1948,7 +1964,7 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         vm.expectRevert(
             abi.encodeWithSelector(EpochBudget.TaskCapExceeded.selector, MAX_PER_TASK_USD + 1, MAX_PER_TASK_USD)
         );
-        budget.checkAndConsume(requester, worker, MAX_PER_TASK_USD + 1);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, MAX_PER_TASK_USD + 1);
     }
 
     function test_epochBudget_workerCapExceeded_direct() public {
@@ -1956,7 +1972,7 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         budget.setWorkerCapUsd(100 * 1e6);
         vm.prank(address(hook));
         vm.expectRevert(abi.encodeWithSelector(EpochBudget.WorkerCapExceeded.selector, worker, 200 * 1e6, 100 * 1e6));
-        budget.checkAndConsume(requester, worker, 200 * 1e6);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, 200 * 1e6);
     }
 
     function test_epochBudget_requesterCapExceeded_direct() public {
@@ -1966,7 +1982,7 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         vm.expectRevert(
             abi.encodeWithSelector(EpochBudget.RequesterCapExceeded.selector, requester, 200 * 1e6, 100 * 1e6)
         );
-        budget.checkAndConsume(requester, worker, 200 * 1e6);
+        budget.checkAndConsume(keccak256("direct-task"), requester, worker, 200 * 1e6);
     }
 
     function test_epochBudget_release_noOp_whenAmountExceedsUsed() public {
@@ -1976,7 +1992,7 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         // contract insteadV2Suite of the hook and revert with OnlyHook.
         uint64 epoch = budget.currentEpoch();
         vm.prank(address(hook));
-        budget.release(requester, worker, 999 * 1e6, epoch);
+        budget.release(keccak256("direct-task"), requester, worker, 999 * 1e6, epoch);
         assertEq(budget.workerUsed(worker), 0);
     }
 

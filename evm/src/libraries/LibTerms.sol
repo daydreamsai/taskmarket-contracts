@@ -80,23 +80,14 @@ library LibTerms {
     function extendOnAppeal(AppStorage storage s, bytes32 taskId) internal {
         uint32 secs = terms(s, taskId).resolutionWindowSecs;
         uint256 newExpiry = block.timestamp + (secs == 0 ? DEFAULT_RESOLUTION_WINDOW_SECS : secs);
-        ITMPCore.Task storage task = s.tasks[taskId];
-        if (task.expiryTime < newExpiry) {
-            task.expiryTime = newExpiry;
-            emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
-        }
+        LibProject.extendExpiry(s, taskId, newExpiry);
     }
 
     /// @notice expiryTime = max(expiryTime, now + reopenExtensionSecs), so a reopened task can be claimed.
     function extendOnReopen(AppStorage storage s, bytes32 taskId) internal {
         uint32 secs = terms(s, taskId).reopenExtensionSecs;
         uint256 ext = secs == 0 ? DEFAULT_REOPEN_EXTENSION_SECS : secs;
-        ITMPCore.Task storage task = s.tasks[taskId];
-        uint256 newExpiry = block.timestamp + ext;
-        if (task.expiryTime < newExpiry) {
-            task.expiryTime = newExpiry;
-            emit ITMPCore.TaskExpiryExtended(taskId, newExpiry);
-        }
+        LibProject.extendExpiry(s, taskId, block.timestamp + ext);
     }
 
     /// @notice Smallest stake a claim must post under `terms`: ceil(reward * stakeBps / 10000).
@@ -131,7 +122,7 @@ library LibTerms {
         } else if (t.acceptWindowSecs != 0) {
             revert ITMPCore.InvalidTerms();
         }
-        if (t.stakeBps > MAX_STAKE_BPS) revert ITMPCore.StakeBpsTooHigh();
+        _checkStakeTerms(t, mode);
         (uint32 minWindow, uint32 maxWindow, uint16 maxRejectFee, uint8 maxRevisions) = bounds(s);
         if (!_windowOk(t.reviewWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
         if (!_windowOk(t.decisionWindowSecs, minWindow, maxWindow)) revert ITMPCore.InvalidTerms();
@@ -141,6 +132,13 @@ library LibTerms {
         if (t.rejectFeeBps != 0 && t.rejectFeeBps - 1 > maxRejectFee) revert ITMPCore.InvalidTerms();
         if (t.maxRevisions != 0 && t.maxRevisions - 1 > maxRevisions) revert ITMPCore.InvalidTerms();
         if (mode == TMP_AUCTION && t.rejectOutcome == ITMPCore.RejectOutcome.Reopen) revert ITMPCore.InvalidTerms();
+    }
+
+    /// @dev Rev028: only a Claim task collects a worker stake, so stake terms on any other mode would
+    ///      promise protection that is never enforced.
+    function _checkStakeTerms(ITMPCore.TaskTerms memory t, bytes4 mode) private pure {
+        if (t.stakeBps > MAX_STAKE_BPS) revert ITMPCore.StakeBpsTooHigh();
+        if (mode != TMP_CLAIM && (t.stakeRequired || t.stakeBps != 0)) revert ITMPCore.InvalidTerms();
     }
 
     function _windowOk(uint32 secs, uint32 minWindow, uint32 maxWindow) private pure returns (bool) {

@@ -39,7 +39,7 @@ contract RatingFacet {
         bytes32 feedbackHash
     ) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         // Rev028: guarded so a V2 hook called here cannot re-enter the diamond.
         LibGuards._nonReentrantBefore(s);

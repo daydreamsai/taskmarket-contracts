@@ -28,6 +28,11 @@ import {
 /// @dev The caller holds the forwarder, pause and reentrancy guards around `create`; this library
 ///      only records the task and books its escrow.
 library LibTaskCreation {
+    /// @dev Rev028: longest delivery duration a task may be created with (1 year). Later expiry
+    ///      additions (review, appeal, reopen) are bounded windows, so expiryTime and every sum
+    ///      derived from it stay far below overflow.
+    uint256 internal constant MAX_TASK_DURATION = 365 days;
+
     /// @notice Validates and records a task for `requester`, applies its evaluator terms, builds
     ///         and checks its hooks, emits its creation events and books its escrow.
     /// @param reservedWorker rev027: the only worker who may claim the task, or zero for none.
@@ -53,6 +58,13 @@ library LibTaskCreation {
         // HookV1Retired. Below rev028 the rev027 V1 build runs instead.
         LibHooks._attach(taskId, hookConfig);
         _announceAndBook(s, taskId, requester, reservedWorker);
+    }
+
+    /// @notice The id the next task created for `requester` will get. Rev028: createProjectTask
+    ///         records the creator against it before the hooks run, so a checkFund hook can see who
+    ///         actually called.
+    function nextTaskId(AppStorage storage s, address requester) internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), requester, s.requesterNonce[requester]));
     }
 
     /// @dev Records the task and, for a reserved worker, the reservation. Split from create to
@@ -93,6 +105,7 @@ library LibTaskCreation {
         if (requester == address(0)) revert ITMPCore.InvalidRequester();
         if (config.reward == 0) revert ITMPCore.RewardMustBeGreaterThanZero();
         if (config.duration == 0) revert ITMPCore.DurationMustBeGreaterThanZero();
+        if (config.duration > MAX_TASK_DURATION) revert ITMPCore.DurationTooLong();
         if (!(config.mode == TMP_BOUNTY || config.mode == TMP_CLAIM || config.mode == TMP_PITCH
                     || config.mode == TMP_BENCHMARK || config.mode == TMP_AUCTION)) {
             revert ITMPCore.InvalidMode();
@@ -106,7 +119,8 @@ library LibTaskCreation {
         }
         LibTerms.validate(s, terms, config.mode, reserved);
 
-        taskId = keccak256(abi.encode(block.chainid, address(this), requester, s.requesterNonce[requester]++));
+        taskId = nextTaskId(s, requester);
+        s.requesterNonce[requester]++;
 
         ITMPCore.Task storage t = s.tasks[taskId];
         t.id = taskId;
@@ -133,6 +147,7 @@ library LibTaskCreation {
         if (config.mode == TMP_AUCTION) {
             if (config.bidDeadline == 0) revert ITMPCore.BidDeadlineMustBeGreaterThanZero();
             ITMPCore.TaskAuctionConfig storage ac = s.taskAuctionConfigs[taskId];
+            if (config.bidDeadline >= config.duration) revert ITMPCore.BidDeadlineAfterExpiry();
             ac.bidDeadline = block.timestamp + config.bidDeadline;
             ac.maxPrice = config.reward;
             ac.auctionSubtype = config.auctionSubtype;

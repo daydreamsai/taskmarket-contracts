@@ -7,6 +7,7 @@ import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
+import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
 import { LibSettlement } from "../libraries/LibSettlement.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { LibReview } from "../libraries/LibReview.sol";
@@ -43,7 +44,7 @@ contract SettlementFacet {
     ///         are rejected, cancelTask becomes available.
     function rejectSubmission(bytes32 taskId, address worker) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -81,7 +82,7 @@ contract SettlementFacet {
     ///         The requester is the authenticated actor (pgtrSender).
     function forfeitAndReopen(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         _snap(taskId, s);
@@ -106,6 +107,9 @@ contract SettlementFacet {
         uint256 forfeited = task.stakeAmount;
         address forfeiter = task.worker;
         s.stakeForfeit[taskId] = forfeited;
+        // Rev028: the worker who forfeited is barred from re-claiming, as after releaseClaim and
+        // rejectDelivery, so a forfeit cannot be undone by claiming the reopened task again.
+        s.taskRejectedWorkers[taskId][forfeiter] = true;
 
         task.status = ITMPCore.TaskStatus.Open;
         task.worker = address(0);
@@ -132,6 +136,7 @@ contract SettlementFacet {
     function requesterTimeout(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         LibGuards._nonReentrantBefore(s);
         _snap(taskId, s);
         uint256 balanceBefore = LibEscrow.balance(s);
@@ -168,7 +173,7 @@ contract SettlementFacet {
     ///         expiry; the rest of the stake returns to the worker and the task reopens.
     function releaseClaim(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         _snap(taskId, s);
@@ -182,7 +187,12 @@ contract SettlementFacet {
         if (block.timestamp >= task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (task.deliverable != bytes32(0)) revert ITMPCore.DeliverableAlreadySet();
         ITMPCore.TaskTerms storage t = LibTerms.terms(s, taskId);
-        if (t.releaseAllowed == ITMPCore.ReleaseAllowed.Disallowed) revert ITMPCore.ReleaseNotAllowed();
+        // A task whose hooks can veto the delivery cannot lock its worker in: the worker would be unable
+        // to deliver or leave and would forfeit the stake at expiry. Only a hook that can actually
+        // veto submitWork lifts Disallowed; a task with no such hook keeps its term.
+        if (t.releaseAllowed == ITMPCore.ReleaseAllowed.Disallowed && !_canVetoSubmit(s, taskId)) {
+            revert ITMPCore.ReleaseNotAllowed();
+        }
 
         uint256 stake = task.stakeAmount;
         uint256 penalty = _releasePenalty(stake, s.taskMetadata[taskId].claimedAt, task.expiryTime, t.releaseGraceBps);
@@ -220,13 +230,28 @@ contract SettlementFacet {
 
     /// @dev storedGrace is grace + 1 (0 = default). now < expiry is checked by the caller, so a
     ///      100% grace (graceEnd == expiry) never reaches the division.
+    /// @dev Whether any hook on the task can veto submitWork: a V1 hook always can (checkSubmit), a V2
+    ///      hook only when it declares the beforeSubmitWork capability bit.
+    function _canVetoSubmit(AppStorage storage s, bytes32 taskId) private view returns (bool) {
+        if (s.taskHooks[taskId].length != 0) return true;
+        ITMPHookV2.Attachment[] storage list = s.taskHooksV2[taskId];
+        uint32 bit = uint32(1) << LibHooksV2.A_SUBMIT_WORK;
+        for (uint256 i; i < list.length; ++i) {
+            if (list[i].capabilities & bit != 0) return true;
+        }
+        return false;
+    }
+
     function _releasePenalty(uint256 stake, uint256 claimedAt, uint256 expiry, uint16 storedGrace)
         private
         view
         returns (uint256)
     {
         uint256 grace = storedGrace == 0 ? LibTerms.DEFAULT_RELEASE_GRACE_BPS : storedGrace - 1;
-        uint256 graceEnd = claimedAt + ((expiry - claimedAt) * grace) / 10000;
+        // Rev028: split the span so a very long claim period cannot overflow the multiplication
+        // and block the release; the result is the span times grace over 10000, rounded down.
+        uint256 span = expiry - claimedAt;
+        uint256 graceEnd = claimedAt + (span / 10000) * grace + ((span % 10000) * grace) / 10000;
         if (block.timestamp <= graceEnd) return 0;
         return (stake * (block.timestamp - graceEnd)) / (expiry - graceEnd);
     }
@@ -235,7 +260,7 @@ contract SettlementFacet {
     ///         The requester is the authenticated actor (pgtrSender).
     function cancelTask(bytes32 taskId, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         _snap(taskId, s);
@@ -290,6 +315,7 @@ contract SettlementFacet {
     function refundExpired(bytes32 taskId, uint256 requesterAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
+        LibGuards._requireNoRelayedPayment(s);
         ITMPCore.Task storage task = s.tasks[taskId];
         // A recorded verdict is never refunded over: it settles as finalizeVerdict would, paying
         // the evaluator its fee, and expiry waits while the appeal window is still open. The call
@@ -361,7 +387,7 @@ contract SettlementFacet {
     ///                      feedback.
     function declineReservation(bytes32 taskId, uint256 workerAgentId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         _snap(taskId, s);
@@ -420,7 +446,7 @@ contract SettlementFacet {
     ///         The requester is the authenticated actor (pgtrSender).
     function rejectDelivery(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
         _snap(taskId, s);
@@ -457,7 +483,7 @@ contract SettlementFacet {
     ///         The requester is the authenticated actor (pgtrSender).
     function requestRevision(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
-        LibGuards._requireForwarder(s);
+        LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
@@ -473,10 +499,10 @@ contract SettlementFacet {
         clock.revisionDueAt = uint64(due);
         uint8 used = clock.revisionsUsed + 1;
         clock.revisionsUsed = used;
-        if (task.expiryTime < due) {
-            task.expiryTime = due;
-            emit ITMPCore.TaskExpiryExtended(taskId, due);
-        }
+        LibProject.extendExpiry(s, taskId, due);
+        // Rev028: a project task's expiry is held to the project's end, so a revision the worker
+        // could not deliver before the task expires is refused rather than requested.
+        if (task.expiryTime < due) revert ITMPCore.RevisionsExhausted();
 
         emit ITMPCore.RevisionRequested(taskId, task.worker, used);
         LibGuards._nonReentrantAfter(s);
@@ -601,27 +627,10 @@ contract SettlementFacet {
         // asked to satisfy the same obligation twice.
         task.reward = 0;
 
-        // An evaluator can be assigned to an auction task while it's still Open. Since
-        // the task never reaches Review without a deliverable, evaluate() never runs and
-        // never returns the evaluator's stake -- forfeit it here (mirroring the same
-        // evaluator-never-acted forfeiture _refundExpiredNormal already applies) instead
-        // of leaving it stranded in escrow with no path back to anyone.
-        ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
-        address timedOutEvaluator = evalCfg.evaluator;
-        uint256 evaluatorForfeited = evalCfg.evaluatorStake;
-        if (evaluatorForfeited > 0) {
-            evalCfg.evaluatorStake = 0;
-            evalCfg.evaluator = address(0);
-            s.totalFeesCollected += evaluatorForfeited;
-        }
-
+        // An undelivered auction never reaches Review, so the evaluator had nothing to act on and
+        // its stake goes back to the requester who posted it (rev028), as on cancelTask.
+        _refundEvaluatorStake(taskId, requesterAddr, s);
         if (!LibProject.payRequester(s, taskId, refundAmount)) revert ITMPCore.RefundFailed();
-
-        if (evaluatorForfeited > 0) {
-            if (!s.usdcToken.transfer(s.feeRecipient, evaluatorForfeited)) revert ITMPCore.ForfeitTransferFailed();
-            LibSettlement.add(taskId, LibSettlement.FORFEITED, evaluatorForfeited);
-            emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, evaluatorForfeited);
-        }
 
         emit ITMPCore.TaskExpired(taskId, requesterAddr, refundAmount);
         LibHooks._onExpireHooks(taskId, s);
@@ -637,7 +646,9 @@ contract SettlementFacet {
         // its stake goes back to the requester who posted it, as on cancelTask.
         address reserved = s.reservedWorkers[taskId];
         bool lapse = reserved != address(0) && task.status == ITMPCore.TaskStatus.Open;
-        if (lapse) _refundEvaluatorStake(taskId, task.requester, s);
+        // Rev028: the same holds whenever nothing was delivered. Only a stake the evaluator failed
+        // to act on for a delivered task is forfeited below.
+        if (lapse || task.deliverable == bytes32(0)) _refundEvaluatorStake(taskId, task.requester, s);
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
 
         task.status = ITMPCore.TaskStatus.Expired;
@@ -656,6 +667,9 @@ contract SettlementFacet {
 
         if (!LibProject.payRequester(s, taskId, refundAmount)) revert ITMPCore.RefundFailed();
 
+        // The delivered branches below are defensive. refundExpired reverts DeliveryPending whenever a
+        // Claim, Pitch or Auction task with an evaluator has a deliverable, and a Bounty or Benchmark
+        // task only sets `deliverable` on accept, so an expiry here is normally an undelivered task.
         if (task.mode == CLAIM && task.stakeAmount > 0) {
             uint256 stake = task.stakeAmount;
             task.stakeAmount = 0;

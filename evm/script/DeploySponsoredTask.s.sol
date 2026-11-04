@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
+import { ScriptBounds } from "./lib/ScriptBounds.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SponsoredTaskCreationFee } from "../src/hooks/sponsored-task/SponsoredTaskCreationFee.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
@@ -62,7 +63,9 @@ contract DeploySponsoredTask is Script {
 
         SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(
             admin,
-            uint16(vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0))),
+            ScriptBounds.bps(
+                vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_BPS", uint256(0)), "FORGE_SPONSORED_TASK_TOKEN_FEE_BPS"
+            ),
             vm.envOr("FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT", address(0))
         );
         SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(

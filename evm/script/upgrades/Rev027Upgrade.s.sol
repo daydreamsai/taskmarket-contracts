@@ -121,7 +121,7 @@ contract Rev027Upgrade is Script {
         cuts[8] =
             IDiamondCut.FacetCut(evaluator, IDiamondCut.FacetCutAction.Replace, FacetSelectors.evalFacetSelectors());
         cuts[9] = IDiamondCut.FacetCut(
-            address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectors()
+            address(new ProjectFacet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.projectFacetSelectorsRev027()
         );
         cuts[10] = IDiamondCut.FacetCut(
             address(new AcceptanceFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.acceptFacetSelectors()

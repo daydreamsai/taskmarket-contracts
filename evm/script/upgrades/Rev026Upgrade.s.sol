@@ -28,9 +28,9 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 /// @dev Removes the rev018 createTask overload (the one taking a StakeConfig) and normalizeTerms.
 ///      Every task live at the rev025 cut was normalized then, so neither has work left to do.
 /// @dev Live tasks created before rev026 are not booked by the cut: Rev026Backfill books them,
-///      the runbook reconciles the surplus against the escrow monitor, and the owner calls
+///      the owner reconciles the surplus against the escrow monitor, and then calls
 ///      completeLiabilities. Until then an unbooked task's payouts release nothing. See
-///      docs/runbooks/rev026-upgrade.md.
+///      docs/specs/erc8195/rev026-escrow-liabilities-and-solvency.md, "Reconciliation procedure".
 /// @dev The cut goes out as two diamondCut transactions: as one it needs about 38M gas on Tempo,
 ///      over its 30M per-transaction limit. The first carries the four settlement-path facets
 ///      and Adds the RegistryFacet views; the second the rest. A run that stops between them

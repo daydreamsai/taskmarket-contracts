@@ -702,6 +702,13 @@ contract TaskHookV2Test is DiamondTestHelper {
         _relay(requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(h), hex"")));
     }
 
+    function test_CallTaskHookRefusesARelayedPayment() public {
+        (MockCallHookV2 h, bytes32 taskId) = _callHook(ROLE_ANY, TMP_CLAIM);
+        vm.expectRevert(ITMPCore.ForwardedPaymentMismatch.selector);
+        _relay(requester, 1, abi.encodeCall(v2.callTaskHook, (taskId, address(h), hex"")));
+        _relay(requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(h), hex"")));
+    }
+
     function test_CallTaskHookRefusesHookNotAttached() public {
         (, bytes32 taskId) = _callHook(ROLE_ANY, TMP_CLAIM);
         MockCallHookV2 other = new MockCallHookV2(address(market), ROLE_ANY);

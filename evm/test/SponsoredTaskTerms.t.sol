@@ -34,9 +34,32 @@ contract SponsoredTaskTermsTest is Test {
             hooksHash: keccak256(abi.encode(_fixedHooks()))
         });
 
-        bytes32 expected = 0x1e08988d3ea6ba5b3e0cbfb9e8f195e5513e8f2d27a773856a8237564b1baf63;
-        bytes32 actual = keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms));
-        assertEq(actual, expected);
+        // The core half is the rev027 commitment, unchanged.
+        bytes32 expectedCore = 0x1e08988d3ea6ba5b3e0cbfb9e8f195e5513e8f2d27a773856a8237564b1baf63;
+        bytes32 core = keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms));
+        assertEq(core, expectedCore);
+
+        // The settlement half and the combined commitment are new in rev028.
+        SponsoredTaskTerms.SettlementTerms memory settlement = SponsoredTaskTerms.SettlementTerms({
+            penaltyTo: 0,
+            reviewWindowSecs: 259_200,
+            decisionWindowSecs: 172_800,
+            reopenExtensionSecs: 86_400,
+            releaseAllowed: 1,
+            releaseGraceBps: 1,
+            rejectOutcome: 0,
+            rejectFeeBps: 1,
+            maxRevisions: 3,
+            resolutionWindowSecs: 604_800,
+            acceptWindowSecs: 0
+        });
+        bytes32 expectedSettlement = 0x954ac646ebd620b75895d9113a5dd86c362474c9f59abe611befdd327d393102;
+        bytes32 settlementHash = keccak256(abi.encode(SponsoredTaskTerms.SETTLEMENT_TERMS_TYPEHASH, settlement));
+        assertEq(settlementHash, expectedSettlement);
+
+        bytes32 expectedCombined = 0x552aa98fc2dd909bf5f3123197d22d2647ab3d99fea357a6cf25aaf11ffcdb76;
+        bytes32 combined = keccak256(abi.encode(SponsoredTaskTerms.TERMS_HASH_TYPEHASH, core, settlementHash));
+        assertEq(combined, expectedCombined);
     }
 
     function _fixedHooks() private pure returns (address[] memory hooks) {

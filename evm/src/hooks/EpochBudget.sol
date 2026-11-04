@@ -11,6 +11,11 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 ///         USD value of the reward, not the DREAMS token amount. This keeps caps
 ///         meaningful regardless of the DREAMS/USDC exchange rate.
 ///
+///         The per-task cap (`maxUsdPerTask`) is a lifetime limit on one task's total emission,
+///         tracked per taskId and checked against the running total, so a bounty with several
+///         winners shares one cap rather than getting it once per winner. An epoch roll does not
+///         reset it.
+///
 ///         Usage is tracked against a monotonic epoch index. When the epoch rolls,
 ///         all usage is considered reset without O(n) clears: each account's stored
 ///         (epoch, used) pair is treated as zero usage when its epoch != the current one.
@@ -34,11 +39,14 @@ contract EpochBudget is Ownable {
     Usage internal globalUsage;
     mapping(address => Usage) internal workerUsage;
     mapping(address => Usage) internal requesterUsage;
+    /// @dev Total consumed against each task's cap, across all of its winners and epochs.
+    mapping(bytes32 => uint256) internal taskUsage;
 
     event HookSet(address indexed hook);
     event EpochRolled(uint64 indexed newEpoch, uint256 startTime);
     event Consumed(address indexed requester, address indexed worker, uint256 amount);
     event Released(address indexed requester, address indexed worker, uint256 amount);
+    event TaskConsumed(bytes32 indexed taskId, uint256 amount, uint256 taskTotal);
 
     error OnlyHook();
     error EpochDurationZero();
@@ -46,7 +54,8 @@ contract EpochBudget is Ownable {
     error GlobalCapExceeded(uint256 requested, uint256 remaining);
     error WorkerCapExceeded(address worker, uint256 requested, uint256 remaining);
     error RequesterCapExceeded(address requester, uint256 requested, uint256 remaining);
-    error TaskCapExceeded(uint256 requested, uint256 cap);
+    /// @dev `remaining` is what is left of the task's cap after what it has already consumed.
+    error TaskCapExceeded(uint256 requested, uint256 remaining);
 
     modifier onlyHook() {
         if (msg.sender != hook) revert OnlyHook();
@@ -109,13 +118,35 @@ contract EpochBudget is Ownable {
         return _usedIn(requesterUsage[requester], _effectiveEpoch());
     }
 
-    /// @notice Remaining USD capacity for a requester/worker pair in the effective epoch.
+    /// @notice Total consumed against `taskId`'s cap.
+    function taskUsed(bytes32 taskId) external view returns (uint256) {
+        return taskUsage[taskId];
+    }
+
+    /// @notice What is left of `taskId`'s cap.
+    function taskRemaining(bytes32 taskId) public view returns (uint256) {
+        return maxUsdPerTask - _min(maxUsdPerTask, taskUsage[taskId]);
+    }
+
+    /// @notice Remaining USD capacity for a requester/worker pair in the effective epoch, counting
+    ///         what `taskId` has already consumed against its cap.
+    function remaining(bytes32 taskId, address requester, address worker) external view returns (uint256) {
+        return _min(_pairRemaining(requester, worker), taskRemaining(taskId));
+    }
+
+    /// @notice Remaining USD capacity for a requester/worker pair in the effective epoch. The
+    ///         per-task cap is only a ceiling here, since no task is named; the hook uses the
+    ///         `taskId` overload.
     function remaining(address requester, address worker) external view returns (uint256) {
+        return _min(_pairRemaining(requester, worker), maxUsdPerTask);
+    }
+
+    function _pairRemaining(address requester, address worker) internal view returns (uint256) {
         uint64 epoch = _effectiveEpoch();
         uint256 globalRem = globalCapUsd - _min(globalCapUsd, _usedIn(globalUsage, epoch));
         uint256 workerRem = workerCapUsd - _min(workerCapUsd, _usedIn(workerUsage[worker], epoch));
         uint256 reqRem = requesterCapUsd - _min(requesterCapUsd, _usedIn(requesterUsage[requester], epoch));
-        return _min(_min3(globalRem, workerRem, reqRem), maxUsdPerTask);
+        return _min3(globalRem, workerRem, reqRem);
     }
 
     // ─── Mutations ────────────────────────────────────────────────────────────
@@ -131,15 +162,18 @@ contract EpochBudget is Ownable {
         return currentEpoch;
     }
 
-    /// @notice Check USD capacity and consume budget. Reverts if any cap is exceeded.
-    function checkAndConsume(address requester, address worker, uint256 amount)
+    /// @notice Check USD capacity and consume budget. Reverts if any cap is exceeded. The per-task
+    ///         cap is checked against `taskId`'s running total, not against `amount` alone.
+    function checkAndConsume(bytes32 taskId, address requester, address worker, uint256 amount)
         external
         onlyHook
         returns (uint64 epoch)
     {
         epoch = _rollEpochIfStale();
 
-        if (amount > maxUsdPerTask) revert TaskCapExceeded(amount, maxUsdPerTask);
+        uint256 tUsed = taskUsage[taskId];
+        uint256 taskRem = maxUsdPerTask - _min(maxUsdPerTask, tUsed);
+        if (amount > taskRem) revert TaskCapExceeded(amount, taskRem);
 
         uint256 gUsed = _usedIn(globalUsage, epoch);
         uint256 globalRem = globalCapUsd - _min(globalCapUsd, gUsed);
@@ -156,16 +190,24 @@ contract EpochBudget is Ownable {
         globalUsage = Usage(epoch, uint192(gUsed + amount));
         workerUsage[worker] = Usage(epoch, uint192(wUsed + amount));
         requesterUsage[requester] = Usage(epoch, uint192(rUsed + amount));
+        taskUsage[taskId] = tUsed + amount;
         emit Consumed(requester, worker, amount);
+        emit TaskConsumed(taskId, amount, tUsed + amount);
     }
 
     /// @notice Reverse previously consumed budget in the epoch it was originally consumed in.
     ///         `consumedEpoch` must be the epoch value returned by the matching
     ///         checkAndConsume call. If the epoch has since rolled past, that epoch's usage
     ///         bucket has already reset to zero -- releasing is a documented no-op rather
-    ///         than corrupting the current epoch's live usage accounting.
-    function release(address requester, address worker, uint256 amount, uint64 consumedEpoch) external onlyHook {
+    ///         than corrupting the current epoch's live usage accounting. The task's own running
+    ///         total is not epoch-bound, so it is always handed back.
+    function release(bytes32 taskId, address requester, address worker, uint256 amount, uint64 consumedEpoch)
+        external
+        onlyHook
+    {
         uint64 epoch = _rollEpochIfStale();
+        uint256 tUsed = taskUsage[taskId];
+        if (tUsed >= amount) taskUsage[taskId] = tUsed - amount;
         if (epoch != consumedEpoch) return;
         bool anyDecremented = false;
 

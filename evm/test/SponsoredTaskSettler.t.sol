@@ -17,6 +17,15 @@ import {
     ISponsoredTaskSettlerAuthority
 } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskSettlerAuthority.sol";
 
+/// @dev Reports the settler as its controller without being a vault the registry lists.
+contract SelfReportedControllerVault {
+    address public controller;
+
+    constructor(address controller_) {
+        controller = controller_;
+    }
+}
+
 contract MockSettlerAuthority is ISponsoredTaskSettlerAuthority {
     mapping(bytes32 digest => bool ok) public approved;
 
@@ -54,19 +63,22 @@ contract SponsoredTaskSettlerTest is Test {
     SponsoredTaskSettler private settler;
     SponsoredTasksVaultV2 private vault;
     bytes32 private allocationId;
+    /// @dev Read once in setUp: a request built after `vm.expectRevert` must not call the vault.
+    bytes32 private vaultIdOfVault;
 
     function setUp() public {
         vm.chainId(REMOTE_CHAIN_ID);
         token = new MockERC20("Project", "PROJECT", 18, address(this));
         feePolicy = new SponsoredTaskFeePolicy(address(this), FEE_BPS, FEE_RECIPIENT);
         registry = new SponsoredTaskRegistry(address(this));
-        settler = new SponsoredTaskSettler(admin, _one(vm.addr(keyA)), 1);
+        settler = new SponsoredTaskSettler(admin, _one(vm.addr(keyA)), 1, registry);
         factory = new SponsoredTaskFactoryV2(
             address(settler), address(feePolicy), registry, SponsoredTaskFeeConfig.none(IERC20(address(token)))
         );
         registry.setFactory(address(factory), true);
         (address v,) = factory.createVault(address(token), address(this), keccak256("remote"));
         vault = SponsoredTasksVaultV2(v);
+        vaultIdOfVault = vault.vaultId();
         vault.configureManager(MANAGER, GROSS * 10, true);
         token.mint(address(this), GROSS * 10);
         token.approve(address(vault), type(uint256).max);
@@ -115,6 +127,7 @@ contract SponsoredTaskSettlerTest is Test {
     function _reserveRequest() private view returns (SponsoredTaskSettler.ReserveRequest memory) {
         return SponsoredTaskSettler.ReserveRequest({
             vault: address(vault),
+            vaultId: vaultIdOfVault,
             allocationId: allocationId,
             taskChainId: TASK_CHAIN_ID,
             taskId: TASK_ID,
@@ -218,29 +231,29 @@ contract SponsoredTaskSettlerTest is Test {
     function testConstructorRejectsBadSettlerSets() public {
         address[] memory empty = new address[](0);
         vm.expectRevert(SponsoredTaskSettler.InvalidSettlers.selector);
-        new SponsoredTaskSettler(admin, empty, 1);
+        new SponsoredTaskSettler(admin, empty, 1, registry);
 
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.InvalidThreshold.selector, uint8(0), uint256(1)));
-        new SponsoredTaskSettler(admin, _one(address(1)), 0);
+        new SponsoredTaskSettler(admin, _one(address(1)), 0, registry);
 
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.InvalidThreshold.selector, uint8(2), uint256(1)));
-        new SponsoredTaskSettler(admin, _one(address(1)), 2);
+        new SponsoredTaskSettler(admin, _one(address(1)), 2, registry);
 
         vm.expectRevert(SponsoredTaskSettler.InvalidSettlers.selector);
-        new SponsoredTaskSettler(admin, _one(address(0)), 1);
+        new SponsoredTaskSettler(admin, _one(address(0)), 1, registry);
 
         address[] memory dup = new address[](2);
         dup[0] = address(1);
         dup[1] = address(1);
         vm.expectRevert(SponsoredTaskSettler.InvalidSettlers.selector);
-        new SponsoredTaskSettler(admin, dup, 1);
+        new SponsoredTaskSettler(admin, dup, 1, registry);
 
         address[] memory tooMany = new address[](17);
         for (uint256 i; i < 17; ++i) {
             tooMany[i] = address(uint160(i + 1));
         }
         vm.expectRevert(SponsoredTaskSettler.InvalidSettlers.selector);
-        new SponsoredTaskSettler(admin, tooMany, 1);
+        new SponsoredTaskSettler(admin, tooMany, 1, registry);
     }
 
     function testRenounceOwnershipDisabled() public {
@@ -305,8 +318,22 @@ contract SponsoredTaskSettlerTest is Test {
         settler.reserve(r, sigs);
     }
 
+    function testReserveRejectsAVaultTheRegistryDoesNotList() public {
+        SelfReportedControllerVault rogue = new SelfReportedControllerVault(address(settler));
+        SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
+        r.vault = address(rogue);
+        bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.VaultNotRegistered.selector, address(rogue)));
+        settler.reserve(r, sigs);
+    }
+
+    function testConstructorRejectsACodelessRegistry() public {
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.InvalidContract.selector, address(0xBEEF)));
+        new SponsoredTaskSettler(admin, _one(vm.addr(keyA)), 1, SponsoredTaskRegistry(address(0xBEEF)));
+    }
+
     function testReserveSignatureForAnotherSettlerFails() public {
-        SponsoredTaskSettler other = new SponsoredTaskSettler(admin, _one(vm.addr(keyA)), 1);
+        SponsoredTaskSettler other = new SponsoredTaskSettler(admin, _one(vm.addr(keyA)), 1, registry);
         SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
         bytes[] memory sigs = _sign(other.reserveDigest(r), _keys1(keyA));
         vm.expectPartialRevert(SponsoredTaskSettler.NotSettler.selector);
@@ -708,6 +735,63 @@ contract SponsoredTaskSettlerTest is Test {
         vm.prank(WORKER);
         vault.claim(allocationId, 0, _net(), new bytes32[](0));
         assertEq(token.balanceOf(WORKER), _net());
+    }
+
+    /// A revoked root that was the correct one must not block the allocation for good: the owner
+    /// reopens that digest and the settlers' signatures settle it again.
+    function testOwnerCanReopenARevokedCorrectRoot() public {
+        _reserve();
+        SponsoredTaskSettler.SettleRequest memory good = _settleRequest(_leaf(WORKER, _net()));
+        bytes[] memory goodSigs = _sign(settler.settleDigest(good), _keys1(keyA));
+        settler.settle(good, goodSigs);
+        bytes32 digest = settler.settleDigest(good);
+
+        vm.prank(admin);
+        settler.revokeSettlement(address(vault), allocationId);
+        assertTrue(settler.settleDigestRevoked(digest));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.SettlementAlreadyUsed.selector, digest));
+        settler.settle(good, goodSigs);
+
+        vm.prank(admin);
+        settler.reopenRevokedSettlement(digest);
+        assertFalse(settler.settleDigestRevoked(digest));
+        assertFalse(settler.settleDigestUsed(digest));
+
+        settler.settle(good, goodSigs);
+        vm.warp(block.timestamp + 3600);
+        settler.finalize(address(vault), allocationId);
+        vm.prank(WORKER);
+        vault.claim(allocationId, 0, _net(), new bytes32[](0));
+        assertEq(token.balanceOf(WORKER), _net());
+    }
+
+    function testReopenNeedsTheOwnerAndARevokedDigest() public {
+        _reserve();
+        SponsoredTaskSettler.SettleRequest memory good = _settleRequest(_leaf(WORKER, _net()));
+        settler.settle(good, _sign(settler.settleDigest(good), _keys1(keyA)));
+        bytes32 digest = settler.settleDigest(good);
+
+        // Pending but not revoked: nothing to reopen.
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.SettlementNotRevoked.selector, digest));
+        settler.reopenRevokedSettlement(digest);
+
+        vm.prank(admin);
+        settler.revokeSettlement(address(vault), allocationId);
+        vm.prank(RELAYER);
+        vm.expectRevert();
+        settler.reopenRevokedSettlement(digest);
+    }
+
+    function testReserveRejectsAVaultIdTheVaultDoesNotHave() public {
+        SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
+        r.vaultId = keccak256("some other vault");
+        bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
+        vm.expectRevert(
+            abi.encodeWithSelector(SponsoredTaskSettler.VaultIdMismatch.selector, vaultIdOfVault, r.vaultId)
+        );
+        settler.reserve(r, sigs);
+        assertEq(vault.totalReserved(), 0);
     }
 
     function testRevokeWorksWhilePausedAndAfterDelay() public {

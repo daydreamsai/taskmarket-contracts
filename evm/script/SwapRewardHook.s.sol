@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
+import { ScriptBounds } from "./lib/ScriptBounds.sol";
 import { RewardVault } from "../src/hooks/RewardVault.sol";
 import { EpochBudget } from "../src/hooks/EpochBudget.sol";
 import { TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHook.sol";
@@ -172,9 +173,9 @@ contract SwapRewardHook is Script {
             vm.envAddress("FORGE_DIAMOND_ADDRESS"),
             IERC20Metadata(protocolToken).decimals(),
             dreamsPerUsdc,
-            uint16(vm.envUint("FORGE_BONUS_BPS")),
+            ScriptBounds.bps(vm.envUint("FORGE_BONUS_BPS"), "FORGE_BONUS_BPS"),
             protocolToken,
-            uint16(vm.envOr("FORGE_WORKER_SPLIT_BPS", uint256(8000))),
+            ScriptBounds.bps(vm.envOr("FORGE_WORKER_SPLIT_BPS", uint256(8000)), "FORGE_WORKER_SPLIT_BPS"),
             relayerAddress,
             deployer
         );

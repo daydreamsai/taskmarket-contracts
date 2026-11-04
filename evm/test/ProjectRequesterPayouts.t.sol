@@ -76,7 +76,7 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
             revokeRemovesControl: true
         });
         _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, terms)));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id)));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(terms)))));
     }
 
     // -------------------------------------------------------------------------

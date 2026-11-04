@@ -121,6 +121,11 @@
   },
   {
     "type": "error",
+    "name": "InitCalldataWithoutInit",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InitFunctionReverted",
     "inputs": [
       {
@@ -2269,7 +2274,17 @@
   },
   {
     "type": "error",
+    "name": "AppealWindowTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AppealWindowTooShort",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BidDeadlineAfterExpiry",
     "inputs": []
   },
   {
@@ -2295,6 +2310,11 @@
   {
     "type": "error",
     "name": "DurationMustBeGreaterThanZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DurationTooLong",
     "inputs": []
   },
   {
@@ -5602,6 +5622,11 @@
   },
   {
     "type": "error",
+    "name": "EmptyDeliverable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EmptyPitchHash",
     "inputs": []
   },
@@ -5638,6 +5663,11 @@
         "name": "projectId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "termsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -6587,6 +6617,22 @@
     "type": "error",
     "name": "GrantNotFound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GrantTermsMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "actual",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",

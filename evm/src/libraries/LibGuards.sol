@@ -31,6 +31,29 @@ library LibGuards {
         if (!s.trustedForwarders[msg.sender]) revert ITMPCore.NotTrustedForwarder();
     }
 
+    /// @notice Rev028: the entrypoint for a relayed call that takes no funds. Same check as
+    ///         _requireForwarder, and the forwarder must report no payment for the call, so a
+    ///         payment pulled for a call that books nothing reverts with the whole transaction
+    ///         instead of landing unbooked.
+    function _requireForwarderNoPayment(AppStorage storage s) internal view {
+        if (!s.trustedForwarders[msg.sender]) revert ITMPCore.NotTrustedForwarder();
+        _requireNoPayment();
+    }
+
+    /// @notice Rev028: for a permissionless entrypoint that a forwarder may also relay. A direct
+    ///         call passes; a relayed call must carry no payment.
+    function _requireNoRelayedPayment(AppStorage storage s) internal view {
+        if (s.trustedForwarders[msg.sender]) _requireNoPayment();
+    }
+
+    /// @dev A forwarder that cannot report a payment (v1) pulls none, so it passes.
+    function _requireNoPayment() private view {
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool ok, bytes memory ret) =
+            msg.sender.staticcall(abi.encodeWithSelector(IPGTRPaymentForwarder.pgtrPaymentAmount.selector));
+        if (ok && ret.length >= 32 && abi.decode(ret, (uint256)) != 0) revert ITMPCore.ForwardedPaymentMismatch();
+    }
+
     function _requireNotPaused(AppStorage storage s) internal view {
         if (s.paused) revert EnforcedPause();
     }

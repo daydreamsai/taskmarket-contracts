@@ -246,7 +246,6 @@ contract TaskTermsTest is DiamondTestHelper {
         t.releaseGraceBps = 10001;
         t.rejectFeeBps = 5001;
         t.maxRevisions = 6;
-        t.stakeBps = 5000;
         bytes32 taskId = _createWithTerms(TMP_PITCH, t);
         assertEq(market.getTaskTerms(taskId).rejectFeeBps, 5001, "50% reject fee stored as 5001");
         assertEq(market.getTaskTerms(taskId).maxRevisions, 6, "five revisions stored as 6");

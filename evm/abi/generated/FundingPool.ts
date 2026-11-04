@@ -828,6 +828,11 @@ export const FundingPoolABI = [
   },
   {
     "type": "error",
+    "name": "PoolSettling",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PoolSharesZero",
     "inputs": []
   },

@@ -73,4 +73,8 @@ pub enum SponsoredTasksError {
     PayoutNotBound,
     #[msg("The settlement's claim delay has not passed")]
     ClaimDelayNotElapsed,
+    #[msg("Caller is not the proposed admin")]
+    NotPendingAdmin,
+    #[msg("Attested payout nonce must be the current nonce plus one and below u64::MAX")]
+    InvalidAttestedNonce,
 }

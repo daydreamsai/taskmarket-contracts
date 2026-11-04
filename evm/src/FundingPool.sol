@@ -35,6 +35,11 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
     ///         base units.
     uint256 internal constant SHARE_SCALE = 1e12;
 
+    /// @notice The most shares a base unit of the pool's value may stand for before a credit
+    ///         starts the next generation. A pool left with only dust against a large supply
+    ///         would otherwise mint amount * supply / value shares and overflow, blocking funding.
+    uint256 internal constant MAX_SHARES_PER_UNIT = 1e30;
+
     /// @custom:storage-location erc7201:taskmarket.storage.FundingPool
     struct PoolStorage {
         address manager;
@@ -53,6 +58,10 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
     error NotOwner();
     error PoolInvalidManager();
     error PoolUnderfunded(uint256 balance, uint256 liabilities);
+    /// @notice A direct fund arrived while the Diamond is inside a settlement (a hook or token
+    ///         callback). The pool's value lags the settlement until it finishes, so shares priced
+    ///         then would be priced against money that is already paid out.
+    error PoolSettling();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -129,6 +138,10 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
     /// @inheritdoc ITMPFundingPool
     function fund(bytes32 poolId, uint256 amount, address onBehalfOf) external whenNotPaused {
         PoolStorage storage $ = _s();
+        // creditFunding and creditOpening are the Diamond's own calls and are not affected.
+        try IDiamondForPool($.manager).isSettling() returns (bool settling) {
+            if (settling) revert PoolSettling();
+        } catch { }
         if (onBehalfOf == address(0)) onBehalfOf = msg.sender;
         _credit($, poolId, msg.sender, onBehalfOf, amount);
         $.token.safeTransferFrom(msg.sender, address(this), amount);
@@ -277,7 +290,10 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
         uint256 supply = p.totalShares;
         uint256 value = p.available + p.outstanding;
         uint256 generation = p.generation;
-        if (supply != 0 && value == 0) {
+        // Dust: a value of zero, or so small against the supply that the next credit would mint
+        // more shares than the supply can hold, prices every share at nothing. Either starts the
+        // next generation; the dust stays in the pool and belongs to it.
+        if (supply != 0 && (value == 0 || supply / value > MAX_SHARES_PER_UNIT)) {
             supply = 0;
             p.generation = ++generation;
             emit PoolSharesReset(poolId, generation);
