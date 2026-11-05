@@ -1,6 +1,6 @@
 {
   "name": "create-taskmarket-hook",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Scaffold a secure Taskmarket lifecycle hook project",
   "type": "module",
   "repository": {

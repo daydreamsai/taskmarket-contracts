@@ -1,5 +1,11 @@
 # create-taskmarket-hook
 
+## 0.3.0
+
+### Minor Changes
+
+- 40cfca9: Add a Task Hook V2 template. `--hook-version 2` generates a project on `BaseTMPHookV2` that declares its callbacks in `hookCapabilities()` and includes unit tests for the `ITMPHookV2` interface, the capability declaration and the diamond-only caller check. Without the flag, the scaffolder generates the `ITMPHook` project. The generated lifecycle test runs a V1 hook on a diamond at revision rev027; from rev028 on, new tasks accept only Task Hook V2 hooks, and V1 hooks serve the tasks created before that revision.
+
 ## 0.2.2
 
 ### Patch Changes
