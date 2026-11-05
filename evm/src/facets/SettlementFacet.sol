@@ -251,6 +251,8 @@ contract SettlementFacet {
         // Rev028: split the span so a very long claim period cannot overflow the multiplication
         // and block the release; the result is the span times grace over 10000, rounded down.
         uint256 span = expiry - claimedAt;
+        // The divide-then-multiply is exact: the remainder term carries the part a plain division drops.
+        // slither-disable-next-line divide-before-multiply
         uint256 graceEnd = claimedAt + (span / 10000) * grace + ((span % 10000) * grace) / 10000;
         if (block.timestamp <= graceEnd) return 0;
         return (stake * (block.timestamp - graceEnd)) / (expiry - graceEnd);
