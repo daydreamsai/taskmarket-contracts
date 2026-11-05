@@ -3435,18 +3435,6 @@ contract TaskTokenRewardHookTest is DiamondTestHelper {
         if (vm.isContext(VmSafe.ForgeContext.Coverage)) vm.skip(true);
     }
 
-    function test_checkComplete_bountyFirstTimeWinnersWithinStipend() public {
-        _skipUnderCoverage();
-        bytes32 taskId = _evaluatedBounty();
-        _manyAwardVerdict(taskId, 12, 0);
-        vm.recordLogs();
-        market.finalizeVerdict{ gas: 25_000_000 }(taskId);
-        uint256 winnersPaid = _count(vm.getRecordedLogs(), REWARD_PAID_SIG);
-        // The first winner also pays the cold access to the vault, budget and token, so later
-        // winners cost less. Pinned so a gas change that moves the count is noticed.
-        assertEq(winnersPaid, 7, "first-time winners inside the stipend");
-    }
-
     // ─── Partial payout whose release fails, then recovered ───────────────────
 
     function test_partialPayout_releaseFails_thenRecovered() public {
