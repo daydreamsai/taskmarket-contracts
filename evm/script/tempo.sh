@@ -70,6 +70,12 @@ case "$ACTION" in
     REQUIRED=(FORGE_DIAMOND_ADDRESS)
     OPTIONAL=()
     ;;
+  deploy-proof-gate-hook)
+    SCRIPT=script/DeployProofGateHook.s.sol:DeployProofGateHook; SCRIPT_VERIFY=1
+    KEY_NAME=FORGE_DEV_PRIVATE_KEY
+    REQUIRED=(FORGE_DIAMOND_ADDRESS)
+    OPTIONAL=()
+    ;;
   deploy-sponsored-task-hook-v2)
     SCRIPT=script/DeployHooksV2.s.sol:DeploySponsoredTaskHookV2; SCRIPT_VERIFY=1
     KEY_NAME=FORGE_DEV_PRIVATE_KEY

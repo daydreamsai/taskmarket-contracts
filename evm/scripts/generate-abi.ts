@@ -71,6 +71,7 @@ const STANDALONE: Record<string, string> = {
   FundingPool: 'FundingPool.sol/FundingPool.json',
   // rev028 Task Hook V2 hooks.
   PayoutGateHook: 'PayoutGateHook.sol/PayoutGateHook.json',
+  ProofGateHook: 'ProofGateHook.sol/ProofGateHook.json',
   SponsoredTaskHookV2: 'SponsoredTaskHookV2.sol/SponsoredTaskHookV2.json',
   RemoteSponsoredTaskHookV2: 'RemoteSponsoredTaskHookV2.sol/RemoteSponsoredTaskHookV2.json',
   TaskTokenRewardHookV2: 'TaskTokenRewardHookV2.sol/TaskTokenRewardHookV2.json',
