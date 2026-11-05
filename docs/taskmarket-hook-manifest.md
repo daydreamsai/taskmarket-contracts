@@ -131,10 +131,13 @@ A V2 manifest (`hookVersion: 2`) declares `ITMPHookV2` callbacks: `beforeCreate`
 - `capabilities`: the `uint32` that `hookCapabilities()` returns. Bits 0-15 are the
   before-callbacks in the order above (bit = action id), 21-24 `afterComplete`,
   `afterCancel`, `afterExpire`, `afterForfeit`, 25 `afterAction`, 26 award reallocation and
-  27 a hook fee. Bits 16-20 and 28-31 are reserved and must be zero. The validator requires
+  27 a hook fee, and 30 `onCall`. Bits 16-20, 28-29 and 31 are reserved and must be zero. The validator requires
   `callbacks` to match the callback bits exactly (see `rev028-task-hook-v2-and-dispute-context.md`
   under `specs/erc8195/`).
 - `minDiamondVersion`: the `uint16` that `minDiamondVersion()` returns, 28 or later.
+- `hookCallRoles`: the `uint32` that `hookCallRoles()` returns. Required exactly when `capabilities` sets
+  bit 30 (`onCall`, calls through the diamond's `callTaskHook`), absent otherwise. Role flags: 1 requester,
+  2 project, 4 worker, 8 submitter, 16 evaluator, 2147483648 stranger.
 - `configSchema`: the ABI parameters of the tuple the configuration bytes encode, as a list
   of `{ "name", "type", "components" }` in Solidity ABI JSON shape. `components` is required
   for a `tuple` type and forbidden otherwise; tuples nest at most three levels; `[]` means no

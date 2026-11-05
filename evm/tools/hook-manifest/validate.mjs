@@ -227,10 +227,17 @@ export const v2ResultPowerBits = Object.freeze({
   awardReallocation: 26,
   hookFee: 27,
 });
+// Bit 30: the hook receives calls through the diamond's callTaskHook from the caller roles it
+// declares in hookCallRoles().
+export const v2OnCallBit = 30;
+// ROLE_REQUESTER, ROLE_PROJECT, ROLE_WORKER, ROLE_SUBMITTER and ROLE_EVALUATOR (bits 0-4) and
+// ROLE_STRANGER (bit 31).
+const v2CallRoleMask = 0x8000001f;
 const v2DefinedMask =
   [
     ...Object.values(v2CallbackBits),
     ...Object.values(v2ResultPowerBits),
+    v2OnCallBit,
   ].reduce((mask, bit) => mask | (2 ** bit), 0) >>> 0;
 
 function checkV2Capabilities(manifest, callbacks, errors) {
@@ -244,7 +251,7 @@ function checkV2Capabilities(manifest, callbacks, errors) {
   const reserved = (capabilities & ~v2DefinedMask) >>> 0;
   if (reserved !== 0) {
     errors.push(
-      `$.capabilities: reserved bits are set (0x${reserved.toString(16)}); bits 16-20 and 28-31 must be zero`,
+      `$.capabilities: reserved bits are set (0x${reserved.toString(16)}); bits 16-20, 28-29 and 31 must be zero`,
     );
   }
   for (const [callback, bit] of Object.entries(v2CallbackBits)) {
@@ -259,6 +266,25 @@ function checkV2Capabilities(manifest, callbacks, errors) {
         `$.callbacks: ${callback} is declared but capability bit ${bit} is not set`,
       );
     }
+  }
+  const onCall = ((capabilities >>> v2OnCallBit) & 1) === 1;
+  const roles = manifest.hookCallRoles;
+  if (onCall && roles === undefined) {
+    errors.push(
+      "$.hookCallRoles: required when capability bit 30 (onCall) is set",
+    );
+  } else if (!onCall && roles !== undefined) {
+    errors.push(
+      "$.hookCallRoles: must be absent unless capability bit 30 (onCall) is set",
+    );
+  } else if (
+    onCall &&
+    Number.isSafeInteger(roles) &&
+    (roles & ~v2CallRoleMask) >>> 0 !== 0
+  ) {
+    errors.push(
+      `$.hookCallRoles: unknown caller role bits are set (0x${((roles & ~v2CallRoleMask) >>> 0).toString(16)})`,
+    );
   }
 }
 

@@ -922,13 +922,19 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 4294967295,
-      "description": "V2 only: the uint32 value hookCapabilities() returns. Bits 0-15 are the before-callback of each vetoable action (bit = action id), 21-24 afterComplete/afterCancel/afterExpire/afterForfeit, 25 afterAction, 26 award reallocation and 27 a hook fee; bits 16-20 and 28-31 are reserved and must be zero."
+      "description": "V2 only: the uint32 value hookCapabilities() returns. Bits 0-15 are the before-callback of each vetoable action (bit = action id), 21-24 afterComplete/afterCancel/afterExpire/afterForfeit, 25 afterAction, 26 award reallocation and 27 a hook fee, and 30 onCall (the hook receives calls through the diamond's callTaskHook from the roles in hookCallRoles); bits 16-20, 28-29 and 31 are reserved and must be zero."
     },
     "minDiamondVersion": {
       "type": "integer",
       "minimum": 28,
       "maximum": 65535,
       "description": "V2 only: the uint16 value minDiamondVersion() returns, the lowest diamondVersion() the hook attaches to (28 or later)."
+    },
+    "hookCallRoles": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "V2 only, and required exactly when capabilities sets bit 30: the uint32 value hookCallRoles() returns, the caller roles the hook accepts on onCall. Role flags: 1 requester, 2 project, 4 worker, 8 submitter, 16 evaluator, 2147483648 stranger; the diamond pins the value at attach."
     },
     "configSchema": {
       "type": "array",
@@ -1422,6 +1428,7 @@
         "properties": {
           "capabilities": {},
           "minDiamondVersion": {},
+          "hookCallRoles": {},
           "configSchema": {},
           "callbacks": {
             "type": "array",

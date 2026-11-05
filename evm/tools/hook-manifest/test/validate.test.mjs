@@ -122,6 +122,29 @@ test("V2 callbacks must match the capability bits exactly", () => {
   const tooWide = simpleV2();
   tooWide.capabilities = 2 ** 32;
   errorsFor(tooWide, "$.capabilities");
+
+  const reservedHigh = simpleV2();
+  reservedHigh.capabilities = (0x2001 | (2 ** 31)) >>> 0;
+  errorsFor(reservedHigh, "reserved bits are set (0x80000000)");
+});
+
+test("capability bit 30 (onCall) needs hookCallRoles with known role bits", () => {
+  const onCall = simpleV2();
+  onCall.capabilities = (0x2001 | (1 << 30)) >>> 0;
+  errorsFor(onCall, "$.hookCallRoles: required when capability bit 30");
+
+  onCall.hookCallRoles = 0x1 | 0x10;
+  assert.deepEqual(validate(onCall), []);
+
+  onCall.hookCallRoles = 0x8000001f;
+  assert.deepEqual(validate(onCall), []);
+
+  onCall.hookCallRoles = 0x20;
+  errorsFor(onCall, "unknown caller role bits are set (0x20)");
+
+  const stray = simpleV2();
+  stray.hookCallRoles = 1;
+  errorsFor(stray, "$.hookCallRoles: must be absent unless capability bit 30");
 });
 
 test("configSchema is an ABI parameter list with tuple components", () => {
