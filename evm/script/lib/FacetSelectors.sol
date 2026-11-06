@@ -357,7 +357,7 @@ library FacetSelectors {
 
     /// @dev The RegistryFacet selector set as it stood through rev025, Replaced by the rev026 step.
     function registryFacetSelectorsThroughRev025() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](29);
+        s = new bytes4[](30);
         s[0] = RegistryFacet.getTask.selector;
         s[1] = RegistryFacet.getWorkerStats.selector;
         s[2] = RegistryFacet.requesterNonce.selector;
@@ -519,9 +519,14 @@ library FacetSelectors {
     }
 
     /// @dev rev027: projects, with the relayed fund and claim entries of the funding pool contract.
-    ///      Every ProjectFacet selector is new in rev027.
+    ///      Every ProjectFacet selector is new in rev027 except the ones rev029 Adds (raiseGrantCap, lowerGrantCap,
+    ///      setGrantLimits, getGrantLimits).
     function projectFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](30);
+        bytes4[] memory ownerSelectors = projectOwnerSelectorsRev029();
+        for (uint256 i; i < ownerSelectors.length; ++i) {
+            s[25 + i] = ownerSelectors[i];
+        }
         s[0] = ProjectFacet.createProject.selector;
         s[1] = ProjectFacet.projectPoolId.selector;
         s[2] = ProjectFacet.closeProject.selector;
@@ -543,6 +548,10 @@ library FacetSelectors {
         s[18] = ProjectFacet.fund.selector;
         s[19] = ProjectFacet.claim.selector;
         s[20] = ProjectFacet.refundProjectTask.selector;
+        s[21] = ProjectFacet.raiseGrantCap.selector;
+        s[22] = ProjectFacet.lowerGrantCap.selector;
+        s[23] = ProjectFacet.setGrantLimits.selector;
+        s[24] = ProjectFacet.getGrantLimits.selector;
     }
 
     /// @dev rev028: every selector rev028 Adds.
@@ -560,7 +569,7 @@ library FacetSelectors {
 
     /// @dev rev027: the ProjectFacet selectors as rev027 routed them, with acceptGrant(uint256).
     function projectFacetSelectorsRev027() internal pure returns (bytes4[] memory s) {
-        s = projectFacetSelectors();
+        s = projectFacetSelectorsRev028Routed();
         bytes4 current = ProjectFacet.acceptGrant.selector;
         for (uint256 i; i < s.length; i++) {
             if (s[i] == current) {
@@ -578,12 +587,56 @@ library FacetSelectors {
 
     /// @dev rev028: the ProjectFacet selectors a rev027 diamond already routes, for a Replace.
     function projectFacetSelectorsRev027Routed() internal pure returns (bytes4[] memory s) {
-        bytes4[] memory all = projectFacetSelectors();
+        bytes4[] memory all = projectFacetSelectorsRev028Routed();
         s = new bytes4[](all.length - 1);
         uint256 n;
         for (uint256 i; i < all.length; ++i) {
             if (all[i] == ProjectFacet.acceptGrant.selector) continue;
             s[n++] = all[i];
+        }
+    }
+
+    /// @dev rev029: the ProjectFacet selectors rev029 Adds. raiseGrantCap stays first: the upgrade
+    ///      script and its resume check test routing against it.
+    function projectSelectorsAddedRev029() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory owner = projectOwnerSelectorsRev029();
+        s = new bytes4[](4 + owner.length);
+        s[0] = ProjectFacet.raiseGrantCap.selector;
+        s[1] = ProjectFacet.lowerGrantCap.selector;
+        s[2] = ProjectFacet.setGrantLimits.selector;
+        s[3] = ProjectFacet.getGrantLimits.selector;
+        for (uint256 i; i < owner.length; ++i) {
+            s[4 + i] = owner[i];
+        }
+    }
+
+    /// @dev rev029: owner transfer and end-date extension. Every selector is new.
+    function projectOwnerSelectorsRev029() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = ProjectFacet.proposeProjectOwner.selector;
+        s[1] = ProjectFacet.cancelProjectOwner.selector;
+        s[2] = ProjectFacet.acceptProjectOwner.selector;
+        s[3] = ProjectFacet.extendProject.selector;
+        s[4] = ProjectFacet.pendingProjectOwner.selector;
+    }
+
+    /// @dev rev029: every selector rev029 Adds.
+    function selectorsAddedRev029() internal pure returns (bytes4[] memory s) {
+        s = projectSelectorsAddedRev029();
+    }
+
+    /// @dev rev029: the ProjectFacet selectors a rev028 diamond already routes, for a Replace.
+    function projectFacetSelectorsRev028Routed() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory all = projectFacetSelectors();
+        bytes4[] memory added = projectSelectorsAddedRev029();
+        s = new bytes4[](all.length - added.length);
+        uint256 n;
+        for (uint256 i; i < all.length; ++i) {
+            bool isNew;
+            for (uint256 j; j < added.length; ++j) {
+                if (all[i] == added[j]) isNew = true;
+            }
+            if (!isNew) s[n++] = all[i];
         }
     }
 

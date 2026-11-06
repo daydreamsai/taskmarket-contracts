@@ -152,7 +152,13 @@ contract HooksV2Facet is ITMPHooksV2 {
     function _roles(AppStorage storage s, bytes32 taskId, address who) private view returns (uint32 roles) {
         ITMPCore.Task storage t = s.tasks[taskId];
         if (who == address(0)) return LibHooksV2.ROLE_STRANGER;
-        if (who == t.requester) roles |= LibHooksV2.ROLE_REQUESTER;
+        // Rev029: a project owner's own task is acted for by the project's current owner.
+        uint256 projectId = s.taskProjects[taskId];
+        bool isRequester = who == t.requester;
+        if (projectId != 0 && s.taskOperators[taskId] == address(0)) {
+            isRequester = who == s.projects[projectId].owner;
+        }
+        if (isRequester) roles |= LibHooksV2.ROLE_REQUESTER;
         if (_isProject(s, taskId, who)) roles |= LibHooksV2.ROLE_PROJECT;
         if (who == t.worker) roles |= LibHooksV2.ROLE_WORKER;
         if (s.taskSubmissionHashes[taskId][who].length != 0) roles |= LibHooksV2.ROLE_SUBMITTER;

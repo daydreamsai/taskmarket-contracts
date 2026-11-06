@@ -300,7 +300,7 @@ contract HookGasPayoutGateTest is HookGasBase {
     function test_gasOnCallLateLink() public recorded {
         bytes32 taskId = _gated(bytes32(0), uint64(block.timestamp + 30 days));
         bytes32 gating = _plain();
-        _relay(requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(gate), abi.encode(gating))));
+        _relay(requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(gate), abi.encode(uint8(1), gating))));
     }
 }
 

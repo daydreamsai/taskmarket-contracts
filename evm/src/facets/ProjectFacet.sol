@@ -143,7 +143,7 @@ contract ProjectFacet {
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
 
-        address requester = _authorizeSpend(s, projectId, config.reward + evaluatorConfig.evaluatorStake);
+        address requester = _authorizeSpend(s, projectId, config.reward + evaluatorConfig.evaluatorStake, config.mode);
         taskId =
             LibTaskCreation.create(s, requester, config, hookConfig, content, evaluatorConfig, terms, reservedWorker);
         _link(s, projectId, taskId);
@@ -177,11 +177,78 @@ contract ProjectFacet {
         if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
         if (operator == address(0) || operator == p.owner) revert ITMPProject.InvalidOperator();
         ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
-        if (g.revoked) revert ITMPProject.GrantRevoked();
-        if (g.accepted) revert ITMPProject.GrantAlreadyAccepted();
+        // An accepted grant that is still live is frozen. A revoked one (accepted or not) may be
+        // granted again; it comes back pending.
+        if (g.accepted && !g.revoked) revert ITMPProject.GrantAlreadyAccepted();
+        // committed carries over a revoke, so the new cap must cover what the operator's tasks
+        // still hold. Zero means no cap beyond the budget, as in every grant.
+        if (terms.cap != 0 && terms.cap < g.committed) {
+            revert ITMPProject.GrantCapBelowCommitted(terms.cap, g.committed);
+        }
         g.terms = terms;
         g.exists = true;
+        g.revoked = false;
+        g.accepted = false;
         emit ITMPProject.OperatorGranted(projectId, operator, terms);
+    }
+
+    /// @notice See ITMPProject.
+    function raiseGrantCap(uint256 projectId, address operator, uint256 newCap) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
+        ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
+        if (!g.exists) revert ITMPProject.GrantNotFound();
+        if (g.revoked) revert ITMPProject.GrantRevoked();
+        uint256 oldCap = g.terms.cap;
+        // A zero cap already means no cap, so no number raises it; zero is not a raise either.
+        if (oldCap == 0 || newCap <= oldCap) revert ITMPProject.GrantCapNotRaised(oldCap, newCap);
+        g.terms.cap = newCap;
+        emit ITMPProject.GrantCapRaised(projectId, operator, oldCap, newCap);
+    }
+
+    /// @notice See ITMPProject.
+    function lowerGrantCap(uint256 projectId, address operator, uint256 newCap) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
+        ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
+        if (!g.exists) revert ITMPProject.GrantNotFound();
+        if (g.revoked) revert ITMPProject.GrantRevoked();
+        uint256 oldCap = g.terms.cap;
+        // Zero means no cap, so any nonzero cap lowers it; otherwise the cap must go down.
+        if (newCap == 0 || (oldCap != 0 && newCap >= oldCap)) revert ITMPProject.GrantCapNotLowered(oldCap, newCap);
+        if (newCap < g.committed) revert ITMPProject.GrantCapBelowCommitted(newCap, g.committed);
+        g.terms.cap = newCap;
+        emit ITMPProject.GrantCapLowered(projectId, operator, oldCap, newCap);
+    }
+
+    /// @notice See ITMPProject.
+    function setGrantLimits(uint256 projectId, address operator, ITMPProject.GrantLimitsInput calldata limits)
+        external
+    {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
+        ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
+        if (!g.exists) revert ITMPProject.GrantNotFound();
+        if (g.revoked) revert ITMPProject.GrantRevoked();
+        LibProject.setLimits(s, projectId, operator, limits);
+    }
+
+    /// @notice See ITMPProject.
+    function getGrantLimits(uint256 projectId, address operator)
+        external
+        view
+        returns (ITMPProject.GrantLimits memory)
+    {
+        return LibAppStorage.appStorage().projectGrantLimits[projectId][operator];
     }
 
     /// @notice See ITMPProject.
@@ -276,12 +343,100 @@ contract ProjectFacet {
         return LibAppStorage.appStorage().projectCount;
     }
 
+    // -------------------------------------------------------------------------
+    // Rev029: owner transfer and end-date extension
+    // -------------------------------------------------------------------------
+
+    /// @notice See ITMPProject.
+    function proposeProjectOwner(uint256 projectId, address newOwner) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        address caller = LibGuards._effectiveSender(s);
+        if (caller != p.owner) revert ITMPProject.NotProjectOwner();
+        if (newOwner == address(0) || newOwner == caller || newOwner == address(this) || newOwner == s.fundingPool) {
+            revert ITMPProject.InvalidProjectOwner();
+        }
+        if (!LibProject.isOpen(s, LibProject.poolOf(projectId))) revert ITMPProject.ProjectNotOpen();
+        s.projectPendingOwner[projectId] = newOwner;
+        emit ITMPProject.ProjectOwnerProposed(projectId, caller, newOwner);
+    }
+
+    /// @notice See ITMPProject.
+    function cancelProjectOwner(uint256 projectId) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        address caller = LibGuards._effectiveSender(s);
+        if (caller != p.owner) revert ITMPProject.NotProjectOwner();
+        address pending = s.projectPendingOwner[projectId];
+        if (pending == address(0)) revert ITMPProject.NoPendingProjectOwner();
+        delete s.projectPendingOwner[projectId];
+        emit ITMPProject.ProjectOwnerProposalCancelled(projectId, caller, pending);
+    }
+
+    /// @notice See ITMPProject.
+    function acceptProjectOwner(uint256 projectId) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        address pending = s.projectPendingOwner[projectId];
+        if (pending == address(0)) revert ITMPProject.NoPendingProjectOwner();
+        address caller = LibGuards._effectiveSender(s);
+        if (caller != pending) revert ITMPProject.NotPendingProjectOwner();
+        bytes32 poolId = LibProject.poolOf(projectId);
+        if (!LibProject.isOpen(s, poolId)) revert ITMPProject.ProjectNotOpen();
+
+        address previous = p.owner;
+        p.owner = caller;
+        delete s.projectPendingOwner[projectId];
+        // The new owner acts as owner now, so a live grant it held as an operator ends. Its
+        // committed amount stays, so its tasks' refunds still give back what was counted.
+        ITMPProject.Grant storage g = s.projectGrants[projectId][caller];
+        if (g.exists && !g.revoked) {
+            g.revoked = true;
+            emit ITMPProject.OperatorRevoked(projectId, caller);
+        }
+        // Only the previous owner's own backing moves; every other backer's is untouched.
+        uint256 moved = LibProject.pool(s).moveBacking(poolId, previous, caller);
+        emit ITMPProject.ProjectOwnerChanged(projectId, previous, caller, moved);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @notice See ITMPProject.
+    function extendProject(uint256 projectId, uint64 newEndsAt) external {
+        AppStorage storage s = LibAppStorage.appStorage();
+        LibGuards._requireForwarderNoPayment(s);
+        LibGuards._requireNotPaused(s);
+        LibGuards._nonReentrantBefore(s);
+        ITMPProject.ProjectRecord storage p = _project(s, projectId);
+        if (LibGuards._effectiveSender(s) != p.owner) revert ITMPProject.NotProjectOwner();
+        bytes32 poolId = LibProject.poolOf(projectId);
+        if (!LibProject.isOpen(s, poolId)) revert ITMPProject.ProjectNotOpen();
+        uint64 current = p.endsAt;
+        if (newEndsAt <= current) revert ITMPProject.ProjectEndNotExtended(current, newEndsAt);
+        if (newEndsAt > block.timestamp + LibProject.MAX_LIFETIME) revert ITMPProject.ProjectEndTooFar();
+        p.endsAt = newEndsAt;
+        LibProject.pool(s).extendClosesAt(poolId, newEndsAt);
+        emit ITMPProject.ProjectEndExtended(projectId, current, newEndsAt);
+        LibGuards._nonReentrantAfter(s);
+    }
+
+    /// @notice See ITMPProject.
+    function pendingProjectOwner(uint256 projectId) external view returns (address) {
+        return LibAppStorage.appStorage().projectPendingOwner[projectId];
+    }
+
     /// @dev Checks the caller may spend `amount` of the project's budget and spends it from the
     ///      pool (LibProject.draw), which unbooks it, so the task's own booking in LibTaskCreation
     ///      finds it as surplus. projectPrepaid tells the creation payment checks the task is
     ///      already paid for. Returns the task's requester: the owner, or the operator when its
     ///      grant says so. An operator needs an accepted, unrevoked grant and stays within its cap.
-    function _authorizeSpend(AppStorage storage s, uint256 projectId, uint256 amount)
+    function _authorizeSpend(AppStorage storage s, uint256 projectId, uint256 amount, bytes4 mode)
         private
         returns (address requester)
     {
@@ -289,6 +444,7 @@ contract ProjectFacet {
         address caller = LibGuards._effectiveSender(s);
         address operator = caller == projectOwner ? address(0) : caller;
         LibProject.draw(s, projectId, caller, operator, amount);
+        if (operator != address(0)) LibProject.requireTaskAllowed(s, projectId, operator, mode, amount);
         requester = projectOwner;
         if (
             operator != address(0)

@@ -5,43 +5,60 @@ import { BaseTMPHookV2 } from "../base/BaseTMPHookV2.sol";
 import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPHookV2 } from "../../interfaces/ITMPHookV2.sol";
 import { ITMPHooksV2 } from "../../interfaces/ITMPHooksV2.sol";
+import { ITMPProject } from "../../interfaces/ITMPProject.sol";
 
 /// @title PayoutGateHook -- holds a task's payout until another task has paid out
-/// @notice One shared Task Hook V2 hook per chain (rev028). A task attaches it at creation with the
-///         configuration `abi.encode(bytes32 gatingTaskId, uint64 deadline, bytes32[] gatesTaskIds)`.
-///         Two modes:
+/// @notice A standalone Task Hook V2 hook, shared per chain and deployed on its own (like the proof
+///         gate). It is not part of any diamond revision. A task attaches it at creation with the
+///         configuration `abi.encode(bytes32 gatingTaskId, uint64 deadline, bytes32[] gatesTaskIds)`,
+///         a gated task or a gating task. Two modes:
 ///         - Gated task (gatesTaskIds empty): the gate holds this task's payout. A zero
 ///           gatingTaskId means the gating task is linked later.
 ///         - Gating task (gatesTaskIds non-empty, at most MAX_GATES_PER_TASK; gatingTaskId and
 ///           deadline zero): this new task becomes the gating task of each listed task, linked
 ///           automatically at creation. Each listed task must carry this gate with no gating task
-///           yet, must not have settled, and must have the same requester as the new task, so a
-///           stranger's task can never open someone else's gate. The new task itself holds nothing.
-///         A human sign-off is modelled as a gating task.
+///           yet, must not have settled, and must have the same requester as the new task.
 ///         The gate opens when ANY of these holds:
 ///         - the gating task has ended Accepted, read from the diamond's settlement record;
-///         - the deadline (fixed at creation) has passed, so a stuck or failed gating task cannot
-///           trap the funds;
+///         - the deadline has passed, so a stuck or failed gating task cannot trap the funds;
 ///         - the call settles a dispute (the diamond shows `Disputed` to `beforeAccept`).
 ///         Until then it vetoes acceptSubmission, acceptSubmissions and finalizeVerdict. It never
 ///         holds the non-vetoable exits (expiry refund, forfeit, timeouts, lapsed review, finalize
-///         after expiry). A gating task left unset at creation may be linked once, later, by the
-///         gated task's requester through the diamond's callTaskHook, so one task's payout can wait
-///         for another's.
-/// @dev Must not be deployed on a chain until that chain's diamond runs rev028.
+///         after expiry).
+///
+///         What version 2 adds, all through the diamond's callTaskHook (`onCall`):
+///         - Link or re-link. A gating task left unset at creation is linked once. If the linked
+///           gating task later ends Cancelled or Expired, it will never pay, and the gate stays
+///           CLOSED (never silently opened: a cancelled sign-off task must not release a payout it
+///           was meant to hold). The caller may then link a replacement gating task, once. A second
+///           failure waits for the deadline.
+///         - Extend the deadline. Upward only, never past `createdAt + MAX_DEADLINE_WINDOW`, and
+///           only while the gate is still closed.
+///         - Caller roles. The requester (caller == ctx.requester) or a project operator holding
+///           ROLE_PROJECT may call. A project operator may also link a gating task in the same
+///           project as the gated task, besides one with the same requester of record.
+///         The deadline is the hard backstop: no gate can hold a payout past 180 days from creation.
+/// @dev Needs a diamond that dispatches Task Hook V2 (diamondVersion 28 or later). See
+///      docs/extensions/ext-005-payout-gate-settlement-extension-and-project-links.md.
 contract PayoutGateHook is BaseTMPHookV2 {
-    /// @notice Capability bits: before Create (0) and before Accept (13). Check only, no result power.
+    /// @notice Capability bits: before Create (0), before Accept (13) and onCall (30). Check only.
     uint32 public constant CAPABILITIES = (uint32(1) << 0) | (uint32(1) << 13) | (uint32(1) << 30);
     /// @notice The deadline must be at least this far after creation.
     uint64 public constant MIN_DEADLINE_WINDOW = 1 hours;
-    /// @notice The deadline may be at most this far after creation.
+    /// @notice The deadline may be at most this far after creation, at creation and after any extension.
     uint64 public constant MAX_DEADLINE_WINDOW = 180 days;
     /// @notice The most tasks one gating task may gate.
     uint256 public constant MAX_GATES_PER_TASK = 16;
+    /// @notice onCall action: link a gating task (or re-link after the gating task failed).
+    uint8 public constant CALL_LINK = 1;
+    /// @notice onCall action: extend the deadline.
+    uint8 public constant CALL_EXTEND = 2;
 
     struct Gate {
         uint64 deadline;
         bool set;
+        bool relinked;
+        uint64 createdAt;
         bytes32 gatingTaskId;
     }
 
@@ -49,13 +66,20 @@ contract PayoutGateHook is BaseTMPHookV2 {
 
     event PayoutGateSet(bytes32 indexed taskId, bytes32 gatingTaskId, uint64 deadline);
     event PayoutGateLinked(bytes32 indexed taskId, bytes32 indexed gatingTaskId);
+    event PayoutGateRelinked(
+        bytes32 indexed taskId, bytes32 indexed previousGatingTaskId, bytes32 indexed gatingTaskId
+    );
+    event PayoutGateExtended(bytes32 indexed taskId, uint64 previousDeadline, uint64 deadline);
 
     error PayoutGate__InvalidConfig();
     error PayoutGate__DeadlineOutOfWindow(uint64 deadline, uint64 earliest, uint64 latest);
+    error PayoutGate__ExtensionOutOfWindow(uint256 deadline, uint64 current, uint64 latest);
     error PayoutGate__AlreadySet();
     error PayoutGate__UnknownTask();
-    error PayoutGate__NotRequester();
+    error PayoutGate__NotAuthorized();
     error PayoutGate__AlreadyLinked();
+    error PayoutGate__RelinkUsed();
+    error PayoutGate__AlreadyOpen();
     error PayoutGate__InvalidGatingTask();
     error PayoutGate__TaskSettled();
     error PayoutGate__Closed();
@@ -68,7 +92,8 @@ contract PayoutGateHook is BaseTMPHookV2 {
         return CAPABILITIES;
     }
 
-    /// @notice The gate of `taskId`. A task with no gate here reads all zero.
+    /// @notice The gate of `taskId`. A task with no gate here reads all zero. Same outputs as
+    ///         PayoutGateHook.gateOf, so one reader serves both.
     function gateOf(bytes32 taskId)
         external
         view
@@ -79,6 +104,35 @@ contract PayoutGateHook is BaseTMPHookV2 {
         return (g.gatingTaskId, g.deadline, gatingPaid, g.set && (gatingPaid || block.timestamp >= g.deadline));
     }
 
+    /// @notice The gate of `taskId` with what the V2 calls need: when it was created, the latest
+    ///         deadline an extension may reach, whether the gating task failed (ended Cancelled or
+    ///         Expired) and whether the one re-link is used.
+    function gateDetailsOf(bytes32 taskId)
+        external
+        view
+        returns (
+            bytes32 gatingTaskId,
+            uint64 deadline,
+            uint64 maxDeadline,
+            bool gatingPaid,
+            bool gatingFailed,
+            bool relinked,
+            bool open
+        )
+    {
+        Gate storage g = _gates[taskId];
+        gatingPaid = _gatingPaid(g.gatingTaskId);
+        return (
+            g.gatingTaskId,
+            g.deadline,
+            g.set ? g.createdAt + MAX_DEADLINE_WINDOW : 0,
+            gatingPaid,
+            _gatingFailed(g.gatingTaskId),
+            g.relinked,
+            g.set && (gatingPaid || block.timestamp >= g.deadline)
+        );
+    }
+
     /// @notice Whether the gate of `taskId` is open now, outside a dispute resolution. False for a
     ///         task with no gate here, matching gateOf.
     function isOpen(bytes32 taskId) public view returns (bool) {
@@ -86,35 +140,64 @@ contract PayoutGateHook is BaseTMPHookV2 {
         return g.set && (block.timestamp >= g.deadline || _gatingPaid(g.gatingTaskId));
     }
 
-    /// @notice Only the gated task's requester may call the gate (the late link).
+    /// @notice The requester, or a project operator, may call the gate. Pinned at attach.
     function hookCallRoles() external pure override returns (uint32) {
-        return ROLE_REQUESTER;
+        return ROLE_REQUESTER | ROLE_PROJECT;
     }
 
-    /// @notice Links the task whose payout opens this gate, once, when none was set at creation.
-    ///         Reached only through the diamond's callTaskHook, which has checked the caller holds
-    ///         the requester role and the task has not settled. `data` is
-    ///         `abi.encode(bytes32 gatingTaskId)`. The gating task must exist, not be the gated
-    ///         task, not have settled, and have the same requester, as a link made at creation.
+    /// @notice Reached only through the diamond's callTaskHook, which has checked the caller holds
+    ///         a role this hook accepts and the task has not settled. `data` is
+    ///         `abi.encode(uint8 action, bytes32 value)`: CALL_LINK with a gating task id, or
+    ///         CALL_EXTEND with the new deadline as a uint256 word.
     function onCall(bytes32 taskId, TaskContextV2 calldata ctx, address caller, uint32 roles, bytes calldata data)
         external
         override
         onlyDiamond
         returns (bytes4)
     {
-        if (!_hasRole(roles, ROLE_REQUESTER) || caller != ctx.requester) revert PayoutGate__NotRequester();
-        if (data.length != 32) revert PayoutGate__InvalidConfig();
-        bytes32 gatingTaskId = abi.decode(data, (bytes32));
+        bool asRequester = _hasRole(roles, ROLE_REQUESTER) && caller == ctx.requester;
+        if (!asRequester && !_hasRole(roles, ROLE_PROJECT)) revert PayoutGate__NotAuthorized();
+        if (data.length != 64) revert PayoutGate__InvalidConfig();
+        (uint8 action, bytes32 value) = abi.decode(data, (uint8, bytes32));
         Gate storage g = _gates[taskId];
         if (!g.set) revert PayoutGate__UnknownTask();
-        if (g.gatingTaskId != bytes32(0)) revert PayoutGate__AlreadyLinked();
-        _requireGatingTask(taskId, gatingTaskId);
-        if (ITMPCore(diamond).getTask(gatingTaskId).requester != ctx.requester) {
-            revert PayoutGate__RequesterMismatch();
-        }
-        g.gatingTaskId = gatingTaskId;
-        emit PayoutGateLinked(taskId, gatingTaskId);
+        if (isOpen(taskId)) revert PayoutGate__AlreadyOpen();
+        if (action == CALL_LINK) _link(g, taskId, value, ctx, roles);
+        else if (action == CALL_EXTEND) _extend(g, taskId, uint256(value));
+        else revert PayoutGate__InvalidConfig();
         return this.onCall.selector;
+    }
+
+    function _link(Gate storage g, bytes32 taskId, bytes32 gatingTaskId, TaskContextV2 calldata ctx, uint32 roles)
+        private
+    {
+        bytes32 previous = g.gatingTaskId;
+        if (previous != bytes32(0)) {
+            // A live or paid gating task keeps its place. Only one that ended Cancelled or Expired
+            // can be replaced, and only once.
+            if (!_gatingFailed(previous)) revert PayoutGate__AlreadyLinked();
+            if (g.relinked) revert PayoutGate__RelinkUsed();
+            if (gatingTaskId == previous) revert PayoutGate__InvalidGatingTask();
+        }
+        _requireGatingTask(taskId, gatingTaskId);
+        if (!_sameOwner(gatingTaskId, ctx, roles)) revert PayoutGate__RequesterMismatch();
+        g.gatingTaskId = gatingTaskId;
+        if (previous == bytes32(0)) {
+            emit PayoutGateLinked(taskId, gatingTaskId);
+        } else {
+            g.relinked = true;
+            emit PayoutGateRelinked(taskId, previous, gatingTaskId);
+        }
+    }
+
+    function _extend(Gate storage g, bytes32 taskId, uint256 newDeadline) private {
+        uint64 latest = g.createdAt + MAX_DEADLINE_WINDOW;
+        if (newDeadline <= g.deadline || newDeadline > latest) {
+            revert PayoutGate__ExtensionOutOfWindow(newDeadline, g.deadline, latest);
+        }
+        uint64 previous = g.deadline;
+        g.deadline = uint64(newDeadline);
+        emit PayoutGateExtended(taskId, previous, uint64(newDeadline));
     }
 
     function beforeCreate(bytes32 taskId, TaskContextV2 calldata ctx, bytes calldata config, bytes calldata)
@@ -141,11 +224,14 @@ contract PayoutGateHook is BaseTMPHookV2 {
         if (deadline < earliest || deadline > latest) {
             revert PayoutGate__DeadlineOutOfWindow(deadline, earliest, latest);
         }
-        if (gatingTaskId != bytes32(0)) _requireGatingTask(taskId, gatingTaskId);
+        if (gatingTaskId != bytes32(0)) {
+            _requireGatingTask(taskId, gatingTaskId);
+        }
         Gate storage g = _gates[taskId];
         if (g.set) revert PayoutGate__AlreadySet();
         g.set = true;
         g.deadline = deadline;
+        g.createdAt = uint64(block.timestamp);
         g.gatingTaskId = gatingTaskId;
         emit PayoutGateSet(taskId, gatingTaskId, deadline);
         return this.beforeCreate.selector;
@@ -183,9 +269,8 @@ contract PayoutGateHook is BaseTMPHookV2 {
     }
 
     /// @dev The gating task must exist on the diamond, must not be the gated task itself, and must
-    ///      not have settled. A settled task is refused because it can no longer move: one that
-    ///      ended before the rev028 cut has no settlement record and could never open the gate, and
-    ///      linking one that already settled would open or never open the gate at once.
+    ///      not have settled (one that ended before the rev028 cut has no settlement record and
+    ///      could never open the gate).
     function _requireGatingTask(bytes32 taskId, bytes32 gatingTaskId) private view {
         if (gatingTaskId == bytes32(0) || gatingTaskId == taskId) revert PayoutGate__InvalidGatingTask();
         ITMPCore.Task memory gating = ITMPCore(diamond).getTask(gatingTaskId);
@@ -195,10 +280,27 @@ contract PayoutGateHook is BaseTMPHookV2 {
         ) revert PayoutGate__InvalidGatingTask();
     }
 
+    /// @dev A forged link can never point at someone else's task: the gating task has the gated
+    ///      task's requester of record, or, for a caller holding ROLE_PROJECT, sits in the gated
+    ///      task's project.
+    function _sameOwner(bytes32 gatingTaskId, TaskContextV2 calldata ctx, uint32 roles) private view returns (bool) {
+        if (ITMPCore(diamond).getTask(gatingTaskId).requester == ctx.requester) return true;
+        return _hasRole(roles, ROLE_PROJECT) && ctx.projectId != 0
+            && ITMPProject(diamond).projectOf(gatingTaskId) == ctx.projectId;
+    }
+
     /// @dev True once the gating task's settlement record shows it ended Accepted.
     function _gatingPaid(bytes32 gatingTaskId) private view returns (bool) {
         if (gatingTaskId == bytes32(0)) return false;
         ITMPHookV2.SettlementAmounts memory r = ITMPHooksV2(diamond).getTaskSettlement(gatingTaskId);
         return r.recorded && r.terminalStatus == uint8(ITMPCore.TaskStatus.Accepted);
+    }
+
+    /// @dev True once the gating task ended without paying: Cancelled or Expired. A rejected
+    ///      submission is not a settlement (the task stays live), so it is not a failure here.
+    function _gatingFailed(bytes32 gatingTaskId) private view returns (bool) {
+        if (gatingTaskId == bytes32(0)) return false;
+        ITMPCore.TaskStatus st = ITMPCore(diamond).getTask(gatingTaskId).status;
+        return st == ITMPCore.TaskStatus.Cancelled || st == ITMPCore.TaskStatus.Expired;
     }
 }

@@ -51,8 +51,9 @@ interface ITMPProject {
 
     /// @notice What the owner and the operator agree on. The contract stores no defaults: the
     ///         caller states every term. Frozen when the operator calls acceptGrant.
-    /// @dev cap is the most the operator's tasks may hold from the budget at once (net of what
-    ///      their refunds return); zero means no cap beyond the project's available budget.
+    /// @dev cap is the most the operator's tasks may draw from the budget over the life of the
+    ///      grant, net of what their refunds return (lifetime net spend, not what is held at
+    ///      once); zero means no cap beyond the project's available budget.
     ///      requesterOfRecord decides only who is task.requester on the operator's tasks (and so
     ///      whom ratings and reputation follow); it does not decide who may act as requester.
     ///      On an operator's task the operator may act unless its grant was revoked with
@@ -75,6 +76,37 @@ interface ITMPProject {
         bool exists;
         bool accepted;
         bool revoked;
+    }
+
+    /// @notice rev029: what the owner sets on top of a grant's terms, per project and operator.
+    ///         Kept outside GrantTerms because acceptGrant hashes the terms. Zero in every field
+    ///         means no limit, so a grant that never had limits set behaves as before.
+    /// @dev expiresAt: unix seconds after which the operator cannot draw. allowedModesMask: bit n
+    ///      allows the nth mode of the MODE_* list in LibProject (bounty 0, claim 1, pitch 2,
+    ///      benchmark 3, auction 4); zero allows every mode, bits beyond the last mode revert.
+    ///      maxRewardPerTask: the most one task may hold from the budget, its reward plus any
+    ///      evaluator stake, counting later top-ups. periodSecs/periodCap: the operator may draw at
+    ///      most periodCap net of refunds in any period of periodSecs; zero periodSecs turns the
+    ///      budget off, and a nonzero periodSecs needs a nonzero periodCap.
+    struct GrantLimitsInput {
+        uint64 expiresAt;
+        uint32 allowedModesMask;
+        uint128 maxRewardPerTask;
+        uint64 periodSecs;
+        uint128 periodCap;
+    }
+
+    /// @notice The limits as stored: the owner's input plus the period meter. periodStart is when
+    ///         the current period began (zero before the first draw), periodSpent what the operator
+    ///         drew in it, net of refunds.
+    struct GrantLimits {
+        uint64 expiresAt;
+        uint32 allowedModesMask;
+        uint64 periodSecs;
+        uint64 periodStart;
+        uint128 maxRewardPerTask;
+        uint128 periodCap;
+        uint128 periodSpent;
     }
 
     // -------------------------------------------------------------------------
@@ -103,12 +135,54 @@ interface ITMPProject {
     event OperatorGranted(uint256 indexed projectId, address indexed operator, GrantTerms terms);
     event GrantAccepted(uint256 indexed projectId, address indexed operator);
     event OperatorRevoked(uint256 indexed projectId, address indexed operator);
+    /// @notice rev029: the owner raised a live grant's cap in place. The terms hash an operator
+    ///         reviewed changes with it, so a pending grant must be accepted again against the
+    ///         new terms.
+    event GrantCapRaised(uint256 indexed projectId, address indexed operator, uint256 oldCap, uint256 newCap);
+    /// @notice rev029: the owner lowered a live grant's lifetime cap, never below what the
+    ///         operator's tasks still hold.
+    event GrantCapLowered(uint256 indexed projectId, address indexed operator, uint256 oldCap, uint256 newCap);
+    /// @notice rev029: the owner set the grant's limits (all of them, as stated).
+    event GrantLimitsSet(
+        uint256 indexed projectId,
+        address indexed operator,
+        uint64 expiresAt,
+        uint32 allowedModesMask,
+        uint128 maxRewardPerTask,
+        uint64 periodSecs,
+        uint128 periodCap
+    );
+    /// @notice rev029: the operator's committed (its tasks' net draw on the budget) after a draw
+    ///         or a refund on one of its tasks. The one number a cap is measured against.
+    event GrantCommitted(uint256 indexed projectId, address indexed operator, uint256 committed);
+
+    /// @notice rev029: the owner named `pendingOwner` to take the project over. Nothing else
+    ///         changes until it accepts. A new proposal replaces an earlier one.
+    event ProjectOwnerProposed(uint256 indexed projectId, address indexed owner, address indexed pendingOwner);
+    /// @notice rev029: the owner withdrew the pending proposal to `pendingOwner`.
+    event ProjectOwnerProposalCancelled(uint256 indexed projectId, address indexed owner, address indexed pendingOwner);
+    /// @notice rev029: the pending owner accepted. `previousOwner`'s own backing in the project's
+    ///         pool moved to `newOwner` (`sharesMoved` shares; zero if it held none).
+    event ProjectOwnerChanged(
+        uint256 indexed projectId, address indexed previousOwner, address indexed newOwner, uint256 sharesMoved
+    );
+    /// @notice rev029: the owner moved the end date later, and the pool's closing date with it.
+    event ProjectEndExtended(uint256 indexed projectId, uint64 previousEndsAt, uint64 newEndsAt);
 
     // -------------------------------------------------------------------------
     // Errors
     // -------------------------------------------------------------------------
 
     error ProjectNotFound();
+    /// @notice rev029: the proposed owner is the zero address, the current owner, the diamond or
+    ///         the funding pool.
+    error InvalidProjectOwner();
+    /// @notice rev029: acceptProjectOwner or cancelProjectOwner with no proposal pending.
+    error NoPendingProjectOwner();
+    /// @notice rev029: the caller is not the address the pending proposal names.
+    error NotPendingProjectOwner();
+    /// @notice rev029: the new end date is not after the current one.
+    error ProjectEndNotExtended(uint64 currentEndsAt, uint64 requestedEndsAt);
     error NotProjectOwner();
     /// @notice The project is closed or past its end date.
     error ProjectNotOpen();
@@ -134,6 +208,24 @@ interface ITMPProject {
     error GrantRevoked();
     error GrantNotFound();
     error GrantTermsMismatch(bytes32 expected, bytes32 actual);
+    /// @notice rev029: a grant's new cap is below what the operator's tasks still hold.
+    error GrantCapBelowCommitted(uint256 cap, uint256 committed);
+    /// @notice rev029: raiseGrantCap needs a cap strictly above a nonzero current cap.
+    error GrantCapNotRaised(uint256 currentCap, uint256 requestedCap);
+    /// @notice rev029: lowerGrantCap needs a nonzero cap below the current one (or any cap on a grant
+    ///         that has none).
+    error GrantCapNotLowered(uint256 currentCap, uint256 requestedCap);
+    /// @notice rev029: the grant's expiry has passed.
+    error GrantExpired(uint64 expiresAt);
+    /// @notice rev029: the task's mode is not in the grant's allowed modes.
+    error GrantModeNotAllowed(bytes4 mode);
+    /// @notice rev029: the task would hold more than the grant's maxRewardPerTask.
+    error GrantRewardTooHigh(uint256 maxReward, uint256 needed);
+    /// @notice rev029: the draw would pass the grant's budget for the current period.
+    error GrantPeriodCapExceeded(uint256 remaining, uint256 needed);
+    /// @notice rev029: the limits are malformed (an unknown mode bit, a period without a cap, an
+    ///         expiry in the past).
+    error InvalidGrantLimits();
     error OperatorCapExceeded(uint256 remaining, uint256 needed);
     /// @notice Only the diamond itself may call this function.
     error NotDiamond();
@@ -217,7 +309,32 @@ interface ITMPProject {
 
     /// @notice The owner grants `operator` the right to spend the project's budget under `terms`,
     ///         or replaces the terms of a grant the operator has not accepted. Owner only.
+    ///         rev029: also grants again after a revoke, which resets the grant to pending with the
+    ///         new terms. `committed` carries over, so a nonzero cap below it reverts
+    ///         GrantCapBelowCommitted. An accepted grant that is not revoked reverts
+    ///         GrantAlreadyAccepted.
     function grantOperator(uint256 projectId, address operator, GrantTerms calldata terms) external;
+
+    /// @notice rev029: the owner raises the cap of a pending or accepted grant that is not revoked.
+    ///         `newCap` must be strictly above a nonzero current cap (GrantCapNotRaised otherwise;
+    ///         a zero cap already means no cap). No other term changes. Owner only.
+    function raiseGrantCap(uint256 projectId, address operator, uint256 newCap) external;
+
+    /// @notice rev029: the owner lowers the lifetime cap of a pending or accepted grant that is not
+    ///         revoked. `newCap` must be nonzero and below the current cap (any nonzero cap is a
+    ///         tightening of a grant with none), and at least `committed`: GrantCapBelowCommitted
+    ///         otherwise. Owner only.
+    function lowerGrantCap(uint256 projectId, address operator, uint256 newCap) external;
+
+    /// @notice rev029: the owner sets all of a grant's limits as stated. A pending grant is edited
+    ///         freely. On an accepted grant the owner may tighten and may loosen: limits are not in
+    ///         the terms hash, loosening only widens what the operator may do, and the owner can
+    ///         revoke at any time anyway. A revoked grant reverts GrantRevoked. The period meter
+    ///         restarts when periodSecs changes. Owner only.
+    function setGrantLimits(uint256 projectId, address operator, GrantLimitsInput calldata limits) external;
+
+    /// @notice rev029: the grant's limits and period meter as stored.
+    function getGrantLimits(uint256 projectId, address operator) external view returns (GrantLimits memory);
 
     /// @notice The operator accepts its grant as recorded, which freezes the terms. The operator
     ///         can spend only after this. `termsHash` is `keccak256(abi.encode(terms))` of the
@@ -230,6 +347,30 @@ interface ITMPProject {
     function revokeOperator(uint256 projectId, address operator) external;
 
     function getGrant(uint256 projectId, address operator) external view returns (Grant memory);
+
+    /// @notice rev029: the owner proposes `newOwner` as the project's owner. Owner only, while the
+    ///         project is open. Changes nothing until `newOwner` accepts; a later proposal replaces
+    ///         this one. Reverts InvalidProjectOwner for the zero address, the current owner, the
+    ///         diamond and the funding pool.
+    function proposeProjectOwner(uint256 projectId, address newOwner) external;
+
+    /// @notice rev029: the owner withdraws the pending proposal. Owner only; allowed at any time,
+    ///         including once the project is closed.
+    function cancelProjectOwner(uint256 projectId) external;
+
+    /// @notice rev029: the pending owner takes the project over, while it is open. The owner
+    ///         becomes the caller; the previous owner's own backing in the pool moves to it
+    ///         (other backers' shares never move); a live grant the new owner held as an operator
+    ///         is revoked, since it now acts as owner. Tasks already created keep their recorded
+    ///         requester, but the project's current owner acts for them.
+    function acceptProjectOwner(uint256 projectId) external;
+
+    /// @notice rev029: the owner moves the end date later, to at most 365 days after this block,
+    ///         while the project is open. The pool's closing date moves with it. Owner only.
+    function extendProject(uint256 projectId, uint64 newEndsAt) external;
+
+    /// @notice rev029: the address the pending ownership proposal names, zero when none.
+    function pendingProjectOwner(uint256 projectId) external view returns (address);
 
     /// @notice The operator that created a task, zero for a task the owner created or no project.
     function taskOperator(bytes32 taskId) external view returns (address);

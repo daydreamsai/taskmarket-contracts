@@ -151,6 +151,12 @@ struct AppStorage {
     // Rev028: owner-set cap on a transforming hook's fee, in basis points of the awards. Zero (the
     // default) means no hook fee may be taken.
     uint16 maxHookFeeBps;
+    // Rev029: owner-set limits per project and operator, kept beside the grant because GrantTerms is
+    // hashed by acceptGrant. Appended at the end per the storage-layout rule; reads as no limits.
+    mapping(uint256 => mapping(address => ITMPProject.GrantLimits)) projectGrantLimits;
+    // Rev029: the address a project's owner proposed as its next owner, zero when none. Cleared on
+    // accept and on cancel.
+    mapping(uint256 => address) projectPendingOwner;
 }
 
 library LibAppStorage {

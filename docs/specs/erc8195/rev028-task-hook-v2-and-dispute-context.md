@@ -412,6 +412,11 @@ New events: `HookAttached`, `HookActionData`, `HookCallFailedV2`, `TaskSettled`,
 holds a task's payout until another task, the gating task, has paid out, so workflows compose (A
 blocks B, B blocks C). A human sign-off is modelled as a gating task; the gate has no approver.
 
+The call surface, the call roles, the handling of a gating task that is cancelled or expires and the
+deadline extension were revised afterwards; see
+`extensions/ext-005-payout-gate-settlement-extension-and-project-links.md`, which is authoritative
+where it differs from this section.
+
 - Capabilities: bit 0 (`beforeCreate`), bit 13 (`beforeAccept`) and bit 30 (calls, accepting
   `REQUESTER` only), `0x40002001`. It is check only and has no result power.
 - Configuration: `abi.encode(bytes32 gatingTaskId, uint64 deadline, bytes32[] gatesTaskIds)`, fixed

@@ -20,7 +20,7 @@ import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 
 /// @dev rev028 Task Hook V2: attach, veto, observers, settlement results, the settlement record,
-///      the dispute context and the payout gate.
+///      the dispute context. The payout gate is covered in PayoutGateHook.t.sol.
 contract TaskHookV2Test is DiamondTestHelper {
     ITMPDiamond internal market;
     ITMPHooksV2 internal v2;
@@ -196,7 +196,7 @@ contract TaskHookV2Test is DiamondTestHelper {
         _createClaim(address(none));
 
         MockTaskHookV2 future = _mock(BIT_CREATE);
-        future.setMinVersion(29);
+        future.setMinVersion(30);
         vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookIncompatible.selector, uint8(0), uint8(3)));
         _createClaim(address(future));
     }
@@ -467,132 +467,12 @@ contract TaskHookV2Test is DiamondTestHelper {
     }
 
     // -------------------------------------------------------------------------
-    // Payout gate
+    // Hook rejection helper
     // -------------------------------------------------------------------------
-
-    function _gated(PayoutGateHook gate, bytes32 gatingTaskId, uint64 deadline) internal returns (bytes32) {
-        return _createWith(TMP_CLAIM, _one(address(gate)), _cfg(abi.encode(gatingTaskId, deadline, new bytes32[](0))));
-    }
-
-    function test_GateHoldsUntilGatingTaskPaid() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        uint64 deadline = uint64(block.timestamp + 3 days);
-        bytes32 taskId = _gated(gate, review, deadline);
-        (bytes32 g, uint64 d, bool paid, bool open) = gate.gateOf(taskId);
-        assertEq(g, review);
-        assertEq(d, deadline);
-        assertFalse(paid);
-        assertFalse(open);
-
-        _claimAndSubmit(taskId);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(taskId);
-
-        _claimAndSubmit(review);
-        _accept(review);
-        (,, paid, open) = gate.gateOf(taskId);
-        assertTrue(paid && open, "gating task paid opens the gate");
-        _accept(taskId);
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
-    }
-
-    function test_GateDeadlineReleasesWhenGatingTaskCancelled() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _gated(gate, review, uint64(block.timestamp + 2 hours));
-        _relay(requester, 0, abi.encodeCall(market.cancelTask, (review, 0)));
-        _claimAndSubmit(taskId);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(taskId);
-        vm.warp(block.timestamp + 2 hours);
-        _accept(taskId);
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
-    }
-
-    function test_GateNeverHoldsExpiryRefund() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _gated(gate, review, uint64(block.timestamp + 30 days));
-        vm.warp(block.timestamp + DURATION + 1);
-        market.refundExpired(taskId, 0);
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Expired));
-    }
-
-    function test_GatePassesDisputeRuling() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _createWith(
-            TMP_CLAIM,
-            _one(address(gate)),
-            _cfg(abi.encode(review, uint64(block.timestamp + 30 days), new bytes32[](0)))
-        );
-        _relay(
-            requester, 0, abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, 2 days, 1 days, resolver))
-        );
-        _claimAndSubmit(taskId);
-        ITMPCore.Award[] memory none = new ITMPCore.Award[](0);
-        _relay(
-            evaluator,
-            0,
-            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.REJECT, 0, 1000, bytes32(0), none))
-        );
-        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
-        _resolve(taskId);
-        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted), "ruling not held");
-    }
-
-    function _link(address sender, bytes32 taskId, address hook, bytes32 gatingTaskId) internal {
-        _relay(sender, 0, abi.encodeCall(v2.callTaskHook, (taskId, hook, abi.encode(gatingTaskId))));
-    }
 
     function _gateRejected(bytes4 err) internal pure returns (bytes memory) {
         return
             abi.encodeWithSelector(ITMPHooksV2.HookRejected.selector, uint8(0), uint8(22), abi.encodeWithSelector(err));
-    }
-
-    function test_GateLinkRules() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _gated(gate, bytes32(0), uint64(block.timestamp + 1 days));
-        assertEq(v2.getTaskHooksV2(taskId)[0].callRoles, ROLE_REQUESTER, "gate accepts the requester only");
-
-        // A worker holds no role the gate accepts: refused before the gate is called.
-        vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCallRoleRefused.selector, ROLE_STRANGER));
-        _link(worker, taskId, address(gate), review);
-
-        vm.expectRevert(_gateRejected(PayoutGateHook.PayoutGate__InvalidGatingTask.selector));
-        _link(requester, taskId, address(gate), taskId);
-        vm.expectRevert(_gateRejected(PayoutGateHook.PayoutGate__InvalidGatingTask.selector));
-        _link(requester, taskId, address(gate), keccak256("unknown"));
-
-        vm.expectEmit(address(market));
-        emit ITMPHooksV2.TaskHookCalled(taskId, address(gate), requester, ROLE_REQUESTER, keccak256(abi.encode(review)));
-        _link(requester, taskId, address(gate), review);
-        (bytes32 linked,,,) = gate.gateOf(taskId);
-        assertEq(linked, review, "linked");
-        vm.expectRevert(_gateRejected(PayoutGateHook.PayoutGate__AlreadyLinked.selector));
-        _link(requester, taskId, address(gate), review);
-    }
-
-    function test_GateLinkRefusesOtherRequestersTask() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 foreign = _createAs(worker2, TMP_CLAIM, new address[](0), new bytes[](0));
-        assertTrue(foreign != bytes32(0), "foreign task created");
-        bytes32 taskId = _gated(gate, bytes32(0), uint64(block.timestamp + 1 days));
-        vm.expectRevert(_gateRejected(PayoutGateHook.PayoutGate__RequesterMismatch.selector));
-        _link(requester, taskId, address(gate), foreign);
-    }
-
-    function test_GateLinkDirectCallToDiamond() public {
-        // The relay is a convenience: the requester's own wallet may call the diamond directly.
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _gated(gate, bytes32(0), uint64(block.timestamp + 1 days));
-        vm.prank(requester);
-        v2.callTaskHook(taskId, address(gate), abi.encode(review));
-        (bytes32 linked,,,) = gate.gateOf(taskId);
-        assertEq(linked, review);
     }
 
     // -------------------------------------------------------------------------
@@ -746,182 +626,6 @@ contract TaskHookV2Test is DiamondTestHelper {
         assertEq(h.calls(), 0);
     }
 
-    function test_HookOnCallOnlyFromDiamond() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _gated(gate, bytes32(0), uint64(block.timestamp + 1 days));
-        ITMPHookV2.TaskContextV2 memory ctx;
-        vm.prank(requester);
-        vm.expectRevert(abi.encodeWithSelector(BaseTMPHookV2.BaseTMPHookV2__UnauthorizedCaller.selector, requester));
-        gate.onCall(taskId, ctx, requester, ROLE_REQUESTER, abi.encode(review));
-    }
-
-    function test_GateLinkAfterPayoutRejected() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 review = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 taskId = _gated(gate, bytes32(0), uint64(block.timestamp + 1 hours));
-        vm.warp(block.timestamp + 1 hours);
-        _claimAndSubmit(taskId);
-        _accept(taskId);
-        vm.expectRevert(ITMPHooksV2.TaskAlreadySettled.selector);
-        _link(requester, taskId, address(gate), review);
-    }
-
-    function test_GateConfigRules() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _gated(gate, bytes32(0), uint64(block.timestamp + 10 minutes));
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _gated(gate, bytes32(0), uint64(block.timestamp + 181 days));
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _gated(gate, keccak256("unknown"), uint64(block.timestamp + 1 days));
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _createWith(TMP_CLAIM, _one(address(gate)), _cfg(hex"01"));
-    }
-
-    function test_GateChainABlocksBBlocksC() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        uint64 deadline = uint64(block.timestamp + 30 days);
-        bytes32 a = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        bytes32 b = _gated(gate, a, deadline);
-        bytes32 c = _gated(gate, b, deadline);
-        _claimAndSubmit(c);
-        _claimAndSubmit(b);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(c);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(b);
-        _claimAndSubmit(a);
-        _accept(a);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(c);
-        _accept(b);
-        _accept(c);
-        assertEq(uint8(market.getTaskState(c)), uint8(ITMPCore.TaskStatus.Accepted));
-    }
-
-    function test_GateComposesWithAnotherHook() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        MockTaskHookV2 other = _mock(BIT_ACCEPT | BIT_AFTER_COMPLETE);
-        address[] memory hooks = new address[](2);
-        hooks[0] = address(other);
-        hooks[1] = address(gate);
-        bytes[] memory configs = new bytes[](2);
-        configs[1] = abi.encode(bytes32(0), uint64(block.timestamp + 1 hours), new bytes32[](0));
-        bytes32 taskId = _createWith(TMP_CLAIM, hooks, configs);
-        _claimAndSubmit(taskId);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(taskId);
-        vm.warp(block.timestamp + 1 hours);
-        _accept(taskId);
-        assertEq(other.lastTerminalKind(), 1, "other hook saw afterComplete");
-    }
-
-    // Gating mode: a later task links itself as the gated task's gating task.
-
-    function _gating(PayoutGateHook gate, bytes32 gated) internal returns (bytes32) {
-        return _createWith(TMP_CLAIM, _one(address(gate)), _cfg(abi.encode(bytes32(0), uint64(0), _ids(gated))));
-    }
-
-    function test_GatingModeLinksAutomatically() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 bounty = _gated(gate, bytes32(0), uint64(block.timestamp + 30 days));
-        bytes32 review = _gating(gate, bounty);
-        (bytes32 g,,, bool open) = gate.gateOf(bounty);
-        assertEq(g, review, "linked at creation");
-        assertFalse(open);
-        _claimAndSubmit(bounty);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(bounty);
-        // The gating task itself holds nothing.
-        _claimAndSubmit(review);
-        _accept(review);
-        _accept(bounty);
-        assertEq(uint8(market.getTaskState(bounty)), uint8(ITMPCore.TaskStatus.Accepted));
-    }
-
-    function test_GatingModeRejectsStranger() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 bounty = _gated(gate, bytes32(0), uint64(block.timestamp + 30 days));
-        bytes memory create = abi.encodeCall(
-            market.createTask,
-            (
-                taskConfig(REWARD, DURATION, TMP_CLAIM),
-                ITMPCore.HookConfig({
-                    contracts: _one(address(gate)),
-                    data: abi.encode(_cfg(abi.encode(bytes32(0), uint64(0), _ids(bounty))))
-                }),
-                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                noEvaluatorConfig(),
-                stakeTerms(false, 0)
-            )
-        );
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _relay(worker, REWARD, create);
-    }
-
-    function test_GatingModeRules() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 bounty = _gated(gate, bytes32(0), uint64(block.timestamp + 30 days));
-        bytes4 rejected = ITMPHooksV2.HookRejected.selector;
-
-        // A task without the gate cannot be gated.
-        bytes32 plain = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        vm.expectPartialRevert(rejected);
-        _gating(gate, plain);
-
-        // Mixed modes are invalid.
-        vm.expectPartialRevert(rejected);
-        _createWith(
-            TMP_CLAIM, _one(address(gate)), _cfg(abi.encode(bytes32(0), uint64(block.timestamp + 1 days), _ids(bounty)))
-        );
-
-        // Only once.
-        _gating(gate, bounty);
-        vm.expectPartialRevert(rejected);
-        _gating(gate, bounty);
-
-        // Not after the gated task settled.
-        bytes32 other = _gated(gate, bytes32(0), uint64(block.timestamp + 1 hours));
-        _relay(requester, 0, abi.encodeCall(market.cancelTask, (other, 0)));
-        vm.expectPartialRevert(rejected);
-        _gating(gate, other);
-    }
-
-    function _ids(bytes32 a) internal pure returns (bytes32[] memory ids) {
-        ids = new bytes32[](1);
-        ids[0] = a;
-    }
-
-    function test_GatingTaskGatesSeveralBounties() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        uint64 deadline = uint64(block.timestamp + 30 days);
-        bytes32[] memory bounties = new bytes32[](3);
-        for (uint256 i; i < 3; ++i) {
-            bounties[i] = _gated(gate, bytes32(0), deadline);
-        }
-        bytes32 review = _createWith(TMP_CLAIM, _one(address(gate)), _cfg(abi.encode(bytes32(0), uint64(0), bounties)));
-        for (uint256 i; i < 3; ++i) {
-            (bytes32 g,,,) = gate.gateOf(bounties[i]);
-            assertEq(g, review, "each linked");
-            _claimAndSubmit(bounties[i]);
-        }
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _accept(bounties[2]);
-        _claimAndSubmit(review);
-        _accept(review);
-        for (uint256 i; i < 3; ++i) {
-            _accept(bounties[i]);
-        }
-    }
-
-    function test_GatingListCapped() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32[] memory many = new bytes32[](17);
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _createWith(TMP_CLAIM, _one(address(gate)), _cfg(abi.encode(bytes32(0), uint64(0), many)));
-    }
-
     // -------------------------------------------------------------------------
     // Review fixes
     // -------------------------------------------------------------------------
@@ -960,18 +664,6 @@ contract TaskHookV2Test is DiamondTestHelper {
         bytes32 taskId = _createClaim(address(h));
         _relay(requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
         assertEq(uint8(h.lastPriorStatus()), uint8(ITMPCore.TaskStatus.Open));
-    }
-
-    function test_GateRejectsSettledGatingTask() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        bytes32 done = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
-        _relay(requester, 0, abi.encodeCall(market.cancelTask, (done, 0)));
-        vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
-        _gated(gate, done, uint64(block.timestamp + 1 days));
-
-        bytes32 taskId = _gated(gate, bytes32(0), uint64(block.timestamp + 1 days));
-        vm.expectRevert(_gateRejected(PayoutGateHook.PayoutGate__InvalidGatingTask.selector));
-        _link(requester, taskId, address(gate), done);
     }
 
     function test_V1TaskSkipsActionsWithoutV1Check() public {
@@ -1063,18 +755,6 @@ contract TaskHookV2Test is DiamondTestHelper {
         bytes memory bad = abi.encodeCall(market.claimTask, (keccak256("none"), 0));
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
         v2.withActionData(hex"01", bad);
-    }
-
-    function test_GateIsOpenFalseForUngatedTask() public {
-        PayoutGateHook gate = new PayoutGateHook(address(market));
-        assertFalse(gate.isOpen(keccak256("none")), "no gate, not open");
-        bytes32 bounty = _gated(gate, bytes32(0), uint64(block.timestamp + 30 days));
-        bytes32 review = _gating(gate, bounty);
-        assertFalse(gate.isOpen(review), "a gating-mode task has no gate of its own");
-        // ...yet its own payout is never held.
-        _claimAndSubmit(review);
-        _accept(review);
-        assertTrue(gate.isOpen(bounty), "the gated task opens once its gating task pays");
     }
 
     // -------------------------------------------------------------------------

@@ -20,6 +20,32 @@ export const PayoutGateHookABI = [
   },
   {
     "type": "function",
+    "name": "CALL_EXTEND",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "CALL_LINK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "CAPABILITIES",
     "inputs": [],
     "outputs": [
@@ -4483,6 +4509,55 @@ export const PayoutGateHookABI = [
   },
   {
     "type": "function",
+    "name": "gateDetailsOf",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gatingTaskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxDeadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "gatingPaid",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "gatingFailed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "relinked",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "open",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "gateOf",
     "inputs": [
       {
@@ -4792,10 +4867,60 @@ export const PayoutGateHookABI = [
   },
   {
     "type": "event",
+    "name": "PayoutGateExtended",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "previousDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PayoutGateLinked",
     "inputs": [
       {
         "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "gatingTaskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PayoutGateRelinked",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "previousGatingTaskId",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
@@ -4862,6 +4987,11 @@ export const PayoutGateHookABI = [
   },
   {
     "type": "error",
+    "name": "PayoutGate__AlreadyOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PayoutGate__AlreadySet",
     "inputs": []
   },
@@ -4893,6 +5023,27 @@ export const PayoutGateHookABI = [
   },
   {
     "type": "error",
+    "name": "PayoutGate__ExtensionOutOfWindow",
+    "inputs": [
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "latest",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PayoutGate__InvalidConfig",
     "inputs": []
   },
@@ -4903,12 +5054,17 @@ export const PayoutGateHookABI = [
   },
   {
     "type": "error",
+    "name": "PayoutGate__NotAuthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PayoutGate__NotGated",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "PayoutGate__NotRequester",
+    "name": "PayoutGate__RelinkUsed",
     "inputs": []
   },
   {

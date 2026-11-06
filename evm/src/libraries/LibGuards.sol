@@ -91,7 +91,14 @@ library LibGuards {
     ///         where the grant's terms decide between the operator and the project owner.
     function _requireRequester(AppStorage storage s, bytes32 taskId, address caller) internal view {
         if (s.taskOperators[taskId] == address(0)) {
-            if (caller != s.tasks[taskId].requester) revert ITMPCore.NotRequester();
+            // Rev029: a project task is acted for by the project's current owner, whoever the
+            // owner was when it was created; any other task by its recorded requester.
+            uint256 projectId = s.taskProjects[taskId];
+            if (projectId == 0) {
+                if (caller != s.tasks[taskId].requester) revert ITMPCore.NotRequester();
+            } else if (caller != s.projects[projectId].owner) {
+                revert ITMPCore.NotRequester();
+            }
         } else if (!LibProject.mayAct(s, taskId, caller)) {
             revert ITMPCore.NotRequester();
         }

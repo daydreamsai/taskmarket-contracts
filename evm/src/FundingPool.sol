@@ -272,6 +272,46 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
         emit PoolClosed(poolId, p.available);
     }
 
+    /// @inheritdoc IFundingPoolManager
+    function extendClosesAt(bytes32 poolId, uint64 closesAt) external onlyManager {
+        Pool storage p = _get(_s(), poolId);
+        if (!_isOpen(p)) revert PoolNotOpen();
+        uint64 previous = p.closesAt;
+        // A pool with no closing date never settles by time, so there is nothing to extend.
+        if (previous == 0 || closesAt <= previous) revert PoolExtensionInvalid();
+        p.closesAt = closesAt;
+        emit PoolExtended(poolId, previous, closesAt);
+    }
+
+    /// @inheritdoc IFundingPoolManager
+    function moveBacking(bytes32 poolId, address from, address to) external onlyManager returns (uint256 shares) {
+        PoolStorage storage $ = _s();
+        Pool storage p = _get($, poolId);
+        if (!_isOpen(p)) revert PoolNotOpen();
+        if (to == from || to == address(0) || to == $.manager || to == address(this)) revert PoolInvalidBacker();
+        Backing storage source = $.backings[poolId][from];
+        shares = _sharesOf(p, source);
+        // A backing of an older share generation counts as no shares and stays where it is.
+        if (shares == 0) return 0;
+        Backing storage target = $.backings[poolId][to];
+        uint256 generation = p.generation;
+        if (target.generation != generation) {
+            target.generation = generation;
+            target.shares = 0;
+            target.claimed = 0;
+        }
+        target.shares += shares;
+        target.claimed += source.claimed;
+        source.shares = 0;
+        source.claimed = 0;
+        emit PoolBackingMoved(poolId, from, to, shares);
+    }
+
+    /// @inheritdoc IFundingPoolManager
+    function fundingPoolRevision() external pure virtual returns (uint256) {
+        return 29;
+    }
+
     // -------------------------------------------------------------------------
     // Internals
     // -------------------------------------------------------------------------

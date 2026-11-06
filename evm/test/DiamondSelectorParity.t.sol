@@ -26,6 +26,7 @@ import { Rev025Upgrade } from "../script/upgrades/Rev025Upgrade.s.sol";
 import { Rev026Upgrade } from "../script/upgrades/Rev026Upgrade.s.sol";
 import { Rev027Upgrade } from "../script/upgrades/Rev027Upgrade.s.sol";
 import { Rev028Upgrade } from "../script/upgrades/Rev028Upgrade.s.sol";
+import { Rev029Upgrade } from "../script/upgrades/Rev029Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
@@ -92,7 +93,8 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
     ///        - rev025's settlement-terms selectors are removed (rev025 Adds them);
     ///        - rev026's escrow selectors are removed (rev026 Adds them);
     ///        - rev027's reserved-worker and project selectors are removed (rev027 Adds them);
-    ///        - rev028's hook dispatch and Task Hook V2 selectors are removed (rev028 Adds them).
+    ///        - rev028's hook dispatch and Task Hook V2 selectors are removed (rev028 Adds them);
+    ///        - rev029's raiseGrantCap and owner transfer selectors are removed (rev029 Adds them).
     ///
     ///      Only routing is reconstructed, never bytecode: this repo contains no historical facet
     ///      source, so every facet here is built from current code. That limitation is inherent
@@ -124,7 +126,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
 
         bytes4[] memory rev026Selectors = _rev026Selectors();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, preRev014CreateTask);
         cuts[1] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev017AdminSelectors);
         cuts[2] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev024AdminSelectors);
@@ -133,6 +135,9 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         cuts[5] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, _rev027Selectors());
         cuts[6] = IDiamondCut.FacetCut(
             address(0), IDiamondCut.FacetCutAction.Remove, FacetSelectors.selectorsAddedRev028()
+        );
+        cuts[7] = IDiamondCut.FacetCut(
+            address(0), IDiamondCut.FacetCutAction.Remove, FacetSelectors.selectorsAddedRev029()
         );
 
         vm.prank(owner);
@@ -217,6 +222,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         new Rev026Upgrade().run();
         new Rev027Upgrade().run();
         new Rev028Upgrade().run();
+        new Rev029Upgrade().run();
     }
 
     /// @dev The one reconstruction _runFullSequence documents: unroute the rev018 evaluator-aware

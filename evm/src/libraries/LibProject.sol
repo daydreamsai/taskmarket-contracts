@@ -7,6 +7,7 @@ import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
 import { ITMPFundingPool } from "../interfaces/ITMPFundingPool.sol";
 import { IFundingPoolManager } from "../interfaces/IFundingPoolManager.sol";
+import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH, TMP_BENCHMARK, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title LibProject -- rev027: what a project task draws from its pool and where its money goes
 /// @dev A project's budget lives in the funding pool contract (IFundingPoolManager), which the
@@ -36,6 +37,10 @@ library LibProject {
     ///         a project's tasks may run. A backer's money is held at most
     ///         MAX_LIFETIME + MAX_TASK_GRACE after the project is created.
     uint32 internal constant MAX_TASK_GRACE = 90 days;
+
+    /// @notice Rev029: the bits of GrantLimits.allowedModesMask, one per built-in mode (bounty 0,
+    ///         claim 1, pitch 2, benchmark 3, auction 4). Any higher bit is unknown.
+    uint32 internal constant KNOWN_MODES_MASK = 0x1F;
 
     /// @notice The latest expiry a task of `projectId` may have: its end date plus its task
     ///         grace period.
@@ -167,6 +172,7 @@ library LibProject {
         if (!isOpen(s, poolId)) revert ITMPProject.ProjectNotOpen();
         if (operator != address(0)) {
             ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
+            ITMPProject.GrantLimits storage lim = s.projectGrantLimits[projectId][operator];
             uint256 committed = g.committed;
             if (caller == operator) {
                 if (!g.exists) revert ITMPProject.NotProjectOperator();
@@ -176,10 +182,95 @@ library LibProject {
                 if (cap != 0 && committed + amount > cap) {
                     revert ITMPProject.OperatorCapExceeded(cap > committed ? cap - committed : 0, amount);
                 }
+                _requireWithinLimits(lim, amount);
             }
             g.committed = committed + amount;
+            _meterDraw(lim, amount);
+            emit ITMPProject.GrantCommitted(projectId, operator, committed + amount);
         }
         pool(s).spend(poolId, amount);
+    }
+
+    /// @dev Rev029: the operator's own draw must be inside the owner's limits: before the expiry,
+    ///      and inside the budget of the current period.
+    function _requireWithinLimits(ITMPProject.GrantLimits storage lim, uint256 amount) private view {
+        uint64 expiresAt = lim.expiresAt;
+        if (expiresAt != 0 && block.timestamp >= expiresAt) revert ITMPProject.GrantExpired(expiresAt);
+        uint64 periodSecs = lim.periodSecs;
+        if (periodSecs == 0) return;
+        uint256 spent = block.timestamp >= uint256(lim.periodStart) + periodSecs ? 0 : lim.periodSpent;
+        uint256 periodCap = lim.periodCap;
+        if (spent + amount > periodCap) {
+            revert ITMPProject.GrantPeriodCapExceeded(periodCap > spent ? periodCap - spent : 0, amount);
+        }
+    }
+
+    /// @dev Rev029: adds a draw to the period meter, starting a new period when none is running or
+    ///      the last one is over. The meter counts every draw on the operator's tasks, the owner's
+    ///      top-ups included, as committed does; only the operator's own draws are refused.
+    function _meterDraw(ITMPProject.GrantLimits storage lim, uint256 amount) private {
+        if (lim.periodSecs == 0) return;
+        if (lim.periodStart == 0 || block.timestamp >= uint256(lim.periodStart) + lim.periodSecs) {
+            lim.periodStart = uint64(block.timestamp);
+            lim.periodSpent = 0;
+        }
+        lim.periodSpent += uint128(amount);
+    }
+
+    /// @notice Rev029: the checks on a new project task by an operator that need the task's
+    ///         configuration: its mode must be allowed and what it holds must not pass the
+    ///         grant's maxRewardPerTask. Zero limits allow everything.
+    function requireTaskAllowed(AppStorage storage s, uint256 projectId, address operator, bytes4 mode, uint256 amount)
+        internal
+        view
+    {
+        ITMPProject.GrantLimits storage lim = s.projectGrantLimits[projectId][operator];
+        uint32 mask = lim.allowedModesMask;
+        if (mask != 0 && mask & modeBit(mode) == 0) revert ITMPProject.GrantModeNotAllowed(mode);
+        _requireRewardWithin(lim, amount);
+    }
+
+    function _requireRewardWithin(ITMPProject.GrantLimits storage lim, uint256 held) private view {
+        uint256 maxReward = lim.maxRewardPerTask;
+        if (maxReward != 0 && held > maxReward) revert ITMPProject.GrantRewardTooHigh(maxReward, held);
+    }
+
+    /// @notice Rev029: the mask bit of a built-in mode; zero for any other mode, which a grant with
+    ///         a nonzero mask therefore refuses.
+    function modeBit(bytes4 mode) internal pure returns (uint32) {
+        if (mode == TMP_BOUNTY) return 1;
+        if (mode == TMP_CLAIM) return 2;
+        if (mode == TMP_PITCH) return 4;
+        if (mode == TMP_BENCHMARK) return 8;
+        if (mode == TMP_AUCTION) return 16;
+        return 0;
+    }
+
+    /// @notice Rev029: stores a grant's limits after checking them, and restarts the period meter
+    ///         when the period length changes.
+    function setLimits(
+        AppStorage storage s,
+        uint256 projectId,
+        address operator,
+        ITMPProject.GrantLimitsInput calldata l
+    ) internal {
+        if (
+            l.allowedModesMask & ~KNOWN_MODES_MASK != 0 || (l.periodSecs == 0) != (l.periodCap == 0)
+                || (l.expiresAt != 0 && l.expiresAt <= block.timestamp)
+        ) revert ITMPProject.InvalidGrantLimits();
+        ITMPProject.GrantLimits storage lim = s.projectGrantLimits[projectId][operator];
+        if (lim.periodSecs != l.periodSecs) {
+            lim.periodStart = 0;
+            lim.periodSpent = 0;
+        }
+        lim.expiresAt = l.expiresAt;
+        lim.allowedModesMask = l.allowedModesMask;
+        lim.maxRewardPerTask = l.maxRewardPerTask;
+        lim.periodSecs = l.periodSecs;
+        lim.periodCap = l.periodCap;
+        emit ITMPProject.GrantLimitsSet(
+            projectId, operator, l.expiresAt, l.allowedModesMask, l.maxRewardPerTask, l.periodSecs, l.periodCap
+        );
     }
 
     /// @notice A reward increase or an evaluator stake added to a live task by `caller`. A project
@@ -198,7 +289,12 @@ library LibProject {
     ///         and books it as held by the task.
     function drawForTask(AppStorage storage s, bytes32 taskId, address caller, uint256 amount) internal {
         uint256 projectId = s.taskProjects[taskId];
-        draw(s, projectId, caller, s.taskOperators[taskId], amount);
+        address operator = s.taskOperators[taskId];
+        // Rev029: an operator topping up its own task keeps the task inside maxRewardPerTask.
+        if (operator != address(0) && caller == operator) {
+            _requireRewardWithin(s.projectGrantLimits[projectId][operator], s.taskPoolDraws[taskId] + amount);
+        }
+        draw(s, projectId, caller, operator, amount);
         s.taskPoolDraws[taskId] += amount;
         emit ITMPProject.ProjectPoolDrawn(projectId, taskId, amount);
     }
@@ -231,7 +327,16 @@ library LibProject {
         address operator = s.taskOperators[taskId];
         if (operator == address(0)) return;
         ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
-        g.committed = g.committed > amount ? g.committed - amount : 0;
+        uint256 committed = g.committed > amount ? g.committed - amount : 0;
+        g.committed = committed;
+        // Rev029: a refund gives back to the current period, floored at zero. A period that is over
+        // is not touched: what it spent stays spent, and the next draw starts a fresh one.
+        ITMPProject.GrantLimits storage lim = s.projectGrantLimits[projectId][operator];
+        if (lim.periodSecs != 0 && lim.periodStart != 0 && block.timestamp < uint256(lim.periodStart) + lim.periodSecs)
+        {
+            lim.periodSpent = lim.periodSpent > amount ? lim.periodSpent - uint128(amount) : 0;
+        }
+        emit ITMPProject.GrantCommitted(projectId, operator, committed);
     }
 
     /// @notice Rev028: whether `who` is a party that may act as the requester of `taskId`: the
@@ -264,8 +369,9 @@ library LibProject {
         uint256 projectId = s.taskProjects[taskId];
         ITMPProject.Grant storage g = s.projectGrants[projectId][operator];
         bool removed = g.revoked && g.terms.revokeRemovesControl;
-        if (caller == operator) return !removed;
-        if (caller == s.projects[projectId].owner) return g.terms.ownerOverride || removed;
-        return false;
+        // Rev029: after an owner transfer the owner can be the operator of a task it created
+        // earlier, so the owner is tested first and keeps control of it.
+        if (caller == s.projects[projectId].owner) return g.terms.ownerOverride || removed || caller == operator;
+        return caller == operator && !removed;
     }
 }

@@ -13,7 +13,14 @@ interface IFundingPoolManager {
     event PoolLedgerMismatch(bytes32 indexed poolId, uint256 requested, uint256 applied);
 
     /// @notice The caller is not the pool's manager.
+    /// @notice rev029: a pool's closing date moved later.
+    event PoolExtended(bytes32 indexed poolId, uint64 previousClosesAt, uint64 closesAt);
+    /// @notice rev029: `shares` of `from`'s backing in the pool moved to `to`.
+    event PoolBackingMoved(bytes32 indexed poolId, address indexed from, address indexed to, uint256 shares);
+
     error NotManager();
+    /// @notice rev029: the new closing date is not later than the current one, or the pool has none.
+    error PoolExtensionInvalid();
     /// @notice The pool or an initialiser was given a token other than the diamond's payment
     ///         token.
     error PoolInvalidToken();
@@ -56,6 +63,21 @@ interface IFundingPoolManager {
 
     /// @notice Settles the pool now: what it holds becomes the backers' pot. Never paused.
     function close(bytes32 poolId) external;
+
+    /// @notice rev029: moves an open pool's closing date later. Shares, value and prices do not
+    ///         change. Reverts PoolNotOpen if the pool is closed or past its closing date, and
+    ///         PoolExtensionInvalid unless `closesAt` is later than the current date.
+    function extendClosesAt(bytes32 poolId, uint64 closesAt) external;
+
+    /// @notice rev029: moves all of `from`'s backing in an open pool (shares and what it claimed)
+    ///         to `to`, adding to any backing `to` holds. No other backer's backing changes, and
+    ///         the pool's totals do not. Returns the shares moved. Reverts PoolInvalidBacker for
+    ///         `to` equal to `from`, the manager or the pool.
+    function moveBacking(bytes32 poolId, address from, address to) external returns (uint256 shares);
+
+    /// @notice rev029: 29 once this implementation has extendClosesAt and moveBacking; the upgrade
+    ///         script reads it to know the pool is already upgraded.
+    function fundingPoolRevision() external pure returns (uint256);
 }
 
 /// @notice What the pool reads from the diamond: its owner, which is also the pool's owner, and

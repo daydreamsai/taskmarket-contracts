@@ -272,8 +272,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
         assertTrue(projects.getGrant(id, operator).revoked);
         vm.expectRevert(ITMPProject.GrantRevoked.selector);
         _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, operator)));
-        vm.expectRevert(ITMPProject.GrantRevoked.selector);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        // rev029: a revoked grant can be granted again; see the re-grant tests below.
     }
 
     // -------------------------------------------------------------------------
@@ -561,6 +560,289 @@ contract ProjectGrantsTest is DiamondTestHelper {
         bytes32 t = abi.decode(_relay(owner, 0, _taskCall(REWARD)), (bytes32));
         assertTrue(_canAct(owner, t));
         assertFalse(_canAct(operator, t), "an operator never acts on the owner's task");
+    }
+
+    // -------------------------------------------------------------------------
+    // rev029: re-grant after revoke, raise the cap in place
+    // -------------------------------------------------------------------------
+
+    function _revoke(address op) internal {
+        _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, op)));
+    }
+
+    function _raise(address who, address op, uint256 newCap) internal {
+        _relay(who, 0, abi.encodeCall(projects.raiseGrantCap, (id, op, newCap)));
+    }
+
+    function test_Regrant_AfterRevoke_ResetsToPendingWithNewTerms() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _revoke(operator);
+        assertTrue(projects.getGrant(id, operator).revoked);
+
+        ITMPProject.GrantTerms memory fresh = _terms(CAP * 2, ITMPProject.RequesterOfRecord.Operator, false, false);
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPProject.OperatorGranted(id, operator, fresh);
+        _grant(operator, fresh);
+
+        ITMPProject.Grant memory g = projects.getGrant(id, operator);
+        assertTrue(g.exists);
+        assertFalse(g.revoked, "revoked cleared");
+        assertFalse(g.accepted, "back to pending");
+        assertEq(g.terms.cap, CAP * 2);
+        assertEq(uint8(g.terms.requesterOfRecord), uint8(ITMPProject.RequesterOfRecord.Operator));
+        assertFalse(g.terms.ownerOverride);
+        assertFalse(g.terms.revokeRemovesControl);
+    }
+
+    function test_Regrant_RevokedPendingGrantCanAlsoBeGrantedAgain() public {
+        _grant(operator, _wideOpen());
+        _revoke(operator);
+        _grant(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        assertFalse(projects.getGrant(id, operator).revoked);
+        assertEq(projects.getGrant(id, operator).terms.cap, CAP);
+    }
+
+    function test_Regrant_PendingOperatorCannotSpendUntilItAccepts() public {
+        _grantAndAccept(operator, _wideOpen());
+        _revoke(operator);
+        _grant(operator, _wideOpen());
+        vm.expectRevert(ITMPProject.GrantNotAccepted.selector);
+        _relay(operator, 0, _taskCall(REWARD));
+    }
+
+    function test_Regrant_OperatorAcceptsAndSpendsAgain() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _opTask(operator, REWARD);
+        _revoke(operator);
+        vm.expectRevert(ITMPProject.GrantRevoked.selector);
+        _relay(operator, 0, _taskCall(REWARD));
+
+        ITMPProject.GrantTerms memory fresh = _terms(CAP + 1e6, ITMPProject.RequesterOfRecord.Operator, true, true);
+        _grant(operator, fresh);
+        // The operator can only accept the terms it reviewed.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITMPProject.GrantTermsMismatch.selector, keccak256(abi.encode(fresh)), bytes32(uint256(1))
+            )
+        );
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, bytes32(uint256(1)))));
+
+        vm.expectEmit(true, true, false, false, address(market));
+        emit ITMPProject.GrantAccepted(id, operator);
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(fresh)))));
+        assertTrue(projects.getGrant(id, operator).accepted);
+
+        bytes32 taskId = _opTask(operator, REWARD);
+        assertEq(market.getTask(taskId).requester, operator, "new requester of record applies to new tasks");
+        assertEq(projects.getGrant(id, operator).committed, 2 * REWARD);
+    }
+
+    function test_Regrant_CommittedCarriesOverAndStillBoundsTotalSpend() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _opTask(operator, 3e6);
+        _revoke(operator);
+        assertEq(projects.getGrant(id, operator).committed, 3e6);
+
+        _grant(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        assertEq(projects.getGrant(id, operator).committed, 3e6, "committed is not reset");
+        _accept(operator);
+
+        // Only the cap's headroom beyond what is still committed can be spent.
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.OperatorCapExceeded.selector, 2e6, 3e6));
+        _relay(operator, 0, _taskCall(3e6));
+        _opTask(operator, 2e6);
+        assertEq(projects.getGrant(id, operator).committed, CAP);
+    }
+
+    function test_Regrant_RefundOfAnOldTaskFreesTheCarriedCommitted() public {
+        bytes32 old = _matrix(ITMPProject.RequesterOfRecord.Owner, true, true);
+        assertEq(projects.getGrant(id, operator).committed, REWARD);
+        _revoke(operator);
+        _grant(operator, _terms(REWARD, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _accept(operator);
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.OperatorCapExceeded.selector, 0, REWARD));
+        _relay(operator, 0, _taskCall(REWARD));
+
+        assertTrue(_cancel(owner, old));
+        assertEq(projects.getGrant(id, operator).committed, 0, "the old task's refund freed its draw");
+        _opTask(operator, REWARD);
+    }
+
+    function test_RevertWhen_Regrant_CapBelowCommitted() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _opTask(operator, 3e6);
+        _revoke(operator);
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantCapBelowCommitted.selector, 3e6 - 1, 3e6));
+        _relay(
+            owner,
+            0,
+            abi.encodeCall(
+                projects.grantOperator, (id, operator, _terms(3e6 - 1, ITMPProject.RequesterOfRecord.Owner, true, true))
+            )
+        );
+        // Equal to committed is allowed (no headroom); so is zero (no cap beyond the budget).
+        _grant(operator, _terms(3e6, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _grant(operator, _terms(0, ITMPProject.RequesterOfRecord.Owner, true, true));
+    }
+
+    function test_RevertWhen_Regrant_NotOwnerOrStillAccepted() public {
+        _grantAndAccept(operator, _wideOpen());
+        // Not revoked and accepted: still frozen.
+        vm.expectRevert(ITMPProject.GrantAlreadyAccepted.selector);
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _revoke(operator);
+        vm.expectRevert(ITMPProject.NotProjectOwner.selector);
+        _relay(stranger, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        vm.expectRevert(ITMPProject.NotProjectOwner.selector);
+        _relay(operator, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        // Granted again and accepted, it is frozen again.
+        _grantAndAccept(operator, _wideOpen());
+        vm.expectRevert(ITMPProject.GrantAlreadyAccepted.selector);
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+    }
+
+    function test_Regrant_CanBeRevokedAgain() public {
+        _grantAndAccept(operator, _wideOpen());
+        _revoke(operator);
+        _grantAndAccept(operator, _wideOpen());
+        _revoke(operator);
+        assertTrue(projects.getGrant(id, operator).revoked);
+        vm.expectRevert(ITMPProject.GrantRevoked.selector);
+        _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, operator)));
+    }
+
+    function test_Regrant_RevokeStillRemovesControlAfterTheSecondRevoke() public {
+        bytes32 t = _matrix(ITMPProject.RequesterOfRecord.Owner, false, true);
+        _revoke(operator);
+        _grant(operator, _terms(0, ITMPProject.RequesterOfRecord.Owner, false, true));
+        _accept(operator);
+        _revoke(operator);
+        assertTrue(_canAct(owner, t), "owner takes control");
+        assertFalse(_canAct(operator, t), "operator loses control");
+    }
+
+    function test_Regrant_OwnerOverrideAndRequesterOfRecordFollowTheNewTerms() public {
+        _grantAndAccept(operator, _terms(0, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _revoke(operator);
+        _grantAndAccept(operator, _terms(0, ITMPProject.RequesterOfRecord.Operator, false, true));
+        bytes32 t = _opTask(operator, REWARD);
+        assertEq(market.getTask(t).requester, operator);
+        assertTrue(_canAct(operator, t));
+        assertFalse(_canAct(owner, t), "override is off in the new terms");
+    }
+
+    function test_Regrant_ExistingTasksFollowTheGrantsCurrentState() public {
+        // The operator's control of a task it created follows its grant: a revoke with
+        // revokeRemovesControl passes it to the owner, and a re-grant, which clears the revoke,
+        // returns it to the operator.
+        bytes32 t = _matrix(ITMPProject.RequesterOfRecord.Owner, false, true);
+        _revoke(operator);
+        assertFalse(_canAct(operator, t));
+        _grant(operator, _terms(0, ITMPProject.RequesterOfRecord.Owner, false, true));
+        assertTrue(_canAct(operator, t), "the grant is live again");
+        assertFalse(_canAct(owner, t), "override off");
+    }
+
+    function test_Regrant_NewOperatorTasksStillRefundToTheProject() public {
+        _grantAndAccept(operator, _wideOpen());
+        _revoke(operator);
+        _grantAndAccept(operator, _wideOpen());
+        bytes32 t = _opTask(operator, REWARD);
+        assertTrue(_cancel(operator, t));
+        assertEq(projects.getProject(id).available, BUDGET);
+        assertEq(usdc.balanceOf(operator), 0);
+    }
+
+    function test_RaiseCap_Accepted() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _opTask(operator, CAP);
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.OperatorCapExceeded.selector, 0, 1e6));
+        _relay(operator, 0, _taskCall(1e6));
+
+        vm.expectEmit(true, true, false, true, address(market));
+        emit ITMPProject.GrantCapRaised(id, operator, CAP, CAP + 3e6);
+        _raise(owner, operator, CAP + 3e6);
+
+        ITMPProject.Grant memory g = projects.getGrant(id, operator);
+        assertEq(g.terms.cap, CAP + 3e6);
+        assertTrue(g.accepted, "still accepted: no second accept needed");
+        assertEq(g.committed, CAP, "committed untouched");
+        assertTrue(uint8(g.terms.requesterOfRecord) == 0 && g.terms.ownerOverride && g.terms.revokeRemovesControl);
+        _opTask(operator, 3e6);
+    }
+
+    function test_RaiseCap_Pending_ChangesTheTermsHashTheOperatorMustAccept() public {
+        ITMPProject.GrantTerms memory reviewed = _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true);
+        _grant(operator, reviewed);
+        bytes32 reviewedHash = keccak256(abi.encode(reviewed));
+        _raise(owner, operator, CAP + 1);
+        assertFalse(projects.getGrant(id, operator).accepted);
+        assertEq(projects.getGrant(id, operator).terms.cap, CAP + 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ITMPProject.GrantTermsMismatch.selector, _storedTermsHash(operator), reviewedHash)
+        );
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, reviewedHash)));
+        _accept(operator);
+        assertTrue(projects.getGrant(id, operator).accepted);
+    }
+
+    function test_RaiseCap_AfterRegrant() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _revoke(operator);
+        _grant(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _accept(operator);
+        _raise(owner, operator, CAP * 2);
+        assertEq(projects.getGrant(id, operator).terms.cap, CAP * 2);
+    }
+
+    function test_RevertWhen_RaiseCap_NotOwner() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        vm.expectRevert(ITMPProject.NotProjectOwner.selector);
+        _raise(stranger, operator, CAP + 1);
+        vm.expectRevert(ITMPProject.NotProjectOwner.selector);
+        _raise(operator, operator, CAP + 1);
+        assertEq(projects.getGrant(id, operator).terms.cap, CAP);
+    }
+
+    function test_RevertWhen_RaiseCap_LoweredOrEqual() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantCapNotRaised.selector, CAP, CAP - 1));
+        _raise(owner, operator, CAP - 1);
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantCapNotRaised.selector, CAP, CAP));
+        _raise(owner, operator, CAP);
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantCapNotRaised.selector, CAP, 0));
+        _raise(owner, operator, 0);
+        assertEq(projects.getGrant(id, operator).terms.cap, CAP);
+    }
+
+    function test_RevertWhen_RaiseCap_FromNoCap() public {
+        _grantAndAccept(operator, _wideOpen());
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantCapNotRaised.selector, 0, 5e6));
+        _raise(owner, operator, 5e6);
+    }
+
+    function test_RevertWhen_RaiseCap_RevokedOrMissing() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        vm.expectRevert(ITMPProject.GrantNotFound.selector);
+        _raise(owner, otherOperator, CAP + 1);
+        _revoke(operator);
+        vm.expectRevert(ITMPProject.GrantRevoked.selector);
+        _raise(owner, operator, CAP + 1);
+        // A revoked pending grant is refused the same way.
+        _grant(otherOperator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        _revoke(otherOperator);
+        vm.expectRevert(ITMPProject.GrantRevoked.selector);
+        _raise(owner, otherOperator, CAP + 1);
+    }
+
+    function test_RevertWhen_RaiseCap_DirectCallOrUnknownProject() public {
+        _grantAndAccept(operator, _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true));
+        vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
+        vm.prank(owner);
+        projects.raiseGrantCap(id, operator, CAP + 1);
+        vm.expectRevert(ITMPProject.ProjectNotFound.selector);
+        _relay(owner, 0, abi.encodeCall(projects.raiseGrantCap, (id + 99, operator, CAP + 1)));
     }
 
     function test_DirectCalls_AreRefused() public {

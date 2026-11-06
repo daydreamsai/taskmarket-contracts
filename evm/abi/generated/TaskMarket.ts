@@ -3261,6 +3261,31 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "GrantCommitted",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "committed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProjectPoolDrawn",
     "inputs": [
       {
@@ -3469,13 +3494,56 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "GrantExpired",
+    "inputs": [
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "GrantNotAccepted",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "GrantPeriodCapExceeded",
+    "inputs": [
+      {
+        "name": "remaining",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "GrantRevoked",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GrantRewardTooHigh",
+    "inputs": [
+      {
+        "name": "maxReward",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -5683,6 +5751,32 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "acceptProjectOwner",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelProjectOwner",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claim",
     "inputs": [
       {
@@ -5991,6 +6085,24 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "extendProject",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newEndsAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "fund",
     "inputs": [
       {
@@ -6092,6 +6204,67 @@ export const TaskMarketABI = [
             "name": "revoked",
             "type": "bool",
             "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getGrantLimits",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ITMPProject.GrantLimits",
+        "components": [
+          {
+            "name": "expiresAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "allowedModesMask",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "periodSecs",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "periodStart",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "maxRewardPerTask",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "periodCap",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "periodSpent",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }
@@ -6209,6 +6382,48 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "lowerGrantCap",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pendingProjectOwner",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "projectCount",
     "inputs": [],
     "outputs": [
@@ -6308,6 +6523,47 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
+    "name": "proposeProjectOwner",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "raiseGrantCap",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "refundProjectTask",
     "inputs": [
       {
@@ -6337,6 +6593,56 @@ export const TaskMarketABI = [
         "name": "operator",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setGrantLimits",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "limits",
+        "type": "tuple",
+        "internalType": "struct ITMPProject.GrantLimitsInput",
+        "components": [
+          {
+            "name": "expiresAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "allowedModesMask",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRewardPerTask",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "periodSecs",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "periodCap",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -6408,6 +6714,117 @@ export const TaskMarketABI = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GrantCapLowered",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "oldCap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GrantCapRaised",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "oldCap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GrantLimitsSet",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "allowedModesMask",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxRewardPerTask",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "periodSecs",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "periodCap",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
       }
     ],
     "anonymous": false
@@ -6542,6 +6959,112 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
+    "name": "ProjectEndExtended",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "previousEndsAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "newEndsAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProjectOwnerChanged",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sharesMoved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProjectOwnerProposalCancelled",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "pendingOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProjectOwnerProposed",
+    "inputs": [
+      {
+        "name": "projectId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "pendingOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProjectRefunded",
     "inputs": [
       {
@@ -6623,6 +7146,65 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "GrantCapBelowCommitted",
+    "inputs": [
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "committed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantCapNotLowered",
+    "inputs": [
+      {
+        "name": "currentCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requestedCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantCapNotRaised",
+    "inputs": [
+      {
+        "name": "currentCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requestedCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantModeNotAllowed",
+    "inputs": [
+      {
+        "name": "mode",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "GrantNotFound",
     "inputs": []
   },
@@ -6644,12 +7226,32 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "InvalidGrantLimits",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidOperator",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "InvalidProjectOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPendingProjectOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotDiamond",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotPendingProjectOwner",
     "inputs": []
   },
   {
@@ -6666,6 +7268,22 @@ export const TaskMarketABI = [
     "type": "error",
     "name": "ProjectBudgetZero",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProjectEndNotExtended",
+    "inputs": [
+      {
+        "name": "currentEndsAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "requestedEndsAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
