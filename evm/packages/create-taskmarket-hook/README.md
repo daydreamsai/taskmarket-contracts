@@ -14,12 +14,11 @@ From a source checkout, run this from the package directory:
 node bin/create-taskmarket-hook.mjs <project-name> --taskmarket <address>
 ```
 
-`--hook-version <1|2>` picks the hook interface and defaults to `1` (`BaseTMPHook`, `ITMPHook`, with
-its local lifecycle test). `--hook-version 2` generates a Task Hook V2 (`ITMPHookV2`, rev028 and
-later) project: it extends `BaseTMPHookV2`, declares its callbacks in `hookCapabilities()` and ships
-unit tests for the interface, the capability declaration and the diamond-only caller check. The
-pinned `taskmarket-contracts` commit does not contain the V2 sources yet, so a V2 project builds
-only against a checkout that has them.
+`--hook-version <1|2>` picks the hook interface and defaults to `2`: a Task Hook V2 (`ITMPHookV2`,
+rev028 and later) project that extends `BaseTMPHookV2`, declares its callbacks in
+`hookCapabilities()` and ships unit tests for the interface, the capability declaration and the
+diamond-only caller check. `--hook-version 1` generates a V1 hook (`BaseTMPHook`, `ITMPHook`, with
+its local lifecycle test) for tasks created before rev028.
 
 `--network <base-sepolia|tempo-moderato>` picks the deploy target and defaults to `base-sepolia`.
 `tempo-moderato` generates a `foundry.toml` with a `tempo` profile and a `tempo_moderato` RPC

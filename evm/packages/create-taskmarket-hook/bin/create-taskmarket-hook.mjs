@@ -59,7 +59,7 @@ function isPortableFileComponent(component) {
 
 const dependencies = {
   taskmarket:
-    "daydreamsai/taskmarket-contracts@a85cc8dae76e0fc6da9e463375fd2e385710d442",
+    "daydreamsai/taskmarket-contracts@570c607ee2b11e8757adfdd31da22bc5088bed31",
   openzeppelin:
     "OpenZeppelin/openzeppelin-contracts@fcbae5394ae8ad52d8e580a3477db99814b9d565",
   openzeppelinUpgradeable:
@@ -87,7 +87,7 @@ function render(files, values) {
         .replaceAll("{{NETWORK_LABEL}}", values.network.label)
         .replaceAll("{{TASKMARKET_HEX}}", values.taskmarket.slice(2))
         .replaceAll("{{TASKMARKET_ADDRESS}}", values.taskmarket),
-    ]),
+    ])
   );
 }
 
@@ -496,8 +496,8 @@ Register the deployed hook when creating a Taskmarket task. Hooks are immutable 
 
 // Task Hook V2 (rev028), generated with --hook-version 2. BaseTMPHookV2 owns onlyDiamond, ERC-165
 // and the allow-by-default before-callbacks, so the generated hook only declares and overrides the
-// callbacks it uses. V1 stays the default until the pinned taskmarket-contracts commit contains the
-// V2 sources; until then a generated V2 project builds only against a checkout that has them.
+// callbacks it uses. V2 is the default; --hook-version 1 still generates a V1 hook for tasks created
+// before rev028.
 const templateV2 = {
   "remappings.txt": template["remappings.txt"],
   ".gitignore": template[".gitignore"],
@@ -626,7 +626,7 @@ async function main() {
     taskmarket,
     hookName = projectName && solidityName(projectName),
     network = "base-sepolia",
-    hookVersion = "1",
+    hookVersion = "2",
   } = parsed;
   if (!projectName || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(projectName))
     return fail("project name must be lowercase kebab-case");
@@ -663,10 +663,10 @@ async function main() {
       taskmarket: taskmarket.toLowerCase(),
       hookName,
       network: networks[network],
-    },
+    }
   );
   const nonPortablePath = Object.keys(files).find((file) =>
-    file.split("/").some((component) => !isPortableFileComponent(component)),
+    file.split("/").some((component) => !isPortableFileComponent(component))
   );
   if (nonPortablePath)
     return fail(`generated path is not portable: ${nonPortablePath}`);
@@ -686,14 +686,16 @@ async function main() {
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
-          `generation failed: ${error.message}; cleanup failed: ${cleanupError.message}`,
+          `generation failed: ${error.message}; cleanup failed: ${cleanupError.message}`
         );
       }
     }
     throw error;
   }
   console.log(
-    `Created ${target}\n\nNext:\n  cd ${projectName}\n  ${installCommands.join("\n  ")}\n  forge test -j 1`,
+    `Created ${target}\n\nNext:\n  cd ${projectName}\n  ${installCommands.join(
+      "\n  "
+    )}\n  forge test -j 1`
   );
 }
 
