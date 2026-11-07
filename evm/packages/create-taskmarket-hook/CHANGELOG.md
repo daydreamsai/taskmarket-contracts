@@ -1,5 +1,11 @@
 # create-taskmarket-hook
 
+## 0.3.1
+
+### Patch Changes
+
+- 7374091: New hook projects are Task Hook V2 hooks by default, scaffolded against a `taskmarket-contracts` commit that includes the rev028 `ITMPHookV2` interface and `BaseTMPHookV2`. Pass `--hook-version 1` to generate a V1 hook for tasks created before rev028.
+
 ## 0.3.0
 
 ### Minor Changes
