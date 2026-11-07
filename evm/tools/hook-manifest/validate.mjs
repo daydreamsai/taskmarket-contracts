@@ -1,16 +1,12 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL, URL } from "node:url";
+import { pathToFileURL } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+// Imported rather than read from disk so a bundler can inline it for the backend.
+import schema from "../../schemas/taskmarket-hook.schema.json" with { type: "json" };
 
-const schema = JSON.parse(
-  readFileSync(
-    new URL("../../schemas/taskmarket-hook.schema.json", import.meta.url),
-    "utf8",
-  ),
-);
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validateSchema = ajv.compile(schema);
