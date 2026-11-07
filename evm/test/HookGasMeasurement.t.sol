@@ -302,6 +302,24 @@ contract HookGasPayoutGateTest is HookGasBase {
         bytes32 gating = _plain();
         _relay(requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(gate), abi.encode(uint8(1), gating))));
     }
+
+    // onCall: the requester extends a closed gate's deadline.
+    function test_gasOnCallExtend() public recorded {
+        bytes32 taskId = _gated(bytes32(0), uint64(block.timestamp + 30 days));
+        bytes32 later = bytes32(uint256(block.timestamp + 60 days));
+        _relay(requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(gate), abi.encode(uint8(2), later))));
+    }
+
+    // onCall: the requester links a replacement after the first gating task was cancelled.
+    function test_gasOnCallRelink() public recorded {
+        bytes32 failed = _plain();
+        bytes32 taskId = _gated(failed, uint64(block.timestamp + 30 days));
+        _relay(requester, 0, abi.encodeCall(market.cancelTask, (failed, 0)));
+        bytes32 replacement = _plain();
+        _relay(
+            requester, 0, abi.encodeCall(v2.callTaskHook, (taskId, address(gate), abi.encode(uint8(1), replacement)))
+        );
+    }
 }
 
 contract HookGasProofGateTest is HookGasBase {
