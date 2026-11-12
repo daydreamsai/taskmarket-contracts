@@ -1,5 +1,13 @@
 # create-taskmarket-hook
 
+## 1.0.0
+
+### Major Changes
+
+- 97f3211: Every project `create-taskmarket-hook` generates is now a Task Hook V2 hook. The `--hook-version` flag is removed: passing it is an error, because V1 hooks are retired and the Taskmarket diamond no longer attaches or calls them. The generated project extends `BaseTMPHookV2`, declares its callbacks in `hookCapabilities()`, and includes unit tests plus a runnable local lifecycle test that attaches two hooks to a task, submits work, accepts it, and checks each hook's `afterComplete` callback. Projects generated earlier with `--hook-version 1` should be rewritten as V2 hooks before they are used on new tasks.
+
+  The generated `remappings.txt` points `@taskmarket/contracts/` at the `evm/` folder of the Taskmarket contracts repository, where the pinned commit keeps its sources, so the project compiles after `forge install`.
+
 ## 0.3.1
 
 ### Patch Changes
