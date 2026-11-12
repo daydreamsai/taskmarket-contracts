@@ -255,13 +255,53 @@ contract Rev030UpgradeTest is Test, DiamondTestHelper {
         up.run();
     }
 
-    function test_CutFitsTempo() public {
-        IDiamondCut.FacetCut[] memory cut = new Rev030Upgrade().cut();
-        uint256 g = gasleft();
-        vm.prank(owner);
-        IDiamondCut(address(market)).diamondCut(cut, address(0), "");
-        uint256 used = g - gasleft();
-        emit log_named_uint("  cut gas", used);
-        assertLt(used, 20_000_000, "the cut must stay well under Tempo's per-transaction cap");
+    function test_CutIsSplitOnTempoOnly() public {
+        Rev030Upgrade up = new Rev030Upgrade();
+        assertTrue(up.splitCut(4217));
+        assertTrue(up.splitCut(42431));
+        assertFalse(up.splitCut(8453));
+        assertFalse(up.splitCut(84532));
+    }
+
+    function test_EachCutEntryStaysFarUnderTempoCap() public {
+        IDiamondCut.FacetCut[] memory all = new Rev030Upgrade().cut();
+        uint256 worst;
+        uint256 total;
+        for (uint256 i = 0; i < all.length; i++) {
+            IDiamondCut.FacetCut[] memory one = new IDiamondCut.FacetCut[](1);
+            one[0] = all[i];
+            uint256 g = gasleft();
+            vm.prank(owner);
+            IDiamondCut(address(market)).diamondCut(one, address(0), "");
+            uint256 used = g - gasleft();
+            total += used;
+            if (used > worst) worst = used;
+        }
+        emit log_named_uint("  largest entry gas", worst);
+        emit log_named_uint("  all entries gas", total);
+        // Tempo prices state writes about three times higher than this EVM run; the fork check in
+        // script/tempo.sh is the real gate, this keeps an entry from growing past it unnoticed.
+        assertLt(worst, 8_000_000, "one entry must stay well under Tempo's per-transaction cap");
+    }
+
+    function test_TempoRunResumesAfterPartOfTheCutLanded() public {
+        vm.chainId(42431);
+        vm.setEnv("FORGE_DIAMOND_ADDRESS_42431", vm.toString(address(market)));
+        IDiamondCut.FacetCut[] memory all = new Rev030Upgrade().cut();
+        vm.startPrank(owner);
+        AdminFacet(address(market)).pause();
+        for (uint256 i = 0; i < 2; i++) {
+            IDiamondCut.FacetCut[] memory one = new IDiamondCut.FacetCut[](1);
+            one[0] = all[i];
+            IDiamondCut(address(market)).diamondCut(one, address(0), "");
+        }
+        vm.stopPrank();
+        new Rev030Upgrade().run();
+        assertEq(AdminFacet(address(market)).diamondVersion(), 30);
+        assertEq(AdminFacet(address(market)).maxSubmissionWinners(), 30);
+        assertFalse(AdminFacet(address(market)).paused());
+        assertEq(
+            IDiamondLoupe(address(market)).facetAddress(bytes4(0xe98650f3)), address(0), "the V1 selectors are removed"
+        );
     }
 }

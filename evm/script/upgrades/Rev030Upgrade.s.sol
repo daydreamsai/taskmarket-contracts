@@ -73,7 +73,11 @@ contract Rev030Upgrade is Script {
         if (!AdminFacet(diamond).paused()) AdminFacet(diamond).pause();
         // The pool first. Its owner is the diamond's owner, which is the broadcaster.
         if (!poolUpgraded) UUPSUpgradeable(pool).upgradeToAndCall(address(new FundingPool()), "");
-        if (!landed) IDiamondCut(diamond).diamondCut(cut(), address(0), "");
+        if (splitCut(block.chainid)) {
+            if (currentVersion != TARGET_VERSION) sendSplitCut(diamond);
+        } else if (!landed) {
+            IDiamondCut(diamond).diamondCut(cut(), address(0), "");
+        }
         if (winnerCap != 0 && AdminFacet(diamond).maxSubmissionWinners() != winnerCap) {
             AdminFacet(diamond).setMaxSubmissionWinners(winnerCap);
         }
@@ -81,7 +85,7 @@ contract Rev030Upgrade is Script {
         if (!keepPaused) AdminFacet(diamond).unpause();
         vm.stopBroadcast();
 
-        console.log(landed ? "cut already on the diamond, skipped" : "cut sent");
+        console.log(landed && currentVersion == TARGET_VERSION ? "cut already on the diamond, skipped" : "cut sent");
         console.log("Rev030 upgrade complete. Diamond:", diamond);
         console.log(
             "AdminFacet:     ", IDiamondLoupe(diamond).facetAddress(FacetSelectors.adminFacetSelectorsAddedRev030()[0])
@@ -94,6 +98,30 @@ contract Rev030Upgrade is Script {
     function winnerCapFor(uint256 chainId) public pure returns (uint16) {
         if (chainId == 4217 || chainId == 42431) return TEMPO_MAX_SUBMISSION_WINNERS;
         return 0;
+    }
+
+    /// @notice Whether the cut goes out as one transaction per facet entry on `chainId`. One cut of
+    ///         all 15 entries needs about 60M gas on Tempo, over its 30M transaction cap.
+    function splitCut(uint256 chainId) public pure returns (bool) {
+        return chainId == 4217 || chainId == 42431;
+    }
+
+    /// @notice Sends each entry of `cut()` as its own diamondCut. Replace entries are sent again on a
+    ///         rerun (harmless); the Add and Remove entries are skipped once they landed, because the
+    ///         diamond refuses to add a routed selector or remove a missing one.
+    function sendSplitCut(address diamond) internal {
+        IDiamondCut.FacetCut[] memory all = cut();
+        for (uint256 i = 0; i < all.length; i++) {
+            IDiamondCut.FacetCut memory entry = all[i];
+            if (entry.action == IDiamondCut.FacetCutAction.Add && cutLanded(diamond)) continue;
+            if (
+                entry.action == IDiamondCut.FacetCutAction.Remove
+                    && IDiamondLoupe(diamond).facetAddress(entry.functionSelectors[0]) == address(0)
+            ) continue;
+            IDiamondCut.FacetCut[] memory one = new IDiamondCut.FacetCut[](1);
+            one[0] = entry;
+            IDiamondCut(diamond).diamondCut(one, address(0), "");
+        }
     }
 
     /// @notice Whether the funding pool proxy already runs the rev030 implementation.
