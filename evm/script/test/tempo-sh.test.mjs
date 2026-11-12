@@ -480,18 +480,10 @@ const SCRIPT_ACTIONS = [
     target: "DeploySponsoredTask.s.sol:DeploySponsoredTask",
     verifies: true,
     env: {
-      FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT_42431: OTHER,
       FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT_42431: OTHER,
       FORGE_SPONSORED_TASK_ADMIN_42431: RELAYER,
     },
     required: "FORGE_SPONSORED_TASK_ADMIN_42431",
-  },
-  {
-    action: "upgrade-sponsored-task",
-    target: "UpgradeSponsoredTask.s.sol:UpgradeSponsoredTask",
-    verifies: true,
-    env: { FORGE_SPONSORED_TASK_HOOK_ADDRESS_42431: FORWARDER },
-    required: "FORGE_SPONSORED_TASK_HOOK_ADDRESS_42431",
   },
   {
     action: "deploy-safe",

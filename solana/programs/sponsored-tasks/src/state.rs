@@ -10,7 +10,7 @@ pub const MAX_SETTLERS: usize = 5;
 pub const MAX_MANAGERS: usize = 8;
 pub const MAX_FEE_BPS: u16 = 10_000;
 /// Claim delay used while `Config::claim_delay_seconds` is unset (zero).
-pub const DEFAULT_CLAIM_DELAY_SECONDS: u64 = 3_600;
+pub const DEFAULT_CLAIM_DELAY_SECONDS: u64 = 86_400;
 
 #[account]
 #[derive(InitSpace)]
@@ -32,6 +32,9 @@ pub struct Config {
     /// Key proposed by `set_admin`; becomes the admin when it signs `accept_admin`. Zero when
     /// no rotation is pending.
     pub pending_admin: Pubkey,
+    /// Identifies the Solana cluster this config lives on (its genesis hash), mixed with the
+    /// program id into the payout binding's signed `salt`. Set once by `init_config`.
+    pub cluster_id: [u8; 32],
 }
 
 impl Config {
@@ -173,7 +176,8 @@ impl Reservation {
 }
 
 /// Where an agent's Solana awards are paid. `bind_payout` creates or replaces it from an
-/// EIP-712 signature by the agent; a replacement must carry a higher nonce.
+/// EIP-712 signature by the agent; a replacement must carry a higher nonce below `u64::MAX`.
+/// A payout the settlers attest is held in `pending_payout` for one claim delay first.
 #[account]
 #[derive(InitSpace)]
 pub struct PayoutBinding {
@@ -182,6 +186,23 @@ pub struct PayoutBinding {
     pub payout: Pubkey,
     pub nonce: u64,
     pub bump: u8,
+    /// A payout the settlers attested (`bind_payout_attested`); it replaces `payout` for claims
+    /// only once the clock reaches `pending_effective_at`, one claim delay after the attestation.
+    /// Zero when none is pending. An agent-signed `bind_payout` clears it.
+    pub pending_payout: Pubkey,
+    pub pending_effective_at: i64,
+}
+
+impl PayoutBinding {
+    /// The address a claim pays at `now`: the pending attested payout once it is effective,
+    /// otherwise the current one (the zero key while the agent has no effective binding).
+    pub fn effective_payout(&self, now: i64) -> Pubkey {
+        if self.pending_effective_at != 0 && now >= self.pending_effective_at {
+            self.pending_payout
+        } else {
+            self.payout
+        }
+    }
 }
 
 /// Exists once leaf `leaf_index` of a reservation's root has been paid; its existence is the

@@ -1,7 +1,13 @@
 # EXT-003: Sponsored Task Hook
 
-**Status:** Implemented (V1, Base-only)
+**Status:** Retired in rev030 (V1 hook). `SponsoredTaskHookV2` is the live hook.
 **Type:** Daydreams Extension (not a TMP protocol standard)
+
+> Rev030 removed V1 hook dispatch: the diamond no longer calls `SponsoredTaskHook`, and its source,
+> `RemoteSponsoredTaskHook` and their deploy and upgrade scripts are deleted. `DeploySponsoredTask`
+> now deploys the shared registry and fee policy only. This document describes the V1 hook as it ran
+> through rev029; vaults, the registry and the fee policy are unchanged and serve the V2 hook. See the
+> rev030 spec (change 30).
 
 ---
 
@@ -32,16 +38,16 @@ standard.
 
 ## Contracts
 
-| Contract | Role |
-|---|---|
-| `SponsoredTaskHook` | `ITMPHook` implementation; the only contract that talks to the Diamond. UUPS-upgradeable, single canonical deployment. |
-| `SponsoredTasksVault` | Per-vault escrow, deployed as an EIP-1167 clone; holds one vault's tokens and tracks available/reserved/claimable/paid/withdrawn balances. Immutable — never upgraded. |
-| `SponsoredTaskFactory` | Permissionless `createVault` — deploys a new vault clone, registers it, and takes a one-time creation fee from the creator. |
-| `SponsoredTaskCreationFee` | The factory's creation fee: token, amount and recipient fixed when the factory is deployed (immutable, no owner), paid straight from the creator to the recipient and never refunded. A different fee takes a new factory. |
-| `SponsoredTaskRegistry` | Owner-gated allowlist of authorized factories; the canonical "is this a real vault" source of truth the hook checks against. |
-| `SponsoredTaskFeePolicy` | Owner-configurable project-token fee (bps + recipient), snapshotted per vault at reservation time. |
-| `SponsoredTaskSettlement` (library) | Computes the Merkle tree of per-worker net entitlements from a verdict's awards. |
-| `SponsoredTaskTerms` (library) | Hashes a snapshot of live Taskmarket task terms so `hookData` cannot be replayed against a task whose terms changed after it was built. |
+| Contract                            | Role                                                                                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SponsoredTaskHook`                 | `ITMPHook` implementation; the only contract that talks to the Diamond. UUPS-upgradeable, single canonical deployment.                                                                                                     |
+| `SponsoredTasksVault`               | Per-vault escrow, deployed as an EIP-1167 clone; holds one vault's tokens and tracks available/reserved/claimable/paid/withdrawn balances. Immutable — never upgraded.                                                     |
+| `SponsoredTaskFactory`              | Permissionless `createVault` — deploys a new vault clone, registers it, and takes a one-time creation fee from the creator.                                                                                                |
+| `SponsoredTaskCreationFee`          | The factory's creation fee: token, amount and recipient fixed when the factory is deployed (immutable, no owner), paid straight from the creator to the recipient and never refunded. A different fee takes a new factory. |
+| `SponsoredTaskRegistry`             | Owner-gated allowlist of authorized factories; the canonical "is this a real vault" source of truth the hook checks against.                                                                                               |
+| `SponsoredTaskFeePolicy`            | Owner-configurable project-token fee (bps + recipient), snapshotted per vault at reservation time.                                                                                                                         |
+| `SponsoredTaskSettlement` (library) | Computes the Merkle tree of per-worker net entitlements from a verdict's awards.                                                                                                                                           |
+| `SponsoredTaskTerms` (library)      | Hashes a snapshot of live Taskmarket task terms so `hookData` cannot be replayed against a task whose terms changed after it was built.                                                                                    |
 
 The hook is UUPS-upgradeable, deliberately unlike vaults: its `taskmarket`/`usdc`/`registry`
 dependencies are `immutable`, baked into the implementation contract's bytecode, correct only
@@ -113,7 +119,10 @@ than trusted by inspection: a wrong field name or ABI type produces a hash that 
    creation back.
 3. **Execute.** The task follows its normal Taskmarket lifecycle and evaluation.
 4. **Complete.** The mandatory `checkComplete` callback commits the verdict's awards digest.
-   **Nothing in this step pays anyone** — see Settlement below.
+   **Nothing in this step pays anyone** — see Settlement below. Since rev030 the V2 hooks treat
+   this commitment as provisional: when a requester's transforming hook replaces the awards, the
+   diamond stores the awards it paid as the task's verdict, and `afterComplete`, `reconcile` and
+   `finalizeSettlement` recommit from it, so sponsor tokens follow the awards actually paid.
 5. **Settle.** A permissionless `finalizeSettlement(taskId, awards)` call — supplying the exact
    awarded array, verified against the committed digest — installs a Merkle root on the vault.
 6. **Claim.** Each awarded worker signs a destination-bound EIP-712 claim; the backend relays it

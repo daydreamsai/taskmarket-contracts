@@ -14,7 +14,6 @@ import { LibTerms } from "../libraries/LibTerms.sol";
 import { LibTaskMarket } from "../libraries/LibTaskMarket.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
-import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import { TMP_BOUNTY, TMP_BENCHMARK, TMP_CLAIM, TMP_PITCH, TMP_AUCTION } from "../interfaces/ITMPModes.sol";
 
 /// @title EvaluatorFacet — ERC-8195 evaluator flow: assign, evaluate, appeal, finalize, dispute
@@ -128,6 +127,9 @@ contract EvaluatorFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
         if (evaluatorAddr != evalCfg.evaluator) revert ITMPCore.NotEvaluator();
+        // Rev030: ownership can move to the evaluator after it was assigned; an acting party never
+        // judges its own task.
+        if (LibProject.isActingParty(s, taskId, evaluatorAddr)) revert ITMPCore.EvaluatorCannotBeRequester();
         if (!(task.status == ITMPCore.TaskStatus.Review
                     || ((task.mode == BOUNTY || task.mode == BENCHMARK)
                         && (task.status == ITMPCore.TaskStatus.Open
@@ -135,6 +137,10 @@ contract EvaluatorFacet {
         // The mirror of evaluatorTimeout's boundary: a verdict is allowed up to and including the
         // deadline, the timeout strictly after it, so only one of them can succeed at any moment.
         if (task.status == ITMPCore.TaskStatus.Review && block.timestamp > s.phaseDeadline[taskId]) {
+            revert ITMPCore.EvaluationWindowClosed();
+        }
+        // Rev030: a Bounty or Benchmark has the same boundary, at its evaluation deadline.
+        if (task.status != ITMPCore.TaskStatus.Review && block.timestamp > _submissionsDeadline(task, taskId, s)) {
             revert ITMPCore.EvaluationWindowClosed();
         }
 
@@ -206,6 +212,8 @@ contract EvaluatorFacet {
             authorized = s.taskSubmissionHashes[taskId][worker].length > 0;
         }
         if (!authorized) revert ITMPCore.NotWorker();
+        // Rev030: a worker that became an acting party after its claim cannot appeal its own task.
+        LibProject.requireNotActingParty(s, taskId, worker);
         if (task.status != ITMPCore.TaskStatus.Appealing) revert ITMPCore.NotInAppealingState();
         if (block.timestamp >= s.phaseDeadline[taskId]) revert ITMPCore.AppealWindowClosed();
         // Only the dispute resolver can settle a Disputed task, and nothing can call
@@ -217,7 +225,9 @@ contract EvaluatorFacet {
         LibHooks._before(s, taskId, LibHooksV2.A_APPEAL, worker, bytes32(0));
 
         task.status = ITMPCore.TaskStatus.Disputed;
-        LibTerms.extendOnAppeal(s, taskId);
+        // Rev030: the resolver's window is recorded apart from the clamped expiry; refundExpired
+        // waits for it before lapsing the dispute.
+        s.phaseDeadline[taskId] = LibTerms.extendOnAppeal(s, taskId);
         emit ITMPEvaluator.TaskAppealed(taskId, worker);
         emit ITMPEvaluator.TaskDisputed(taskId, dr);
 
@@ -245,7 +255,7 @@ contract EvaluatorFacet {
         if (v.verdictType == ITMPCore.VerdictType.REJECT) {
             _finalizeReject(taskId, task, s);
         } else {
-            // Past expiry no check hook may block settlement, as refundExpired never runs hooks:
+            // Past expiry no hook may block settlement, as refundExpired never runs hooks:
             // a reverting hook would otherwise lock the escrow for good.
             _payAwards(taskId, task, v, s, true, block.timestamp <= task.expiryTime);
         }
@@ -286,8 +296,10 @@ contract EvaluatorFacet {
 
     /// @dev Settles a Claim worker's stake when a verdict or a dispute resolution ends the task.
     ///      Award recipients are pinned to task.worker for Claim, so task.worker is the claimant.
-    ///      A worker who receives an award gets the stake back, as acceptSubmission does; a worker
-    ///      the evaluator or resolver awarded nothing forfeits it. Auction tasks reuse stakeAmount
+    ///      A worker the evaluator or resolver awarded something gets the stake back, as
+    ///      acceptSubmission does; a worker the evaluator or resolver awarded nothing forfeits it.
+    ///      Rev030: `awarded` reflects the evaluator's or resolver's own awards, not a transforming
+    ///      hook's replacement of them. Auction tasks reuse stakeAmount
     ///      for the accepted price, which is not a stake.
     function _settleClaimStake(bytes32 taskId, ITMPCore.Task storage task, bool awarded, AppStorage storage s) private {
         if (task.mode != CLAIM || task.stakeAmount == 0) return;
@@ -334,6 +346,8 @@ contract EvaluatorFacet {
         if (task.status != ITMPCore.TaskStatus.Disputed) revert ITMPCore.NotInDisputedState();
         address caller = s.trustedForwarders[msg.sender] ? LibGuards._effectiveSender(s) : msg.sender;
         if (caller != s.taskEvaluatorConfigs[taskId].disputeResolver) revert ITMPCore.NotDisputeResolver();
+        // Rev030: as for evaluate, a resolver that became an acting party after assignment is refused.
+        if (LibProject.isActingParty(s, taskId, caller)) revert ITMPCore.DisputeResolverCannotBeRequester();
         if (verdictType == ITMPCore.VerdictType.REJECT) revert ITMPCore.DisputeResolutionMustAwardWorkers();
         if (awards.length == 0) revert ITMPCore.AwardsRequired();
         _validateAwardRecipients(task, taskId, awards, s);
@@ -346,9 +360,8 @@ contract EvaluatorFacet {
             v.awards.push(awards[i]);
         }
 
-        // A V2 task's beforeAccept is best effort on a resolution (see _payAwards), so the requester's
-        // hook cannot veto the resolver's decision there. Legacy V1 check hooks still run and are
-        // shown the Disputed state.
+        // A task's beforeAccept is best effort on a resolution (see _payAwards), so the requester's
+        // hook cannot veto the resolver's decision there.
         _payAwards(taskId, task, v, s, upheld, true);
         LibEscrow.release(s, taskId, balanceBefore);
         LibGuards._nonReentrantAfter(s);
@@ -373,6 +386,11 @@ contract EvaluatorFacet {
     /// @notice Trigger evaluator timeout after the evaluation window expires.
     ///         Permissionless: anyone may call this directly once the window has passed. It
     ///         reads no caller, so it does not require the PGTR forwarder (rev027).
+    ///         Rev030: a Bounty or Benchmark never enters Review, so it times out from Open (or
+    ///         PendingApproval) once it has live submissions and its evaluation deadline,
+    ///         `max(expiryTime, decisionStartAt) + evaluationWindow`, has passed. The evaluator is
+    ///         cleared and the requester's decision window (decisionWindowSecs) starts now, after
+    ///         which requesterTimeout refunds the requester.
     function evaluatorTimeout(bytes32 taskId) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireNotPaused(s);
@@ -384,15 +402,28 @@ contract EvaluatorFacet {
         // Permissionless: once the evaluation window has passed anyone, including the worker, may
         // time out the evaluator, so a requester cannot leave a delivered task stuck in Review.
         ITMPCore.Task storage task = s.tasks[taskId];
-        if (task.status != ITMPCore.TaskStatus.Review) revert ITMPCore.NotInReviewState();
-        if (block.timestamp <= s.phaseDeadline[taskId]) revert ITMPCore.EvaluationWindowNotExpired();
-
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
         address timedOutEvaluator = evalCfg.evaluator;
+        bytes4 mode = task.mode;
+        bool submissions = (mode == BOUNTY || mode == BENCHMARK)
+            && (task.status == ITMPCore.TaskStatus.Open || task.status == ITMPCore.TaskStatus.PendingApproval);
+        if (submissions) {
+            if (timedOutEvaluator == address(0)) revert ITMPCore.NotInReviewState();
+            if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
+            if (block.timestamp <= _submissionsDeadline(task, taskId, s)) {
+                revert ITMPCore.EvaluationWindowNotExpired();
+            }
+            // The requester's decision window runs from the timeout: decisionLapsed reads
+            // max(expiryTime, decisionStartAt), and the timeout is after expiryTime.
+            s.taskClocks[taskId].decisionStartAt = uint64(block.timestamp);
+        } else {
+            if (task.status != ITMPCore.TaskStatus.Review) revert ITMPCore.NotInReviewState();
+            if (block.timestamp <= s.phaseDeadline[taskId]) revert ITMPCore.EvaluationWindowNotExpired();
+        }
+
         uint256 forfeited = evalCfg.evaluatorStake;
         evalCfg.evaluatorStake = 0;
         evalCfg.evaluator = address(0);
-        bytes4 mode = task.mode;
         if ((mode == CLAIM || mode == PITCH || mode == AUCTION) && task.deliverable != bytes32(0)) {
             // A delivered single-payee task goes back under the requester's review window from now,
             // so the requester cannot time out the evaluator and refund at expiry over the work.
@@ -417,6 +448,21 @@ contract EvaluatorFacet {
         LibGuards._nonReentrantAfter(s);
     }
 
+    /// @dev Rev030: the evaluator's deadline on a Bounty or Benchmark, which settles through
+    ///      submissions and never enters Review: `max(expiryTime, decisionStartAt) +
+    ///      evaluationWindow`, the start LibReview.decisionLapsed uses for a task without an
+    ///      evaluator. decisionStartAt is zero here unless the task was normalized at the rev025 cut.
+    function _submissionsDeadline(ITMPCore.Task storage task, bytes32 taskId, AppStorage storage s)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 start = task.expiryTime;
+        uint256 seeded = s.taskClocks[taskId].decisionStartAt;
+        if (seeded > start) start = seeded;
+        return start + s.taskEvaluatorConfigs[taskId].evaluationWindow;
+    }
+
     /// @dev Ensures every award recipient is a legitimate party for this task: the locked
     ///      worker for Claim/Pitch/Auction, or an address that actually submitted work for
     ///      Bounty/Benchmark (mirrors AcceptanceFacet._resolveDeliverables' submission
@@ -429,7 +475,9 @@ contract EvaluatorFacet {
     ///      be stored would move the task to Appealing and then revert finalizeVerdict
     ///      permanently, stranding the escrow. For the same reason the non-zero award total
     ///      must fit the award budget (reward less the evaluator fee), or it reverts
-    ///      AwardsExceedEscrow.
+    ///      AwardsExceedEscrow. Rev030: a non-zero Bounty or Benchmark award must have rank >= 1
+    ///      (InvalidAwardRank), and a verdict of any mode may carry at most the chain's winner
+    ///      cap of awards (TooManyWinners).
     function _validateAwardRecipients(
         ITMPCore.Task storage task,
         bytes32 taskId,
@@ -437,7 +485,8 @@ contract EvaluatorFacet {
         AppStorage storage s
     ) private view {
         bool bountyLike = task.mode == BOUNTY || task.mode == BENCHMARK;
-        if (bountyLike && awards.length > LibTaskMarket.MAX_SUBMISSION_WINNERS) revert ITMPCore.TooManyWinners();
+        // Rev030: the cap is per chain (s.maxSubmissionWinners, 50 when unset), on every mode.
+        if (awards.length > LibTaskMarket._maxSubmissionWinners(s)) revert ITMPCore.TooManyWinners();
         uint256 total = 0;
         for (uint256 i; i < awards.length; ++i) {
             if (awards[i].amount == 0) continue;
@@ -445,6 +494,8 @@ contract EvaluatorFacet {
             address worker = awards[i].worker;
             if (worker == address(0)) revert ITMPCore.InvalidAwardRecipient();
             if (bountyLike) {
+                // Rev030: a paid contest place is ranked from 1; rank 0 names no place.
+                if (awards[i].rank == 0) revert ITMPCore.InvalidAwardRank();
                 if (s.taskSubmissionHashes[taskId][worker].length == 0) revert ITMPCore.SubmissionNotFound();
             } else if (worker != task.worker) {
                 revert ITMPCore.WorkerMismatch();
@@ -487,7 +538,7 @@ contract EvaluatorFacet {
 
         uint256 remaining = _awardBudget(task, taskId, s);
         ITMPCore.Verdict memory verdictMem = s.taskVerdicts[taskId];
-        // Rev028: a dispute resolution is settling a Disputed task; check hooks are shown that state.
+        // Rev028: a dispute resolution is settling a Disputed task; hooks are shown that state.
         bool disputed = task.status == ITMPCore.TaskStatus.Disputed;
         LibHooksV2.snap(taskId, uint8(task.status));
 
@@ -495,6 +546,10 @@ contract EvaluatorFacet {
         // resolution and after expiry), and the transforming hook's result if any.
         uint16 hookFeeBps = 0;
         address feeHook = address(0);
+        // Rev030: the Claim stake follows what the evaluator or resolver awarded, recorded before a
+        // transforming hook's result replaces the awards, so a hook that zeroes an approved award
+        // cannot forfeit the worker's stake to the requester. Acceptance returns it the same way.
+        bool verdictAwarded = _anyAward(verdictMem.awards);
         {
             (bool changed, ITMPCore.Award[] memory result, uint16 bps, address hook) =
                 LibHooks._acceptV2(s, taskId, verdictMem, runCheckHooks && !disputed, disputed, remaining);
@@ -527,26 +582,33 @@ contract EvaluatorFacet {
             task.worker = address(0);
         }
 
-        // Commit award accounting (worker stats + fees) and validate escrow before the check hook;
-        // transfers happen after. Accounting and distribution live in separate frames to avoid
-        // stack-too-deep under --ir-minimum coverage compilation.
+        // Commit award accounting (worker stats + fees) and validate escrow before the transfers.
+        // Accounting and distribution live in separate frames to avoid stack-too-deep under
+        // --ir-minimum coverage compilation.
         uint256 totalAwarded = _commitEvalAccounting(taskId, awards, task.feeBps, remaining, s);
 
         // An auction escrows the price cap but budgets awards against the accepted price, so the
         // unused cap goes back to the requester with the rest of the unawarded budget.
         if (task.mode == AUCTION) remaining += task.reward - task.stakeAmount;
 
-        if (runCheckHooks) LibHooks._checkCompleteHooks(taskId, s, verdictMem, disputed);
         LibPayout.transferAwards(s, taskId, task.requester, awards, task.feeBps, hookFeeBps, feeHook);
         if (remaining > totalAwarded) {
             if (!LibProject.payRequester(s, taskId, remaining - totalAwarded)) revert ITMPCore.ExcessRefundFailed();
         }
-        _settleClaimStake(taskId, task, totalAwarded > 0, s);
+        _settleClaimStake(taskId, task, verdictAwarded, s);
         _payEvaluatorFee(taskId, task, feeToEvaluator, s);
         // A verdict settled before expiry is a non-exit action; a ruling or a settlement after expiry
         // never waits on hook gas.
         if (runCheckHooks && !disputed) LibHooks._onCompleteHooksStrict(taskId, verdictMem);
         else LibHooks._onCompleteHooks(taskId, s, verdictMem);
+    }
+
+    /// @dev Whether any award in the list pays a nonzero amount.
+    function _anyAward(ITMPCore.Award[] memory awards) private pure returns (bool) {
+        for (uint256 i; i < awards.length; ++i) {
+            if (awards[i].amount > 0) return true;
+        }
+        return false;
     }
 
     /// @dev The fee stays in escrow from evaluate until the verdict is final. A verdict an appeal

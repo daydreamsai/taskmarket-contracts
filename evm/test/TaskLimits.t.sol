@@ -5,15 +5,17 @@ import "forge-std/Test.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
+import { ITMPHooksV2 } from "../src/interfaces/ITMPHooksV2.sol";
 import { TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
-import { MockTaskHook } from "./mocks/MockTaskHook.sol";
+import { MockTaskHookV2 } from "./mocks/MockTaskHookV2.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
 
-/// @dev rev025 per-chain limits on tags and hooks per task.
+/// @dev rev025 per-chain limits on tags and hooks per task. Hooks are Task Hook V2 hooks: a task takes at
+///      most eight whatever the owner-set limit, and at most two of them are protocol defaults.
 contract TaskLimitsTest is Test, DiamondTestHelper {
     uint256 internal constant REWARD = 100e6;
     uint256 internal constant DURATION = 7 days;
@@ -29,9 +31,6 @@ contract TaskLimitsTest is Test, DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), feeRecipient, 500);
-        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
-        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
-        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
         vm.stopPrank();
@@ -48,7 +47,7 @@ contract TaskLimitsTest is Test, DiamondTestHelper {
     function _hookList(uint256 n) internal returns (address[] memory h) {
         h = new address[](n);
         for (uint256 i; i < n; ++i) {
-            h[i] = address(new MockTaskHook());
+            h[i] = address(new MockTaskHookV2(address(market), 1));
         }
     }
 
@@ -97,7 +96,7 @@ contract TaskLimitsTest is Test, DiamondTestHelper {
     function test_Create_DefaultHooksCountTowardsLimit() public {
         address[] memory defaults = _hookList(2);
         vm.prank(owner);
-        market.setDefaultHooks(defaults);
+        ITMPHooksV2(address(market)).setDefaultHooksV2(defaults);
         _create(0, _hookList(6));
         _expectCreateRevert(0, _hookList(7), ITMPCore.TooManyHooks.selector);
     }
@@ -117,16 +116,18 @@ contract TaskLimitsTest is Test, DiamondTestHelper {
 
         vm.prank(owner);
         market.setTaskLimits(20, 12);
-        _create(20, _hookList(12));
+        _create(20, _hookList(8));
+        // The V2 cap of eight holds above the owner-set limit.
+        _expectCreateRevert(0, _hookList(9), ITMPCore.TooManyHooks.selector);
     }
 
     function test_SetDefaultHooks_UsesConfiguredLimit() public {
         vm.prank(owner);
-        market.setTaskLimits(10, 2);
-        address[] memory three = _hookList(3);
+        market.setTaskLimits(10, 1);
+        address[] memory two = _hookList(2);
         vm.prank(owner);
-        vm.expectRevert(ITMPCore.TooManyHooks.selector);
-        market.setDefaultHooks(three);
+        vm.expectRevert(ITMPHooksV2.TooManyDefaultHooks.selector);
+        ITMPHooksV2(address(market)).setDefaultHooksV2(two);
     }
 
     function test_SetTaskLimits_NonOwnerRefused() public {
@@ -136,9 +137,9 @@ contract TaskLimitsTest is Test, DiamondTestHelper {
     }
 
     function test_SetTaskLimits_RejectsInvalid() public {
-        address[] memory defaults = _hookList(3);
+        address[] memory defaults = _hookList(2);
         vm.startPrank(owner);
-        market.setDefaultHooks(defaults);
+        ITMPHooksV2(address(market)).setDefaultHooksV2(defaults);
         vm.expectRevert(ITMPCore.InvalidTaskLimits.selector);
         market.setTaskLimits(0, 8);
         vm.expectRevert(ITMPCore.InvalidTaskLimits.selector);
@@ -148,7 +149,7 @@ contract TaskLimitsTest is Test, DiamondTestHelper {
         vm.expectRevert(ITMPCore.InvalidTaskLimits.selector);
         market.setTaskLimits(10, 17);
         vm.expectRevert(ITMPCore.InvalidTaskLimits.selector);
-        market.setTaskLimits(10, 2);
+        market.setTaskLimits(10, 1);
         market.setTaskLimits(64, 16);
         market.setTaskLimits(1, 3);
         vm.stopPrank();

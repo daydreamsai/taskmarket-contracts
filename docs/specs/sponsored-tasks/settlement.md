@@ -77,7 +77,8 @@ accounts: config, fee_recipient (signer), vault (mut), mint, vault token account
           event authority, program
 ```
 
-Open while paused, so a pause never traps fee funds. Checks: the signer is `Config.fee_recipient`
+Blocked while paused (`Paused`): claiming the fee sets `fee_claimed`, which ends
+`revoke_settlement` for the reservation, so a pause keeps a wrong root revocable. Checks: the signer is `Config.fee_recipient`
 (`NotFeeRecipient`), vault active, current epoch, reservation `Settled`, the claim delay passed
 (`ClaimDelayNotElapsed`), and an unpaid non-zero fee
 (`NothingToClaim`). It pays `fee_total` to any token account of the vault's mint, sets
@@ -87,7 +88,7 @@ Open while paused, so a pause never traps fee funds. Checks: the signer is `Conf
 
 `Config.claim_delay_seconds` holds how long after `settle` a root's claims and fee wait. The admin
 sets it with `set_claim_delay` (open while paused; zero and values above `i64::MAX` fail with
-`InvalidClaimDelay`). `init_config` stores the default of 3600 seconds, and a stored zero, which
+`InvalidClaimDelay`). `init_config` stores the default of 86400 seconds (one day), and a stored zero, which
 only a `Config` written before the field existed can hold, reads as that default. The field is
 appended after every earlier `Config` field so the existing layout is unchanged.
 
@@ -116,6 +117,18 @@ the one reservation, so revoking one bad root leaves claims on every other vault
 EVM settler mode does. It stays admin-only and is refused (`SettlementHasClaims`) once a leaf or
 the fee has been claimed against the root.
 
+## Expired reservations
+
+A reservation's `deadline` (unix seconds, set by the settlers at `reserve` and required to be in
+the future then) does not stop a settlement: `settle` does not read it. It bounds how long the
+settlers can hold the sponsor's funds in an unsettled reservation. After the deadline, `release_expired`
+lets anyone return the reservation to the vault with the same bookkeeping and `TaskReleased` event
+as the settler-gated `release`. It fails with `ReservationNotExpired` until the clock is past the
+deadline, with `ReservationWrongState` for a settled reservation (a pending root must be revoked
+first), and with `VaultNotActive` or `EpochMismatch` as `release` does; a released reservation is a
+no-op. It is open while the program is paused. A settler `settle` that lands after the deadline but
+before anyone releases still succeeds, and whichever comes first wins.
+
 ## Reasoning
 
 **Settler authorization.** Settlers sign the `settle` transaction itself, as they already do for
@@ -126,8 +139,11 @@ a settler message, with one authorization scheme for every settler-gated instruc
 may pay the fee; the settler signatures authorize.
 
 **Claim delay.** On Solana a root rests on the settler signature alone. The delay gives the root
-watcher, which rebuilds the expected root from the task chain award events, time to flag a root that
-does not match, and the admin time to revoke it, before any token leaves the vault. An
+watcher, which rebuilds the expected root from the task chain award events and compares `root`,
+`leaf_count`, `distributed_gross`, `settled_total` and `fee_total`, time to flag a root that does
+not match (the watcher is not deployed at launch; the settler itself refuses to sign a settlement
+whose leaf amounts do not sum to `settled_total`, whose leaf count differs from the list, or where
+`settled_total + fee_total` is not `distributed_gross`), and the admin time to revoke it, before any token leaves the vault. An
 honest award waits one delay. The delay is a `Config` setting rather than a constant so it can be
 tuned once watcher latency is measured, and it never drops to zero, so a watcher always has a
 window.

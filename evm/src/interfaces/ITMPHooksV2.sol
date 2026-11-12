@@ -36,6 +36,13 @@ interface ITMPHooksV2 {
     error HookCallRoleRefused(uint32 roles);
     /// @notice callTaskHook on an Accepted, Cancelled or Expired task.
     error TaskAlreadySettled();
+    /// @notice Rev030: the hook address is an EIP-7702 delegated account, whose code its key holder
+    ///         can change at any time.
+    error HookDelegatedAccount(uint8 index);
+    /// @notice Rev030: a task with a transforming hook may not also have a hook that can veto an appeal.
+    error TransformingHookWithAppealHook();
+    /// @notice Rev030: a task with a transforming hook may not have an evaluator without a dispute resolver.
+    error TransformingHookNeedsDisputeResolver();
 
     // -------------------------------------------------------------------------
     // Events

@@ -8,7 +8,9 @@ use solana_signer::Signer;
 use spl_associated_token_account_interface::address::get_associated_token_address_with_program_id;
 use sponsored_tasks::error::SponsoredTasksError as E;
 use sponsored_tasks::events::*;
-use sponsored_tasks::state::{ClaimReceipt, Manager, Vault, VaultStatus};
+use sponsored_tasks::state::{
+    ClaimReceipt, Manager, ReservationState, Vault, VaultStatus, DEFAULT_CLAIM_DELAY_SECONDS,
+};
 
 const WORKER_A: [u8; 20] = [0xa1; 20];
 const WORKER_B: [u8; 20] = [0xb2; 20];
@@ -200,6 +202,101 @@ fn claim_rejects_unbound_worker_and_other_destination() {
 }
 
 #[test]
+fn an_attested_payout_change_is_used_only_after_the_claim_delay() {
+    let mut env = Env::new();
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
+    let s = env.settlers[0].insecure_clone();
+    let payer = env.payer.pubkey();
+    env.send(
+        &[f.reserve_ix(&payer, &[&s], task_id(1), 400, manager(1))],
+        &[&s],
+    )
+    .unwrap();
+    let r = reservation_pda(&f.vault, &task_id(1));
+    let (root, proofs) = award_tree(&f.vault, 1, &r, &task_id(1), &[(0, WORKER_A, 400)]);
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(root, 1, 400, 0))],
+        &[&s],
+    )
+    .unwrap();
+    env.pass_claim_delay();
+
+    let old_owner = Keypair::new().pubkey();
+    let new_owner = Keypair::new().pubkey();
+    let old_dest = env.mint_to(&SPL_TOKEN, &f.mint, &old_owner, 0);
+    let new_dest = env.mint_to(&SPL_TOKEN, &f.mint, &new_owner, 0);
+    let ix = |dest| f.claim_ix(&payer, r, 0, WORKER_A, 400, proofs[0].clone(), dest);
+    env.put_binding(WORKER_A, old_owner);
+
+    // The settlers re-point the agent's payout; the old address stays in force for one delay.
+    env.send(
+        &[bind_payout_attested_ix(
+            &payer,
+            &[&s],
+            TASK_CHAIN_ID,
+            WORKER_A,
+            new_owner,
+            2,
+        )],
+        &[&s],
+    )
+    .unwrap();
+    // Anchor ConstraintTokenOwner: the new owner is not paid yet.
+    assert_custom(env.send(&[ix(new_dest)], &[]), 2015);
+
+    let effective_at = env.now() + DEFAULT_CLAIM_DELAY_SECONDS as i64;
+    env.warp_to(effective_at - 1);
+    assert_custom(env.send(&[ix(new_dest)], &[]), 2015);
+
+    env.warp_to(effective_at);
+    assert_custom(env.send(&[ix(old_dest)], &[]), 2015);
+    env.send(&[ix(new_dest)], &[]).unwrap();
+    assert_eq!(env.token_balance(&new_dest), 400);
+    assert_eq!(env.token_balance(&old_dest), 0);
+}
+
+#[test]
+fn a_first_attested_binding_pays_nobody_until_its_delay_has_passed() {
+    let mut env = Env::new();
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
+    let s = env.settlers[0].insecure_clone();
+    let payer = env.payer.pubkey();
+    env.send(
+        &[f.reserve_ix(&payer, &[&s], task_id(1), 400, manager(1))],
+        &[&s],
+    )
+    .unwrap();
+    let r = reservation_pda(&f.vault, &task_id(1));
+    let (root, proofs) = award_tree(&f.vault, 1, &r, &task_id(1), &[(0, WORKER_A, 400)]);
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(root, 1, 400, 0))],
+        &[&s],
+    )
+    .unwrap();
+    env.pass_claim_delay();
+    let owner = Keypair::new().pubkey();
+    let dest = env.mint_to(&SPL_TOKEN, &f.mint, &owner, 0);
+    let ix = f.claim_ix(&payer, r, 0, WORKER_A, 400, proofs[0].clone(), dest);
+
+    env.send(
+        &[bind_payout_attested_ix(
+            &payer,
+            &[&s],
+            TASK_CHAIN_ID,
+            WORKER_A,
+            owner,
+            1,
+        )],
+        &[&s],
+    )
+    .unwrap();
+    assert_error(env.send(std::slice::from_ref(&ix), &[]), E::PayoutNotBound);
+    env.pass_claim_delay();
+    env.send(&[ix], &[]).unwrap();
+    assert_eq!(env.token_balance(&dest), 400);
+}
+
+#[test]
 fn claim_never_pays_more_than_the_settled_total() {
     let mut env = Env::new();
     let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
@@ -300,13 +397,21 @@ fn claim_works_for_token_2022_vault() {
 }
 
 #[test]
-fn claim_fee_pays_the_fee_recipient_once_even_while_paused() {
+fn claim_fee_pays_the_fee_recipient_once_and_is_blocked_while_paused() {
     let mut env = Env::new();
     let t = settled(&mut env, SPL_TOKEN);
     env.pause(true);
     let recipient = env.fee_recipient.insecure_clone();
     // Any token account of the mint may receive it.
     let dest = env.mint_to(&SPL_TOKEN, &t.f.mint, &Keypair::new().pubkey(), 0);
+    assert_error(
+        env.send(
+            &[t.f.claim_fee_ix(&recipient.pubkey(), t.r, dest)],
+            &[&recipient],
+        ),
+        E::Paused,
+    );
+    env.pause(false);
     env.send(
         &[t.f.claim_fee_ix(&recipient.pubkey(), t.r, dest)],
         &[&recipient],
@@ -341,6 +446,37 @@ fn claim_fee_pays_the_fee_recipient_once_even_while_paused() {
     assert_error(
         env.send(&[t.f.revoke_ix(&admin.pubkey(), t.r)], &[&admin]),
         E::SettlementHasClaims,
+    );
+}
+
+#[test]
+fn a_pause_keeps_a_wrong_root_revocable_past_the_claim_delay() {
+    let mut env = Env::new();
+    let t = settled(&mut env, SPL_TOKEN);
+    // The delay has passed (settled() passes it); the pause is what holds the fee back.
+    env.pause(true);
+    let recipient = env.fee_recipient.insecure_clone();
+    let dest = env.mint_to(&SPL_TOKEN, &t.f.mint, &Keypair::new().pubkey(), 0);
+    assert_error(
+        env.send(
+            &[t.f.claim_fee_ix(&recipient.pubkey(), t.r, dest)],
+            &[&recipient],
+        ),
+        E::Paused,
+    );
+    assert!(!env.reservation(&t.r).fee_claimed);
+    // Revoke stays open while paused and succeeds because no fee or leaf was claimed.
+    let admin = env.admin.insecure_clone();
+    env.send(&[t.f.revoke_ix(&admin.pubkey(), t.r)], &[&admin])
+        .unwrap();
+    assert_eq!(env.reservation(&t.r).state, ReservationState::Reserved);
+    env.pause(false);
+    assert_error(
+        env.send(
+            &[t.f.claim_fee_ix(&recipient.pubkey(), t.r, dest)],
+            &[&recipient],
+        ),
+        E::ReservationWrongState,
     );
 }
 
@@ -437,7 +573,7 @@ fn claim_and_claim_fee_wait_for_the_claim_delay() {
         E::ClaimDelayNotElapsed,
     );
 
-    env.warp_to(10_000 + 3_600);
+    env.warp_to(10_000 + sponsored_tasks::state::DEFAULT_CLAIM_DELAY_SECONDS as i64);
     env.send(&[claim], &[]).unwrap();
     env.send(&[claim_fee], &[&recipient]).unwrap();
     assert_eq!(env.token_balance(&fee_dest), FEE);

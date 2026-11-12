@@ -83,6 +83,9 @@ contract WorkerFacet {
         if (block.timestamp > LibTerms.acceptBy(s, taskId)) revert ITMPCore.AcceptWindowClosed();
         uint256 newExpiry = block.timestamp + (task.expiryTime - s.taskMetadata[taskId].createdAt);
         LibProject.extendExpiry(s, taskId, newExpiry);
+        // Rev030: a project task's expiry is held to the project's end, so a reserved worker is
+        // never staked into less delivery time than the reservation promised.
+        if (task.expiryTime < newExpiry) revert ITMPCore.ReservedDeliveryPeriodShortened();
     }
 
     /// @notice Select a worker for Pitch mode. The requester is the authenticated actor (pgtrSender).
@@ -223,7 +226,9 @@ contract WorkerFacet {
                 && (task.mode == TMP_CLAIM || task.mode == TMP_PITCH || task.mode == TMP_AUCTION)
         ) {
             task.status = ITMPCore.TaskStatus.Review;
-            uint256 reviewDeadline = block.timestamp + evalCfg.evaluationWindow;
+            // Rev030: on a project task the evaluation deadline is held to the project's latest
+            // expiry, as the expiry extension below is, so evaluatorTimeout opens by then.
+            uint256 reviewDeadline = LibProject.boundDeadline(s, taskId, block.timestamp + evalCfg.evaluationWindow);
             s.phaseDeadline[taskId] = reviewDeadline;
             LibProject.extendExpiry(s, taskId, reviewDeadline);
         }

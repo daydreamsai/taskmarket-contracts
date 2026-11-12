@@ -6,8 +6,9 @@ import { ITMPCore } from "./ITMPCore.sol";
 
 /// @title ITMPHookV2 -- rev028 Task Hook V2: typed lifecycle callbacks, capabilities and bounded
 ///        settlement results
-/// @notice Every task created after the rev028 cut dispatches to V2 hooks only. Tasks created before
-///         the cut keep the V1 `ITMPHook` dispatch unchanged until they are terminal.
+/// @notice Every task created after the rev028 cut dispatches to V2 hooks only. Since rev030 the
+///         diamond dispatches nothing else: a task created before the cut (dispatch version 0) has
+///         no hooks.
 ///
 ///         Before-callbacks (`before*`) run for a vetoable action. A hook allows the action by
 ///         returning its own function selector; a revert, out-of-gas, a wrong selector or oversized

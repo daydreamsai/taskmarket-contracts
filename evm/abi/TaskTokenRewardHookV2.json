@@ -1279,7 +1279,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "ctx",
+        "name": "",
         "type": "tuple",
         "internalType": "struct ITMPHookV2.TaskContextV2",
         "components": [
@@ -5963,6 +5963,11 @@
   {
     "type": "error",
     "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FutureFirstSeen",
     "inputs": []
   },
   {

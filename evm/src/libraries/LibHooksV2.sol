@@ -97,6 +97,15 @@ library LibHooksV2 {
     ///         29.9M per-transaction cap however many hooks the task has; callbacks past it are
     ///         best effort.
     uint256 internal constant MAX_STRICT_HOOK_GAS = 16_000_000;
+    /// @notice Most gas the best-effort callbacks of one forced exit (a dispute ruling, a
+    ///         settlement after expiry, a lapsed review) spend in one dispatch. Once hooks have
+    ///         spent it, or would spend more than it with their next budget, the rest are skipped
+    ///         and reported, so the settlement around them keeps its gas however many hooks the
+    ///         task carries. The first callback always runs, whatever its budget.
+    uint256 internal constant MAX_EXIT_HOOK_GAS = 6_000_000;
+    /// @notice Gas held back per remaining hook so that skipping it (event and sequence write)
+    ///         cannot run out of gas.
+    uint256 internal constant SKIP_RESERVE = 40_000;
     /// @notice Gas for each manifest read at attach (supportsInterface, hookCapabilities, minDiamondVersion).
     uint256 internal constant MANIFEST_GAS = 50_000;
     /// @notice Highest maxHookFeeBps the owner may set.

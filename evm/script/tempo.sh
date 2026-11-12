@@ -3,7 +3,7 @@
 #   make deploy 42431|4217
 #   make deploy-forwarder 42431|4217
 #   make upgrade 42431|4217 [revNNN]
-#   make deploy-sponsored-task|deploy-remote-sponsored-task-hook|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock 42431|4217
+#   make deploy-sponsored-task|deploy-safe|deploy-sponsored-task-timelock 42431|4217
 #
 # Usage: script/tempo.sh <action> <42431|4217> [revNNN]
 #
@@ -36,7 +36,7 @@ esac
 export DRY_RUN
 
 usage() {
-  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|deploy-remote-sponsored-task-hook|deploy-payout-gate-hook|deploy-sponsored-task-hook-v2|deploy-remote-sponsored-task-hook-v2|set-default-hooks-v2|upgrade-sponsored-task|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
+  echo "Usage: script/tempo.sh <deploy|deploy-forwarder|upgrade|deploy-sponsored-task|deploy-payout-gate-hook|deploy-sponsored-task-hook-v2|deploy-remote-sponsored-task-hook-v2|set-default-hooks-v2|deploy-safe|deploy-sponsored-task-timelock> <42431|4217> [revNNN]" >&2
   exit 1
 }
 
@@ -54,15 +54,8 @@ case "$ACTION" in
   deploy-sponsored-task)
     SCRIPT=script/DeploySponsoredTask.s.sol:DeploySponsoredTask; SCRIPT_VERIFY=1
     KEY_NAME=FORGE_DEV_PRIVATE_KEY
-    REQUIRED=(FORGE_USDC_TOKEN_ADDRESS FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT
-      FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT FORGE_SPONSORED_TASK_ADMIN)
-    OPTIONAL=(FORGE_SPONSORED_TASK_CREATION_FEE_USDC FORGE_SPONSORED_TASK_TOKEN_FEE_BPS)
-    ;;
-  deploy-remote-sponsored-task-hook)
-    SCRIPT=script/DeployRemoteSponsoredTaskHook.s.sol:DeployRemoteSponsoredTaskHook; SCRIPT_VERIFY=1
-    KEY_NAME=FORGE_DEV_PRIVATE_KEY
-    REQUIRED=(FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN)
-    OPTIONAL=()
+    REQUIRED=(FORGE_DIAMOND_ADDRESS FORGE_SPONSORED_TASK_ADMIN)
+    OPTIONAL=(FORGE_SPONSORED_TASK_TOKEN_FEE_BPS FORGE_SPONSORED_TASK_TOKEN_FEE_RECIPIENT)
     ;;
   deploy-payout-gate-hook)
     SCRIPT=script/DeployHooksV2.s.sol:DeployPayoutGateHook; SCRIPT_VERIFY=1
@@ -94,12 +87,6 @@ case "$ACTION" in
     KEY_NAME=FORGE_DEV_PRIVATE_KEY
     REQUIRED=(FORGE_DIAMOND_ADDRESS)
     OPTIONAL=(FORGE_DEFAULT_HOOKS_V2)
-    ;;
-  upgrade-sponsored-task)
-    SCRIPT=script/UpgradeSponsoredTask.s.sol:UpgradeSponsoredTask; SCRIPT_VERIFY=1
-    KEY_NAME=FORGE_DEV_PRIVATE_KEY
-    REQUIRED=(FORGE_SPONSORED_TASK_HOOK_ADDRESS)
-    OPTIONAL=()
     ;;
   deploy-safe)
     SCRIPT=script/DeploySafe.s.sol:DeploySafe; SCRIPT_VERIFY=0

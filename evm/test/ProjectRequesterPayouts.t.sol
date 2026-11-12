@@ -305,7 +305,62 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
         assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Open));
         assertEq(usdc.balanceOf(worker), 0);
         assertEq(_available(), BUDGET - REWARD + STAKE, "the forfeited stake joined the budget");
-        assertEq(_committed(), REWARD - STAKE);
+        // Rev030: the stake was the worker's money, not drawn from the project, so it does not
+        // lower the operator's committed cap.
+        assertEq(_committed(), REWARD, "a forfeited stake does not raise the operator's cap");
         _assertRouted();
+    }
+
+    /// @dev Rev030: after a forfeit and reopen, the task ending releases the operator's whole
+    ///      remaining commitment once: committed returns to what it was before the task.
+    function test_ForfeitAndReopen_ThenCancel_ReleasesExactlyTheCommitment() public {
+        uint256 before = _committed();
+        ITMPCore.TaskTerms memory t = _v2Terms();
+        t.penaltyTo = ITMPCore.PenaltyTo.Requester;
+        bytes32 taskId = _opTask(taskConfig(REWARD, DURATION, TMP_CLAIM), noEvaluatorConfig(), t);
+        assertEq(_committed(), before + REWARD);
+        _relay(worker, STAKE, abi.encodeCall(market.claimTask, (taskId, STAKE)));
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _relay(operator, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        assertEq(_committed(), before + REWARD);
+
+        _relay(operator, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+
+        assertEq(_committed(), before, "the commitment is released exactly once");
+        assertEq(_available(), BUDGET + STAKE, "the project got the reward back and the forfeited stake");
+        _assertRouted();
+    }
+
+    /// @dev Rev030: the period meter follows committed: a forfeited stake gives nothing back to
+    ///      it, and the task ending returns exactly the drawn reward.
+    function test_ForfeitAndReopen_PeriodMeter_IgnoresTheStake() public {
+        _relay(
+            owner,
+            0,
+            abi.encodeCall(
+                projects.setGrantLimits,
+                (
+                    id,
+                    operator,
+                    ITMPProject.GrantLimitsInput({
+                        expiresAt: 0,
+                        allowedModesMask: 0,
+                        maxRewardPerTask: 0,
+                        periodSecs: 30 days,
+                        periodCap: uint128(2 * REWARD)
+                    })
+                )
+            )
+        );
+        ITMPCore.TaskTerms memory t = _v2Terms();
+        t.penaltyTo = ITMPCore.PenaltyTo.Requester;
+        bytes32 taskId = _opTask(taskConfig(REWARD, DURATION, TMP_CLAIM), noEvaluatorConfig(), t);
+        _relay(worker, STAKE, abi.encodeCall(market.claimTask, (taskId, STAKE)));
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _relay(operator, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        assertEq(projects.getGrantLimits(id, operator).periodSpent, REWARD, "the stake gave nothing back");
+
+        _relay(operator, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
+        assertEq(projects.getGrantLimits(id, operator).periodSpent, 0);
     }
 }

@@ -77,10 +77,12 @@ library LibTerms {
 
     /// @notice expiryTime = max(expiryTime, now + resolutionWindowSecs) when a verdict is appealed, so
     ///         the dispute resolver has the whole window before refundExpired can lapse the dispute.
-    function extendOnAppeal(AppStorage storage s, bytes32 taskId) internal {
+    ///         Returns the end of the window, which appeal records as the dispute deadline: a project
+    ///         task's expiry is clamped to the project's end and may fall short of it.
+    function extendOnAppeal(AppStorage storage s, bytes32 taskId) internal returns (uint256 resolveBy) {
         uint32 secs = terms(s, taskId).resolutionWindowSecs;
-        uint256 newExpiry = block.timestamp + (secs == 0 ? DEFAULT_RESOLUTION_WINDOW_SECS : secs);
-        LibProject.extendExpiry(s, taskId, newExpiry);
+        resolveBy = block.timestamp + (secs == 0 ? DEFAULT_RESOLUTION_WINDOW_SECS : secs);
+        LibProject.extendExpiry(s, taskId, resolveBy);
     }
 
     /// @notice expiryTime = max(expiryTime, now + reopenExtensionSecs), so a reopened task can be claimed.

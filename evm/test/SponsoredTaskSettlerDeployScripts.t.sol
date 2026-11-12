@@ -6,9 +6,7 @@ import { Vm } from "forge-std/Vm.sol";
 import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskSettler } from "../src/hooks/sponsored-task/SponsoredTaskSettler.sol";
-import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
 import { DeploySponsoredTaskSettler } from "../script/DeploySponsoredTaskSettler.s.sol";
-import { DeployRemoteSponsoredTaskHook } from "../script/DeployRemoteSponsoredTaskHook.s.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 
 contract SettlerAdminStandIn { }
@@ -75,24 +73,5 @@ contract SponsoredTaskSettlerDeployScriptsTest is Test {
         DeploySponsoredTaskSettler script = new DeploySponsoredTaskSettler();
         vm.expectRevert(bytes("Settler: admin must be a contract"));
         script.run();
-    }
-
-    function test_RevertWhen_DeployRemoteHook_DiamondIsNotAContract() public {
-        vm.etch(address(0xD1A), "");
-        DeployRemoteSponsoredTaskHook script = new DeployRemoteSponsoredTaskHook();
-        vm.expectRevert(bytes("Remote hook: diamond must be a contract"));
-        script.run();
-    }
-
-    function test_DeployRemoteHook_AdminOwnsProxy() public {
-        vm.recordLogs();
-        new DeployRemoteSponsoredTaskHook().run();
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        RemoteSponsoredTaskHook hook;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == keccak256("Upgraded(address)")) hook = RemoteSponsoredTaskHook(logs[i].emitter);
-        }
-        assertEq(hook.owner(), admin);
-        assertEq(hook.diamond(), address(0xD1A));
     }
 }

@@ -8,7 +8,7 @@ import test from "node:test";
 
 const packageRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  ".."
+  "..",
 );
 const contractsRoot = path.resolve(packageRoot, "../..");
 const bin = path.join(packageRoot, "bin/create-taskmarket-hook.mjs");
@@ -29,134 +29,81 @@ function run(cwd, ...args) {
   return spawnSync(process.execPath, [bin, ...args], { cwd, encoding: "utf8" });
 }
 
-test("generates a substituted, reproducible V1 project with --hook-version 1", async (t) => {
+test("generates a substituted, reproducible Task Hook V2 project", async (t) => {
   const cwd = await temporaryDirectory();
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const result = run(
-    cwd,
-    "reputation-hook",
-    "--taskmarket",
-    mixedCaseAddress,
-    "--hook-version",
-    "1"
-  );
+  const result = run(cwd, "ledger-hook", "--taskmarket", mixedCaseAddress);
   assert.equal(result.status, 0, result.stderr);
-  const root = path.join(cwd, "reputation-hook");
+  const root = path.join(cwd, "ledger-hook");
   await stat(path.join(root, "foundry.toml"));
-  await stat(path.join(root, "src/ReputationHook.sol"));
-  await stat(path.join(root, "test/ReputationHook.t.sol"));
-  await stat(path.join(root, "test/ReputationHookLifecycle.t.sol"));
+  await stat(path.join(root, "src/LedgerHook.sol"));
+  await stat(path.join(root, "test/LedgerHook.t.sol"));
+  await stat(path.join(root, "test/LedgerHookLifecycle.t.sol"));
 
   const remappings = await readFile(path.join(root, "remappings.txt"), "utf8");
   assert.equal(
     remappings,
-    "@taskmarket/contracts/=lib/taskmarket-contracts/\n@openzeppelin/=lib/openzeppelin-contracts/\nopenzeppelin-contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/\nforge-std/=lib/forge-std/src/\n"
+    "@taskmarket/contracts/=lib/taskmarket-contracts/evm/\n@openzeppelin/=lib/openzeppelin-contracts/\nopenzeppelin-contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/\nforge-std/=lib/forge-std/src/\n",
   );
-
-  const deploy = await readFile(path.join(root, "script/Deploy.s.sol"), "utf8");
-  assert.ok(deploy.includes(`hex"${normalizedAddress.slice(2)}"`));
-  assert.doesNotMatch(deploy, new RegExp(mixedCaseAddress));
-
   const gitignore = await readFile(path.join(root, ".gitignore"), "utf8");
   assert.match(gitignore, /^lib\/$/m);
 
-  const hook = await readFile(
-    path.join(root, "src/ReputationHook.sol"),
-    "utf8"
-  );
-  // The audited base contract owns onlyDiamond, the ERC165 surface, and the allow-by-default
-  // check callbacks. A generated hook that reimplements them instead would duplicate
-  // security-critical code that never gets the base contract's test coverage.
-  assert.match(hook, /^contract ReputationHook is BaseTMPHook \{$/m);
-  assert.match(
-    hook,
-    /^import \{BaseTMPHook\} from "@taskmarket\/contracts\/src\/hooks\/base\/BaseTMPHook\.sol";$/m
-  );
-  assert.match(
-    hook,
-    /constructor\(address taskmarket_\) BaseTMPHook\(taskmarket_\) \{\}/
-  );
-  assert.doesNotMatch(hook, /modifier onlyTaskmarket/);
-  assert.doesNotMatch(hook, /function supportsInterface/);
-
-  const readme = await readFile(path.join(root, "README.md"), "utf8");
-  for (const command of dependencyCommands) {
-    assert.ok(readme.includes(command), `README missing ${command}`);
-    assert.ok(result.stdout.includes(command), `next steps missing ${command}`);
-  }
-  assert.ok(readme.includes("set -a\n. ./.env\nset +a\nforge script"));
-  assert.ok(readme.includes("forge test -j 1"));
-  assert.ok(readme.includes("ReputationHookLifecycleTest"));
-  assert.ok(readme.includes("HookRegistered"));
-  assert.ok(readme.includes("onComplete"));
-  assert.ok(result.stdout.includes("forge test -j 1"));
-  assert.match(readme, /forge script .*--verify/);
-
-  const lifecycle = await readFile(
-    path.join(root, "test/ReputationHookLifecycle.t.sol"),
-    "utf8"
-  );
-  for (const expected of [
-    "contract ReputationHookLifecycleTest is DiamondTestHelper",
-    "ReputationHook defaultHook = new ReputationHook(address(market))",
-    "ReputationHook firstCustomHook = new ReputationHook(address(market))",
-    "ReputationHook secondCustomHook = new ReputationHook(address(market))",
-    "market.setDefaultHooks(defaults)",
-    "HookRegistered",
-    "getTaskHooks",
-    "submitWork",
-    "acceptSubmission",
-    "TaskCompleted",
-    "default hook attached first",
-    "first custom hook attached second",
-    "second custom hook attached third",
-  ]) {
-    assert.ok(
-      lifecycle.includes(expected),
-      `lifecycle test missing ${expected}`
-    );
-  }
-});
-
-test("generates a Task Hook V2 project with --hook-version 2", async (t) => {
-  const cwd = await temporaryDirectory();
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  const result = run(
-    cwd,
-    "ledger-hook",
-    "--taskmarket",
-    mixedCaseAddress,
-    "--hook-version",
-    "2"
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const root = path.join(cwd, "ledger-hook");
-  await stat(path.join(root, "test/LedgerHook.t.sol"));
-  await assert.rejects(stat(path.join(root, "test/LedgerHookLifecycle.t.sol")));
-
   const hook = await readFile(path.join(root, "src/LedgerHook.sol"), "utf8");
+  // The audited base contract owns onlyDiamond, the ERC165 surface and the allow-by-default
+  // before-callbacks. A generated hook that reimplements them instead would duplicate
+  // security-critical code that never gets the base contract's test coverage.
   assert.match(hook, /^contract LedgerHook is BaseTMPHookV2 \{$/m);
   assert.match(
     hook,
-    /^import \{BaseTMPHookV2\} from "@taskmarket\/contracts\/src\/hooks\/base\/BaseTMPHookV2\.sol";$/m
+    /^import \{BaseTMPHookV2\} from "@taskmarket\/contracts\/src\/hooks\/base\/BaseTMPHookV2\.sol";$/m,
   );
   assert.match(
     hook,
-    /constructor\(address taskmarket_\) BaseTMPHookV2\(taskmarket_\) \{\}/
+    /constructor\(address taskmarket_\) BaseTMPHookV2\(taskmarket_\) \{\}/,
   );
   assert.match(
     hook,
-    /function hookCapabilities\(\) external pure override returns \(uint32\)/
+    /function hookCapabilities\(\) external pure override returns \(uint32\)/,
   );
   assert.doesNotMatch(hook, /function supportsInterface/);
   assert.doesNotMatch(hook, /BaseTMPHook\b/);
+  assert.doesNotMatch(hook, /ITMPHook\b/);
 
   const unit = await readFile(path.join(root, "test/LedgerHook.t.sol"), "utf8");
   assert.ok(unit.includes("type(ITMPHookV2).interfaceId"));
   assert.ok(unit.includes("BaseTMPHookV2__UnauthorizedCaller"));
 
+  const lifecycle = await readFile(
+    path.join(root, "test/LedgerHookLifecycle.t.sol"),
+    "utf8",
+  );
+  for (const expected of [
+    "contract LedgerHookLifecycleTest is DiamondTestHelper",
+    "LedgerHook firstHook = new LedgerHook(address(market))",
+    "LedgerHook secondHook = new LedgerHook(address(market))",
+    "HookAttached",
+    "getTaskHooksV2",
+    "getTaskHookVersion",
+    "submitWork",
+    "acceptSubmission",
+    "TaskCompleted",
+    "first hook attached first",
+    "second hook attached second",
+  ]) {
+    assert.ok(
+      lifecycle.includes(expected),
+      `lifecycle test missing ${expected}`,
+    );
+  }
+  // V1 hooks are retired: the project must not reach for the V1 machinery.
+  assert.doesNotMatch(
+    lifecycle,
+    /setDefaultHooks\b|HookRegistered|placeAtVersion/,
+  );
+
   const deploy = await readFile(path.join(root, "script/Deploy.s.sol"), "utf8");
   assert.ok(deploy.includes(`hex"${normalizedAddress.slice(2)}"`));
+  assert.doesNotMatch(deploy, new RegExp(mixedCaseAddress));
 
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   assert.ok(readme.includes("Task Hook V2"));
@@ -165,37 +112,36 @@ test("generates a Task Hook V2 project with --hook-version 2", async (t) => {
   assert.ok(readme.includes(normalizedAddress));
   for (const command of dependencyCommands) {
     assert.ok(readme.includes(command), `README missing ${command}`);
+    assert.ok(result.stdout.includes(command), `next steps missing ${command}`);
   }
+  assert.ok(readme.includes("set -a\n. ./.env\nset +a\nforge script"));
+  assert.ok(readme.includes("forge test -j 1"));
+  assert.ok(readme.includes("LedgerHookLifecycleTest"));
+  assert.ok(readme.includes("HookAttached"));
+  assert.ok(readme.includes("afterComplete"));
+  assert.ok(result.stdout.includes("forge test -j 1"));
+  assert.match(readme, /forge script .*--verify/);
   assert.doesNotMatch(readme, /\{\{[A-Z_]+\}\}/);
   assert.doesNotMatch(hook, /\{\{[A-Z_]+\}\}/);
+  assert.doesNotMatch(lifecycle, /\{\{[A-Z_]+\}\}/);
 });
 
-test("generates a Task Hook V2 project by default", async (t) => {
+test("rejects --hook-version: every generated hook is a Task Hook V2 hook", async (t) => {
   const cwd = await temporaryDirectory();
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const result = run(cwd, "ledger-hook", "--taskmarket", address);
-  assert.equal(result.status, 0, result.stderr);
-  const hook = await readFile(
-    path.join(cwd, "ledger-hook/src/LedgerHook.sol"),
-    "utf8"
-  );
-  assert.match(hook, /^contract LedgerHook is BaseTMPHookV2 \{$/m);
-});
-
-test("rejects an unknown --hook-version", async (t) => {
-  const cwd = await temporaryDirectory();
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  const result = run(
-    cwd,
-    "bad-version",
-    "--taskmarket",
-    address,
-    "--hook-version",
-    "3"
-  );
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--hook-version must be 1 or 2/);
-  assert.ok(!(await readdir(cwd)).includes("bad-version"));
+  for (const version of ["1", "2"]) {
+    const result = run(
+      cwd,
+      `version-${version}-hook`,
+      "--taskmarket",
+      address,
+      "--hook-version",
+      version,
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /--hook-version was removed/);
+    assert.ok(!(await readdir(cwd)).includes(`version-${version}-hook`));
+  }
 });
 
 test("generates Tempo Moderato deploy configuration with --network", async (t) => {
@@ -207,7 +153,7 @@ test("generates Tempo Moderato deploy configuration with --network", async (t) =
     "--taskmarket",
     address,
     "--network",
-    "tempo-moderato"
+    "tempo-moderato",
   );
   assert.equal(result.status, 0, result.stderr);
   const root = path.join(cwd, "tempo-hook");
@@ -216,14 +162,14 @@ test("generates Tempo Moderato deploy configuration with --network", async (t) =
   assert.match(foundry, /^\[profile\.tempo\]\nnetwork = "tempo"$/m);
   assert.match(
     foundry,
-    /^tempo_moderato = "\$\{FORGE_TEMPO_MODERATO_RPC_URL\}"$/m
+    /^tempo_moderato = "\$\{FORGE_TEMPO_MODERATO_RPC_URL\}"$/m,
   );
   assert.doesNotMatch(foundry, /base_sepolia|etherscan/);
 
   const env = await readFile(path.join(root, ".env.example"), "utf8");
   assert.match(
     env,
-    /^FORGE_FEE_TOKEN=0x20c0000000000000000000006a37da5c996874be$/m
+    /^FORGE_FEE_TOKEN=0x20c0000000000000000000006a37da5c996874be$/m,
   );
   assert.doesNotMatch(env, /ETHERSCAN|BASE_SEPOLIA/);
 
@@ -233,8 +179,8 @@ test("generates Tempo Moderato deploy configuration with --network", async (t) =
   assert.ok(readme.includes('--tempo.fee-token "$FORGE_FEE_TOKEN"'));
   assert.ok(
     readme.includes(
-      "--verifier sourcify --verifier-url https://contracts.tempo.xyz"
-    )
+      "--verifier sourcify --verifier-url https://contracts.tempo.xyz",
+    ),
   );
   assert.doesNotMatch(readme, /Base Sepolia/);
 
@@ -244,12 +190,12 @@ test("generates Tempo Moderato deploy configuration with --network", async (t) =
     "--taskmarket",
     address,
     "--network",
-    "mars"
+    "mars",
   );
   assert.notEqual(rejected.status, 0);
   assert.match(
     rejected.stderr,
-    /--network must be base-sepolia or tempo-moderato/
+    /--network must be base-sepolia or tempo-moderato/,
   );
 });
 
@@ -260,7 +206,7 @@ test("rejects invalid names and existing targets without overwriting", async (t)
     assert.notEqual(
       run(cwd, invalidName, "--taskmarket", address).status,
       0,
-      invalidName
+      invalidName,
     );
   }
   assert.notEqual(run(cwd, "bad-address", "--taskmarket", "0x0").status, 0);
@@ -271,14 +217,14 @@ test("rejects invalid names and existing targets without overwriting", async (t)
       "--taskmarket",
       address,
       "--hook-name",
-      "notSolidity"
+      "notSolidity",
     ).status,
-    0
+    0,
   );
   assert.notEqual(
     run(cwd, "unknown-option", "--taskmarket", address, "--nope", "value")
       .status,
-    0
+    0,
   );
   assert.equal(run(cwd, "hook", "--taskmarket", address).status, 0);
   await stat(path.join(cwd, "hook/src/Hook.sol"));
@@ -291,33 +237,26 @@ test("rejects invalid names and existing targets without overwriting", async (t)
   assert.equal(await readFile(generatedHook, "utf8"), originalHook);
 });
 
-test("enforces portable path-component boundaries before writing (V1 lifecycle file is the longest)", async (t) => {
+test("enforces portable path-component boundaries before writing (the lifecycle file is the longest)", async (t) => {
   const cwd = await temporaryDirectory();
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const longestDefaultProjectName = "a".repeat(236);
   const longestDefaultHookName = `A${"a".repeat(235)}Hook`;
   assert.equal(
     Buffer.byteLength(`${longestDefaultHookName}Lifecycle.t.sol`),
-    255
+    255,
   );
   assert.equal(
-    run(
-      cwd,
-      longestDefaultProjectName,
-      "--taskmarket",
-      address,
-      "--hook-version",
-      "1"
-    ).status,
-    0
+    run(cwd, longestDefaultProjectName, "--taskmarket", address).status,
+    0,
   );
   await stat(
     path.join(
       cwd,
       longestDefaultProjectName,
       "test",
-      `${longestDefaultHookName}.t.sol`
-    )
+      `${longestDefaultHookName}.t.sol`,
+    ),
   );
 
   const tooLongDefaultProjectName = "a".repeat(237);
@@ -326,8 +265,6 @@ test("enforces portable path-component boundaries before writing (V1 lifecycle f
     tooLongDefaultProjectName,
     "--taskmarket",
     address,
-    "--hook-version",
-    "1"
   );
   assert.notEqual(longRenderedPath.status, 0);
   assert.match(longRenderedPath.stderr, /generated path is not portable/);
@@ -342,7 +279,7 @@ test("enforces portable path-component boundaries before writing (V1 lifecycle f
     "--taskmarket",
     address,
     "--hook-name",
-    "ShortHook"
+    "ShortHook",
   );
   assert.notEqual(longProject.status, 0);
   assert.match(longProject.stderr, /project name is not portable/);
@@ -358,73 +295,14 @@ test("generated project compiles and its Foundry tests pass against checkout dep
     return;
   }
   try {
-    await stat(
-      path.join(
-        contractsRoot,
-        "lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
-      )
-    );
-    await stat(
-      path.join(
-        contractsRoot,
-        "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol"
-      )
-    );
-    await stat(path.join(contractsRoot, "lib/forge-std/src/Test.sol"));
-  } catch {
-    t.skip("checkout dependencies are not installed");
-    return;
-  }
-
-  const cwd = await temporaryDirectory();
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  const generated = run(
-    cwd,
-    "compiled-hook",
-    "--taskmarket",
-    mixedCaseAddress,
-    "--hook-name",
-    "CompiledHook",
-    "--hook-version",
-    "1"
-  );
-  assert.equal(generated.status, 0, generated.stderr);
-  const root = path.join(cwd, "compiled-hook");
-  const result = spawnSync(
-    "forge",
-    [
-      "test",
-      "-j",
-      "1",
-      "--root",
-      root,
-      "--no-cache",
-      "-R",
-      `@taskmarket/contracts/=${contractsRoot}/`,
-      "-R",
-      `@openzeppelin/=${contractsRoot}/lib/openzeppelin-contracts/`,
-      "-R",
-      `openzeppelin-contracts-upgradeable/=${contractsRoot}/lib/openzeppelin-contracts-upgradeable/`,
-      "-R",
-      `forge-std/=${contractsRoot}/lib/forge-std/src/`,
-    ],
-    { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
-  );
-  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stdout, /3 tests passed, 0 failed/);
-});
-
-test("generated V2 project compiles and its Foundry tests pass against checkout dependencies", async (t) => {
-  if (
-    spawnSync("forge", ["--version"], { encoding: "utf8" }).error?.code ===
-    "ENOENT"
-  ) {
-    t.skip("Foundry is not installed");
-    return;
-  }
-  try {
     await stat(path.join(contractsRoot, "src/hooks/base/BaseTMPHookV2.sol"));
     await stat(path.join(contractsRoot, "lib/forge-std/src/Test.sol"));
+    await stat(
+      path.join(
+        contractsRoot,
+        "lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+      ),
+    );
   } catch {
     t.skip("BaseTMPHookV2 or checkout dependencies are not present");
     return;
@@ -432,14 +310,7 @@ test("generated V2 project compiles and its Foundry tests pass against checkout 
 
   const cwd = await temporaryDirectory();
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const generated = run(
-    cwd,
-    "compiled-v2-hook",
-    "--taskmarket",
-    address,
-    "--hook-version",
-    "2"
-  );
+  const generated = run(cwd, "compiled-v2-hook", "--taskmarket", address);
   assert.equal(generated.status, 0, generated.stderr);
   const result = spawnSync(
     "forge",
@@ -459,8 +330,8 @@ test("generated V2 project compiles and its Foundry tests pass against checkout 
       "-R",
       `forge-std/=${contractsRoot}/lib/forge-std/src/`,
     ],
-    { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+    { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
   );
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stdout, /5 tests passed, 0 failed/);
+  assert.match(result.stdout, /6 tests passed, 0 failed/);
 });

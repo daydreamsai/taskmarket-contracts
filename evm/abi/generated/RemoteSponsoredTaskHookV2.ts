@@ -1944,7 +1944,7 @@ export const RemoteSponsoredTaskHookV2ABI = [
     "name": "beforeAssignEvaluator",
     "inputs": [
       {
-        "name": "",
+        "name": "taskId",
         "type": "bytes32",
         "internalType": "bytes32"
       },
@@ -2130,7 +2130,7 @@ export const RemoteSponsoredTaskHookV2ABI = [
         "internalType": "bytes4"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -4329,7 +4329,7 @@ export const RemoteSponsoredTaskHookV2ABI = [
     "name": "beforeUpdate",
     "inputs": [
       {
-        "name": "",
+        "name": "taskId",
         "type": "bytes32",
         "internalType": "bytes32"
       },
@@ -4510,7 +4510,7 @@ export const RemoteSponsoredTaskHookV2ABI = [
         "internalType": "bytes4"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -5216,6 +5216,40 @@ export const RemoteSponsoredTaskHookV2ABI = [
   },
   {
     "type": "function",
+    "name": "taskByCommitment",
+    "inputs": [
+      {
+        "name": "remoteChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "commitmentNonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -5705,6 +5739,17 @@ export const RemoteSponsoredTaskHookV2ABI = [
   {
     "type": "error",
     "name": "CommitmentNotFound",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentTermsFrozen",
     "inputs": [
       {
         "name": "taskId",

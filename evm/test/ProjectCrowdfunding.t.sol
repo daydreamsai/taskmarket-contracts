@@ -672,6 +672,119 @@ contract ProjectCrowdfundingTest is DiamondTestHelper {
         assertLe(_booked(), 2);
     }
 
+    // -------------------------------------------------------------------------
+    // Rev030: a forfeited stake on a reopened task leaves its draw in outstanding
+    // -------------------------------------------------------------------------
+
+    function _claimAs(bytes32 taskId, address w, uint256 stake) internal {
+        _relay(w, stake, abi.encodeCall(market.claimTask, (taskId, stake)));
+    }
+
+    function _forfeit(bytes32 taskId) internal {
+        _relay(owner, 0, abi.encodeCall(market.forfeitAndReopen, (taskId)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Open), "reopened");
+        _assertSolvent();
+    }
+
+    /// @dev Claims `taskId` as `w` with `stake`, lets it expire and has the owner forfeit the
+    ///      stake, which reopens the task with its reward still in escrow.
+    function _forfeitOnce(bytes32 taskId, address w, uint256 stake) internal {
+        _claimAs(taskId, w, stake);
+        vm.warp(market.getTask(taskId).expiryTime + 1);
+        _forfeit(taskId);
+    }
+
+    /// @dev The pool money a live task holds: its reward and its evaluator stake.
+    function _held(bytes32 taskId) internal view returns (uint256) {
+        return market.getTask(taskId).reward + market.getTaskEvaluatorConfig(taskId).evaluatorStake;
+    }
+
+    /// @dev External audit: two stakes forfeited on a task that reopens each time used to take the
+    ///      task's draw out of outstanding although the task still held its reward. With the owner
+    ///      spending the forfeited stakes, the pool read as worth nothing, a 1-unit funding started
+    ///      a new share generation, and the funder took every backer's claim on the reward when
+    ///      the task was cancelled. The forfeited stakes now only add to available: the reward
+    ///      stays outstanding, the funding buys at the pool's real value and the backers keep
+    ///      their claim.
+    function test_ForfeitedStakes_OnAReopenedTask_DoNotResetTheGeneration() public {
+        _backAll();
+        bytes32 taskId = abi.decode(_relay(owner, 0, _claimTaskCall(FUNDED)), (bytes32));
+        assertEq(_p().available, 0);
+        assertEq(_p().outstanding, FUNDED);
+
+        _forfeitOnce(taskId, worker, FUNDED / 2);
+        assertEq(_p().outstanding, FUNDED, "the reopened task still holds its reward");
+        assertEq(_p().available, FUNDED / 2, "the forfeited stake is a windfall in available");
+        _forfeitOnce(taskId, stranger, FUNDED / 2);
+        assertEq(_p().outstanding, FUNDED, "still the reward after a second forfeit");
+        assertEq(_p().available, FUNDED);
+
+        // The owner spends the windfall on accepted work.
+        _spend(FUNDED);
+        assertEq(_p().available, 0);
+        assertEq(_p().outstanding, FUNDED, "the pool is worth the reward its live task holds");
+
+        // One base unit buys its share of a pool worth FUNDED, not the whole pool.
+        address attacker = address(0xBAD);
+        _back(attacker, 1);
+        assertEq(_p().generation, 0, "no new share generation");
+        assertEq(pools.sharesOf(pool, attacker), SCALE, "one unit buys at the pool's value");
+        assertEq(pools.sharesOf(pool, alice), ALICE * SCALE, "alice keeps her shares");
+        assertEq(pools.sharesOf(pool, bob), BOB * SCALE, "bob keeps his shares");
+
+        _cancel(taskId);
+        assertEq(_p().outstanding, 0);
+        _close(owner);
+        assertEq(_claim(alice), ALICE, "alice's claim on the returned reward is whole");
+        assertEq(_claim(bob), BOB);
+        assertEq(_claim(owner), BUDGET);
+        assertEq(_claim(attacker), 1, "the attacker gets its one unit back and nothing more");
+        assertEq(_booked(), 0);
+    }
+
+    /// @dev Outstanding is the pool money the live tasks hold at every step of forfeit and reopen,
+    ///      with an evaluator stake drawn from the pool and stakes larger than the reward, and it
+    ///      returns to zero when the tasks finish: one cancelled, one accepted.
+    function test_Outstanding_EqualsWhatLiveTasksHold_AcrossForfeitAndReopen() public {
+        _backAll();
+        uint256 r = 5e6;
+        uint256 e = 2e6;
+        bytes32 a = abi.decode(_relay(owner, 0, _claimTaskCall(r)), (bytes32));
+        bytes32 b = abi.decode(_relay(owner, 0, _claimTaskCall(r)), (bytes32));
+        _relay(owner, 0, abi.encodeCall(market.assignEvaluator, (b, EVALUATOR, e, 0, 3 days, 2 days, RESOLVER)));
+        assertEq(_p().outstanding, _held(a) + _held(b));
+        assertEq(_p().outstanding, 2 * r + e);
+
+        // Both claimed and forfeited together, then `a` twice more with stakes above its reward.
+        _claimAs(a, worker, 3e6);
+        _claimAs(b, worker, r);
+        vm.warp(market.getTask(a).expiryTime + 1);
+        _forfeit(a);
+        _forfeit(b);
+        uint256 windfall = 3e6 + r;
+        assertEq(_p().outstanding, _held(a) + _held(b), "outstanding is what the live tasks hold");
+        assertEq(_p().outstanding, 2 * r + e);
+        assertEq(_p().available, FUNDED - 2 * r - e + windfall, "every stake is a windfall");
+        address[2] memory ws = [stranger, router];
+        for (uint256 i; i < 2; ++i) {
+            uint256 stake = (i + 2) * 3e6;
+            _forfeitOnce(a, ws[i], stake);
+            windfall += stake;
+            assertEq(_p().outstanding, _held(a) + _held(b), "outstanding is what the live tasks hold");
+            assertEq(_p().available, FUNDED - 2 * r - e + windfall, "every stake is a windfall");
+        }
+
+        _cancel(b);
+        assertEq(_p().outstanding, _held(a), "the cancelled task left outstanding in full");
+        address last = address(0xC9);
+        _claimAs(a, last, 1);
+        _relay(last, 0, abi.encodeCall(market.submitWork, (a, WORK)));
+        _relay(owner, 0, abi.encodeCall(market.acceptSubmission, (a, last, WORK, 0)));
+        assertEq(_p().outstanding, 0, "nothing stays outstanding once every task finished");
+        assertEq(_p().available, FUNDED - r + windfall);
+        _assertSolvent();
+    }
+
     /// @dev A first-depositor (inflation) attack: the owner opens with one base unit, then a
     ///      forfeited stake of its own worker pushes a large windfall into the pool, raising a
     ///      share's value as far as it can, and a donation straight to the diamond tries the same.

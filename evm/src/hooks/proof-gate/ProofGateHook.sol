@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { BaseTMPHookV2 } from "../base/BaseTMPHookV2.sol";
 import { ITMPHookV2 } from "../../interfaces/ITMPHookV2.sol";
+import { ITMPHooksV2 } from "../../interfaces/ITMPHooksV2.sol";
 
 /// @title ProofGateHook -- only allowlisted workers may submit benchmark proof entries
 /// @notice A standalone Task Hook V2 hook, shared per chain and deployed on its own. A task attaches it at creation with the
@@ -41,9 +42,13 @@ contract ProofGateHook is BaseTMPHookV2 {
         return _allowed[taskId][worker];
     }
 
-    /// @notice The task's requester allows one more worker to submit proof entries.
+    /// @notice The task's requester allows one more worker to submit proof entries. Rev030: the
+    ///         caller is checked against the task's current roles on the diamond, so a project
+    ///         task is controlled by the project's current owner or an operator acting for it,
+    ///         not by the requester of record pinned at creation.
     function allow(bytes32 taskId, address worker) external {
-        if (msg.sender != _requesterOf[taskId]) revert ProofGate__NotRequester();
+        uint32 roles = ITMPHooksV2(diamond).taskCallerRoles(taskId, msg.sender);
+        if (!_hasRole(roles, ROLE_REQUESTER) && !_hasRole(roles, ROLE_PROJECT)) revert ProofGate__NotRequester();
         if (worker == address(0)) revert ProofGate__InvalidConfig();
         _allowed[taskId][worker] = true;
         emit ProofGateAllowed(taskId, worker);

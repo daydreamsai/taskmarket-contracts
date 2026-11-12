@@ -125,7 +125,7 @@ contract Rev017UpgradeTest is Test, DiamondTestHelper {
         _assertRoutes(diamond, EvaluatorFacet.evaluatorTimeout.selector, newEval, "evaluatorTimeout");
 
         _assertRoutes(diamond, AdminFacet.diamondVersion.selector, newAdmin, "diamondVersion");
-        _assertRoutes(diamond, AdminFacet.setDefaultHooks.selector, newAdmin, "setDefaultHooks");
+        _assertRoutes(diamond, FacetSelectors.SET_DEFAULT_HOOKS, newAdmin, "setDefaultHooks");
 
         // Both added selectors route, and the getter answers with the lazy default rather than
         // the raw zero actually sitting in the freshly-appended storage slot -- the guard must be

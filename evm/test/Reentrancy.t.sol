@@ -5,7 +5,8 @@ import "forge-std/Test.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
-import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
+import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
+import { BaseTMPHookV2 } from "../src/hooks/base/BaseTMPHookV2.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { TaskMarketForwarderV2 } from "../src/TaskMarketForwarderV2.sol";
@@ -69,65 +70,55 @@ contract ReentrantToken is ERC20 {
     }
 }
 
-/// @dev Hook that approves every check and, from each settlement callback, tries to re-enter the
-///      diamond with preset calldata, recording how that call ended.
-contract ReentrantHook is ITMPHook {
+/// @dev Task Hook V2 hook that, from each settlement callback (afterComplete, afterForfeit, afterCancel,
+///      afterExpire), tries to re-enter the diamond with preset calldata, recording how that call ended.
+contract ReentrantHook is BaseTMPHookV2 {
     address public reentryTarget;
     bytes public reentryData;
     uint256 public attempts;
     bool public reentrySucceeded;
     bytes public reentryRevertData;
 
+    constructor(address diamond_) BaseTMPHookV2(diamond_) { }
+
     function arm(address _target, bytes calldata _data) external {
         reentryTarget = _target;
         reentryData = _data;
     }
 
-    function supportsInterface(bytes4 id) external pure returns (bool) {
-        return id == type(ITMPHook).interfaceId;
+    function hookCapabilities() external pure override returns (uint32) {
+        return (uint32(1) << 21) | (uint32(1) << 22) | (uint32(1) << 23) | (uint32(1) << 24);
     }
 
-    function checkFund(bytes32, ITMPCore.TaskContext calldata, bytes calldata) external pure returns (bool) {
-        return true;
-    }
-
-    function checkClaim(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
-        return true;
-    }
-
-    function checkSelectWorker(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
-        return true;
-    }
-
-    function checkSubmit(bytes32, ITMPCore.TaskContext calldata, address, bytes32) external pure returns (bool) {
-        return true;
-    }
-
-    function checkEvaluate(bytes32, ITMPCore.TaskContext calldata, address) external pure returns (bool) {
-        return true;
-    }
-
-    function checkComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata)
+    function afterComplete(bytes32, TaskContextV2 calldata, SettlementAmounts calldata, uint64)
         external
-        pure
-        returns (bool)
+        override
+        onlyDiamond
     {
-        return true;
-    }
-
-    function onComplete(bytes32, ITMPCore.TaskContext calldata, ITMPCore.Verdict calldata) external {
         _reenter();
     }
 
-    function onForfeit(bytes32, ITMPCore.TaskContext calldata, address) external {
+    function afterForfeit(bytes32, TaskContextV2 calldata, SettlementAmounts calldata, uint64)
+        external
+        override
+        onlyDiamond
+    {
         _reenter();
     }
 
-    function onCancel(bytes32, ITMPCore.TaskContext calldata) external {
+    function afterCancel(bytes32, TaskContextV2 calldata, SettlementAmounts calldata, uint64)
+        external
+        override
+        onlyDiamond
+    {
         _reenter();
     }
 
-    function onExpire(bytes32, ITMPCore.TaskContext calldata) external {
+    function afterExpire(bytes32, TaskContextV2 calldata, SettlementAmounts calldata, uint64)
+        external
+        override
+        onlyDiamond
+    {
         _reenter();
     }
 
@@ -163,9 +154,6 @@ contract DiamondReentrancyTest is DiamondTestHelper {
         token = new ReentrantToken();
         vm.startPrank(owner);
         market = deployDiamond(owner, address(token), feeRecipient, FEE_BPS);
-        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
-        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
-        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(token));
         market.addForwarder(address(forwarder));
         vm.stopPrank();
@@ -331,7 +319,7 @@ contract DiamondReentrancyTest is DiamondTestHelper {
     // -------------------------------------------------------------------------
 
     function _hooked() internal returns (ReentrantHook hook, bytes32 taskId) {
-        hook = new ReentrantHook();
+        hook = new ReentrantHook(address(market));
         address[] memory hooks = new address[](1);
         hooks[0] = address(hook);
         taskId = _createBounty(hooks);
@@ -422,9 +410,6 @@ contract ForwarderReentrancyTest is DiamondTestHelper {
         token = new ReentrantToken();
         vm.startPrank(owner);
         market = deployDiamond(owner, address(token), owner, 500);
-        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
-        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
-        placeAtVersion(address(market), 27);
         forwarder = new TaskMarketForwarderV2(address(token), address(market), address(token));
         market.addForwarder(address(forwarder));
         vm.stopPrank();

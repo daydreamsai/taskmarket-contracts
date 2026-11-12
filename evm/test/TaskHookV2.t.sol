@@ -16,6 +16,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { MockTaskHook } from "./mocks/MockTaskHook.sol";
 import { MockTaskHookV2 } from "./mocks/MockTaskHookV2.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { LibRevision } from "../src/libraries/LibRevision.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 
@@ -151,6 +152,22 @@ contract TaskHookV2Test is DiamondTestHelper {
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Disputed), "disputed");
     }
 
+    function _disputedTaskNoHook() internal returns (bytes32 taskId) {
+        taskId = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
+        _relay(
+            requester, 0, abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, 2 days, 1 days, resolver))
+        );
+        _claimAndSubmit(taskId);
+        ITMPCore.Award[] memory none = new ITMPCore.Award[](0);
+        _relay(
+            evaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.REJECT, 0, 1000, bytes32(0), none))
+        );
+        _relay(worker, 0, abi.encodeCall(market.appeal, (taskId)));
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Disputed), "disputed");
+    }
+
     function _resolve(bytes32 taskId) internal {
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker, amount: REWARD, rank: 1 });
@@ -196,7 +213,7 @@ contract TaskHookV2Test is DiamondTestHelper {
         _createClaim(address(none));
 
         MockTaskHookV2 future = _mock(BIT_CREATE);
-        future.setMinVersion(30);
+        future.setMinVersion(uint16(LibRevision.CURRENT_REVISION + 1));
         vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookIncompatible.selector, uint8(0), uint8(3)));
         _createClaim(address(future));
     }
@@ -357,18 +374,26 @@ contract TaskHookV2Test is DiamondTestHelper {
         assertEq(h.lastTerminalKind(), 2);
     }
 
+    /// @dev A task from before the cut: dispatch version 0 and a V1 hook list in storage (no code path
+    ///      can create one now, so makeLegacyV1Task writes it). Rev030: it is a task with no hooks.
+    function _legacyV1Task(MockTaskHook v1) internal returns (bytes32 taskId) {
+        taskId = _createWith(TMP_CLAIM, new address[](0), new bytes[](0));
+        address[] memory legacy = new address[](1);
+        legacy[0] = address(v1);
+        makeLegacyV1Task(address(market), taskId, legacy);
+        assertEq(v2.getTaskHookVersion(taskId), 0, "created before the cut");
+    }
+
     function test_SettlementRecordForPreCutV1Task() public {
-        placeAtVersion(address(market), 27);
         MockTaskHook v1 = new MockTaskHook();
-        bytes32 taskId = _createClaim(address(v1));
-        assertEq(v2.getTaskHookVersion(taskId), 0, "created as V1");
-        placeAtVersion(address(market), 28);
+        bytes32 taskId = _legacyV1Task(v1);
         _claimAndSubmit(taskId);
         _accept(taskId);
         ITMPHookV2.SettlementAmounts memory r = v2.getTaskSettlement(taskId);
-        assertTrue(r.recorded, "V1 tasks that end after the cut are recorded");
+        assertTrue(r.recorded, "tasks from before the cut are recorded");
         assertEq(r.workerPaid, _net(REWARD));
-        assertEq(v1.checkCompleteCalls(), 1, "V1 checkComplete still runs");
+        assertEq(v1.checkCompleteCalls(), 0, "the V1 hook is not called");
+        assertEq(v1.onCompleteCalls(), 0, "the V1 hook is not called");
     }
 
     // -------------------------------------------------------------------------
@@ -456,14 +481,18 @@ contract TaskHookV2Test is DiamondTestHelper {
         assertEq(usdc.balanceOf(worker), _net(REWARD));
     }
 
-    function test_DisputeShowsDisputedToV1CheckComplete() public {
-        placeAtVersion(address(market), 27);
-        V1StateRecorder v1 = new V1StateRecorder();
-        bytes32 taskId = _disputedTask(address(v1));
-        placeAtVersion(address(market), 28);
+    function test_DisputeOnAPreCutTaskResolvesWithoutItsV1Hook() public {
+        MockTaskHook v1 = new MockTaskHook();
+        v1.setRevertOnCheckComplete(true);
+        bytes32 taskId = _disputedTaskNoHook();
+        address[] memory legacy = new address[](1);
+        legacy[0] = address(v1);
+        makeLegacyV1Task(address(market), taskId, legacy);
         _resolve(taskId);
-        assertEq(uint8(v1.lastCheckCompleteState()), uint8(ITMPCore.TaskStatus.Disputed), "checkComplete");
-        assertEq(uint8(v1.lastOnCompleteState()), uint8(ITMPCore.TaskStatus.Accepted), "onComplete");
+        assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted), "ruling settled");
+        assertEq(v1.checkCompleteCalls(), 0, "no V1 checkComplete");
+        assertEq(v1.onCompleteCalls(), 0, "no V1 onComplete");
+        assertTrue(v2.getTaskSettlement(taskId).recorded, "recorded");
     }
 
     // -------------------------------------------------------------------------
@@ -666,14 +695,12 @@ contract TaskHookV2Test is DiamondTestHelper {
         assertEq(uint8(h.lastPriorStatus()), uint8(ITMPCore.TaskStatus.Open));
     }
 
-    function test_V1TaskSkipsActionsWithoutV1Check() public {
-        placeAtVersion(address(market), 27);
+    function test_PreCutTaskCancelsWithoutItsV1Hook() public {
         MockTaskHook v1 = new MockTaskHook();
-        bytes32 taskId = _createClaim(address(v1));
-        placeAtVersion(address(market), 28);
-        // cancelTask has no V1 check hook; it must not reach the dispatch for one.
+        bytes32 taskId = _legacyV1Task(v1);
         _relay(requester, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
         assertTrue(v2.getTaskSettlement(taskId).recorded);
+        assertEq(v1.onCancelCalls(), 0, "the V1 hook is not called");
     }
 
     // -------------------------------------------------------------------------
@@ -899,27 +926,6 @@ contract TaskHookV2Test is DiamondTestHelper {
         );
         assertEq(uint8(market.getTaskState(taskId)), uint8(ITMPCore.TaskStatus.Accepted));
         assertEq(MockTaskHookV2(hooks[0]).lastTerminalKind(), 1, "the first callbacks ran");
-    }
-}
-
-/// @dev V1 hook recording the state each callback observed.
-contract V1StateRecorder is MockTaskHook {
-    ITMPCore.TaskStatus public lastCheckCompleteState;
-    ITMPCore.TaskStatus public lastOnCompleteState;
-
-    function checkComplete(bytes32 taskId, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata v)
-        external
-        override
-        returns (bool)
-    {
-        taskId;
-        v;
-        lastCheckCompleteState = ctx.currentState;
-        return true;
-    }
-
-    function onComplete(bytes32, ITMPCore.TaskContext calldata ctx, ITMPCore.Verdict calldata) external override {
-        lastOnCompleteState = ctx.currentState;
     }
 }
 

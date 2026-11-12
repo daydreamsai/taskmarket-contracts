@@ -172,6 +172,29 @@ contract AdminFacet is Initializable {
     }
 
     // -------------------------------------------------------------------------
+    // Submission winner cap (Rev030)
+    // -------------------------------------------------------------------------
+
+    /// @notice Return the most winners one Bounty or Benchmark settlement may pay on this chain.
+    ///         Returns LibTaskMarket.MAX_SUBMISSION_WINNERS (50) when it has never been set.
+    function maxSubmissionWinners() external view returns (uint256) {
+        return LibTaskMarket._maxSubmissionWinners(LibAppStorage.appStorage());
+    }
+
+    /// @notice Set this chain's winner cap (owner only), from 1 to
+    ///         LibTaskMarket.MAX_SUBMISSION_WINNERS. It bounds the awards of evaluate and
+    ///         resolveDispute on a Bounty or Benchmark task, and acceptSubmissions. A chain whose new
+    ///         storage slots cost more gas sets it lower, so a verdict that can be stored can also
+    ///         be paid in one transaction. A verdict already stored keeps its awards.
+    function setMaxSubmissionWinners(uint16 newMaximum) external onlyOwner {
+        if (newMaximum == 0 || newMaximum > LibTaskMarket.MAX_SUBMISSION_WINNERS) {
+            revert ITMPCore.InvalidMaxSubmissionWinners();
+        }
+        LibAppStorage.appStorage().maxSubmissionWinners = newMaximum;
+        emit ITMPCore.MaxSubmissionWinnersUpdated(newMaximum);
+    }
+
+    // -------------------------------------------------------------------------
     // Escrow surplus (Rev026)
     // -------------------------------------------------------------------------
 
@@ -240,34 +263,6 @@ contract AdminFacet is Initializable {
     }
 
     // -------------------------------------------------------------------------
-    // Default hooks (Rev008)
-    // -------------------------------------------------------------------------
-
-    /// @notice Replace the protocol default hook list (owner only).
-    ///         These hooks are prepended to every new task's hook list at createTask().
-    ///         Does not affect tasks already created.
-    ///         At most maxHooks default hooks to bound hook dispatch gas cost.
-    function setDefaultHooks(address[] calldata hooks) external onlyOwner {
-        AppStorage storage s = LibAppStorage.appStorage();
-        if (hooks.length > LibTaskLimits.maxHooks(s)) revert ITMPCore.TooManyHooks();
-        delete s.defaultHooks;
-        for (uint256 i; i < hooks.length; i++) {
-            if (hooks[i] == address(0)) revert ITMPCore.InvalidHookAddress();
-            if (hooks[i].code.length == 0) revert ITMPCore.InvalidHookAddress();
-            for (uint256 j; j < i; j++) {
-                if (hooks[j] == hooks[i]) revert ITMPCore.DuplicateHookAddress();
-            }
-            s.defaultHooks.push(hooks[i]);
-        }
-        emit ITMPCore.DefaultHooksSet(hooks);
-    }
-
-    /// @notice Return the current protocol default hook list.
-    function getDefaultHooks() external view returns (address[] memory) {
-        return LibAppStorage.appStorage().defaultHooks;
-    }
-
-    // -------------------------------------------------------------------------
     // Minimum appeal window (Rev017)
     // -------------------------------------------------------------------------
 
@@ -319,14 +314,20 @@ contract AdminFacet is Initializable {
     ///         the review, decision and reopen-extension windows alike. A task whose term is zero
     ///         uses the protocol default whatever the bounds, and a task already created keeps
     ///         the terms it was created with.
+    ///         Rev030: maxWindowSecs also caps an evaluator's evaluationWindow, so it may not fall
+    ///         below the effective minEvaluationWindowSecs, which would leave no valid window.
     function setTermsBounds(uint32 minWindowSecs, uint32 maxWindowSecs, uint16 maxRejectFeeBps, uint8 maxRevisions)
         external
         onlyOwner
     {
-        if (minWindowSecs == 0 || minWindowSecs > maxWindowSecs || maxRejectFeeBps > 10000 || maxRevisions == 255) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        if (
+            minWindowSecs == 0 || minWindowSecs > maxWindowSecs || maxRejectFeeBps > 10000 || maxRevisions == 255
+                || maxWindowSecs < LibTaskMarket._minEvaluationWindowSecs(s)
+        ) {
             revert ITMPCore.InvalidTermsBounds();
         }
-        LibAppStorage.appStorage().termsBounds = ITMPCore.TermsBounds({
+        s.termsBounds = ITMPCore.TermsBounds({
             minWindowSecs: minWindowSecs,
             maxWindowSecs: maxWindowSecs,
             maxRejectFeeBps: maxRejectFeeBps + 1,
@@ -347,7 +348,7 @@ contract AdminFacet is Initializable {
         AppStorage storage s = LibAppStorage.appStorage();
         if (
             maxTags_ == 0 || maxTags_ > LibTaskLimits.MAX_MAX_TAGS || maxHooks_ == 0
-                || maxHooks_ > LibTaskLimits.MAX_MAX_HOOKS || maxHooks_ < s.defaultHooks.length
+                || maxHooks_ > LibTaskLimits.MAX_MAX_HOOKS || maxHooks_ < s.defaultHooksV2.length
         ) {
             revert ITMPCore.InvalidTaskLimits();
         }

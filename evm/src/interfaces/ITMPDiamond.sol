@@ -162,8 +162,6 @@ interface ITMPDiamond {
     function setDefaultFeeBps(uint16 feeBps) external;
     function setFeeRecipient(address recipient) external;
     function setReputationRegistry(address registry) external;
-    function setDefaultHooks(address[] calldata hooks) external;
-    function getDefaultHooks() external view returns (address[] memory);
     // Rev017: admin-settable floor on assignEvaluator's appealWindowSecs.
     function minAppealWindowSecs() external view returns (uint32);
     function setMinAppealWindowSecs(uint32 newMinimum) external;
@@ -227,6 +225,9 @@ interface ITMPDiamond {
     // Rev026: per-chain gas stipend forwarded to each hook call.
     function hookGasStipend() external view returns (uint256);
     function setHookGasStipend(uint256 newStipend) external;
+    // Rev030: per-chain cap on the winners one Bounty or Benchmark settlement may pay.
+    function maxSubmissionWinners() external view returns (uint256);
+    function setMaxSubmissionWinners(uint16 newMaximum) external;
 
     // -------------------------------------------------------------------------
     // DiamondLoupeFacet

@@ -33,6 +33,12 @@ Tasks created before the cut read `0` and keep their stored `taskHooks` array an
 (callbacks, context, stipend, failure behaviour) until they are terminal. Nothing migrates them.
 `defaultHooks` (V1) is no longer applied to new tasks; V2 defaults live in `defaultHooksV2`.
 
+Correction (rev030, 2026-11-11): rev030 retires V1 dispatch for those tasks as well (rev030, change
+30). A task with `taskHookVersion` 0 now behaves as a task with no hooks: its stored `taskHooks` list
+is never read and no V1 callback runs. The statements in this document about pre-cut tasks keeping V1
+dispatch, and about `hookCheckCompleteV1`, `setDefaultHooks` and `getDefaultHooks`, describe rev028
+and rev029 only.
+
 Every `createTask` overload keeps its selector. For a V2 task, `HookConfig.contracts` holds the
 requester's V2 hooks and `HookConfig.data` is empty or `abi.encode(bytes[] configs)`, one
 configuration per requester hook (a length mismatch reverts `HookIncompatible(index, 5)`). A hook
@@ -159,8 +165,8 @@ Roles are flags; one wallet can hold several:
 
 | Flag        | Value     | Holder                                                                                          |
 | ----------- | --------- | ----------------------------------------------------------------------------------------------- |
-| `REQUESTER` | `1 << 0`  | `task.requester`                                                                                |
-| `PROJECT`   | `1 << 1`  | the owner of the task's project, the operator that created it, or an operator with an accepted, unrevoked grant on the project |
+| `REQUESTER` | `1 << 0`  | `task.requester`; from rev030, on a task an operator created, only while it may act on the task |
+| `PROJECT`   | `1 << 1`  | the owner of the task's project, the operator that created it while it may act on the task (from rev030, `rev030-hook-roles-follow-task-control.md`), or an operator with an accepted, unrevoked grant on the project |
 | `WORKER`    | `1 << 2`  | `task.worker` (the claimer, selected pitcher or auction winner; cleared by a forfeit)          |
 | `SUBMITTER` | `1 << 3`  | a wallet with a recorded submission: Bounty and Benchmark only (a single-worker delivery is `WORKER`) |
 | `EVALUATOR` | `1 << 4`  | the task's assigned evaluator                                                                   |
@@ -570,6 +576,11 @@ needed about 29.5M of the 29.9M cap. The facet CREATEs are separate transactions
   The rollout sets none. In particular, the DREAMS reward hook is not a default in this revision, and
   nothing in rev028 depends on it.
 
+  Correction (rev030, 2026-11-11): on Base, `TaskTokenRewardHookV2` is a protocol default V2 hook,
+  set with `setDefaultHooksV2` after this rollout, so it is attached first to every new Base task and
+  runs before the requester's hooks. A requester's transforming hook therefore runs after it in
+  `beforeAccept`. The rev030 revision moves the bonus payout to `afterComplete` for that reason.
+
 CI checks that every contract fits EIP-170 (`make contract evm size-check`). A test estimates each
 cut's Tempo gas from its new storage slots.
 
@@ -588,6 +599,11 @@ Make targets follow the existing deploy pattern (chain ID, or `preview`; `DRY_RU
 | `deploy-remote-sponsored-task-hook-v2` | `DeployRemoteSponsoredTaskHookV2` | Proxy owned by the remote-hook admin |
 | `deploy-reward-hook-v2` | `DeployRewardHookV2` | Base only, and not part of the rev028 rollout (DREAMS does not exist on Tempo). Proxy with its own vault and budget; not made a default |
 | `set-default-hooks-v2` | `SetDefaultHooksV2` | Diamond owner. `FORGE_DEFAULT_HOOKS_V2` is a comma-separated list of at most two hooks. The rev028 rollout sets none |
+
+Correction (rev030, 2026-11-11): the `deploy-reward-hook-v2` row says the reward hook is "not made a
+default". The deploy script still does not set it, but on Base it was later made a protocol default
+with `set-default-hooks-v2`, so it runs on every new Base task. It is not deployed on Tempo or
+Robinhood Chain.
 
 ## Known limits and trade-offs
 

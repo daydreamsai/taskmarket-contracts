@@ -164,10 +164,41 @@ contract ProjectGrantsTest is DiamondTestHelper {
         _grant(otherOperator, _wideOpen());
         assertEq(_roles(ownerTask, otherOperator), strangerRole, "unaccepted grant");
 
-        // Revoked: no longer a project operator, though still the creator of its own task.
+        // Revoked with revokeRemovesControl (rev030): no longer a project operator, and no role on
+        // its own task either, though it is still the creator and the requester of record.
         _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, operator)));
         assertEq(_roles(ownerTask, operator), strangerRole, "revoked operator");
-        assertTrue(_roles(opTask, operator) & projectRole != 0, "creator of the task");
+        assertEq(market.getTask(opTask).requester, operator, "still the requester of record");
+        assertEq(_roles(opTask, operator), strangerRole, "creator whose control was removed");
+        assertEq(_roles(opTask, owner), projectRole, "the owner keeps the project role");
+    }
+
+    /// @dev Rev030: the creating operator's roles on its task follow LibProject.mayAct in every
+    ///      combination of requester of record, override and revoke setting.
+    function test_CallerRoles_CreatorFollowsMayAct() public {
+        uint32 requesterRole = 1 << 0;
+        uint32 projectRole = 1 << 1;
+        uint32 strangerRole = uint32(1) << 31;
+        ITMPProject.RequesterOfRecord[2] memory rors =
+            [ITMPProject.RequesterOfRecord.Owner, ITMPProject.RequesterOfRecord.Operator];
+        for (uint256 i; i < 2; ++i) {
+            for (uint256 j; j < 2; ++j) {
+                uint256 snap = vm.snapshotState();
+                bool removes = j == 0;
+                bool ofRecord = rors[i] == ITMPProject.RequesterOfRecord.Operator;
+                bytes32 t = _matrix(rors[i], false, removes);
+                _relay(owner, 0, abi.encodeCall(projects.revokeOperator, (id, operator)));
+                bool acts = _canAct(operator, t);
+                assertEq(acts, !removes, "mayAct: only revokeRemovesControl takes control away");
+                uint32 expected = acts ? projectRole | (ofRecord ? requesterRole : 0) : strangerRole;
+                assertEq(_roles(t, operator), expected, "the creator's roles follow its control");
+                // The owner always holds the project role; as requester of record it holds the
+                // requester role only once it may act (here, with override off, after a removing revoke).
+                uint32 ownerExpected = projectRole | (!ofRecord && removes ? requesterRole : 0);
+                assertEq(_roles(t, owner), ownerExpected, "the owner's roles follow its control");
+                vm.revertToState(snap);
+            }
+        }
     }
 
     function _cancel(address who, bytes32 taskId) internal returns (bool ok) {

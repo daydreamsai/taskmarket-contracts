@@ -392,14 +392,14 @@ fn settle_records_when_the_root_was_installed() {
 }
 
 #[test]
-fn claim_delay_defaults_to_an_hour_and_unset_reads_as_the_default() {
+fn claim_delay_defaults_to_a_day_and_unset_reads_as_the_default() {
     let mut env = Env::new();
     let mut config = env.config();
     assert_eq!(config.claim_delay_seconds, DEFAULT_CLAIM_DELAY_SECONDS);
-    assert_eq!(config.claim_delay(), 3_600);
+    assert_eq!(config.claim_delay(), 86_400);
     config.claim_delay_seconds = 0;
     env.write(&config_pda(), &config);
-    assert_eq!(env.config().claim_delay(), 3_600);
+    assert_eq!(env.config().claim_delay(), 86_400);
 }
 
 #[test]
@@ -595,13 +595,19 @@ fn a_settlement_keeps_the_claim_delay_it_was_installed_with() {
         &[&s],
     )
     .unwrap();
-    assert_eq!(env.reservation(&r).claim_delay_seconds, 3_600);
+    assert_eq!(
+        env.reservation(&r).claim_delay_seconds,
+        DEFAULT_CLAIM_DELAY_SECONDS
+    );
 
     // Collapsing the delay afterwards does not shorten the root already installed.
     let admin = env.admin.insecure_clone();
     env.send(&[set_claim_delay_ix(&admin.pubkey(), 1)], &[&admin])
         .unwrap();
-    assert_eq!(env.reservation(&r).claim_delay_seconds, 3_600);
+    assert_eq!(
+        env.reservation(&r).claim_delay_seconds,
+        DEFAULT_CLAIM_DELAY_SECONDS
+    );
 
     // A revoked and re-installed root takes the delay in force at the new settle.
     env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])

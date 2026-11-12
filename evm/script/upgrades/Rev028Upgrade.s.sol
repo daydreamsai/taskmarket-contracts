@@ -110,7 +110,7 @@ contract Rev028Upgrade is Script {
         cuts[0] = IDiamondCut.FacetCut(
             address(new HookDispatchFacet()),
             IDiamondCut.FacetCutAction.Add,
-            FacetSelectors.hookDispatchFacetSelectors()
+            FacetSelectors.hookDispatchFacetSelectorsThroughRev029()
         );
         cuts[1] = IDiamondCut.FacetCut(
             address(new HooksV2Facet()), IDiamondCut.FacetCutAction.Add, FacetSelectors.hooksV2FacetSelectors()
@@ -173,7 +173,9 @@ contract Rev028Upgrade is Script {
     function cutFour() public returns (IDiamondCut.FacetCut[] memory cuts) {
         cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut(
-            address(new AdminFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.adminFacetSelectors()
+            address(new AdminFacet()),
+            IDiamondCut.FacetCutAction.Replace,
+            FacetSelectors.adminFacetSelectorsThroughRev029()
         );
         cuts[1] = IDiamondCut.FacetCut(
             address(new FeedbackFacet()), IDiamondCut.FacetCutAction.Replace, FacetSelectors.feedbackFacetSelectors()

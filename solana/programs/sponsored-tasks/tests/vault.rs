@@ -27,6 +27,35 @@ fn init_config_by_upgrade_authority() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].admin, env.admin.pubkey());
     assert_eq!(events[0].threshold, 2);
+    assert_eq!(config.cluster_id, TEST_CLUSTER_ID);
+    assert_eq!(events[0].cluster_id, TEST_CLUSTER_ID);
+}
+
+#[test]
+fn init_config_rejects_a_zero_admin_and_a_zero_cluster_id() {
+    let mut env = Env::bare();
+    let authority = env.upgrade_authority.insecure_clone();
+    let settlers = vec![env.settlers[0].pubkey()];
+    assert_error(
+        env.init_config_as(
+            &authority,
+            Pubkey::default(),
+            TEST_CLUSTER_ID,
+            settlers.clone(),
+            1,
+            0,
+        ),
+        E::InvalidAdmin,
+    );
+    let admin = env.admin.pubkey();
+    assert_error(
+        env.init_config_as(&authority, admin, [0; 32], settlers.clone(), 1, 0),
+        E::InvalidClusterId,
+    );
+    // Neither refusal left a config behind: a valid one still initialises.
+    env.init_config_as(&authority, admin, TEST_CLUSTER_ID, settlers, 1, 0)
+        .unwrap();
+    assert_eq!(env.config().admin, admin);
 }
 
 #[test]
@@ -306,16 +335,6 @@ fn create_vault_accepts_token_2022_plain_and_allowed_extensions() {
     assert_eq!(env.vault(&f.vault).token_program, TOKEN_2022);
 
     let payer = env.payer.pubkey();
-    allowed_mint(&mut env, ExtensionType::MintCloseAuthority, |mint| {
-        vec![
-            spl_token_2022_interface::instruction::initialize_mint_close_authority(
-                &TOKEN_2022,
-                mint,
-                Some(&payer),
-            )
-            .unwrap(),
-        ]
-    });
     allowed_mint(&mut env, ExtensionType::Pausable, |mint| {
         vec![
             spl_token_2022_interface::extension::pausable::instruction::initialize(
@@ -419,6 +438,22 @@ fn create_vault_rejects_permanent_delegate_mint() {
                 &TOKEN_2022,
                 mint,
                 &payer,
+            )
+            .unwrap(),
+        ]
+    });
+}
+
+#[test]
+fn create_vault_rejects_mint_close_authority() {
+    let mut env = Env::new();
+    let payer = env.payer.pubkey();
+    assert_mint_rejected(&mut env, ExtensionType::MintCloseAuthority, |mint| {
+        vec![
+            spl_token_2022_interface::instruction::initialize_mint_close_authority(
+                &TOKEN_2022,
+                mint,
+                Some(&payer),
             )
             .unwrap(),
         ]
@@ -974,6 +1009,66 @@ fn release_open_while_paused() {
 }
 
 #[test]
+fn release_expired_is_permissionless_only_after_the_reservation_deadline() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+
+    // Before the deadline nobody but a settler may release.
+    env.warp_to(DEADLINE - 10);
+    assert_error(
+        env.send(&[f.release_expired_ix(r)], &[]),
+        E::ReservationNotExpired,
+    );
+    // The deadline second itself still counts as live.
+    env.warp_to(DEADLINE);
+    assert_error(
+        env.send(&[f.release_expired_ix(r)], &[]),
+        E::ReservationNotExpired,
+    );
+    assert_eq!(env.reservation(&r).state, ReservationState::Reserved);
+
+    // After it, anyone releases, even while the program is paused, with the usual event.
+    env.warp_to(DEADLINE + 1);
+    env.pause(true);
+    env.send(&[f.release_expired_ix(r)], &[]).unwrap();
+    assert_eq!(env.reservation(&r).state, ReservationState::Released);
+    let vault = env.vault(&f.vault);
+    assert_eq!(vault.total_reserved, 0);
+    assert_eq!(vault.available(), 1_000);
+    assert_eq!(vault.managers[0].reserved, 0);
+    let events = env.events::<TaskReleased>();
+    assert_eq!(events[0].reservation, r);
+    assert_eq!(events[0].amount, 400);
+
+    // A second call is a no-op and emits nothing.
+    env.send(&[f.release_expired_ix(r)], &[]).unwrap();
+    assert!(env.events::<TaskReleased>().is_empty());
+}
+
+#[test]
+fn release_expired_refuses_a_settled_reservation_and_an_exited_vault() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let (g, r2) = env.reserved_vault(400);
+    env.stage_settlement(&f, &r, 400, 0);
+    let sponsor = g.sponsor.insecure_clone();
+    env.send(
+        &[g.exit_ix(&sponsor.pubkey(), &g.sponsor_token)],
+        &[&sponsor],
+    )
+    .unwrap();
+    env.warp_to(DEADLINE + 1);
+    assert_error(
+        env.send(&[f.release_expired_ix(r)], &[]),
+        E::ReservationWrongState,
+    );
+    assert_error(
+        env.send(&[g.release_expired_ix(r2)], &[]),
+        E::VaultNotActive,
+    );
+}
+
+#[test]
 fn release_rejects_non_settler() {
     let mut env = Env::new();
     let (f, r) = env.reserved_vault(400);
@@ -1381,6 +1476,67 @@ fn a_manager_with_a_settled_reservation_cannot_be_replaced() {
         .unwrap();
     let m = env.vault(&f.vault).managers[0];
     assert_eq!((m.key, m.reserved, m.spent), (manager(1), 400, 0));
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards([8; 32], 1, 100, 0))],
+        &[&s],
+    )
+    .unwrap();
+    assert_eq!(env.reservation(&r).root, [8; 32]);
+}
+
+#[test]
+fn revoke_fails_while_the_manager_slot_was_reused_and_works_once_it_is_back() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let s = env.settlers[0].insecure_clone();
+    // A settlement that awards nothing spends nothing, leaving the manager replaceable.
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards([0; 32], 0, 0, 0))],
+        &[&s],
+    )
+    .unwrap();
+    let sponsor = f.sponsor.insecure_clone();
+    let mut inputs: Vec<ManagerInput> = (2..9).map(|n| input(manager(n), 1, true)).collect();
+    inputs.insert(0, input(manager(1), 1_000, false));
+    env.send(&[f.set_managers_ix(&sponsor.pubkey(), inputs)], &[&sponsor])
+        .unwrap();
+    env.send(
+        &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(9), 1, true)])],
+        &[&sponsor],
+    )
+    .unwrap();
+    assert!(!env
+        .vault(&f.vault)
+        .managers
+        .iter()
+        .any(|m| m.key == manager(1)));
+
+    // Revoking would leave a reservation `settle` can never settle, so it is refused and
+    // nothing changes.
+    let admin = env.admin.insecure_clone();
+    let before = env.vault(&f.vault);
+    assert_error(
+        env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin]),
+        E::ManagerNotActive,
+    );
+    assert_eq!(env.reservation(&r).state, ReservationState::Settled);
+    assert_eq!(env.vault(&f.vault).total_reserved, before.total_reserved);
+
+    // Putting the manager back (freeing a slot first) lets the revoke through, and the
+    // corrected root then settles.
+    env.send(
+        &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(2), 1, false)])],
+        &[&sponsor],
+    )
+    .unwrap();
+    env.send(
+        &[f.set_managers_ix(&sponsor.pubkey(), vec![input(manager(1), 1_000, true)])],
+        &[&sponsor],
+    )
+    .unwrap();
+    env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
+        .unwrap();
+    assert_eq!(env.reservation(&r).state, ReservationState::Reserved);
     env.send(
         &[f.settle_ix(&[&s], r, SettleTerms::awards([8; 32], 1, 100, 0))],
         &[&s],

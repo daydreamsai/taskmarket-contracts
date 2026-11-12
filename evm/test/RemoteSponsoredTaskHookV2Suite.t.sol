@@ -8,7 +8,7 @@ import { Test } from "forge-std/Test.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
-import { TMP_AUCTION, TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
@@ -162,7 +162,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         assertEq(c.allocationId, keccak256(abi.encode(TASK_CHAIN_ID, TASK_ID)));
         assertEq(c.allocationId, hook.allocationIdFor(TASK_CHAIN_ID, TASK_ID));
         assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHookV2.HookStatus.Committed));
-        assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE), TASK_ID);
+        assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE, MANAGER), TASK_ID);
         assertEq(hook.reservationReleaseAfter(TASK_ID), block.timestamp + 3 days + 7 days);
     }
 
@@ -358,6 +358,68 @@ contract RemoteSponsoredTaskHookTest is Test {
         market.setStatus(auctionTask, ITMPCore.TaskStatus.Accepted);
         assertEq(uint8(hook.reconcile(auctionTask)), uint8(RemoteSponsoredTaskHookV2.HookStatus.SettlementPrepared));
         assertEq(hook.outcome(auctionTask).sponsoredTaskTotal, 9_250);
+    }
+
+    function testReconcileUncommittedClaimPaysSoleWorker() public {
+        bytes32 claimTask = keccak256("claim-lapsed");
+        market.primeTask(claimTask, MANAGER, address(0x05DC), NATIVE_REWARD, TMP_CLAIM, address(hook));
+        RemoteSponsoredTaskHookV2.FundingRequest memory r = _request();
+        r.taskTermsHash = hook.currentTaskTermsHash(claimTask);
+        market.callCheckFundV2(hook, claimTask, hook.encodeHookData(r));
+        market.setWorkerAndStake(claimTask, ALICE, 0, keccak256("deliverable"));
+        // A lapsed-review settlement whose hook callbacks were all swallowed.
+        market.setStatus(claimTask, ITMPCore.TaskStatus.Accepted);
+        assertEq(uint8(hook.reconcile(claimTask)), uint8(RemoteSponsoredTaskHookV2.HookStatus.SettlementPrepared));
+        assertEq(hook.outcome(claimTask).awardCount, 1);
+    }
+
+    function testEvaluatorAndTermsFrozenOnceCommitted() public {
+        uint32 caps = hook.hookCapabilities();
+        assertTrue(caps & (uint32(1) << 1) != 0 && caps & (uint32(1) << 2) != 0, "bits 1 and 2 declared");
+        ITMPHookV2.TaskContextV2 memory ctx;
+        vm.startPrank(address(market));
+        hook.beforeAssignEvaluator(TASK_ID, ctx, ALICE, "");
+        hook.beforeUpdate(TASK_ID, ctx, "");
+        vm.stopPrank();
+
+        _fund();
+        vm.startPrank(address(market));
+        vm.expectPartialRevert(RemoteSponsoredTaskHookV2.CommitmentTermsFrozen.selector);
+        hook.beforeAssignEvaluator(TASK_ID, ctx, ALICE, "");
+        vm.expectPartialRevert(RemoteSponsoredTaskHookV2.CommitmentTermsFrozen.selector);
+        hook.beforeUpdate(TASK_ID, ctx, "");
+        vm.stopPrank();
+    }
+
+    function testAnotherCreatorCannotBurnTheNonce() public {
+        // An attacker creates a task first with the same hookData fields.
+        address attacker = address(0xBAD);
+        bytes32 attackTask = keccak256("attack-task");
+        market.primeTask(attackTask, attacker, address(0x05DC), NATIVE_REWARD, TMP_BOUNTY, address(hook));
+        RemoteSponsoredTaskHookV2.FundingRequest memory r = _request();
+        r.taskTermsHash = hook.currentTaskTermsHash(attackTask);
+        market.callCheckFundV2(hook, attackTask, hook.encodeHookData(r));
+
+        // The vault manager's own task still takes the nonce.
+        _fund();
+        assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE, MANAGER), TASK_ID);
+        assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE, attacker), attackTask);
+    }
+
+    function testNonceUsedBeforeRev030StaysUsed() public {
+        bytes32 legacyKey = keccak256(abi.encode(REMOTE_CHAIN_ID, address(vault), NONCE));
+        bytes32 hookSlot = keccak256("taskmarket.remotesponsoredtaskhookv2.storage.v1");
+        bytes32 entry = keccak256(abi.encode(legacyKey, uint256(hookSlot) + 2));
+        bytes32 oldTask = keccak256("old-task");
+        vm.store(address(hook), entry, oldTask);
+        assertEq(hook.taskByCommitment(REMOTE_CHAIN_ID, address(vault), NONCE), oldTask);
+        bytes memory data = hook.encodeHookData(_request());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RemoteSponsoredTaskHookV2.CommitmentNonceUsed.selector, REMOTE_CHAIN_ID, address(vault), NONCE, oldTask
+            )
+        );
+        market.callCheckFundV2(hook, TASK_ID, data);
     }
 
     function testReconcileRequiresAwardsForUncommittedBounty() public {

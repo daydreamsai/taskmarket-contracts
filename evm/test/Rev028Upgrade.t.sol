@@ -24,9 +24,11 @@ import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.s
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 
 /// @title Rev028UpgradeTest
-/// @dev Builds a diamond holding a live V1 task with a V1 hook, strips the rev028 selectors to
+/// @dev Builds a diamond holding live pre-cut tasks with V1 hook lists, strips the rev028 selectors to
 ///      stand in for a rev027 diamond, runs the cut, and checks the routing, the version, that the
-///      pre-cut task keeps V1 dispatch to its end and is recorded, and that new tasks are V2.
+///      pre-cut tasks are recorded, and that new tasks are V2. Rev030 retired V1 dispatch, so the
+///      pre-cut tasks (made with makeLegacyV1Task, as no code path can create one now) never call
+///      their V1 hooks, before or after the cut.
 /// @dev A V1 hook whose onExpire burns the gas it is given.
 contract ExpireGasBurnerV1 is MockTaskHook {
     function onExpire(bytes32 taskId, ITMPCore.TaskContext calldata ctx) external override {
@@ -63,17 +65,21 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         vm.stopPrank();
         usdc.mint(address(forwarder), 10_000e6);
 
-        // A task created on the rev027 diamond: V1 hooks.
-        placeAtVersion(address(market), 27);
+        // Tasks created on the rev027 diamond: V1 hook lists.
         v1Hook = new MockTaskHook();
         address[] memory hooks = new address[](1);
         hooks[0] = address(v1Hook);
-        preCutTask = _create(hooks);
+        preCutTask = _create(new address[](0));
+        makeLegacyV1Task(address(market), preCutTask, hooks);
         address[] memory burners = new address[](4);
         for (uint256 i; i < burners.length; ++i) {
             burners[i] = address(new ExpireGasBurnerV1());
         }
-        preCutBurnerTask = _create(burners);
+        preCutBurnerTask = _create(new address[](0));
+        makeLegacyV1Task(address(market), preCutBurnerTask, burners);
+        placeAtVersion(address(market), 27);
+        // rev027 also routed the V1 default hook setter and view, which rev030 removes.
+        _routeRemovedRev030(address(market), owner, false);
 
         // rev027 routing: no rev028 Adds, and settleLapsedReview and the settlement views on
         // SettlementFacet, where rev027 served them.
@@ -135,7 +141,7 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         assertEq(AdminFacet(address(market)).diamondVersion(), 28, "diamondVersion 28");
         address dispatch = loupe.facetAddress(ITMPHookDispatch.hookAcceptV2.selector);
         assertNotEq(dispatch, address(0), "HookDispatchFacet routed");
-        bytes4[] memory d = FacetSelectors.hookDispatchFacetSelectors();
+        bytes4[] memory d = FacetSelectors.hookDispatchFacetSelectorsThroughRev029();
         for (uint256 i; i < d.length; ++i) {
             assertEq(loupe.facetAddress(d[i]), dispatch, "dispatch selector");
         }
@@ -161,22 +167,22 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         );
     }
 
-    function test_PreCutTask_ExpiryRefundIsNotBlockedByAggregateHookGas() public {
+    function test_PreCutTask_ExpiryRefundIsNotBlockedByItsLegacyHooks() public {
         new Rev028Upgrade().run();
-        assertEq(ITMPHooksV2(address(market)).getTaskHookVersion(preCutBurnerTask), 0, "still V1");
+        assertEq(ITMPHooksV2(address(market)).getTaskHookVersion(preCutBurnerTask), 0, "still pre-cut");
         vm.warp(block.timestamp + 8 days);
-        // Four hooks each burn about a stipend; supplying less than all four need still refunds.
+        // Four legacy hooks that would each burn a stipend are never called.
         market.refundExpired{ gas: 3_400_000 }(preCutBurnerTask, 0);
         assertEq(uint8(market.getTaskState(preCutBurnerTask)), uint8(ITMPCore.TaskStatus.Expired));
     }
 
-    function test_PreCutTaskKeepsV1DispatchAndIsRecorded() public {
+    function test_PreCutTaskCallsNoHookAndIsRecorded() public {
         new Rev028Upgrade().run();
-        assertEq(ITMPHooksV2(address(market)).getTaskHookVersion(preCutTask), 0, "still V1");
+        assertEq(ITMPHooksV2(address(market)).getTaskHookVersion(preCutTask), 0, "still pre-cut");
         _relay(worker, 0, abi.encodeCall(market.claimTask, (preCutTask, 0)));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (preCutTask, WORK)));
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (preCutTask, worker, WORK, 0)));
-        assertEq(v1Hook.checkCompleteCalls(), 1, "V1 checkComplete ran");
+        assertEq(v1Hook.checkCompleteCalls(), 0, "no V1 checkComplete");
         assertTrue(ITMPHooksV2(address(market)).getTaskSettlement(preCutTask).recorded, "recorded after the cut");
     }
 
@@ -242,10 +248,10 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         }
         vm.prank(owner);
         AdminFacet(address(market)).setDiamondVersion(28);
-        assertEq(market.getTaskHooks(preCutTask)[0], address(v1Hook), "settlement views and registry routed");
+        assertEq(market.getTaskHooks(preCutTask).length, 0, "settlement views and registry routed");
     }
 
-    /// @dev The diamond is usable between cuts: after cutOne alone, and after cutTwo, a pre-cut V1
+    /// @dev The diamond is usable between cuts: after cutOne alone, and after cutTwo, a pre-cut
     ///      task still claims, submits and settles, and the version stays 27 until the bump.
     function test_DiamondConsistentBetweenCuts() public {
         placeAtVersion(address(market), 27);
@@ -256,14 +262,14 @@ contract Rev028UpgradeTest is Test, DiamondTestHelper {
         assertEq(AdminFacet(address(market)).diamondVersion(), 27, "still rev027 after cutOne");
         _relay(worker, 0, abi.encodeCall(market.claimTask, (preCutTask, 0)));
         _relay(worker, 0, abi.encodeCall(market.submitWork, (preCutTask, WORK)));
-        assertEq(v1Hook.checkClaimCalls(), 1, "V1 claim check ran through the new dispatch");
+        assertEq(v1Hook.checkClaimCalls(), 0, "no V1 claim check");
 
         IDiamondCut.FacetCut[] memory two = up.cutTwo();
         vm.prank(owner);
         IDiamondCut(address(market)).diamondCut(two, address(0), "");
         assertEq(AdminFacet(address(market)).diamondVersion(), 27, "still rev027 after cutTwo");
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (preCutTask, worker, WORK, 0)));
-        assertEq(v1Hook.checkCompleteCalls(), 1, "V1 accept check ran");
+        assertEq(v1Hook.checkCompleteCalls(), 0, "no V1 accept check");
         assertTrue(ITMPHooksV2(address(market)).getTaskSettlement(preCutTask).recorded, "recorded");
     }
 

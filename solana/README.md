@@ -28,36 +28,37 @@ Accounts, all program-derived:
 
 | Account | Seeds | Holds |
 | ------- | ----- | ----- |
-| `Config` | `"config"` | admin, pending admin, settler set and threshold, pause flag, fee bps and recipient, claim delay |
+| `Config` | `"config"` | admin, pending admin, settler set and threshold, pause flag, fee bps and recipient, claim delay, cluster id |
 | `Vault` | `"vault", mint, sponsor, vault_id (u64 LE)` | sponsor, mint, token program, token account, status, epoch, totals (funded, reserved, settled, claimed, withdrawn, defaulted reserved and claimable), managers |
 | `Reservation` | `"task", vault, task_chain_id (u64 LE), task_id` | epoch, task chain commitment nonce, deadline, manager, amount, state, award root, leaf count, settled total, fee total, claim count, claimed total, fee claimed, settle time, claim delay |
 | `ClaimReceipt` | `"claim", reservation, leaf_index (u32 LE)` | exists once the leaf is paid; the double-claim guard |
-| `PayoutBinding` | `"payout", task_chain_id (u64 LE), agent (20 bytes)` | the agent's Solana payout address and the binding's nonce |
+| `PayoutBinding` | `"payout", task_chain_id (u64 LE), agent (20 bytes)` | the agent's Solana payout address, the binding's nonce, and a settler-attested payout pending until its claim delay has passed |
 
 The vault's tokens sit in the associated token account owned by the `Vault` PDA. A manager is a
 Base or Tempo task creator, `(chain_id, evm_address)`, with a lifetime allowance.
 
 | Instruction | Signer | Paused | Notes |
 | ----------- | ------ | ------ | ----- |
-| `init_config` | program upgrade authority | - | once; names the admin and settlers |
+| `init_config` | program upgrade authority | - | once; names the admin (never the zero key), settlers and the cluster id (never zero) |
 | `set_admin` | admin | open | proposes a new admin key; zero cancels |
 | `accept_admin` | proposed admin | open | completes the rotation `set_admin` proposed |
 | `set_fee` | admin | open | sets the fee basis points and the fee recipient |
 | `set_settlers` | admin | open | replaces the settler set and threshold |
 | `pause` | admin | open | sets or clears the pause flag |
-| `set_claim_delay` | admin | open | sets the seconds claims wait after `settle` (default 3600, never zero); a settlement keeps the delay it was installed with |
+| `set_claim_delay` | admin | open | sets the seconds claims wait after `settle` (default 86400, one day; never zero); a settlement keeps the delay it was installed with |
 | `create_vault` | sponsor | blocked | SPL Token or Token-2022; rejects transfer-fee, transfer-hook, permanent-delegate, non-transferable and confidential-transfer mints |
 | `fund` | anyone | open | `transfer_checked`, then checks the vault received the exact amount |
 | `set_managers` | sponsor | open | allowance never below reserved plus spent; a full list replaces an inactive manager with nothing reserved |
 | `reserve` | settler threshold | blocked | the manager's chain must be the task's chain; bounded by the manager allowance the sponsor set and the available balance |
 | `release` | settler threshold | open | returns a reservation to the vault; repeating it is a no-op |
+| `release_expired` | anyone | open | returns an unsettled reservation to the vault once its deadline has passed (`ReservationNotExpired` before); same bookkeeping and `TaskReleased` event as `release` |
 | `settle` | settler threshold | blocked | installs the award root, net total and fee of a reserved task; the rest of the reservation returns to the vault; a second settle fails |
 | `claim` | anyone (relayer) | blocked | pays an award leaf, proven against the settled root, to the worker's `PayoutBinding` address; creates the leaf's `ClaimReceipt` |
-| `claim_fee` | config fee recipient | open | pays a settled reservation's fee to any token account of the mint, once |
+| `claim_fee` | config fee recipient | blocked | pays a settled reservation's fee to any token account of the mint, once |
 | `revoke_settlement` | admin | open | resets a settled reservation with no claims to reserved, clears its root and restores the manager's allowance, and fails unless the vault and the manager's cap still back the restored reservation; touches only that reservation, so it needs no pause |
 | `emergency_exit` | sponsor | open | takes the whole balance, defaults open reservations and unclaimed awards by advancing the epoch, and closes the vault |
-| `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce |
-| `bind_payout_attested` | settler threshold | open | the same binding for a contract-wallet agent, attested by the settlers after they verify its ERC-1271 signature; nonce is the current one plus one |
+| `bind_payout` | anyone (relayer) | open | creates or replaces a `PayoutBinding` from the agent's EIP-712 signature, checked with `secp256k1_recover`; a replacement needs a higher nonce below `u64::MAX`; the signature carries a deadline and the cluster id from `Config` |
+| `bind_payout_attested` | settler threshold | open | the same binding for a contract-wallet agent, attested by the settlers after they verify its ERC-1271 signature; nonce is the current one plus one; the payout is held pending and used by `claim` only one claim delay later |
 
 Settler signatures are passed as signer accounts after the named accounts. Every state change
 emits an event through `emit_cpi!`. Settlement, claims and the award leaf format are in
@@ -97,6 +98,11 @@ make contract solana verify devnet          # compare the deployed program with 
 - `deploy` and `upgrade` accept `localnet` and `devnet` only. On `mainnet-beta`, `buffer` writes the
   build and hands the buffer to `SOLANA_UPGRADE_AUTHORITY` (the multisig, required there); the
   multisig executes the upgrade, then `verify` checks it.
+- Deploy the program fresh. Accounts created before 2026-11-05 cannot be read by the current
+  program: `Config` and `Reservation` gained fields appended at their ends, and an older account is
+  too short to decode. Do not upgrade a deployment that holds older accounts in place; deploy at a
+  new program id and run `init_config` there (it also sets the `cluster_id` payout bindings are
+  salted with).
 - `deploy` refuses a program keypair whose address differs from `declare_id!`. Set the real program
   id in `declare_id!` and `Anchor.toml` in a reviewed change before the first deploy.
 - `verify` is read-only: it compares `solana-verify get-executable-hash` of the build with

@@ -12,7 +12,6 @@ import { ITMPTerms, ITMPTermsV1 } from "../src/interfaces/ITMPTerms.sol";
 import { TMP_BOUNTY, TMP_CLAIM, TMP_PITCH } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
-import { MockTaskHook } from "./mocks/MockTaskHook.sol";
 import { MockReputationRegistry } from "./mocks/MockReputationRegistry.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
@@ -44,9 +43,6 @@ contract ReservedWorkerTest is DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), feeRecipient, 500);
-        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
-        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
-        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
         registry = new MockReputationRegistry();
@@ -117,15 +113,6 @@ contract ReservedWorkerTest is DiamondTestHelper {
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
         assertEq(v2.taskCallerRoles(taskId, worker), 1 << 2, "worker after the claim");
         assertEq(v2.taskCallerRoles(taskId, stranger), uint32(1) << 31);
-    }
-
-    function _withHook(MockTaskHook hook, address reserved) internal returns (bytes32) {
-        address[] memory hooks = new address[](1);
-        hooks[0] = address(hook);
-        return abi.decode(
-            _relay(requester, REWARD, _createCall(TMP_CLAIM, DELIVERY, hooks, noEvaluatorConfig(), _terms(), reserved)),
-            (bytes32)
-        );
     }
 
     function _claim(bytes32 taskId, address w, uint256 stake) internal {
@@ -333,23 +320,15 @@ contract ReservedWorkerTest is DiamondTestHelper {
         assertEq(market.getTask(open).expiryTime, expiry, "unchanged for an open claim");
     }
 
-    function test_Claim_RequiredStakeAndHooksAsUsual() public {
-        MockTaskHook hook = new MockTaskHook();
-        bytes32 taskId = _withHook(hook, worker);
-        assertEq(hook.checkFundCalls(), 1, "checkFund at create");
+    function test_Claim_RequiredStakeAsUsual() public {
+        bytes32 taskId = _create(_terms(), worker);
         _claim(taskId, worker, 0);
-        assertEq(hook.checkClaimCalls(), 1, "checkClaim runs on the reserved worker's claim");
-
-        hook.setRejectOnCheckClaim(true);
-        bytes32 rejected = _withHook(hook, worker);
-        vm.expectRevert(ITMPCore.HookCheckClaimRejected.selector);
-        _claim(rejected, worker, 0);
 
         bytes32 staked = _create(_stakeTerms(), worker);
         vm.expectRevert(ITMPCore.StakePaymentMismatch.selector);
         _claim(staked, worker, STAKE - 1);
         _claim(staked, worker, STAKE);
-        assertEq(market.totalLiabilities(), 2 * REWARD + STAKE + REWARD, "stake booked");
+        assertEq(market.totalLiabilities(), REWARD + STAKE + REWARD, "stake booked");
     }
 
     // -------------------------------------------------------------------------
@@ -357,8 +336,7 @@ contract ReservedWorkerTest is DiamondTestHelper {
     // -------------------------------------------------------------------------
 
     function test_Decline_RefundsAndEnds() public {
-        MockTaskHook hook = new MockTaskHook();
-        bytes32 taskId = _withHook(hook, worker);
+        bytes32 taskId = _create(_terms(), worker);
         vm.expectRevert(ITMPCore.NotReservedWorker.selector);
         _relay(stranger, 0, abi.encodeCall(market.declineReservation, (taskId, 0)));
 
@@ -372,7 +350,6 @@ contract ReservedWorkerTest is DiamondTestHelper {
 
         assertEq(uint8(_status(taskId)), uint8(ITMPCore.TaskStatus.Cancelled), "declined");
         assertEq(usdc.balanceOf(requester), REWARD, "refunded");
-        assertEq(hook.onCancelCalls(), 1, "onCancel runs");
         assertEq(registry.calls(), 0, "declining sends nothing by default");
         assertEq(market.workerAgentOf(worker), WORKER_AGENT, "worker agent bound");
         _assertSettled();
@@ -423,8 +400,7 @@ contract ReservedWorkerTest is DiamondTestHelper {
     // -------------------------------------------------------------------------
 
     function test_Lapse_RefundExpiredAfterAcceptBy() public {
-        MockTaskHook hook = new MockTaskHook();
-        bytes32 taskId = _withHook(hook, worker);
+        bytes32 taskId = _create(_terms(), worker);
         vm.warp(block.timestamp + WINDOW);
         vm.expectRevert(ITMPCore.TaskNotYetExpired.selector);
         market.refundExpired(taskId, 0);
@@ -439,7 +415,6 @@ contract ReservedWorkerTest is DiamondTestHelper {
         market.refundExpired(taskId, 0);
         assertEq(uint8(_status(taskId)), uint8(ITMPCore.TaskStatus.Expired), "lapsed");
         assertEq(usdc.balanceOf(requester), REWARD, "refunded");
-        assertEq(hook.onExpireCalls(), 1, "onExpire runs");
         assertEq(registry.calls(), 0, "a lapse sends nothing by default");
         _assertSettled();
 
@@ -571,16 +546,13 @@ contract ReservedWorkerTest is DiamondTestHelper {
     }
 
     function test_Release_EndsWithRefund_ReopensWithout() public {
-        MockTaskHook hook = new MockTaskHook();
-        bytes32 taskId = _withHook(hook, worker);
+        bytes32 taskId = _create(_terms(), worker);
         _claim(taskId, worker, 0);
         vm.recordLogs();
         _relay(worker, 0, abi.encodeCall(market.releaseClaim, (taskId)));
         _assertNoReopen();
         assertEq(uint8(_status(taskId)), uint8(ITMPCore.TaskStatus.Expired), "hand-back ends it");
         assertEq(usdc.balanceOf(requester), REWARD, "refunded");
-        assertEq(hook.onExpireCalls(), 1, "onExpire runs");
-        assertEq(hook.onForfeitCalls(), 0, "no onForfeit: the task does not reopen");
         _assertSettled();
 
         bytes32 open = _create(_terms(), address(0));

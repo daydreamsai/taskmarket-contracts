@@ -56,7 +56,7 @@ contract Rev028RefreshTestnet is Script {
 
     function cutOne() public returns (IDiamondCut.FacetCut[] memory cuts) {
         cuts = new IDiamondCut.FacetCut[](4);
-        cuts[0] = _r(address(new HookDispatchFacet()), FacetSelectors.hookDispatchFacetSelectors());
+        cuts[0] = _r(address(new HookDispatchFacet()), FacetSelectors.hookDispatchFacetSelectorsThroughRev029());
         cuts[1] = _r(address(new HooksV2Facet()), FacetSelectors.hooksV2FacetSelectors());
         cuts[2] = _r(address(new CoreFacet()), FacetSelectors.coreFacetSelectors());
         cuts[3] = _r(address(new WorkerFacet()), FacetSelectors.workerFacetSelectors());
@@ -86,7 +86,7 @@ contract Rev028RefreshTestnet is Script {
 
     function cutFour() public returns (IDiamondCut.FacetCut[] memory cuts) {
         cuts = new IDiamondCut.FacetCut[](2);
-        cuts[0] = _r(address(new AdminFacet()), FacetSelectors.adminFacetSelectors());
+        cuts[0] = _r(address(new AdminFacet()), FacetSelectors.adminFacetSelectorsThroughRev029());
         cuts[1] = _r(address(new FeedbackFacet()), FacetSelectors.feedbackFacetSelectors());
     }
 }

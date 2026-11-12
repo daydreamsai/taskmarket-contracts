@@ -8,6 +8,7 @@ import "forge-std/Test.sol";
 import { VmSafe } from "forge-std/Vm.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPHook } from "../src/interfaces/ITMPHook.sol";
+import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
 import { TaskTokenRewardHookV2 as TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHookV2.sol";
 import { RewardVault } from "../src/hooks/RewardVault.sol";
 import { EpochBudget } from "../src/hooks/EpochBudget.sol";
@@ -1747,6 +1748,125 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         assertEq(vault.taskReserve(taskId), 0);
     }
 
+    // ─── Rev030 hardening ─────────────────────────────────────────────────────
+
+    function test_rev030_forfeitWithWorkerStillOnTaskKeepsReservation() public {
+        bytes32 taskId = _createClaimTask();
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        uint256 reserved = vault.taskReserve(taskId);
+        assertGt(reserved, 0);
+
+        // An evaluator timeout on a delivered task reports a forfeit while the worker stays on it.
+        ITMPHookV2.TaskContextV2 memory ctx;
+        ctx.taskId = taskId;
+        ctx.worker = worker;
+        ITMPHookV2.SettlementAmounts memory none;
+        vm.prank(address(market));
+        hook.afterForfeit(taskId, ctx, none, 0);
+        assertEq(vault.taskReserve(taskId), reserved, "reservation kept for the worker still on the task");
+    }
+
+    function test_rev030_seedWalletHistory_bansNeverSeenAndExistingWallets() public {
+        _earnClaimable();
+        address neverSeen = makeAddr("neverSeenBanned");
+        address[] memory wallets = new address[](2);
+        uint40[] memory firstSeenAt = new uint40[](2);
+        bool[] memory isBanned = new bool[](2);
+        wallets[0] = neverSeen; // zero firstSeenAt: nothing to seed, but the ban applies
+        wallets[1] = worker; // already has history: kept, but the ban applies
+        isBanned[0] = true;
+        isBanned[1] = true;
+        uint40 real = hook.firstSeen(worker);
+
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+
+        assertTrue(hook.banned(neverSeen));
+        assertTrue(hook.banned(worker));
+        assertEq(hook.firstSeen(neverSeen), 0);
+        assertEq(hook.firstSeen(worker), real);
+    }
+
+    function test_rev030_seedWalletHistory_refusesFutureFirstSeen() public {
+        address[] memory wallets = new address[](1);
+        uint40[] memory firstSeenAt = new uint40[](1);
+        bool[] memory isBanned = new bool[](1);
+        wallets[0] = makeAddr("future");
+        firstSeenAt[0] = uint40(block.timestamp + 1);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.FutureFirstSeen.selector));
+        hook.seedWalletHistory(wallets, firstSeenAt, isBanned);
+    }
+
+    function test_rev030_futureFirstSeenNeverUnderflowsTheRamp() public {
+        // A first-seen time ahead of the clock counts as age zero rather than reverting the
+        // payout (the setUp ramp pays in full at any age, so a payout means no underflow).
+        stdstore.target(address(hook))
+            .sig("firstSeen(address)")
+            .with_key(worker)
+            .checked_write(block.timestamp + 1 days);
+        _earnClaimable();
+        assertGt(hook.claimable(worker), 0);
+    }
+
+    function test_rev030_seedRewardStates_pinsTheVaultTheReservationWasMadeOn() public {
+        bytes32 taskId = keccak256("seeded-reserved");
+        uint256 amount = 26_025_000_000_000_000;
+        vm.prank(address(hook));
+        vault.reserve(taskId, amount);
+
+        bytes32[] memory ids = new bytes32[](1);
+        TaskTokenRewardHook.RewardState[] memory states = new TaskTokenRewardHook.RewardState[](1);
+        ids[0] = taskId;
+        states[0] = _inFlightState(requester, worker, amount);
+        vm.startPrank(owner);
+        hook.seedRewardStates(ids, states);
+
+        // The vault is replaced afterwards; the carried reservation still settles on the old one.
+        RewardVault replacement = new RewardVault(address(dreamsToken), owner);
+        replacement.setHook(address(hook));
+        hook.setVault(address(replacement));
+        vm.stopPrank();
+
+        ITMPHookV2.TaskContextV2 memory ctx;
+        ctx.taskId = taskId;
+        ITMPHookV2.SettlementAmounts memory none;
+        ITMPCore.TaskContext memory v1;
+        v1.taskId = taskId;
+        v1.requester = requester;
+        v1.currentState = ITMPCore.TaskStatus.Cancelled;
+        vm.mockCall(
+            address(market), abi.encodeWithSelector(ITMPDiamond.getTaskContext.selector, taskId), abi.encode(v1)
+        );
+        vm.prank(address(market));
+        hook.afterCancel(taskId, ctx, none, 0);
+        assertEq(vault.taskReserve(taskId), 0, "released on the vault the reservation was made on");
+    }
+
+    function test_rev030_initializeRefusesVaultOfAnotherToken() public {
+        RewardVault other = new RewardVault(address(usdc), owner);
+        address impl = address(new TaskTokenRewardHook());
+        bytes memory init = abi.encodeCall(
+            TaskTokenRewardHook.initialize,
+            (
+                address(other),
+                address(budget),
+                address(market),
+                18,
+                DREAMS_PER_USDC,
+                BONUS_BPS,
+                address(dreamsToken),
+                WORKER_SPLIT_BPS,
+                authorizedRelayer,
+                owner
+            )
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(TaskTokenRewardHook.VaultTokenMismatch.selector, address(dreamsToken), address(usdc))
+        );
+        new ERC1967Proxy(impl, init);
+    }
+
     // ─── Cancel on unclaimed task: onCancel fires, no reserve to release ───────
 
     function test_cancel_noReserve_noRevert() public {
@@ -2512,6 +2632,47 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         assertTrue(paid);
         vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHook.ReleaseNotDue.selector, taskId));
         hook.recoverReserve(taskId);
+    }
+
+    /// @dev A delivered Claim task whose evaluator times out stays with its worker: the timeout
+    ///      reports an evaluator forfeit, which must not release the worker's reserved bonus.
+    function _evaluatorTimedOutOnDeliveredClaim() internal returns (bytes32 taskId) {
+        taskId = _createClaimTask();
+        _assignAwardEvaluator(taskId, 0);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        vm.warp(block.timestamp + 2 days + 1);
+
+        market.evaluatorTimeout(taskId);
+
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "evaluator cleared");
+        assertEq(market.getTask(taskId).worker, worker, "worker stays on the task");
+        assertEq(vault.taskReserve(taskId), EXPECTED_REWARD_1000_DREAMS, "timeout keeps the reservation");
+        (,,,,,, bool reserved, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(reserved);
+        assertFalse(paid);
+    }
+
+    function test_evaluatorTimeout_thenLapsedReviewPaysReservedBonus() public {
+        bytes32 taskId = _evaluatorTimedOutOnDeliveredClaim();
+        vm.warp(market.reviewDeadline(taskId) + 1);
+
+        market.settleLapsedReview(taskId);
+
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "worker receives the reserved bonus");
+        assertEq(vault.taskReserve(taskId), 0);
+        (,,,,,,, bool paid,) = hook.rewardStates(taskId);
+        assertTrue(paid);
+    }
+
+    function test_evaluatorTimeout_thenRequesterAcceptPaysReservedBonus() public {
+        bytes32 taskId = _evaluatorTimedOutOnDeliveredClaim();
+
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(worker), EXPECTED_REWARD_1000_DREAMS, "worker receives the reserved bonus");
+        assertEq(vault.taskReserve(taskId), 0);
     }
 
     function test_onComplete_auctionLapsedReviewPaysOnAcceptedPrice() public {

@@ -24,7 +24,8 @@ interface ITMPProject {
         address owner;
         uint64 endsAt;
         // How long after endsAt a project task's expiry may run, chosen at creation (at most
-        // 90 days) and fixed. A backer's money is held at most until endsAt plus this.
+        // 90 days) and fixed. A backer's money is held at most until the current endsAt plus this
+        // plus the task evaluation and decision windows; extendProject moves endsAt later.
         uint32 taskGraceSecs;
     }
 
@@ -248,7 +249,9 @@ interface ITMPProject {
     ///         project's pool, closing at `endsAt`, with `budget` as the owner's contribution.
     ///         `taskGraceSecs`, at most 90 days and fixed from now on, is how long after `endsAt`
     ///         a project task's expiry may run: every project task must expire by
-    ///         endsAt + taskGraceSecs, so a backer's money is held at most that long.
+    ///         endsAt + taskGraceSecs. A backer's money is held at most until the current end date plus
+    ///         that grace plus the evaluation and decision windows; the owner can extend the end date
+    ///         repeatedly with extendProject, so the hold is not bounded from creation.
     function createProject(address token, uint256 budget, uint64 endsAt, uint32 taskGraceSecs)
         external
         returns (uint256 projectId);
@@ -366,7 +369,9 @@ interface ITMPProject {
     function acceptProjectOwner(uint256 projectId) external;
 
     /// @notice rev029: the owner moves the end date later, to at most 365 days after this block,
-    ///         while the project is open. The pool's closing date moves with it. Owner only.
+    ///         while the project is open. The pool's closing date moves with it. Owner only. It can
+    ///         be called repeatedly, so backers' money is held until the latest end date plus task
+    ///         grace plus the evaluation and decision windows, not for a fixed time from creation.
     function extendProject(uint256 projectId, uint64 newEndsAt) external;
 
     /// @notice rev029: the address the pending ownership proposal names, zero when none.

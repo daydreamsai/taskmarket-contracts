@@ -408,7 +408,7 @@ contract ProjectOwnerTest is DiamondTestHelper {
         IFundingPoolManager(address(mockPool)).moveBacking(poolId, owner, stranger);
         vm.expectRevert(IFundingPoolManager.NotManager.selector);
         IFundingPoolManager(address(mockPool)).extendClosesAt(poolId, uint64(block.timestamp + 60 days));
-        assertEq(IFundingPoolManager(address(mockPool)).fundingPoolRevision(), 29);
+        assertEq(IFundingPoolManager(address(mockPool)).fundingPoolRevision(), 30);
     }
 
     function test_Pool_MoveBackingRefusesInvalidTargets() public {

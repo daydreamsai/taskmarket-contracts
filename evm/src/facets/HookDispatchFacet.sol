@@ -16,19 +16,20 @@ import { ITMPHookDispatch } from "../interfaces/ITMPHookDispatch.sol";
 import { IPGTRForwarder } from "../interfaces/IPGTRForwarder.sol";
 import { TMP_BOUNTY, TMP_BENCHMARK } from "../interfaces/ITMPModes.sol";
 
-/// @title HookDispatchFacet -- rev028 hook dispatch for V1 and V2 tasks
-/// @notice Reached only through a call from the diamond to itself (LibHooks). A V1 task (created
-///         before the rev028 cut) gets exactly the V1 dispatch it had: same callbacks, context,
-///         stipend and failure behaviour. A V2 task gets the rev028 dispatch: typed before- and
+/// @title HookDispatchFacet -- Task Hook V2 dispatch
+/// @notice Reached only through a call from the diamond to itself (LibHooks). Typed before- and
 ///         after-callbacks by capability, a per-capability gas budget, codehash binding, sequence
 ///         numbers and at most one transforming hook's validated settlement result. Every terminal
-///         transition also writes the settlement record here.
+///         transition also writes the settlement record here. Rev030: V1 hooks are retired. A task
+///         created before the rev028 cut (dispatch version 0) has no V2 attachments, so every
+///         callback is a no-op for it and its settlement still completes.
 contract HookDispatchFacet is ITMPHookDispatch {
     struct Accept {
         bool changed;
         ITMPCore.Award[] awards;
         uint16 hookFeeBps;
         address feeHook;
+        uint256 hookSpent; // gas the callbacks of this dispatch have consumed
     }
 
     modifier onlySelf() {
@@ -44,12 +45,6 @@ contract HookDispatchFacet is ITMPHookDispatch {
     // solhint-disable-next-line code-complexity
     function hookAttach(bytes32 taskId, address[] calldata hooks, bytes calldata data) external onlySelf {
         AppStorage storage s = LibAppStorage.appStorage();
-        // A diamond not yet at rev028 (the window between the cut and setDiamondVersion, or a
-        // diamond placed at an earlier revision) still creates V1 tasks exactly as rev027 did.
-        if (s.diamondVersion < 28) {
-            _attachV1(s, taskId, hooks, data);
-            return;
-        }
         s.taskHookVersion[taskId] = LibHooksV2.VERSION_V2;
         uint256 dLen = s.defaultHooksV2.length;
         uint256 rLen = hooks.length;
@@ -90,6 +85,7 @@ contract HookDispatchFacet is ITMPHookDispatch {
             list.push(a);
             emit ITMPHooksV2.HookAttached(taskId, uint8(i), a.hook, a.capabilities, a.codehash, configs[i]);
         }
+        if (transforming) _requireNeutralAppeal(s, taskId, list);
 
         ITMPHookV2.TaskContextV2 memory ctx = _ctx(s, taskId, false);
         bytes memory d = _data(taskId, LibHooksV2.A_CREATE);
@@ -101,34 +97,21 @@ contract HookDispatchFacet is ITMPHookDispatch {
         }
     }
 
-    /// @dev Rev027's V1 hook build and checkFund, for a diamond below rev028.
-    function _attachV1(AppStorage storage s, bytes32 taskId, address[] calldata hooks, bytes calldata data) private {
-        uint256 defaultLen = s.defaultHooks.length;
-        uint256 reqLen = hooks.length;
-        if (defaultLen == 0 && reqLen == 0) return;
-        if (defaultLen + reqLen > LibTaskLimits.maxHooks(s)) revert ITMPCore.TooManyHooks();
-        address[] storage th = s.taskHooks[taskId];
-        for (uint256 i; i < defaultLen; i++) {
-            th.push(s.defaultHooks[i]);
+    /// @dev Rev030: a task with a transforming hook keeps a neutral appeal open. No hook may veto an
+    ///      appeal, and an evaluator, if the task has one, must come with a dispute resolver. The
+    ///      evaluator terms are applied before the hooks at creation, so they are checked here;
+    ///      LibTaskMarket._applyEvaluatorConfig checks the same rule for a later assignEvaluator.
+    function _requireNeutralAppeal(AppStorage storage s, bytes32 taskId, ITMPHookV2.Attachment[] storage list)
+        private
+        view
+    {
+        uint32 appealBit = uint32(1) << LibHooksV2.A_APPEAL;
+        for (uint256 i; i < list.length; ++i) {
+            if (list[i].capabilities & appealBit != 0) revert ITMPHooksV2.TransformingHookWithAppealHook();
         }
-        for (uint256 i; i < reqLen; i++) {
-            address h = hooks[i];
-            if (h == address(0)) revert ITMPCore.InvalidHookAddress();
-            if (h.code.length == 0) revert ITMPCore.InvalidHookAddress();
-            for (uint256 j; j < defaultLen; j++) {
-                if (s.defaultHooks[j] == h) revert ITMPCore.DuplicateHookAddress();
-            }
-            for (uint256 j; j < i; j++) {
-                if (hooks[j] == h) revert ITMPCore.DuplicateHookAddress();
-            }
-            th.push(h);
-        }
-        address[] memory list = th;
-        bytes memory callData = abi.encodeCall(ITMPHook.checkFund, (taskId, LibHooks._buildContext(taskId, s), data));
-        for (uint256 i; i < list.length; i++) {
-            (bool ok, uint256 size, bytes memory ret) = _call(list[i], LibHooks._hookGasStipend(s), callData, 32);
-            if (!ok || size < 32 || uint256(_word(ret)) != 1) revert ITMPCore.HookCheckFundRejected();
-            emit ITMPCore.HookRegistered(taskId, list[i]);
+        ITMPCore.TaskEvaluatorConfig storage cfg = s.taskEvaluatorConfigs[taskId];
+        if (cfg.evaluator != address(0) && cfg.disputeResolver == address(0)) {
+            revert ITMPHooksV2.TransformingHookNeedsDisputeResolver();
         }
     }
 
@@ -142,8 +125,13 @@ contract HookDispatchFacet is ITMPHookDispatch {
         view
         returns (ITMPHookV2.Attachment memory a)
     {
-        if (h == address(0) || h.code.length == 0) revert ITMPCore.InvalidHookAddress();
+        uint256 codeLen = h.code.length;
+        if (h == address(0) || codeLen == 0) revert ITMPCore.InvalidHookAddress();
         uint8 idx = uint8(index);
+        // Rev030: an EIP-7702 delegated account's code is the 23-byte designator 0xef0100 || address,
+        // which its key holder can re-point at will. The pinned codehash would then stop matching
+        // and every vetoable callback would revert, so such an account is never a hook.
+        if (codeLen == 23 && bytes3(h.code) == 0xef0100) revert ITMPHooksV2.HookDelegatedAccount(idx);
         if (!_supports(h, type(ITMPHookV2).interfaceId)) {
             if (_supports(h, type(ITMPHook).interfaceId)) revert ITMPHooksV2.HookV1Retired(idx);
             revert ITMPHooksV2.HookIncompatible(idx, LibHooksV2.R_INTERFACE);
@@ -178,10 +166,6 @@ contract HookDispatchFacet is ITMPHookDispatch {
     // solhint-disable-next-line code-complexity
     function hookBefore(bytes32 taskId, uint8 action, address who, bytes32 extra) external onlySelf {
         AppStorage storage s = LibAppStorage.appStorage();
-        if (s.taskHookVersion[taskId] != LibHooksV2.VERSION_V2) {
-            _beforeV1(s, taskId, action, who, extra);
-            return;
-        }
         ITMPHookV2.TaskContextV2 memory ctx = _ctx(s, taskId, false);
         bytes memory d = _data(taskId, action);
         bytes memory cd;
@@ -224,36 +208,6 @@ contract HookDispatchFacet is ITMPHookDispatch {
         }
     }
 
-    /// @dev The V1 check hook for the actions V1 had one for; nothing for the others.
-    function _beforeV1(AppStorage storage s, bytes32 taskId, uint8 action, address who, bytes32 extra) private {
-        address[] memory hooks = s.taskHooks[taskId];
-        if (hooks.length == 0) return;
-        ITMPCore.TaskContext memory ctx = LibHooks._buildContext(taskId, s);
-        if (action == LibHooksV2.A_CLAIM) {
-            LibHooks._dispatchCheckHooks(
-                hooks, abi.encodeCall(ITMPHook.checkClaim, (taskId, ctx, who)), ITMPCore.HookCheckClaimRejected.selector
-            );
-        } else if (action == LibHooksV2.A_SELECT_WORKER || action == LibHooksV2.A_ACCEPT_AUCTION) {
-            LibHooks._dispatchCheckHooks(
-                hooks,
-                abi.encodeCall(ITMPHook.checkSelectWorker, (taskId, ctx, who)),
-                ITMPCore.HookCheckSelectWorkerRejected.selector
-            );
-        } else if (action == LibHooksV2.A_SUBMIT_WORK) {
-            LibHooks._dispatchCheckHooks(
-                hooks,
-                abi.encodeCall(ITMPHook.checkSubmit, (taskId, ctx, who, extra)),
-                ITMPCore.HookCheckSubmitRejected.selector
-            );
-        } else if (action == LibHooksV2.A_EVALUATE) {
-            LibHooks._dispatchCheckHooks(
-                hooks,
-                abi.encodeCall(ITMPHook.checkEvaluate, (taskId, ctx, who)),
-                ITMPCore.HookCheckEvaluateRejected.selector
-            );
-        }
-    }
-
     function _callBefore(AppStorage storage s, bytes32 taskId, uint256 i, uint8 action, bytes memory cd) private {
         ITMPHookV2.Attachment storage a = s.taskHooksV2[taskId][i];
         address hook = a.hook;
@@ -281,23 +235,8 @@ contract HookDispatchFacet is ITMPHookDispatch {
     }
 
     // -------------------------------------------------------------------------
-    // Accept: V1 checkComplete and the V2 settlement step
+    // Accept: the settlement step
     // -------------------------------------------------------------------------
-
-    function hookCheckCompleteV1(bytes32 taskId, ITMPCore.Verdict calldata verdict, bool disputed) external onlySelf {
-        AppStorage storage s = LibAppStorage.appStorage();
-        address[] memory hooks = s.taskHooks[taskId];
-        if (hooks.length == 0) return;
-        ITMPCore.TaskContext memory ctx = LibHooks._buildContext(taskId, s);
-        // Rev028: a dispute resolution shows check hooks the Disputed state it is settling, so a hook
-        // that must never hold a ruling can tell it from an ordinary accept.
-        if (disputed) ctx.currentState = ITMPCore.TaskStatus.Disputed;
-        LibHooks._dispatchCheckHooks(
-            hooks,
-            abi.encodeCall(ITMPHook.checkComplete, (taskId, ctx, verdict)),
-            ITMPCore.HookCheckCompleteRejected.selector
-        );
-    }
 
     function hookAcceptV2(
         bytes32 taskId,
@@ -319,11 +258,11 @@ contract HookDispatchFacet is ITMPHookDispatch {
             (taskId, ctx, verdict, _data(taskId, disputed ? LibHooksV2.A_RESOLVE_DISPUTE : LibHooksV2.A_ACCEPT))
         );
         uint32 bit = uint32(1) << LibHooksV2.A_ACCEPT;
-        Accept memory r = Accept({ changed: false, awards: awards, hookFeeBps: 0, feeHook: address(0) });
+        Accept memory r = Accept({ changed: false, awards: awards, hookFeeBps: 0, feeHook: address(0), hookSpent: 0 });
         for (uint256 i; i < n; ++i) {
             ITMPHookV2.Attachment memory a = list[i];
             if (a.capabilities & bit == 0 && !a.transforming) continue;
-            _acceptOne(s, taskId, i, a, cd, vetoable, budget, r);
+            _acceptOne(s, taskId, i, n, a, cd, vetoable, budget, r);
         }
         return (r.changed, r.awards, r.hookFeeBps, r.feeHook);
     }
@@ -332,6 +271,7 @@ contract HookDispatchFacet is ITMPHookDispatch {
         AppStorage storage s,
         bytes32 taskId,
         uint256 i,
+        uint256 n,
         ITMPHookV2.Attachment memory a,
         bytes memory cd,
         bool vetoable,
@@ -341,8 +281,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
         uint8 action = LibHooksV2.A_ACCEPT;
         if (vetoable && a.hook.codehash != a.codehash) revert ITMPHooksV2.HookCodeChanged(uint8(i));
         uint256 gasBudget = _budget(s, action);
-        if (!vetoable && !_hasGas(gasBudget)) {
-            // Best effort: a dispute ruling or a settlement after expiry never waits on hook gas.
+        if (!vetoable && _skipExit(gasBudget, r.hookSpent, n - i)) {
+            // Best effort: a dispute ruling or a settlement after expiry never waits on hook gas,
+            // and the hooks of one exit share MAX_EXIT_HOOK_GAS.
             _failed(taskId, i, a.hook, action, LibHooksV2.PHASE_BEFORE, LibHooksV2.FAIL_GAS, "");
             return;
         }
@@ -351,7 +292,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
         // checked; a dispute ruling or a settlement after expiry stands as the core computed it.
         bool applies = a.transforming && vetoable;
         uint256 maxCopy = applies ? 32 * (6 + 3 * LibTaskMarket.MAX_SUBMISSION_WINNERS) : 256;
+        uint256 g = gasleft();
         (bool ok, uint256 size, bytes memory ret) = _call(a.hook, gasBudget, cd, maxCopy);
+        r.hookSpent += g - gasleft();
         if (!ok || size < 32 || _word(ret) != bytes32(ITMPHookV2.beforeAccept.selector)) {
             if (vetoable) revert ITMPHooksV2.HookRejected(uint8(i), action, ret);
             _failed(
@@ -439,7 +382,6 @@ contract HookDispatchFacet is ITMPHookDispatch {
 
     function hookObserve(bytes32 taskId, uint8 action, bool vetoable) external onlySelf {
         AppStorage storage s = LibAppStorage.appStorage();
-        if (s.taskHookVersion[taskId] != LibHooksV2.VERSION_V2) return;
         if (s.taskHooksV2[taskId].length == 0) return;
         bytes memory d = LibHooksV2.actionData();
         bytes memory cd = abi.encodeCall(ITMPHookV2.afterAction, (taskId, _ctx(s, taskId, false), action, d, uint64(0)));
@@ -463,20 +405,8 @@ contract HookDispatchFacet is ITMPHookDispatch {
         ITMPHookV2.SettlementAmounts memory amounts =
             terminal ? LibSettlement.finalize(s, taskId) : LibSettlement.forfeit(s, taskId);
 
-        if (s.taskHookVersion[taskId] != LibHooksV2.VERSION_V2) {
-            address[] memory hooks = s.taskHooks[taskId];
-            if (hooks.length == 0) return;
-            ITMPCore.TaskContext memory c = LibHooks._buildContext(taskId, s);
-            bytes memory v1;
-            if (kind == LibHooksV2.KIND_COMPLETE) v1 = abi.encodeCall(ITMPHook.onComplete, (taskId, c, verdict));
-            else if (kind == LibHooksV2.KIND_CANCEL) v1 = abi.encodeCall(ITMPHook.onCancel, (taskId, c));
-            else if (kind == LibHooksV2.KIND_EXPIRE) v1 = abi.encodeCall(ITMPHook.onExpire, (taskId, c));
-            else v1 = abi.encodeCall(ITMPHook.onForfeit, (taskId, c, who));
-            // An expiry refund never depends on hook gas (rev028); the other exits keep the full-gas rule.
-            if (kind == LibHooksV2.KIND_EXPIRE) LibHooks._dispatchExpireHooksBestEffort(hooks, v1);
-            else LibHooks._dispatchAfterHooksFullGas(hooks, v1);
-            return;
-        }
+        // A task without V2 attachments (every task created before the rev028 cut included) has no
+        // hook to call: its settlement record is written above and nothing else runs.
         if (s.taskHooksV2[taskId].length == 0) return;
         ITMPHookV2.TaskContextV2 memory ctx = _ctx(s, taskId, false);
         bytes memory cd;
@@ -513,6 +443,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
         ITMPHookV2.Attachment[] storage list = s.taskHooksV2[taskId];
         uint256 n = list.length;
         uint32 mask = uint32(1) << bit;
+        // An observer callback is watch-only: it never blocks the action it watches for gas.
+        bool bestEffort = !vetoable || bit == LibHooksV2.BIT_OBSERVER;
+        uint256 spent;
         for (uint256 i; i < n; ++i) {
             ITMPHookV2.Attachment storage a = list[i];
             if (a.capabilities & mask == 0) continue;
@@ -525,9 +458,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
                 mstore(add(add(cd, 32), seqOffset), seq)
             }
             uint256 budget = _budget(s, bit);
-            if (!vetoable && !_hasGas(budget)) {
-                // A best-effort after-callback (terminal exits included) never blocks the action
-                // for gas: it is skipped, reported, and its sequence number is spent, so the hook
+            if (bestEffort && _skipExit(budget, vetoable ? 0 : spent, n - i)) {
+                // A best-effort after-callback (terminal exits and observers included) never blocks
+                // the action for gas: it is skipped, reported, and its sequence number is spent, so the hook
                 // can detect the gap and reconcile from the settlement record.
                 emit ITMPHooksV2.HookCallFailedV2(
                     taskId, uint8(i), hook, action, LibHooksV2.PHASE_AFTER, LibHooksV2.FAIL_GAS, bytes32(0), seq
@@ -535,7 +468,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
                 continue;
             }
             _requireGas(budget);
+            uint256 g = gasleft();
             (bool ok, uint256 size, bytes memory ret) = _call(hook, budget, cd, 256);
+            spent += g - gasleft();
             if (!ok) {
                 emit ITMPHooksV2.HookCallFailedV2(
                     taskId, uint8(i), hook, action, LibHooksV2.PHASE_AFTER, _class(size), keccak256(ret), seq
@@ -590,8 +525,7 @@ contract HookDispatchFacet is ITMPHookDispatch {
         uint256 v = s.hookCapabilityGas[bit];
         if (v != 0) return v;
         // Unset reads as this chain's hook gas stipend (rev026), so a chain that raised it for its
-        // storage costs (Tempo) gives V2 hooks the same headroom V1 hooks have, and never below
-        // the V2 floor.
+        // storage costs (Tempo) gives V2 hooks that headroom, and never below the V2 floor.
         uint256 stipend = LibHooks._hookGasStipend(s);
         return stipend > LibHooksV2.GAS_FLOOR ? stipend : LibHooksV2.GAS_FLOOR;
     }
@@ -614,6 +548,14 @@ contract HookDispatchFacet is ITMPHookDispatch {
         // chain's per-transaction gas limit; callbacks beyond the cap are best effort.
         if (total > LibHooksV2.MAX_STRICT_HOOK_GAS) total = LibHooksV2.MAX_STRICT_HOOK_GAS;
         if (gasleft() < total) revert ITMPHooksV2.InsufficientGasForHooks();
+    }
+
+    /// @dev Whether a best-effort callback is skipped: the gas for its budget (and for skipping the
+    ///      `remaining` hooks after it) is not there, or the callbacks of this dispatch have already
+    ///      spent `spent` and its budget would take them past MAX_EXIT_HOOK_GAS.
+    function _skipExit(uint256 budget, uint256 spent, uint256 remaining) private view returns (bool) {
+        if (gasleft() < (budget * 64) / 63 + LibHooksV2.GAS_MARGIN + remaining * LibHooksV2.SKIP_RESERVE) return true;
+        return spent != 0 && spent + budget > LibHooksV2.MAX_EXIT_HOOK_GAS;
     }
 
     function _hasGas(uint256 budget) private view returns (bool) {

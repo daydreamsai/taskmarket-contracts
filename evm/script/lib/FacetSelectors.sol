@@ -66,6 +66,37 @@ library FacetSelectors {
     /// @dev rev025's permissionless normalizeTerms, which rev026 Removes.
     bytes4 internal constant NORMALIZE_TERMS = bytes4(keccak256("normalizeTerms(bytes32[])"));
 
+    /// @dev rev008's V1 protocol default hook setter, which rev030 Removes with the rest of V1 hook
+    ///      dispatch. No facet serves it any more, so the signature hash is written out, as for the
+    ///      other selectors a historical step still has to name.
+    bytes4 internal constant SET_DEFAULT_HOOKS = bytes4(keccak256("setDefaultHooks(address[])"));
+
+    /// @dev rev008's V1 protocol default hook view, which rev030 Removes.
+    bytes4 internal constant GET_DEFAULT_HOOKS = bytes4(keccak256("getDefaultHooks()"));
+
+    /// @dev rev028's internal V1 checkComplete dispatch on HookDispatchFacet, which rev030 Removes.
+    bytes4 internal constant HOOK_CHECK_COMPLETE_V1 = bytes4(
+        keccak256(
+            "hookCheckCompleteV1(bytes32,(bool,uint8,uint16,uint16,bytes32[],bytes32,(address,uint256,uint16)[]),bool)"
+        )
+    );
+
+    /// @dev The selectors rev030 Removes: the V1 default hook setter and view (AdminFacet) and the V1
+    ///      checkComplete dispatch (HookDispatchFacet).
+    function selectorsRemovedRev030() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = SET_DEFAULT_HOOKS;
+        s[1] = GET_DEFAULT_HOOKS;
+        s[2] = HOOK_CHECK_COMPLETE_V1;
+    }
+
+    /// @dev The two AdminFacet selectors rev030 Removes.
+    function adminSelectorsRemovedRev030() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = SET_DEFAULT_HOOKS;
+        s[1] = GET_DEFAULT_HOOKS;
+    }
+
     /// @dev The selectors rev026 Removes.
     function selectorsRemovedRev026() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](2);
@@ -88,6 +119,32 @@ library FacetSelectors {
     }
 
     function adminFacetSelectors() internal pure returns (bytes4[] memory s) {
+        bytes4[] memory base = adminFacetSelectorsKeptRev030();
+        bytes4[] memory added = adminFacetSelectorsAddedRev030();
+        s = new bytes4[](base.length + added.length);
+        for (uint256 i; i < base.length; ++i) {
+            s[i] = base[i];
+        }
+        for (uint256 i; i < added.length; ++i) {
+            s[base.length + i] = added[i];
+        }
+    }
+
+    /// @dev The AdminFacet selectors a rev029 diamond routes that rev030 keeps, for the rev030 Replace.
+    function adminFacetSelectorsKeptRev030() internal pure returns (bytes4[] memory s) {
+        s = _without(adminFacetSelectorsThroughRev029(), adminSelectorsRemovedRev030());
+    }
+
+    /// @dev rev030: the per-chain cap on the winners one settlement may pay.
+    function adminFacetSelectorsAddedRev030() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = AdminFacet.maxSubmissionWinners.selector;
+        s[1] = AdminFacet.setMaxSubmissionWinners.selector;
+    }
+
+    /// @dev The AdminFacet selector set as it stood from rev026 to rev029, Replaced by the rev030
+    ///      step.
+    function adminFacetSelectorsThroughRev029() internal pure returns (bytes4[] memory s) {
         bytes4[] memory base = adminFacetSelectorsThroughRev025();
         bytes4[] memory added = adminFacetSelectorsAddedRev026();
         s = new bytes4[](base.length + added.length);
@@ -163,8 +220,8 @@ library FacetSelectors {
         s[10] = AdminFacet.setDefaultFeeBps.selector;
         s[11] = AdminFacet.setFeeRecipient.selector;
         s[12] = AdminFacet.setReputationRegistry.selector;
-        s[13] = AdminFacet.setDefaultHooks.selector;
-        s[14] = AdminFacet.getDefaultHooks.selector;
+        s[13] = SET_DEFAULT_HOOKS;
+        s[14] = GET_DEFAULT_HOOKS;
         s[15] = AdminFacet.diamondVersion.selector;
         s[16] = AdminFacet.setDiamondVersion.selector;
         // rev017: the appeal-window floor is admin-settable state, so both its getter and its
@@ -357,7 +414,7 @@ library FacetSelectors {
 
     /// @dev The RegistryFacet selector set as it stood through rev025, Replaced by the rev026 step.
     function registryFacetSelectorsThroughRev025() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](30);
+        s = new bytes4[](29);
         s[0] = RegistryFacet.getTask.selector;
         s[1] = RegistryFacet.getWorkerStats.selector;
         s[2] = RegistryFacet.requesterNonce.selector;
@@ -625,6 +682,11 @@ library FacetSelectors {
         s = projectSelectorsAddedRev029();
     }
 
+    /// @dev rev030: every selector rev030 Adds.
+    function selectorsAddedRev030() internal pure returns (bytes4[] memory s) {
+        s = adminFacetSelectorsAddedRev030();
+    }
+
     /// @dev rev029: the ProjectFacet selectors a rev028 diamond already routes, for a Replace.
     function projectFacetSelectorsRev028Routed() internal pure returns (bytes4[] memory s) {
         bytes4[] memory all = projectFacetSelectors();
@@ -640,18 +702,29 @@ library FacetSelectors {
         }
     }
 
-    /// @dev rev028: the internal hook dispatch, callable only by the diamond itself. Every
-    ///      selector is new in rev028.
+    /// @dev The internal hook dispatch, callable only by the diamond itself. Every selector is new in
+    ///      rev028; rev030 drops hookCheckCompleteV1 (hookDispatchFacetSelectorsThroughRev029).
     function hookDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
-        s[7] = HookDispatchFacet.hookCall.selector;
+        s = new bytes4[](7);
+        s[6] = HookDispatchFacet.hookCall.selector;
         s[0] = HookDispatchFacet.hookAttach.selector;
         s[1] = HookDispatchFacet.hookReadManifest.selector;
         s[2] = HookDispatchFacet.hookBefore.selector;
         s[3] = HookDispatchFacet.hookObserve.selector;
-        s[4] = HookDispatchFacet.hookCheckCompleteV1.selector;
-        s[5] = HookDispatchFacet.hookAcceptV2.selector;
-        s[6] = HookDispatchFacet.hookSettle.selector;
+        s[4] = HookDispatchFacet.hookAcceptV2.selector;
+        s[5] = HookDispatchFacet.hookSettle.selector;
+    }
+
+    /// @dev The HookDispatchFacet selector set as rev028 added it and rev029 left it: today's set
+    ///      plus the V1 checkComplete dispatch. The rev028 step Adds it and the rev030 step
+    ///      Removes hookCheckCompleteV1 from it.
+    function hookDispatchFacetSelectorsThroughRev029() internal pure returns (bytes4[] memory s) {
+        s = _concat(hookDispatchFacetSelectors(), _single(HOOK_CHECK_COMPLETE_V1));
+    }
+
+    function _single(bytes4 sel) private pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = sel;
     }
 
     /// @dev rev028: Task Hook V2 views, owner settings, per-action data and the settlement record.

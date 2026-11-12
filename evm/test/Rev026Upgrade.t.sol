@@ -137,6 +137,7 @@ contract Rev026UpgradeTest is Test, DiamondTestHelper {
         vm.prank(owner);
         IDiamondCut(address(market)).diamondCut(cuts, address(0), "");
         _routeRemovedRev026(address(market), owner);
+        _routeRemovedRev030(address(market), owner, false);
         placeAtVersion(address(market), 25);
 
         vm.chainId(84532);

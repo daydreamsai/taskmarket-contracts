@@ -23,8 +23,11 @@ declare_id!("STvau1t111111111111111111111111111111111111");
 
 /// Transfer fees break balance accounting, transfer hooks run foreign code inside vault
 /// transfers, a permanent delegate can move the vault's balance, and non-transferable or
-/// confidential balances cannot be paid out by an ordinary checked transfer.
-pub const REJECTED_MINT_EXTENSIONS: [ExtensionType; 5] = [
+/// confidential balances cannot be paid out by an ordinary checked transfer. A close authority
+/// could close a zero-supply mint and recreate it at the same address with other extensions,
+/// after the one-time create_vault check.
+pub const REJECTED_MINT_EXTENSIONS: [ExtensionType; 6] = [
+    ExtensionType::MintCloseAuthority,
     ExtensionType::TransferFeeConfig,
     ExtensionType::TransferHook,
     ExtensionType::PermanentDelegate,
@@ -33,12 +36,14 @@ pub const REJECTED_MINT_EXTENSIONS: [ExtensionType; 5] = [
 ];
 
 /// EIP-712 domain of the payout binding an agent signs. `chainId` is the agent's EVM chain and
-/// `salt` is this program's id, so a binding cannot be replayed on another chain or program.
+/// `salt` is `keccak256(program id || Config::cluster_id)`, so a binding cannot be replayed on
+/// another EVM chain, another program, or another Solana cluster that reuses this program id.
 pub const PAYOUT_DOMAIN_NAME: &str = "Taskmarket Sponsored Tasks";
 pub const PAYOUT_DOMAIN_VERSION: &str = "1";
 const EIP712_DOMAIN_TYPE: &[u8] =
     b"EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)";
-const PAYOUT_BINDING_TYPE: &[u8] = b"PayoutBinding(address agent,bytes32 payout,uint64 nonce)";
+const PAYOUT_BINDING_TYPE: &[u8] =
+    b"PayoutBinding(address agent,bytes32 payout,uint64 nonce,uint64 deadline)";
 
 #[program]
 pub mod sponsored_tasks {
@@ -51,7 +56,13 @@ pub mod sponsored_tasks {
         threshold: u8,
         fee_bps: u16,
         fee_recipient: Pubkey,
+        cluster_id: [u8; 32],
     ) -> Result<()> {
+        require!(
+            admin != Pubkey::default(),
+            SponsoredTasksError::InvalidAdmin
+        );
+        require!(cluster_id != [0; 32], SponsoredTasksError::InvalidClusterId);
         validate_settlers(&settlers, threshold)?;
         require!(fee_bps <= MAX_FEE_BPS, SponsoredTasksError::InvalidFeeBps);
         let config = &mut ctx.accounts.config;
@@ -64,12 +75,14 @@ pub mod sponsored_tasks {
         config.bump = ctx.bumps.config;
         config.claim_delay_seconds = DEFAULT_CLAIM_DELAY_SECONDS;
         config.pending_admin = Pubkey::default();
+        config.cluster_id = cluster_id;
         emit_cpi!(ConfigInitialized {
             admin,
             settlers,
             threshold,
             fee_bps,
             fee_recipient,
+            cluster_id,
         });
         Ok(())
     }
@@ -231,8 +244,9 @@ pub mod sponsored_tasks {
 
     /// Adds or updates managers; an existing manager's cap may not drop below what it has
     /// already reserved or spent. Adding a manager to a full list replaces the first one that
-    /// is inactive with nothing reserved and nothing spent: a manager with spent history may
-    /// still have a settled reservation that `revoke_settlement` must restore against it.
+    /// is inactive with nothing reserved and nothing spent. Spent alone does not prove there is
+    /// no settled reservation (a zero-gross settle leaves spent at zero), so
+    /// `revoke_settlement` refuses until the manager is re-added.
     pub fn set_managers(ctx: Context<SetManagers>, managers: Vec<ManagerInput>) -> Result<()> {
         let vault_key = ctx.accounts.vault.key();
         let vault = &mut ctx.accounts.vault;
@@ -386,42 +400,35 @@ pub mod sponsored_tasks {
     pub fn release(ctx: Context<Release>) -> Result<()> {
         require_settlers(&ctx.accounts.config, ctx.remaining_accounts)?;
         let vault_key = ctx.accounts.vault.key();
-        let vault = &mut ctx.accounts.vault;
-        require!(
-            vault.status == VaultStatus::Active,
-            SponsoredTasksError::VaultNotActive
-        );
-        let reservation = &mut ctx.accounts.reservation;
-        require!(
-            reservation.epoch == vault.epoch,
-            SponsoredTasksError::EpochMismatch
-        );
-        match reservation.state {
-            ReservationState::Released => return Ok(()),
-            ReservationState::Reserved => {}
-            _ => return err!(SponsoredTasksError::ReservationWrongState),
+        if let Some(event) = release_reservation(
+            vault_key,
+            &mut ctx.accounts.vault,
+            &mut ctx.accounts.reservation,
+        )? {
+            emit_cpi!(event);
         }
-        let amount = reservation.amount;
-        if let Some(account) = vault
-            .managers
-            .iter_mut()
-            .find(|m| m.key == reservation.manager)
-        {
-            account.reserved = account.reserved.saturating_sub(amount);
+        Ok(())
+    }
+
+    /// Permissionless and open while paused: once a reservation's deadline has passed, anyone may
+    /// return its unsettled amount to the vault. It does the same bookkeeping and emits the same
+    /// `TaskReleased` event as `release`, but needs no settler, so a reservation the settlers
+    /// abandon cannot hold the sponsor's funds. A settled or revoked-and-settled reservation is
+    /// refused, a released one is a no-op, and a reservation before its deadline fails with
+    /// `ReservationNotExpired`.
+    pub fn release_expired(ctx: Context<ReleaseExpired>) -> Result<()> {
+        require!(
+            Clock::get()?.unix_timestamp > ctx.accounts.reservation.deadline,
+            SponsoredTasksError::ReservationNotExpired
+        );
+        let vault_key = ctx.accounts.vault.key();
+        if let Some(event) = release_reservation(
+            vault_key,
+            &mut ctx.accounts.vault,
+            &mut ctx.accounts.reservation,
+        )? {
+            emit_cpi!(event);
         }
-        vault.total_reserved = vault
-            .total_reserved
-            .checked_sub(amount)
-            .ok_or(SponsoredTasksError::Overflow)?;
-        reservation.state = ReservationState::Released;
-        emit_cpi!(TaskReleased {
-            vault: vault_key,
-            reservation: reservation.key(),
-            task_chain_id: reservation.task_chain_id,
-            task_id: reservation.task_id,
-            manager: reservation.manager,
-            amount,
-        });
         Ok(())
     }
 
@@ -584,7 +591,13 @@ pub mod sponsored_tasks {
             *binding.owner == ID && !binding.data_is_empty(),
             SponsoredTasksError::PayoutNotBound
         );
-        let payout = PayoutBinding::try_deserialize(&mut &binding.try_borrow_data()?[..])?.payout;
+        let payout = PayoutBinding::try_deserialize(&mut &binding.try_borrow_data()?[..])?
+            .effective_payout(Clock::get()?.unix_timestamp);
+        // An attested binding that is still waiting out its delay leaves no payout yet.
+        require!(
+            payout != Pubkey::default(),
+            SponsoredTasksError::PayoutNotBound
+        );
         let destination = &ctx.accounts.destination_token_account;
         require_keys_eq!(
             destination.owner,
@@ -630,9 +643,11 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
-    /// Open while paused. The config fee recipient takes a settled reservation's fee to any
-    /// token account of the vault's mint, once, after the claim delay.
+    /// Blocked while paused. The config fee recipient takes a settled reservation's fee to any
+    /// token account of the vault's mint, once, after the claim delay. Claiming the fee ends
+    /// `revoke_settlement` for that reservation, so a pause keeps a wrong root revocable.
     pub fn claim_fee(ctx: Context<ClaimFee>) -> Result<()> {
+        require!(!ctx.accounts.config.paused, SponsoredTasksError::Paused);
         let vault_key = ctx.accounts.vault.key();
         let reservation_key = ctx.accounts.reservation.key();
         let vault = &ctx.accounts.vault;
@@ -735,27 +750,29 @@ pub mod sponsored_tasks {
             committed <= backing,
             SponsoredTasksError::InsufficientAvailable
         );
-        // The manager's allowance may have been lowered after the settlement.
-        if let Some(account) = vault
+        // The reservation goes back to `Reserved`, and `settle` needs its manager on the list, so
+        // a manager whose slot was reused (possible only for a settlement that spent nothing)
+        // must be added again before the settlement can be revoked. The manager's allowance
+        // may also have been lowered after the settlement.
+        let account = vault
             .managers
             .iter_mut()
             .find(|m| m.key == reservation.manager)
-        {
-            let reserved = account
-                .reserved
-                .checked_add(amount)
-                .ok_or(SponsoredTasksError::Overflow)?;
-            let spent = account.spent.saturating_sub(distributed_gross);
-            require!(
-                reserved
-                    .checked_add(spent)
-                    .ok_or(SponsoredTasksError::Overflow)?
-                    <= account.cap,
-                SponsoredTasksError::ManagerAllowanceExceeded
-            );
-            account.reserved = reserved;
-            account.spent = spent;
-        }
+            .ok_or(SponsoredTasksError::ManagerNotActive)?;
+        let reserved = account
+            .reserved
+            .checked_add(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        let spent = account.spent.saturating_sub(distributed_gross);
+        require!(
+            reserved
+                .checked_add(spent)
+                .ok_or(SponsoredTasksError::Overflow)?
+                <= account.cap,
+            SponsoredTasksError::ManagerAllowanceExceeded
+        );
+        account.reserved = reserved;
+        account.spent = spent;
         vault.total_settled = settled_after;
         vault.total_reserved = reserved_after;
         let root = reservation.root;
@@ -776,18 +793,30 @@ pub mod sponsored_tasks {
     }
 
     /// Binds an agent's Solana payout address from the agent's EIP-712 signature over
-    /// `PayoutBinding(agent, payout, nonce)`. Anyone may relay it: the signature, not the payer,
-    /// authorizes. A newer binding replaces the old one only with a higher nonce. Open while
-    /// paused, since it moves no funds.
+    /// `PayoutBinding(agent, payout, nonce, deadline)`. Anyone may relay it, but only until
+    /// `deadline` (unix seconds; `u64::MAX` for none): the signature, not the payer, authorizes.
+    /// A newer binding replaces the old one only with a higher nonce, and the nonce is below
+    /// `u64::MAX` so the agent can always bind again. The signed domain carries the cluster id
+    /// from `Config`. Open while paused, since it moves no funds.
     pub fn bind_payout(
         ctx: Context<BindPayout>,
         task_chain_id: u64,
         agent: [u8; 20],
         payout: Pubkey,
         nonce: u64,
+        deadline: u64,
         signature: [u8; 65],
     ) -> Result<()> {
-        let digest = payout_binding_digest(task_chain_id, &agent, &payout, nonce);
+        let now = Clock::get()?.unix_timestamp.max(0) as u64;
+        require!(now <= deadline, SponsoredTasksError::PayoutSignatureExpired);
+        let digest = payout_binding_digest(
+            task_chain_id,
+            &ctx.accounts.config.cluster_id,
+            &agent,
+            &payout,
+            nonce,
+            deadline,
+        );
         require!(
             recover_evm_address(&digest, &signature)? == agent,
             SponsoredTasksError::InvalidPayoutSignature
@@ -814,7 +843,9 @@ pub mod sponsored_tasks {
     /// ERC-1271 signature the program cannot verify. The settlers check that signature on the
     /// agent's chain and attest the binding with the settler threshold. The nonce must be the
     /// current one plus one (1 for a first binding) and never `u64::MAX`, so the agent's own signed binding with a higher nonce still
-    /// replaces an attested one.
+    /// replaces an attested one. The attested payout is stored as pending and used by `claim`
+    /// only one claim delay later, so the settlers cannot re-point payouts faster than the
+    /// admin can revoke their roots.
     pub fn bind_payout_attested(
         ctx: Context<BindPayoutAttested>,
         task_chain_id: u64,
@@ -835,19 +866,28 @@ pub mod sponsored_tasks {
             current.checked_add(1) == Some(nonce) && nonce != u64::MAX,
             SponsoredTasksError::InvalidAttestedNonce
         );
-        write_binding(
+        // The settlers also decide which worker each award leaf names, so a payout they attest
+        // takes effect only after the claim delay that gives the admin time to revoke a bad
+        // root. The agent's own signed `bind_payout` stays immediate and supersedes it.
+        let now = Clock::get()?.unix_timestamp;
+        let effective_at = now
+            .checked_add(ctx.accounts.config.claim_delay() as i64)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        write_pending_binding(
             &mut ctx.accounts.binding,
             ctx.bumps.binding,
             task_chain_id,
             agent,
             payout,
             nonce,
+            effective_at,
         )?;
-        emit_cpi!(PayoutBound {
+        emit_cpi!(PayoutBindingPending {
             task_chain_id,
             agent,
             payout,
             nonce,
+            effective_at,
         });
         Ok(())
     }
@@ -912,6 +952,50 @@ pub mod sponsored_tasks {
 
 /// Claims against a root wait the claim delay `settle` recorded, counted from the time it
 /// installed the root.
+/// The bookkeeping shared by `release` and `release_expired`: returns a `Reserved` reservation's
+/// amount to the vault and the manager's allowance, and gives the `TaskReleased` event to emit
+/// (`None` when the reservation was already released).
+fn release_reservation(
+    vault_key: Pubkey,
+    vault: &mut Vault,
+    reservation: &mut Account<Reservation>,
+) -> Result<Option<TaskReleased>> {
+    require!(
+        vault.status == VaultStatus::Active,
+        SponsoredTasksError::VaultNotActive
+    );
+    require!(
+        reservation.epoch == vault.epoch,
+        SponsoredTasksError::EpochMismatch
+    );
+    match reservation.state {
+        ReservationState::Released => return Ok(None),
+        ReservationState::Reserved => {}
+        _ => return err!(SponsoredTasksError::ReservationWrongState),
+    }
+    let amount = reservation.amount;
+    if let Some(account) = vault
+        .managers
+        .iter_mut()
+        .find(|m| m.key == reservation.manager)
+    {
+        account.reserved = account.reserved.saturating_sub(amount);
+    }
+    vault.total_reserved = vault
+        .total_reserved
+        .checked_sub(amount)
+        .ok_or(SponsoredTasksError::Overflow)?;
+    reservation.state = ReservationState::Released;
+    Ok(Some(TaskReleased {
+        vault: vault_key,
+        reservation: reservation.key(),
+        task_chain_id: reservation.task_chain_id,
+        task_id: reservation.task_id,
+        manager: reservation.manager,
+        amount,
+    }))
+}
+
 fn require_claim_delay_elapsed(reservation: &Reservation) -> Result<()> {
     let claimable_at = reservation
         .settled_at
@@ -931,6 +1015,8 @@ fn write_binding(
     payout: Pubkey,
     nonce: u64,
 ) -> Result<()> {
+    // `u64::MAX` could never be exceeded, so a binding at it would be permanent.
+    require!(nonce != u64::MAX, SponsoredTasksError::InvalidPayoutNonce);
     // A fresh account is zeroed; the seeds tie an existing one to this agent.
     if binding.agent == agent {
         require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
@@ -940,6 +1026,33 @@ fn write_binding(
     binding.payout = payout;
     binding.nonce = nonce;
     binding.bump = bump;
+    // The agent's own signature supersedes any attested change still waiting.
+    binding.pending_payout = Pubkey::default();
+    binding.pending_effective_at = 0;
+    Ok(())
+}
+
+/// Stores a settler-attested payout as pending until `effective_at`; the current payout keeps
+/// being paid until then. The nonce sequence is shared with `write_binding`.
+fn write_pending_binding(
+    binding: &mut Account<PayoutBinding>,
+    bump: u8,
+    task_chain_id: u64,
+    agent: [u8; 20],
+    payout: Pubkey,
+    nonce: u64,
+    effective_at: i64,
+) -> Result<()> {
+    require!(nonce != u64::MAX, SponsoredTasksError::InvalidPayoutNonce);
+    if binding.agent == agent {
+        require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
+    }
+    binding.task_chain_id = task_chain_id;
+    binding.agent = agent;
+    binding.nonce = nonce;
+    binding.bump = bump;
+    binding.pending_payout = payout;
+    binding.pending_effective_at = effective_at;
     Ok(())
 }
 
@@ -1012,16 +1125,19 @@ fn require_settlers(config: &Config, signers: &[AccountInfo]) -> Result<()> {
 /// The EIP-712 digest of a payout binding, as `eth_signTypedData_v4` builds it.
 pub fn payout_binding_digest(
     task_chain_id: u64,
+    cluster_id: &[u8; 32],
     agent: &[u8; 20],
     payout: &Pubkey,
     nonce: u64,
+    deadline: u64,
 ) -> [u8; 32] {
+    let salt = keccak::hashv(&[ID.as_ref(), cluster_id]);
     let domain = keccak::hashv(&[
         keccak::hash(EIP712_DOMAIN_TYPE).as_ref(),
         keccak::hash(PAYOUT_DOMAIN_NAME.as_bytes()).as_ref(),
         keccak::hash(PAYOUT_DOMAIN_VERSION.as_bytes()).as_ref(),
         &abi_word(task_chain_id),
-        ID.as_ref(),
+        salt.as_ref(),
     ]);
     let mut agent_word = [0u8; 32];
     agent_word[12..].copy_from_slice(agent);
@@ -1030,6 +1146,7 @@ pub fn payout_binding_digest(
         &agent_word,
         payout.as_ref(),
         &abi_word(nonce),
+        &abi_word(deadline),
     ]);
     keccak::hashv(&[b"\x19\x01", domain.as_ref(), message.as_ref()]).to_bytes()
 }
@@ -1240,6 +1357,15 @@ pub struct Release<'info> {
 
 #[event_cpi]
 #[derive(Accounts)]
+pub struct ReleaseExpired<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, Vault>,
+    #[account(mut, has_one = vault)]
+    pub reservation: Account<'info, Reservation>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
 pub struct Settle<'info> {
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, Config>,
@@ -1328,6 +1454,8 @@ pub struct RevokeSettlement<'info> {
 #[derive(Accounts)]
 #[instruction(task_chain_id: u64, agent: [u8; 20])]
 pub struct BindPayout<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
     #[account(
         init_if_needed,
         payer = payer,

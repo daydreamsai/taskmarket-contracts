@@ -1016,6 +1016,24 @@ contract SponsoredTaskSettlerTest is Test {
         settler.applyClaimDelay();
     }
 
+    function testRaisingClaimDelayCancelsPendingReduction() public {
+        vm.startPrank(admin);
+        settler.setClaimDelay(60);
+        uint64 eta = settler.pendingClaimDelayEta();
+        vm.expectEmit(address(settler));
+        emit SponsoredTaskSettler.ClaimDelayChangeCancelled();
+        settler.setClaimDelay(7200);
+        vm.stopPrank();
+
+        assertEq(settler.claimDelaySeconds(), 7200);
+        assertEq(settler.pendingClaimDelay(), 0);
+        assertEq(settler.pendingClaimDelayEta(), 0);
+        vm.warp(eta);
+        vm.expectRevert(SponsoredTaskSettler.NothingScheduled.selector);
+        settler.applyClaimDelay();
+        assertEq(settler.claimDelaySeconds(), 7200);
+    }
+
     function testClaimDelayValidationAndCancel() public {
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.InvalidClaimDelay.selector, uint64(0)));

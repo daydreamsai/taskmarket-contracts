@@ -252,7 +252,7 @@ contract RegistryFacet {
     }
 
     /// @notice Whether the diamond is inside a state-changing call (its reentrancy lock is held), as
-    ///         during settlement while check hooks are dispatched. Lets a hook tell a settlement in
+    ///         during settlement while hooks are dispatched. Lets a hook tell a settlement in
     ///         progress from one that finished.
     function isSettling() external view returns (bool) {
         return LibAppStorage.appStorage().reentrancyStatus == LibGuards.ENTERED;

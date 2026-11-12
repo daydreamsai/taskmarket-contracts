@@ -504,6 +504,37 @@ contract FundingPoolTest is FundingPoolBase {
         assertEq(pools.totalLiabilities(), 0);
     }
 
+    /// @dev Rev030: a pool whose value is dust against its supply does not start a new
+    ///      generation while anything is outstanding. The money a live task holds belongs to the
+    ///      current backers; it starts once the task has finished.
+    function test_NoNewGeneration_WhileAnythingIsOutstanding() public {
+        bytes32 big = keccak256("pool-big");
+        _open(big, 0);
+        uint256 opening = 1e19;
+        _creditOpening(big, creator, opening);
+        _spend(big, opening);
+        _finish(big, opening - 1);
+        assertEq(_info(big).outstanding, 1, "one unit is still out on a live task");
+        assertGt(_info(big).totalShares, 1e30, "dust against the supply");
+
+        _fund(big, alice, 1);
+        assertEq(_info(big).generation, 0, "no new generation while a task holds pool money");
+        assertEq(pools.sharesOf(big, creator), opening * SCALE, "the creator keeps its claim");
+        assertEq(pools.sharesOf(big, alice), opening * SCALE, "alice bought at the dust value");
+
+        _finish(big, 1);
+        assertEq(_info(big).outstanding, 0);
+        usdc.mint(bob, 5e6);
+        vm.startPrank(bob);
+        usdc.approve(address(pools), 5e6);
+        vm.expectEmit(address(pools));
+        emit ITMPFundingPool.PoolSharesReset(big, 1);
+        pools.fund(big, 5e6, address(0));
+        vm.stopPrank();
+        assertEq(pools.sharesOf(big, bob), 5e6 * SCALE, "the new generation starts once the task finished");
+        assertEq(pools.sharesOf(big, creator), 0);
+    }
+
     function test_ZeroValuePool_KeepsItsGenerationUntilFunded() public {
         _fund(pool, alice, BUDGET);
         _spendDone(pool, 2 * BUDGET);

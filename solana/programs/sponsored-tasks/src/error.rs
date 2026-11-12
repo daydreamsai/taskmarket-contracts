@@ -77,4 +77,14 @@ pub enum SponsoredTasksError {
     NotPendingAdmin,
     #[msg("Attested payout nonce must be the current nonce plus one and below u64::MAX")]
     InvalidAttestedNonce,
+    #[msg("Admin must not be the zero key")]
+    InvalidAdmin,
+    #[msg("Cluster id must not be zero")]
+    InvalidClusterId,
+    #[msg("Payout binding signature has expired")]
+    PayoutSignatureExpired,
+    #[msg("Payout binding nonce must be below u64::MAX")]
+    InvalidPayoutNonce,
+    #[msg("Reservation deadline has not passed")]
+    ReservationNotExpired,
 }

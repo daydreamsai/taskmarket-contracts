@@ -325,19 +325,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "getDefaultHooks",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "hookGasStipend",
     "inputs": [],
     "outputs": [
@@ -400,6 +387,19 @@ export const TaskMarketABI = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxSubmissionWinners",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -517,19 +517,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "setDefaultHooks",
-    "inputs": [
-      {
-        "name": "hooks",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setDiamondVersion",
     "inputs": [
       {
@@ -575,6 +562,19 @@ export const TaskMarketABI = [
         "name": "registry",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxSubmissionWinners",
+    "inputs": [
+      {
+        "name": "newMaximum",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [],
@@ -725,19 +725,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "event",
-    "name": "DefaultHooksSet",
-    "inputs": [
-      {
-        "name": "hooks",
-        "type": "address[]",
-        "indexed": false,
-        "internalType": "address[]"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "EscrowBackfilled",
     "inputs": [
       {
@@ -854,6 +841,19 @@ export const TaskMarketABI = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxSubmissionWinnersUpdated",
+    "inputs": [
+      {
+        "name": "maxSubmissionWinners",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -1050,11 +1050,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "DuplicateHookAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "EscrowInsolvent",
     "inputs": [
       {
@@ -1091,17 +1086,17 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "InvalidHookAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidHookGasStipend",
     "inputs": []
   },
   {
     "type": "error",
     "name": "InvalidInitialization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidMaxSubmissionWinners",
     "inputs": []
   },
   {
@@ -1190,11 +1185,6 @@ export const TaskMarketABI = [
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "TooManyHooks",
-    "inputs": []
   },
   {
     "type": "function",
@@ -2374,6 +2364,22 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "EvaluationWindowTooLong",
+    "inputs": [
+      {
+        "name": "evaluationWindow",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxWindow",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EvaluationWindowTooShort",
     "inputs": [
       {
@@ -2501,6 +2507,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "TooManyTags",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransformingHookNeedsDisputeResolver",
     "inputs": []
   },
   {
@@ -3547,7 +3558,17 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "InvalidAwardRank",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAwardRecipient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoActiveSubmissions",
     "inputs": []
   },
   {
@@ -5293,7 +5314,12 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
-    "name": "NoActiveSubmissions",
+    "name": "DisputeWindowStillOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EvaluatorDecides",
     "inputs": []
   },
   {
@@ -5724,6 +5750,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "PitchDeadlinePassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservedDeliveryPeriodShortened",
     "inputs": []
   },
   {
@@ -7996,6 +8027,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "DuplicateHookAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "HookCallNotDeclared",
     "inputs": []
   },
@@ -8018,6 +8054,17 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "HookCodeChanged",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HookDelegatedAccount",
     "inputs": [
       {
         "name": "index",
@@ -8113,6 +8160,11 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "TooManyDefaultHooks",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransformingHookWithAppealHook",
     "inputs": []
   },
   {
@@ -8326,83 +8378,6 @@ export const TaskMarketABI = [
   },
   {
     "type": "function",
-    "name": "hookCheckCompleteV1",
-    "inputs": [
-      {
-        "name": "taskId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "verdict",
-        "type": "tuple",
-        "internalType": "struct ITMPCore.Verdict",
-        "components": [
-          {
-            "name": "issued",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "verdictType",
-            "type": "uint8",
-            "internalType": "enum ITMPCore.VerdictType"
-          },
-          {
-            "name": "score",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "confidence",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "criteriaFlags",
-            "type": "bytes32[]",
-            "internalType": "bytes32[]"
-          },
-          {
-            "name": "evidenceHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "awards",
-            "type": "tuple[]",
-            "internalType": "struct ITMPCore.Award[]",
-            "components": [
-              {
-                "name": "worker",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "amount",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "rank",
-                "type": "uint16",
-                "internalType": "uint16"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "name": "disputed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "hookObserve",
     "inputs": [
       {
@@ -8568,6 +8543,34 @@ export const TaskMarketABI = [
     "stateMutability": "nonpayable"
   },
   {
+    "type": "error",
+    "name": "InvalidHookAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotSelf",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyHooks",
+    "inputs": []
+  },
+  {
+    "type": "event",
+    "name": "DefaultHooksSet",
+    "inputs": [
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "event",
     "name": "HookCallFailed",
     "inputs": [
@@ -8607,11 +8610,6 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InsufficientGasForHook",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotSelf",
     "inputs": []
   }
 ] as const;

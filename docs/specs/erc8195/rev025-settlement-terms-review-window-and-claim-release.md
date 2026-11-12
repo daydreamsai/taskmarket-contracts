@@ -455,6 +455,13 @@ this window lapses with live submissions; see `rev027-reservation-mode.md`.
   It does not apply to auctions, which have one winner and bids bounded by `MAX_BIDS_PER_TASK`.
 - Sizing: 50 winners measured 3.6M gas on Base (about 60k to 70k per winner) and about 9M on
   Tempo, under the 16M relay ceiling; 100 winners would exceed it on Tempo.
+  - Correction (rev030, 11 November 2026): the Tempo figures above are wrong. Tempo charges about
+    250,000 gas per new storage slot, a transaction is capped at 30M gas and the relay ceiling is
+    28M, not 16M. A 50-winner payout to recipients that hold no balance writes about three new
+    slots per winner and needs about 40M gas on Tempo, so it cannot settle in one transaction;
+    the Base figure stands. rev030 makes the cap per chain: `MAX_SUBMISSION_WINNERS` stays the
+    ceiling and the default of the owner-set `maxSubmissionWinners`, which Tempo sets lower. See
+    the rev030 spec.
 - Every award with a nonzero amount sets `taskAwarded[taskId][worker]`, in `acceptSubmission`,
   `acceptSubmissions`, `_payAwards` and `settleLapsedReview`.
 

@@ -15,13 +15,12 @@ import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTas
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTaskFactoryV2.sol";
 import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
-import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
 import { SponsoredTaskHookV2 } from "../src/hooks/sponsored-task/SponsoredTaskHookV2.sol";
 import { SponsoredTaskTerms } from "../src/hooks/sponsored-task/libraries/SponsoredTaskTerms.sol";
 import { PayoutGateHook } from "../src/hooks/payout-gate/PayoutGateHook.sol";
 import { MockTaskHookV2 } from "./mocks/MockTaskHookV2.sol";
 import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
-import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
+import { MockTaskmarketForSponsoredTask } from "./mocks/MockTaskmarketForSponsoredTask.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
@@ -59,184 +58,24 @@ contract MockTaskmarketV2ForSponsoredTask is MockTaskmarketForSponsoredTask {
     }
 }
 
-/// @dev Parity: the V2 hook reaches the V1 hook's outcomes for the same task state.
-contract SponsoredTaskHookV2ParityTest is Test {
+/// @dev The V2 hook's manifest and its diamond-only entry points. Its lifecycle outcomes are covered by
+///      SponsoredTaskHookV2Suite and the diamond test below.
+contract SponsoredTaskHookV2Test is Test {
     bytes32 private constant TASK_ID = keccak256("task");
-    uint256 private constant NATIVE_REWARD = 1_000_000;
-    uint256 private constant GROSS = 10_000;
-    uint16 private constant TOKEN_FEE_BPS = 50;
-    address private constant MANAGER = address(0xCAFE);
-    address private constant ALICE = address(0xA11CE);
-    address private constant BOB = address(0xB0B);
-    address private constant TOKEN_FEE_RECIPIENT = address(0xFEE1);
 
-    MockTaskmarketV2ForSponsoredTask private market1;
-    MockTaskmarketV2ForSponsoredTask private market2;
-    MockERC20 private usdc;
-    MockERC20 private projectToken;
-    SponsoredTaskHook private hook1;
     SponsoredTaskHookV2 private hook2;
-    SponsoredTasksVaultV2 private vault1;
-    SponsoredTasksVaultV2 private vault2;
 
     function setUp() external {
-        usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
-        projectToken = new MockERC20("Project", "PROJECT", 18, address(this));
-        SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(address(this), TOKEN_FEE_BPS, TOKEN_FEE_RECIPIENT);
+        MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
-        market1 = new MockTaskmarketV2ForSponsoredTask();
-        market2 = new MockTaskmarketV2ForSponsoredTask();
-        hook1 = new SponsoredTaskHook(address(market1), IERC20(address(usdc)), registry);
-        hook2 = new SponsoredTaskHookV2(address(market2), IERC20(address(usdc)), registry);
-        vault1 = _vault(registry, address(hook1), address(feePolicy), "v1");
-        vault2 = _vault(registry, address(hook2), address(feePolicy), "v2");
-        market1.primeTask(TASK_ID, MANAGER, address(usdc), NATIVE_REWARD, TMP_BOUNTY, address(hook1));
-        market2.primeTask(TASK_ID, MANAGER, address(usdc), NATIVE_REWARD, TMP_BOUNTY, address(hook2));
-    }
-
-    function _vault(SponsoredTaskRegistry registry, address hook, address feePolicy, bytes memory salt)
-        private
-        returns (SponsoredTasksVaultV2 vault)
-    {
-        SponsoredTaskFactoryV2 factory = new SponsoredTaskFactoryV2(
-            hook, feePolicy, registry, SponsoredTaskFeeConfig.none(IERC20(address(usdc)))
-        );
-        registry.setFactory(address(factory), true);
-        (address vaultAddress,) = factory.createVault(address(projectToken), address(this), keccak256(salt));
-        vault = SponsoredTasksVaultV2(vaultAddress);
-        vault.configureManager(MANAGER, GROSS * 100, true);
-        projectToken.mint(address(this), GROSS * 100);
-        projectToken.approve(address(vault), type(uint256).max);
-        vault.fund(GROSS * 100);
-    }
-
-    function _hookData(SponsoredTaskHook h, SponsoredTasksVaultV2 v, bytes32 termsHash)
-        private
-        view
-        returns (bytes memory)
-    {
-        return h.encodeHookData(
-            SponsoredTaskHook.FundingRequest({
-                route: 0,
-                vault: address(v),
-                vaultId: v.vaultId(),
-                allocationId: bytes32(0),
-                epoch: 1,
-                feeBps: TOKEN_FEE_BPS,
-                feeRecipient: TOKEN_FEE_RECIPIENT,
-                grossAmount: GROSS,
-                taskTermsHash: termsHash
-            })
-        );
-    }
-
-    function _fundBoth() private {
-        market1.callCheckFund(hook1, TASK_ID, _hookData(hook1, vault1, hook1.currentTaskTermsHash(TASK_ID)));
-        // The V2 configuration is the V1 hookData, byte for byte.
-        bytes memory config = _hookData(hook1, vault2, hook2.currentTaskTermsHash(TASK_ID));
-        assertEq(
-            keccak256(config),
-            keccak256(
-                hook2.encodeHookData(
-                    SponsoredTaskHookV2.FundingRequest({
-                        route: 0,
-                        vault: address(vault2),
-                        vaultId: vault2.vaultId(),
-                        allocationId: bytes32(0),
-                        epoch: 1,
-                        feeBps: TOKEN_FEE_BPS,
-                        feeRecipient: TOKEN_FEE_RECIPIENT,
-                        grossAmount: GROSS,
-                        taskTermsHash: hook2.currentTaskTermsHash(TASK_ID)
-                    })
-                )
-            ),
-            "same encoding"
-        );
-        market2.v2Create(hook2, TASK_ID, config);
-    }
-
-    function _verdict() private pure returns (ITMPCore.Verdict memory v) {
-        ITMPCore.Award[] memory awards = new ITMPCore.Award[](2);
-        awards[0] = ITMPCore.Award({ worker: ALICE, amount: 700_000, rank: 1 });
-        awards[1] = ITMPCore.Award({ worker: BOB, amount: 300_000, rank: 2 });
-        v.issued = true;
-        v.verdictType = ITMPCore.VerdictType.APPROVE;
-        v.score = 1000;
-        v.confidence = 1000;
-        v.awards = awards;
-    }
-
-    function _assertVaultsMatch() private view {
-        (,,,,,,, uint256 d1) = vault1.allocationTerms(TASK_ID);
-        (,,,,,,, uint256 d2) = vault2.allocationTerms(TASK_ID);
-        assertEq(d1, d2, "distributedGross");
-        (uint256 o1, uint256 p1, uint256 f1,, uint256 r1,,, SponsoredTaskTypes.AllocationStatus s1) =
-            vault1.allocationSettlement(TASK_ID);
-        (uint256 o2, uint256 p2, uint256 f2,, uint256 r2,,, SponsoredTaskTypes.AllocationStatus s2) =
-            vault2.allocationSettlement(TASK_ID);
-        assertEq(o1, o2, "outstanding");
-        assertEq(p1, p2, "paid");
-        assertEq(f1, f2, "fee outstanding");
-        assertEq(r1, r2, "released");
-        assertEq(uint8(s1), uint8(s2), "vault status");
-    }
-
-    function _status1() private view returns (uint8 s) {
-        (,,,,,,,, SponsoredTaskHook.HookStatus st) = hook1.taskAllocationSettlement(TASK_ID);
-        s = uint8(st);
-    }
-
-    function _status2() private view returns (uint8 s) {
-        (,,,,,,,, SponsoredTaskHookV2.HookStatus st) = hook2.taskAllocationSettlement(TASK_ID);
-        s = uint8(st);
+        hook2 =
+            new SponsoredTaskHookV2(address(new MockTaskmarketV2ForSponsoredTask()), IERC20(address(usdc)), registry);
     }
 
     function test_DeclaresOnlyItsCapabilities() external view {
         assertEq(hook2.hookCapabilities(), hook2.CAPABILITIES());
         assertEq(hook2.minDiamondVersion(), 28);
         assertTrue(hook2.supportsInterface(type(ITMPHookV2).interfaceId));
-    }
-
-    function test_ParityReserve() external {
-        _fundBoth();
-        assertEq(_status1(), _status2(), "hook status");
-        _assertVaultsMatch();
-    }
-
-    function test_ParityCompletionAndSettlement() external {
-        _fundBoth();
-        market1.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
-        market2.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
-        market1.callCheckComplete(hook1, TASK_ID, _verdict());
-        market2.v2Accept(hook2, TASK_ID, _verdict());
-        assertEq(_status1(), _status2(), "committed");
-        // The rewards roots differ only because each binds its own vault; the amounts must match.
-        hook1.finalizeSettlement(TASK_ID, _verdict().awards);
-        hook2.finalizeSettlement(TASK_ID, _verdict().awards);
-        assertEq(_status1(), _status2(), "settled");
-        _assertVaultsMatch();
-    }
-
-    function test_ParityCancelRelease() external {
-        _fundBoth();
-        market1.setStatus(TASK_ID, ITMPCore.TaskStatus.Cancelled);
-        market2.setStatus(TASK_ID, ITMPCore.TaskStatus.Cancelled);
-        market1.callOnCancel(hook1, TASK_ID);
-        market2.v2AfterCancel(hook2, TASK_ID);
-        assertEq(_status1(), _status2(), "released");
-        _assertVaultsMatch();
-    }
-
-    function test_AfterCompleteCommitsUncommittedCompletion() external {
-        _fundBoth();
-        market1.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
-        market2.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
-        market1.setVerdict(TASK_ID, _verdict());
-        market2.setVerdict(TASK_ID, _verdict());
-        market1.callOnComplete(hook1, TASK_ID, _verdict());
-        market2.v2AfterComplete(hook2, TASK_ID);
-        assertEq(_status1(), _status2(), "committed from the stored verdict");
     }
 
     function test_OnlyDiamondCalls() external {

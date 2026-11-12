@@ -146,7 +146,7 @@ contract Rev029UpgradeTest is Test, DiamondTestHelper {
 
         new Rev029Upgrade().run();
 
-        assertEq(IFundingPoolManager(pool).fundingPoolRevision(), 29, "pool upgraded in place");
+        assertGe(IFundingPoolManager(pool).fundingPoolRevision(), 29, "pool upgraded in place");
         assertEq(projects.fundingPool(), pool, "same proxy");
         assertEq(ITMPFundingPool(pool).sharesOf(poolId, projectOwner), shares, "state kept");
         assertTrue(new Rev029Upgrade().poolLanded(pool));

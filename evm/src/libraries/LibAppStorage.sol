@@ -40,7 +40,9 @@ struct AppStorage {
     mapping(bytes32 => mapping(address => bytes32[])) taskSubmissionHashes;
     // O(1) existence check for taskSubmissionHashes; set alongside every push in submitWork.
     mapping(bytes32 => mapping(address => mapping(bytes32 => bool))) taskSubmissionHashExists;
-    // Rev008: multi-hook support
+    // Rev008: multi-hook support. Retired in rev030 (V1 hooks are no longer dispatched or set): both
+    // fields stay because AppStorage is append-only, and nothing reads or writes them. A task created
+    // before the rev028 cut keeps its taskHooks list, which no code looks at.
     address[] defaultHooks;
     mapping(bytes32 => address[]) taskHooks;
     // Rev011: explicit upgrade-step counter, tracking the same revision numbering already used
@@ -134,8 +136,8 @@ struct AppStorage {
     address fundingPool;
     // Rev028: Task Hook V2, appended at the end per the storage-layout rule, in the order the rev028
     // spec fixes. taskHookVersion is each task's dispatch version, fixed at creation: zero reads as
-    // V1, so every task created before the cut keeps V1 dispatch with no write; every later task is
-    // 2. taskHooksV2 holds a V2 task's ordered attachments (defaults first, then requester hooks).
+    // a task with no hooks since rev030 (it was V1 dispatch before), so every task created before
+    // the cut needs no write; every later task is 2. taskHooksV2 holds a V2 task's ordered attachments (defaults first, then requester hooks).
     // defaultHooksV2 is the owner's protocol default V2 list (at most two). hookCapabilityGas is
     // the owner-set gas budget per capability bit (zero reads as the floor). hookCallSeq is, per
     // task and hook index, the next after-callback sequence number.
@@ -144,8 +146,8 @@ struct AppStorage {
     ITMPHookV2.Attachment[] defaultHooksV2;
     mapping(uint8 => uint256) hookCapabilityGas;
     mapping(bytes32 => mapping(uint8 => uint64)) hookCallSeq;
-    // Rev028: the settlement record, written once when a task becomes terminal after the cut (V1
-    // and V2 tasks alike); forfeited accumulates across forfeits before that. A task that was
+    // Rev028: the settlement record, written once when a task becomes terminal after the cut (tasks
+    // with and without V2 hooks alike); forfeited accumulates across forfeits before that. A task that was
     // terminal before the cut reads with recorded == false.
     mapping(bytes32 => ITMPHookV2.SettlementAmounts) taskSettlements;
     // Rev028: owner-set cap on a transforming hook's fee, in basis points of the awards. Zero (the
@@ -157,6 +159,11 @@ struct AppStorage {
     // Rev029: the address a project's owner proposed as its next owner, zero when none. Cleared on
     // accept and on cancel.
     mapping(uint256 => address) projectPendingOwner;
+    // Rev030: owner-set cap on the winners one Bounty or Benchmark settlement may pay on this chain,
+    // from 1 to LibTaskMarket.MAX_SUBMISSION_WINNERS. Zero means "never set":
+    // LibTaskMarket._maxSubmissionWinners substitutes MAX_SUBMISSION_WINNERS, so a diamond upgraded
+    // into rev030 keeps the cap it had. Appended at the end per the storage-layout rule.
+    uint16 maxSubmissionWinners;
 }
 
 library LibAppStorage {

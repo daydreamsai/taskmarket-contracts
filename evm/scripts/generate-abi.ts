@@ -59,11 +59,9 @@ const DIAMOND_FACETS = [
 // was absent that map could not name a single one of them -- an unnamed revert is treated as
 // transient and retried against a call that can only revert again.
 const STANDALONE: Record<string, string> = {
-  TaskTokenRewardHook: 'TaskTokenRewardHook.sol/TaskTokenRewardHook.json',
   RewardVault: 'RewardVault.sol/RewardVault.json',
   EpochBudget: 'EpochBudget.sol/EpochBudget.json',
   TaskMarketForwarder: 'TaskMarketForwarderV2.sol/TaskMarketForwarderV2.json',
-  SponsoredTaskHook: 'SponsoredTaskHook.sol/SponsoredTaskHook.json',
   SponsoredTasksVaultV2: 'SponsoredTasksVaultV2.sol/SponsoredTasksVaultV2.json',
   SponsoredTaskFactoryV2: 'SponsoredTaskFactoryV2.sol/SponsoredTaskFactoryV2.json',
   SponsoredTaskRegistry: 'SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json',
@@ -76,6 +74,15 @@ const STANDALONE: Record<string, string> = {
   RemoteSponsoredTaskHookV2: 'RemoteSponsoredTaskHookV2.sol/RemoteSponsoredTaskHookV2.json',
   TaskTokenRewardHookV2: 'TaskTokenRewardHookV2.sol/TaskTokenRewardHookV2.json',
 };
+
+// Retired in rev030: the V1 hook contracts TaskTokenRewardHook and SponsoredTaskHook (and
+// RemoteSponsoredTaskHook, which never had a file here) no longer exist in the sources, but
+// hooks deployed from them stay on chain, and the indexer and the backend's error map still decode
+// their events and errors. Their abi/<Name>.json and abi/generated/<Name>.ts are frozen at their
+// rev029 content: this script does not regenerate them and `make contract evm abi-check` does not
+// compare them. Delete a frozen pair only when no deployed V1 hook remains to be read.
+//
+// abi/TaskTokenRewardHook.json, abi/SponsoredTaskHook.json (and their generated/*.ts files).
 
 type AbiEntry = Record<string, unknown>;
 
@@ -142,6 +149,13 @@ function main(): void {
       seen.add(key);
       merged.push(entry);
     }
+  }
+  const retired = JSON.parse(readFileSync(join('abi', 'retired', 'TaskMarketV1Hooks.json'), 'utf8')) as AbiEntry[];
+  for (const entry of retired) {
+    const key = stableKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
   }
   write('TaskMarket', merged);
 

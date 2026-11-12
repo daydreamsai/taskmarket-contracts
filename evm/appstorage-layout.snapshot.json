@@ -1,0 +1,1609 @@
+{
+  "types": {
+    "t_address": {
+      "label": "address",
+      "encoding": "inplace",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_address)dyn_storage": {
+      "label": "address[]",
+      "encoding": "dynamic_array",
+      "numberOfBytes": "32",
+      "base": "t_address"
+    },
+    "t_array(t_bytes32)dyn_storage": {
+      "label": "bytes32[]",
+      "encoding": "dynamic_array",
+      "numberOfBytes": "32",
+      "base": "t_bytes32"
+    },
+    "t_array(t_struct(Attachment)_storage)dyn_storage": {
+      "label": "struct ITMPHookV2.Attachment[]",
+      "encoding": "dynamic_array",
+      "numberOfBytes": "32",
+      "base": "t_struct(Attachment)_storage"
+    },
+    "t_array(t_struct(Award)_storage)dyn_storage": {
+      "label": "struct ITMPCore.Award[]",
+      "encoding": "dynamic_array",
+      "numberOfBytes": "32",
+      "base": "t_struct(Award)_storage"
+    },
+    "t_array(t_struct(Bid)_storage)dyn_storage": {
+      "label": "struct ITMPCore.Bid[]",
+      "encoding": "dynamic_array",
+      "numberOfBytes": "32",
+      "base": "t_struct(Bid)_storage"
+    },
+    "t_bool": {
+      "label": "bool",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_bytes32": {
+      "label": "bytes32",
+      "encoding": "inplace",
+      "numberOfBytes": "32"
+    },
+    "t_bytes4": {
+      "label": "bytes4",
+      "encoding": "inplace",
+      "numberOfBytes": "4"
+    },
+    "t_contract(IERC20)": {
+      "label": "contract IERC20",
+      "encoding": "inplace",
+      "numberOfBytes": "20"
+    },
+    "t_enum(PenaltyTo)": {
+      "label": "enum ITMPCore.PenaltyTo",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_enum(RejectOutcome)": {
+      "label": "enum ITMPCore.RejectOutcome",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_enum(ReleaseAllowed)": {
+      "label": "enum ITMPCore.ReleaseAllowed",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_enum(RequesterOfRecord)": {
+      "label": "enum ITMPProject.RequesterOfRecord",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_enum(TaskStatus)": {
+      "label": "enum ITMPCore.TaskStatus",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_enum(VerdictType)": {
+      "label": "enum ITMPCore.VerdictType",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    },
+    "t_int128": {
+      "label": "int128",
+      "encoding": "inplace",
+      "numberOfBytes": "16"
+    },
+    "t_mapping(t_address,t_array(t_bytes32)dyn_storage)": {
+      "label": "mapping(address => bytes32[])",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_array(t_bytes32)dyn_storage"
+    },
+    "t_mapping(t_address,t_bool)": {
+      "label": "mapping(address => bool)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_bool"
+    },
+    "t_mapping(t_address,t_mapping(t_bytes32,t_bool))": {
+      "label": "mapping(address => mapping(bytes32 => bool))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_mapping(t_bytes32,t_bool)"
+    },
+    "t_mapping(t_address,t_struct(Grant)_storage)": {
+      "label": "mapping(address => struct ITMPProject.Grant)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_struct(Grant)_storage"
+    },
+    "t_mapping(t_address,t_struct(GrantLimits)_storage)": {
+      "label": "mapping(address => struct ITMPProject.GrantLimits)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_struct(GrantLimits)_storage"
+    },
+    "t_mapping(t_address,t_struct(WorkerStats)_storage)": {
+      "label": "mapping(address => struct ITMPCore.WorkerStats)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_struct(WorkerStats)_storage"
+    },
+    "t_mapping(t_address,t_uint256)": {
+      "label": "mapping(address => uint256)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_address",
+      "value": "t_uint256"
+    },
+    "t_mapping(t_bytes32,t_address)": {
+      "label": "mapping(bytes32 => address)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_address"
+    },
+    "t_mapping(t_bytes32,t_array(t_address)dyn_storage)": {
+      "label": "mapping(bytes32 => address[])",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_array(t_address)dyn_storage"
+    },
+    "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)": {
+      "label": "mapping(bytes32 => bytes32[])",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_array(t_bytes32)dyn_storage"
+    },
+    "t_mapping(t_bytes32,t_array(t_struct(Attachment)_storage)dyn_storage)": {
+      "label": "mapping(bytes32 => struct ITMPHookV2.Attachment[])",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_array(t_struct(Attachment)_storage)dyn_storage"
+    },
+    "t_mapping(t_bytes32,t_array(t_struct(Bid)_storage)dyn_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.Bid[])",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_array(t_struct(Bid)_storage)dyn_storage"
+    },
+    "t_mapping(t_bytes32,t_bool)": {
+      "label": "mapping(bytes32 => bool)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_bool"
+    },
+    "t_mapping(t_bytes32,t_mapping(t_address,t_array(t_bytes32)dyn_storage))": {
+      "label": "mapping(bytes32 => mapping(address => bytes32[]))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_mapping(t_address,t_array(t_bytes32)dyn_storage)"
+    },
+    "t_mapping(t_bytes32,t_mapping(t_address,t_bool))": {
+      "label": "mapping(bytes32 => mapping(address => bool))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_mapping(t_address,t_bool)"
+    },
+    "t_mapping(t_bytes32,t_mapping(t_address,t_mapping(t_bytes32,t_bool)))": {
+      "label": "mapping(bytes32 => mapping(address => mapping(bytes32 => bool)))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_mapping(t_address,t_mapping(t_bytes32,t_bool))"
+    },
+    "t_mapping(t_bytes32,t_mapping(t_uint8,t_uint64))": {
+      "label": "mapping(bytes32 => mapping(uint8 => uint64))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_mapping(t_uint8,t_uint64)"
+    },
+    "t_mapping(t_bytes32,t_struct(EscrowRecord)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPEscrow.EscrowRecord)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(EscrowRecord)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(FeedbackValue)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPFeedback.FeedbackValue)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(FeedbackValue)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(SettlementAmounts)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPHookV2.SettlementAmounts)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(SettlementAmounts)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(Task)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.Task)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(Task)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskAuctionConfig)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.TaskAuctionConfig)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(TaskAuctionConfig)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskClock)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.TaskClock)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(TaskClock)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskEvaluatorConfig)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.TaskEvaluatorConfig)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(TaskEvaluatorConfig)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskMetadata)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.TaskMetadata)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(TaskMetadata)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskPitchConfig)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.TaskPitchConfig)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(TaskPitchConfig)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TaskTerms)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.TaskTerms)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(TaskTerms)_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(Verdict)_storage)": {
+      "label": "mapping(bytes32 => struct ITMPCore.Verdict)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_struct(Verdict)_storage"
+    },
+    "t_mapping(t_bytes32,t_uint256)": {
+      "label": "mapping(bytes32 => uint256)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_uint256"
+    },
+    "t_mapping(t_bytes32,t_uint8)": {
+      "label": "mapping(bytes32 => uint8)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_bytes32",
+      "value": "t_uint8"
+    },
+    "t_mapping(t_uint256,t_address)": {
+      "label": "mapping(uint256 => address)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint256",
+      "value": "t_address"
+    },
+    "t_mapping(t_uint256,t_array(t_bytes32)dyn_storage)": {
+      "label": "mapping(uint256 => bytes32[])",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint256",
+      "value": "t_array(t_bytes32)dyn_storage"
+    },
+    "t_mapping(t_uint256,t_mapping(t_address,t_struct(Grant)_storage))": {
+      "label": "mapping(uint256 => mapping(address => struct ITMPProject.Grant))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint256",
+      "value": "t_mapping(t_address,t_struct(Grant)_storage)"
+    },
+    "t_mapping(t_uint256,t_mapping(t_address,t_struct(GrantLimits)_storage))": {
+      "label": "mapping(uint256 => mapping(address => struct ITMPProject.GrantLimits))",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint256",
+      "value": "t_mapping(t_address,t_struct(GrantLimits)_storage)"
+    },
+    "t_mapping(t_uint256,t_struct(ProjectRecord)_storage)": {
+      "label": "mapping(uint256 => struct ITMPProject.ProjectRecord)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint256",
+      "value": "t_struct(ProjectRecord)_storage"
+    },
+    "t_mapping(t_uint8,t_uint256)": {
+      "label": "mapping(uint8 => uint256)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint8",
+      "value": "t_uint256"
+    },
+    "t_mapping(t_uint8,t_uint64)": {
+      "label": "mapping(uint8 => uint64)",
+      "encoding": "mapping",
+      "numberOfBytes": "32",
+      "key": "t_uint8",
+      "value": "t_uint64"
+    },
+    "t_string_storage": {
+      "label": "string",
+      "encoding": "bytes",
+      "numberOfBytes": "32"
+    },
+    "t_struct(AppStorage)_storage": {
+      "label": "struct AppStorage",
+      "encoding": "inplace",
+      "numberOfBytes": "2112",
+      "members": [
+        {
+          "label": "usdcToken",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_contract(IERC20)"
+        },
+        {
+          "label": "trustedForwarders",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_mapping(t_address,t_bool)"
+        },
+        {
+          "label": "tasks",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(Task)_storage)"
+        },
+        {
+          "label": "workerStats",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_mapping(t_address,t_struct(WorkerStats)_storage)"
+        },
+        {
+          "label": "stakeForfeit",
+          "slot": "4",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_uint256)"
+        },
+        {
+          "label": "taskBids",
+          "slot": "5",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_array(t_struct(Bid)_storage)dyn_storage)"
+        },
+        {
+          "label": "defaultFeeBps",
+          "slot": "6",
+          "offset": 0,
+          "type": "t_uint16"
+        },
+        {
+          "label": "feeRecipient",
+          "slot": "6",
+          "offset": 2,
+          "type": "t_address"
+        },
+        {
+          "label": "totalFeesCollected",
+          "slot": "7",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "reputationRegistry",
+          "slot": "8",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "requesterNonce",
+          "slot": "9",
+          "offset": 0,
+          "type": "t_mapping(t_address,t_uint256)"
+        },
+        {
+          "label": "taskPitchHashes",
+          "slot": "10",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)"
+        },
+        {
+          "label": "taskProofHashes",
+          "slot": "11",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)"
+        },
+        {
+          "label": "taskWorkerRated",
+          "slot": "12",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))"
+        },
+        {
+          "label": "taskTags",
+          "slot": "13",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_array(t_bytes32)dyn_storage)"
+        },
+        {
+          "label": "taskVerdicts",
+          "slot": "14",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(Verdict)_storage)"
+        },
+        {
+          "label": "phaseDeadline",
+          "slot": "15",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_uint256)"
+        },
+        {
+          "label": "taskEvaluatorConfigs",
+          "slot": "16",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(TaskEvaluatorConfig)_storage)"
+        },
+        {
+          "label": "taskAuctionConfigs",
+          "slot": "17",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(TaskAuctionConfig)_storage)"
+        },
+        {
+          "label": "taskMetadata",
+          "slot": "18",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(TaskMetadata)_storage)"
+        },
+        {
+          "label": "taskPitchConfigs",
+          "slot": "19",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(TaskPitchConfig)_storage)"
+        },
+        {
+          "label": "reentrancyStatus",
+          "slot": "20",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "paused",
+          "slot": "21",
+          "offset": 0,
+          "type": "t_bool"
+        },
+        {
+          "label": "taskHasSubmissions",
+          "slot": "22",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_bool)"
+        },
+        {
+          "label": "taskRejectedWorkers",
+          "slot": "23",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))"
+        },
+        {
+          "label": "taskActiveSubmissionCount",
+          "slot": "24",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_uint256)"
+        },
+        {
+          "label": "taskSubmissionHashes",
+          "slot": "25",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_mapping(t_address,t_array(t_bytes32)dyn_storage))"
+        },
+        {
+          "label": "taskSubmissionHashExists",
+          "slot": "26",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_mapping(t_address,t_mapping(t_bytes32,t_bool)))"
+        },
+        {
+          "label": "defaultHooks",
+          "slot": "27",
+          "offset": 0,
+          "type": "t_array(t_address)dyn_storage"
+        },
+        {
+          "label": "taskHooks",
+          "slot": "28",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_array(t_address)dyn_storage)"
+        },
+        {
+          "label": "diamondVersion",
+          "slot": "29",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "minAppealWindowSecs",
+          "slot": "30",
+          "offset": 0,
+          "type": "t_uint32"
+        },
+        {
+          "label": "minFeedbackGas",
+          "slot": "31",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "taskTerms",
+          "slot": "32",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(TaskTerms)_storage)"
+        },
+        {
+          "label": "taskClocks",
+          "slot": "33",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(TaskClock)_storage)"
+        },
+        {
+          "label": "taskAwarded",
+          "slot": "34",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_mapping(t_address,t_bool))"
+        },
+        {
+          "label": "termsBounds",
+          "slot": "35",
+          "offset": 0,
+          "type": "t_struct(TermsBounds)_storage"
+        },
+        {
+          "label": "taskLimits",
+          "slot": "36",
+          "offset": 0,
+          "type": "t_struct(TaskLimits)_storage"
+        },
+        {
+          "label": "minEvaluationWindowSecs",
+          "slot": "37",
+          "offset": 0,
+          "type": "t_uint32"
+        },
+        {
+          "label": "identityRegistry",
+          "slot": "37",
+          "offset": 4,
+          "type": "t_address"
+        },
+        {
+          "label": "requesterAgentIds",
+          "slot": "38",
+          "offset": 0,
+          "type": "t_mapping(t_address,t_uint256)"
+        },
+        {
+          "label": "feedbackValues",
+          "slot": "39",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(FeedbackValue)_storage)"
+        },
+        {
+          "label": "totalLiabilities",
+          "slot": "40",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "escrowRecords",
+          "slot": "41",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(EscrowRecord)_storage)"
+        },
+        {
+          "label": "liabilitiesInitialised",
+          "slot": "42",
+          "offset": 0,
+          "type": "t_bool"
+        },
+        {
+          "label": "hookGasStipend",
+          "slot": "43",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "reservedWorkers",
+          "slot": "44",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_address)"
+        },
+        {
+          "label": "workerAgentIds",
+          "slot": "45",
+          "offset": 0,
+          "type": "t_mapping(t_address,t_uint256)"
+        },
+        {
+          "label": "projectCount",
+          "slot": "46",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "projects",
+          "slot": "47",
+          "offset": 0,
+          "type": "t_mapping(t_uint256,t_struct(ProjectRecord)_storage)"
+        },
+        {
+          "label": "projectTaskIds",
+          "slot": "48",
+          "offset": 0,
+          "type": "t_mapping(t_uint256,t_array(t_bytes32)dyn_storage)"
+        },
+        {
+          "label": "taskProjects",
+          "slot": "49",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_uint256)"
+        },
+        {
+          "label": "taskCreators",
+          "slot": "50",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_address)"
+        },
+        {
+          "label": "projectPrepaid",
+          "slot": "51",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "projectGrants",
+          "slot": "52",
+          "offset": 0,
+          "type": "t_mapping(t_uint256,t_mapping(t_address,t_struct(Grant)_storage))"
+        },
+        {
+          "label": "taskOperators",
+          "slot": "53",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_address)"
+        },
+        {
+          "label": "taskPoolDraws",
+          "slot": "54",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_uint256)"
+        },
+        {
+          "label": "fundingPool",
+          "slot": "55",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "taskHookVersion",
+          "slot": "56",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_uint8)"
+        },
+        {
+          "label": "taskHooksV2",
+          "slot": "57",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_array(t_struct(Attachment)_storage)dyn_storage)"
+        },
+        {
+          "label": "defaultHooksV2",
+          "slot": "58",
+          "offset": 0,
+          "type": "t_array(t_struct(Attachment)_storage)dyn_storage"
+        },
+        {
+          "label": "hookCapabilityGas",
+          "slot": "59",
+          "offset": 0,
+          "type": "t_mapping(t_uint8,t_uint256)"
+        },
+        {
+          "label": "hookCallSeq",
+          "slot": "60",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_mapping(t_uint8,t_uint64))"
+        },
+        {
+          "label": "taskSettlements",
+          "slot": "61",
+          "offset": 0,
+          "type": "t_mapping(t_bytes32,t_struct(SettlementAmounts)_storage)"
+        },
+        {
+          "label": "maxHookFeeBps",
+          "slot": "62",
+          "offset": 0,
+          "type": "t_uint16"
+        },
+        {
+          "label": "projectGrantLimits",
+          "slot": "63",
+          "offset": 0,
+          "type": "t_mapping(t_uint256,t_mapping(t_address,t_struct(GrantLimits)_storage))"
+        },
+        {
+          "label": "projectPendingOwner",
+          "slot": "64",
+          "offset": 0,
+          "type": "t_mapping(t_uint256,t_address)"
+        },
+        {
+          "label": "maxSubmissionWinners",
+          "slot": "65",
+          "offset": 0,
+          "type": "t_uint16"
+        }
+      ]
+    },
+    "t_struct(Attachment)_storage": {
+      "label": "struct ITMPHookV2.Attachment",
+      "encoding": "inplace",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "label": "hook",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "capabilities",
+          "slot": "0",
+          "offset": 20,
+          "type": "t_uint32"
+        },
+        {
+          "label": "minDiamondVersion",
+          "slot": "0",
+          "offset": 24,
+          "type": "t_uint16"
+        },
+        {
+          "label": "transforming",
+          "slot": "0",
+          "offset": 26,
+          "type": "t_bool"
+        },
+        {
+          "label": "configHash",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_bytes32"
+        },
+        {
+          "label": "codehash",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_bytes32"
+        },
+        {
+          "label": "callRoles",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_uint32"
+        }
+      ]
+    },
+    "t_struct(Award)_storage": {
+      "label": "struct ITMPCore.Award",
+      "encoding": "inplace",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "label": "worker",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "amount",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "rank",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_uint16"
+        }
+      ]
+    },
+    "t_struct(Bid)_storage": {
+      "label": "struct ITMPCore.Bid",
+      "encoding": "inplace",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "label": "worker",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "price",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint256"
+        }
+      ]
+    },
+    "t_struct(EscrowRecord)_storage": {
+      "label": "struct ITMPEscrow.EscrowRecord",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "booked",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint128"
+        },
+        {
+          "label": "tracked",
+          "slot": "0",
+          "offset": 16,
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(FeedbackValue)_storage": {
+      "label": "struct ITMPFeedback.FeedbackValue",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "value",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_int128"
+        },
+        {
+          "label": "isSet",
+          "slot": "0",
+          "offset": 16,
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(Grant)_storage": {
+      "label": "struct ITMPProject.Grant",
+      "encoding": "inplace",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "label": "terms",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_struct(GrantTerms)_storage"
+        },
+        {
+          "label": "committed",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "exists",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_bool"
+        },
+        {
+          "label": "accepted",
+          "slot": "3",
+          "offset": 1,
+          "type": "t_bool"
+        },
+        {
+          "label": "revoked",
+          "slot": "3",
+          "offset": 2,
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(GrantLimits)_storage": {
+      "label": "struct ITMPProject.GrantLimits",
+      "encoding": "inplace",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "label": "expiresAt",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint64"
+        },
+        {
+          "label": "allowedModesMask",
+          "slot": "0",
+          "offset": 8,
+          "type": "t_uint32"
+        },
+        {
+          "label": "periodSecs",
+          "slot": "0",
+          "offset": 12,
+          "type": "t_uint64"
+        },
+        {
+          "label": "periodStart",
+          "slot": "0",
+          "offset": 20,
+          "type": "t_uint64"
+        },
+        {
+          "label": "maxRewardPerTask",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint128"
+        },
+        {
+          "label": "periodCap",
+          "slot": "1",
+          "offset": 16,
+          "type": "t_uint128"
+        },
+        {
+          "label": "periodSpent",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_uint128"
+        }
+      ]
+    },
+    "t_struct(GrantTerms)_storage": {
+      "label": "struct ITMPProject.GrantTerms",
+      "encoding": "inplace",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "label": "cap",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "requesterOfRecord",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_enum(RequesterOfRecord)"
+        },
+        {
+          "label": "ownerOverride",
+          "slot": "1",
+          "offset": 1,
+          "type": "t_bool"
+        },
+        {
+          "label": "revokeRemovesControl",
+          "slot": "1",
+          "offset": 2,
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(ProjectRecord)_storage": {
+      "label": "struct ITMPProject.ProjectRecord",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "owner",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "endsAt",
+          "slot": "0",
+          "offset": 20,
+          "type": "t_uint64"
+        },
+        {
+          "label": "taskGraceSecs",
+          "slot": "0",
+          "offset": 28,
+          "type": "t_uint32"
+        }
+      ]
+    },
+    "t_struct(SettlementAmounts)_storage": {
+      "label": "struct ITMPHookV2.SettlementAmounts",
+      "encoding": "inplace",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "label": "workerPaid",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint128"
+        },
+        {
+          "label": "requesterRefund",
+          "slot": "0",
+          "offset": 16,
+          "type": "t_uint128"
+        },
+        {
+          "label": "forfeited",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint128"
+        },
+        {
+          "label": "evaluatorFee",
+          "slot": "1",
+          "offset": 16,
+          "type": "t_uint128"
+        },
+        {
+          "label": "protocolFee",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_uint128"
+        },
+        {
+          "label": "hookFee",
+          "slot": "2",
+          "offset": 16,
+          "type": "t_uint128"
+        },
+        {
+          "label": "awardCount",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_uint16"
+        },
+        {
+          "label": "terminalStatus",
+          "slot": "3",
+          "offset": 2,
+          "type": "t_uint8"
+        },
+        {
+          "label": "settledAt",
+          "slot": "3",
+          "offset": 3,
+          "type": "t_uint40"
+        },
+        {
+          "label": "recorded",
+          "slot": "3",
+          "offset": 8,
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(Task)_storage": {
+      "label": "struct ITMPCore.Task",
+      "encoding": "inplace",
+      "numberOfBytes": "288",
+      "members": [
+        {
+          "label": "id",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_bytes32"
+        },
+        {
+          "label": "requester",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "worker",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "status",
+          "slot": "2",
+          "offset": 20,
+          "type": "t_enum(TaskStatus)"
+        },
+        {
+          "label": "mode",
+          "slot": "2",
+          "offset": 21,
+          "type": "t_bytes4"
+        },
+        {
+          "label": "reward",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "expiryTime",
+          "slot": "4",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "stakeAmount",
+          "slot": "5",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "feeBps",
+          "slot": "6",
+          "offset": 0,
+          "type": "t_uint16"
+        },
+        {
+          "label": "deliverable",
+          "slot": "7",
+          "offset": 0,
+          "type": "t_bytes32"
+        },
+        {
+          "label": "rating",
+          "slot": "8",
+          "offset": 0,
+          "type": "t_uint8"
+        },
+        {
+          "label": "hookContract",
+          "slot": "8",
+          "offset": 1,
+          "type": "t_address"
+        },
+        {
+          "label": "stakeRequired",
+          "slot": "8",
+          "offset": 21,
+          "type": "t_bool"
+        },
+        {
+          "label": "stakeBps",
+          "slot": "8",
+          "offset": 22,
+          "type": "t_uint16"
+        }
+      ]
+    },
+    "t_struct(TaskAuctionConfig)_storage": {
+      "label": "struct ITMPCore.TaskAuctionConfig",
+      "encoding": "inplace",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "label": "bidDeadline",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "maxPrice",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "auctionSubtype",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_bytes4"
+        },
+        {
+          "label": "lowestBidder",
+          "slot": "2",
+          "offset": 4,
+          "type": "t_address"
+        },
+        {
+          "label": "lowestBidPrice",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_uint256"
+        }
+      ]
+    },
+    "t_struct(TaskClock)_storage": {
+      "label": "struct ITMPCore.TaskClock",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "deliveredAt",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint64"
+        },
+        {
+          "label": "decisionStartAt",
+          "slot": "0",
+          "offset": 8,
+          "type": "t_uint64"
+        },
+        {
+          "label": "revisionsUsed",
+          "slot": "0",
+          "offset": 16,
+          "type": "t_uint8"
+        },
+        {
+          "label": "revisionDueAt",
+          "slot": "0",
+          "offset": 17,
+          "type": "t_uint64"
+        }
+      ]
+    },
+    "t_struct(TaskEvaluatorConfig)_storage": {
+      "label": "struct ITMPCore.TaskEvaluatorConfig",
+      "encoding": "inplace",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "label": "evaluator",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_address"
+        },
+        {
+          "label": "evaluatorStake",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "evaluatorFeeBps",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_uint16"
+        },
+        {
+          "label": "evaluationWindow",
+          "slot": "2",
+          "offset": 2,
+          "type": "t_uint32"
+        },
+        {
+          "label": "appealWindow",
+          "slot": "2",
+          "offset": 6,
+          "type": "t_uint32"
+        },
+        {
+          "label": "disputeResolver",
+          "slot": "2",
+          "offset": 10,
+          "type": "t_address"
+        }
+      ]
+    },
+    "t_struct(TaskLimits)_storage": {
+      "label": "struct ITMPCore.TaskLimits",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "maxTags",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint16"
+        },
+        {
+          "label": "maxHooks",
+          "slot": "0",
+          "offset": 2,
+          "type": "t_uint8"
+        }
+      ]
+    },
+    "t_struct(TaskMetadata)_storage": {
+      "label": "struct ITMPCore.TaskMetadata",
+      "encoding": "inplace",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "label": "createdAt",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "claimedAt",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "contentHash",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_bytes32"
+        },
+        {
+          "label": "contentURI",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_string_storage"
+        }
+      ]
+    },
+    "t_struct(TaskPitchConfig)_storage": {
+      "label": "struct ITMPCore.TaskPitchConfig",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "pitchDeadline",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint256"
+        }
+      ]
+    },
+    "t_struct(TaskTerms)_storage": {
+      "label": "struct ITMPCore.TaskTerms",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "version",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint8"
+        },
+        {
+          "label": "stakeRequired",
+          "slot": "0",
+          "offset": 1,
+          "type": "t_bool"
+        },
+        {
+          "label": "stakeBps",
+          "slot": "0",
+          "offset": 2,
+          "type": "t_uint16"
+        },
+        {
+          "label": "penaltyTo",
+          "slot": "0",
+          "offset": 4,
+          "type": "t_enum(PenaltyTo)"
+        },
+        {
+          "label": "reviewWindowSecs",
+          "slot": "0",
+          "offset": 5,
+          "type": "t_uint32"
+        },
+        {
+          "label": "decisionWindowSecs",
+          "slot": "0",
+          "offset": 9,
+          "type": "t_uint32"
+        },
+        {
+          "label": "reopenExtensionSecs",
+          "slot": "0",
+          "offset": 13,
+          "type": "t_uint32"
+        },
+        {
+          "label": "releaseAllowed",
+          "slot": "0",
+          "offset": 17,
+          "type": "t_enum(ReleaseAllowed)"
+        },
+        {
+          "label": "releaseGraceBps",
+          "slot": "0",
+          "offset": 18,
+          "type": "t_uint16"
+        },
+        {
+          "label": "rejectOutcome",
+          "slot": "0",
+          "offset": 20,
+          "type": "t_enum(RejectOutcome)"
+        },
+        {
+          "label": "rejectFeeBps",
+          "slot": "0",
+          "offset": 21,
+          "type": "t_uint16"
+        },
+        {
+          "label": "maxRevisions",
+          "slot": "0",
+          "offset": 23,
+          "type": "t_uint8"
+        },
+        {
+          "label": "resolutionWindowSecs",
+          "slot": "0",
+          "offset": 24,
+          "type": "t_uint32"
+        },
+        {
+          "label": "acceptWindowSecs",
+          "slot": "0",
+          "offset": 28,
+          "type": "t_uint32"
+        }
+      ]
+    },
+    "t_struct(TermsBounds)_storage": {
+      "label": "struct ITMPCore.TermsBounds",
+      "encoding": "inplace",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "label": "minWindowSecs",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint32"
+        },
+        {
+          "label": "maxWindowSecs",
+          "slot": "0",
+          "offset": 4,
+          "type": "t_uint32"
+        },
+        {
+          "label": "maxRejectFeeBps",
+          "slot": "0",
+          "offset": 8,
+          "type": "t_uint16"
+        },
+        {
+          "label": "maxRevisions",
+          "slot": "0",
+          "offset": 10,
+          "type": "t_uint8"
+        }
+      ]
+    },
+    "t_struct(Verdict)_storage": {
+      "label": "struct ITMPCore.Verdict",
+      "encoding": "inplace",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "label": "issued",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_bool"
+        },
+        {
+          "label": "verdictType",
+          "slot": "0",
+          "offset": 1,
+          "type": "t_enum(VerdictType)"
+        },
+        {
+          "label": "score",
+          "slot": "0",
+          "offset": 2,
+          "type": "t_uint16"
+        },
+        {
+          "label": "confidence",
+          "slot": "0",
+          "offset": 4,
+          "type": "t_uint16"
+        },
+        {
+          "label": "criteriaFlags",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_array(t_bytes32)dyn_storage"
+        },
+        {
+          "label": "evidenceHash",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_bytes32"
+        },
+        {
+          "label": "awards",
+          "slot": "3",
+          "offset": 0,
+          "type": "t_array(t_struct(Award)_storage)dyn_storage"
+        }
+      ]
+    },
+    "t_struct(WorkerStats)_storage": {
+      "label": "struct ITMPCore.WorkerStats",
+      "encoding": "inplace",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "label": "completedTasks",
+          "slot": "0",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "ratedTasks",
+          "slot": "1",
+          "offset": 0,
+          "type": "t_uint256"
+        },
+        {
+          "label": "totalStars",
+          "slot": "2",
+          "offset": 0,
+          "type": "t_uint256"
+        }
+      ]
+    },
+    "t_uint128": {
+      "label": "uint128",
+      "encoding": "inplace",
+      "numberOfBytes": "16"
+    },
+    "t_uint16": {
+      "label": "uint16",
+      "encoding": "inplace",
+      "numberOfBytes": "2"
+    },
+    "t_uint256": {
+      "label": "uint256",
+      "encoding": "inplace",
+      "numberOfBytes": "32"
+    },
+    "t_uint32": {
+      "label": "uint32",
+      "encoding": "inplace",
+      "numberOfBytes": "4"
+    },
+    "t_uint40": {
+      "label": "uint40",
+      "encoding": "inplace",
+      "numberOfBytes": "5"
+    },
+    "t_uint64": {
+      "label": "uint64",
+      "encoding": "inplace",
+      "numberOfBytes": "8"
+    },
+    "t_uint8": {
+      "label": "uint8",
+      "encoding": "inplace",
+      "numberOfBytes": "1"
+    }
+  }
+}

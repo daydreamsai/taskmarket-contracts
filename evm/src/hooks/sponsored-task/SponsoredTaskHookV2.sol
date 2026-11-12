@@ -12,8 +12,9 @@ import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/pr
 import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../../interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../../interfaces/ITMPProject.sol";
-import { TMP_AUCTION } from "../../interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_CLAIM, TMP_PITCH } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHookV2 } from "../base/BaseTMPHookV2.sol";
+import { LibSettledAwards } from "../base/LibSettledAwards.sol";
 import { SponsoredTaskTypes } from "./SponsoredTaskTypes.sol";
 import { ISponsoredTasksVault } from "./interfaces/ISponsoredTasksVault.sol";
 import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol";
@@ -134,6 +135,7 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     error VaultMismatch();
     error VaultExited(bytes32 vaultId, uint64 epoch);
     error TaskTermsMismatch(bytes32 expected, bytes32 actual);
+    error SponsorshipTermsFrozen();
     error TaskNotTerminal(bytes32 taskId, ITMPCore.TaskStatus status);
     error VerdictNotIssued();
     error VerdictCommitmentMismatch(bytes32 taskId);
@@ -302,6 +304,9 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         returns (bytes32 rewardsRoot)
     {
         TaskAllocation storage allocation = _requireAllocation(taskId);
+        // Rev030: a stored verdict is the awards the diamond paid; a provisional commitment from the
+        // core awards gives way to it first, so only the paid awards can settle.
+        if (allocation.status == HookStatus.CompletionCommitted) _adoptStoredVerdict(taskId, allocation);
         ITMPCore.Award[] memory awardsMemory = awards;
         rewardsRoot = _finalizeSettlement(taskId, allocation, awardsMemory);
     }
@@ -497,6 +502,11 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         emit ForfeitReservationRetained(taskId, allocation.allocationId, worker);
     }
 
+    /// @dev Rev030: the commitment `beforeAccept` makes from the core verdict is provisional. When
+    ///      a transforming hook replaces the awards, the diamond stores the awards it paid as the
+    ///      task's verdict, and `afterComplete`, `reconcile` and `finalizeSettlement` recommit from
+    ///      it (`_adoptStoredVerdict`). An accept no hook changed stores no verdict, so this
+    ///      commitment stands, and settlement proves the awards against it as before.
     function _commitCompletion(
         bytes32 taskId,
         TaskAllocation storage allocation,
@@ -504,34 +514,58 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         ITMPCore.Verdict memory verdict
     ) private {
         if (!verdict.issued) revert VerdictNotIssued();
-        ITMPCore.Award[] memory awards = verdict.awards;
+        HookStatus status = allocation.status;
+        if (status != HookStatus.Reserved && status != HookStatus.AwardCountExceeded) {
+            revert AllocationWrongStatus(taskId, status);
+        }
+        _commit(
+            taskId,
+            allocation,
+            verdict.verdictType,
+            verdict.awards,
+            _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps)
+        );
+    }
+
+    /// @dev Rev030: the settled awards, when the diamond stored them, replace the commitment. The
+    ///      native payout pool depends only on the task's terms, so it is kept. Never reverts on the
+    ///      award count (an oversized stored verdict releases the reservation), so it is safe in
+    ///      `afterComplete`.
+    function _adoptStoredVerdict(bytes32 taskId, TaskAllocation storage allocation) private {
+        ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
+        if (verdict.issued) {
+            _commit(taskId, allocation, verdict.verdictType, verdict.awards, allocation.nativePayoutPool);
+        }
+    }
+
+    /// @dev Commits the completion of a `Reserved` allocation, or recommits a `CompletionCommitted`
+    ///      one; an unchanged recommitment writes nothing. The count guard runs before the digest is
+    ///      built, so an oversized verdict releases the sponsorship without spending more of the
+    ///      hook's gas first.
+    function _commit(
+        bytes32 taskId,
+        TaskAllocation storage allocation,
+        ITMPCore.VerdictType verdictType,
+        ITMPCore.Award[] memory awards,
+        uint256 payoutPool
+    ) private {
         uint256 count = awards.length;
-        // The count guard runs before the payout pool is read, so an oversized verdict releases the
-        // sponsorship without spending more of the hook's gas first.
         if (count > MAX_AWARDS) {
             _releaseForAwardOverflow(taskId, allocation, count);
             return;
         }
-        uint256 payoutPool = _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps);
-        bytes32 digest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdict.verdictType, awards);
+        // An AwardCountExceeded allocation is already released and stays so.
+        if (allocation.status == HookStatus.AwardCountExceeded) return;
+        bytes32 digest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdictType, awards);
+        // The digest binds the verdict type, the count and every award.
+        if (allocation.status == HookStatus.CompletionCommitted && allocation.awardsDigest == digest) return;
 
-        if (allocation.status == HookStatus.CompletionCommitted) {
-            if (
-                allocation.verdictType != verdict.verdictType || allocation.awardsDigest != digest
-                    || allocation.awardCount != uint32(count) || allocation.nativePayoutPool != payoutPool
-            ) revert VerdictCommitmentMismatch(taskId);
-            return;
-        }
-        if (allocation.status != HookStatus.Reserved) revert AllocationWrongStatus(taskId, allocation.status);
-
-        allocation.verdictType = verdict.verdictType;
+        allocation.verdictType = verdictType;
         allocation.awardsDigest = digest;
         allocation.awardCount = uint32(count);
         allocation.nativePayoutPool = payoutPool;
         allocation.status = HookStatus.CompletionCommitted;
-        emit CompletionCommitted(
-            taskId, allocation.allocationId, verdict.verdictType, digest, uint32(count), payoutPool
-        );
+        emit CompletionCommitted(taskId, allocation.allocationId, verdictType, digest, uint32(count), payoutPool);
     }
 
     /// @dev The native pool PARTIAL awards scale against: the task's payment base minus the
@@ -548,8 +582,9 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     }
 
     /// @dev Split out of `reconcile` to stay under `forge coverage --ir-minimum`'s stack limit.
-    ///      Requester `acceptSubmission` stores no verdict; its single award is rebuilt from the
-    ///      task, and a wrong reconstruction reverts on the commitment digest. Returns the status
+    ///      A stored verdict is recommitted from first (rev030). Requester `acceptSubmission` stores
+    ///      no verdict unless a transforming hook replaced the awards; its single award is rebuilt
+    ///      from the task, and a wrong reconstruction reverts on the commitment digest. Returns the status
     ///      unchanged (`CompletionCommitted`) when nothing could be reconstructed.
     function _reconcileCommittedCompletion(bytes32 taskId, TaskAllocation storage allocation)
         private
@@ -557,7 +592,11 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     {
         ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
         ITMPCore.Award[] memory awards = verdict.awards;
-        if (!verdict.issued) {
+        if (verdict.issued) {
+            // Rev030: the stored verdict is what the diamond paid; recommit from it first. An
+            // oversized one releases the sponsorship, and the settlement below then does nothing.
+            _commit(taskId, allocation, verdict.verdictType, awards, allocation.nativePayoutPool);
+        } else {
             if (allocation.awardCount != 1) return allocation.status;
             ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
             awards = new ITMPCore.Award[](1);
@@ -579,24 +618,22 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         returns (HookStatus)
     {
         ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
-        // Nothing to rebuild without a stored verdict, unless it is an auction with a worker.
-        if (!verdict.issued && !(task.mode == TMP_AUCTION && task.worker != address(0))) {
-            revert AwardsRequired(taskId);
-        }
+        // Nothing to rebuild without a stored verdict, unless the mode pays a single worker (Claim,
+        // Pitch or Auction) and the task has one. Rev030: Claim and Pitch included, so a completion
+        // whose afterComplete was swallowed still settles.
+        bool singlePayee =
+            task.worker != address(0) && (task.mode == TMP_AUCTION || task.mode == TMP_CLAIM || task.mode == TMP_PITCH);
+        if (!verdict.issued && !singlePayee) revert AwardsRequired(taskId);
         ITMPCore.VerdictType verdictType = ITMPCore.VerdictType.APPROVE;
         ITMPCore.Award[] memory awards;
         if (verdict.issued) {
             verdictType = verdict.verdictType;
             awards = verdict.awards;
-            if (awards.length > MAX_AWARDS) {
-                _releaseForAwardOverflow(taskId, allocation, awards.length);
-                return allocation.status;
-            }
         } else {
-            awards = new ITMPCore.Award[](1);
-            awards[0] = ITMPCore.Award({ worker: task.worker, amount: task.stakeAmount, rank: 1 });
+            awards = LibSettledAwards.singlePayee(diamond, taskId);
         }
-        _commitCompletionMemory(
+        // An oversized stored verdict releases the sponsorship; the settlement below then does nothing.
+        _commit(
             taskId,
             allocation,
             verdictType,
@@ -607,31 +644,6 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         );
         _finalizeSettlement(taskId, allocation, awards);
         return allocation.status;
-    }
-
-    function _commitCompletionMemory(
-        bytes32 taskId,
-        TaskAllocation storage allocation,
-        ITMPCore.VerdictType verdictType,
-        ITMPCore.Award[] memory awards,
-        uint256 payoutPool
-    ) private {
-        uint256 count = awards.length;
-        // Only ever called from `_reconcileUncommitted`, which releases an oversized stored
-        // verdict through `_releaseForAwardOverflow` first, so `count` never exceeds `MAX_AWARDS`.
-        allocation.verdictType = verdictType;
-        allocation.awardsDigest = SponsoredTaskSettlement.awardsDigestMemory(taskId, verdictType, awards);
-        allocation.awardCount = uint32(count);
-        allocation.nativePayoutPool = payoutPool;
-        allocation.status = HookStatus.CompletionCommitted;
-        emit CompletionCommitted(
-            taskId,
-            allocation.allocationId,
-            verdictType,
-            allocation.awardsDigest,
-            uint32(count),
-            allocation.nativePayoutPool
-        );
     }
 
     function _finalizeSettlement(bytes32 taskId, TaskAllocation storage allocation, ITMPCore.Award[] memory awards)
@@ -736,8 +748,8 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         return result.rewardsRoot;
     }
 
-    /// @dev Called only from the mandatory `checkComplete` boundary via `_commitCompletion`, so it
-    ///      must never revert: an oversized verdict releases the reservation back to `available`
+    /// @dev Reached from the mandatory `checkComplete` boundary and, rev030, from `afterComplete`
+    ///      (both through `_commit`), so it must never revert: an oversized verdict releases the reservation back to `available`
     ///      and marks the sponsor terminally unsettleable, while Taskmarket's own USDC settlement
     ///      proceeds unaffected in the same transaction.
     function _releaseForAwardOverflow(bytes32 taskId, TaskAllocation storage allocation, uint256 count) private {
@@ -745,7 +757,11 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
             allocation.status == HookStatus.AwardCountExceeded || allocation.status == HookStatus.DefaultedByOwner
                 || allocation.status == HookStatus.Released
         ) return;
-        if (allocation.status != HookStatus.Reserved) revert AllocationWrongStatus(taskId, allocation.status);
+        // Rev030: a provisional commitment (CompletionCommitted) is released too, when the awards the
+        // diamond settled exceed the bound.
+        if (allocation.status != HookStatus.Reserved && allocation.status != HookStatus.CompletionCommitted) {
+            revert AllocationWrongStatus(taskId, allocation.status);
+        }
 
         ISponsoredTasksVault vault = ISponsoredTasksVault(allocation.vault);
         if (vault.status() == SponsoredTaskTypes.VaultStatus.Exited && vault.epoch() != allocation.epoch) {
@@ -936,10 +952,13 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     // rev028 Task Hook V2 callbacks
     // -------------------------------------------------------------------------
 
-    /// @notice beforeCreate (0), beforeEvaluate (11), beforeAccept (13), afterComplete (21),
-    ///         afterCancel (22), afterExpire (23), afterForfeit (24). No result power.
-    uint32 public constant CAPABILITIES = (uint32(1) << 0) | (uint32(1) << 11) | (uint32(1) << 13) | (uint32(1) << 21)
-        | (uint32(1) << 22) | (uint32(1) << 23) | (uint32(1) << 24);
+    /// @notice beforeCreate (0), beforeAssignEvaluator (1), beforeUpdate (2), beforeEvaluate (11),
+    ///         beforeAccept (13), afterComplete (21), afterCancel (22), afterExpire (23),
+    ///         afterForfeit (24). No result power. Rev030: bits 1 and 2 freeze the terms the sponsor
+    ///         funded. The diamond snapshots capabilities at attach, so tasks created before the
+    ///         upgrade keep their old bits and only new tasks are covered.
+    uint32 public constant CAPABILITIES = (uint32(1) << 0) | (uint32(1) << 1) | (uint32(1) << 2) | (uint32(1) << 11)
+        | (uint32(1) << 13) | (uint32(1) << 21) | (uint32(1) << 22) | (uint32(1) << 23) | (uint32(1) << 24);
 
     function hookCapabilities() external pure override returns (uint32) {
         return CAPABILITIES;
@@ -954,6 +973,35 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     {
         _checkFund(taskId, _v1(taskId, ctx), config);
         return this.beforeCreate.selector;
+    }
+
+    /// @dev Rev030: the evaluator is part of the funded terms hash, so it cannot change while the
+    ///      sponsorship is active (any status but None, Released and DefaultedByOwner).
+    function beforeAssignEvaluator(bytes32 taskId, TaskContextV2 calldata, address, bytes calldata)
+        external
+        view
+        override
+        returns (bytes4)
+    {
+        _requireNoActiveSponsorship(taskId);
+        return this.beforeAssignEvaluator.selector;
+    }
+
+    /// @dev Rev030: the reward and other terms cannot change while the sponsorship is active.
+    function beforeUpdate(bytes32 taskId, TaskContextV2 calldata, bytes calldata)
+        external
+        view
+        override
+        returns (bytes4)
+    {
+        _requireNoActiveSponsorship(taskId);
+        return this.beforeUpdate.selector;
+    }
+
+    function _requireNoActiveSponsorship(bytes32 taskId) private view {
+        _onlyDiamond();
+        // None (0), Released (5) and DefaultedByOwner (6) are the inactive statuses (mask 0x61).
+        if ((0x61 >> uint8(_s().taskAllocations[taskId].status)) & 1 == 0) revert SponsorshipTermsFrozen();
     }
 
     /// @dev V1 checkEvaluate.
@@ -979,17 +1027,25 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         return _allowAccept();
     }
 
-    /// @dev V1 onComplete. afterComplete carries no verdict, so a completion not yet committed
-    ///      (lapsed-review settlement) is committed from the diamond's verdict, or the single award a
-    ///      single-payee settlement pays.
+    /// @dev V1 onComplete, sized from the awards the diamond settled (LibSettledAwards).
+    ///      afterComplete carries no verdict, so a completion not yet committed (lapsed-review
+    ///      settlement) is committed from the diamond's verdict, or the single award a single-payee
+    ///      settlement pays. Rev030: a provisional commitment from `beforeAccept` is recommitted
+    ///      from the stored verdict, which holds the awards a transforming hook made the diamond
+    ///      pay; with none stored the core awards were paid and the commitment stands. Every other
+    ///      status is left alone.
     function afterComplete(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata, uint64)
         external
         override
         onlyDiamond
     {
         TaskAllocation storage allocation = _s().taskAllocations[taskId];
-        if (allocation.status != HookStatus.Reserved) return;
-        _onComplete(taskId, _v1(taskId, ctx), _settledVerdict(taskId));
+        HookStatus status = allocation.status;
+        if (status == HookStatus.CompletionCommitted) {
+            _adoptStoredVerdict(taskId, allocation);
+        } else if (status == HookStatus.Reserved) {
+            _onComplete(taskId, _v1(taskId, ctx), LibSettledAwards.settledVerdict(diamond, taskId));
+        }
     }
 
     function afterCancel(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata, uint64)
@@ -1021,20 +1077,5 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     function _v1(bytes32 taskId, TaskContextV2 calldata ctx) private view returns (ITMPCore.TaskContext memory c) {
         c = ITMPDiamond(diamond).getTaskContext(taskId);
         c.currentState = ctx.currentState;
-    }
-
-    function _settledVerdict(bytes32 taskId) private view returns (ITMPCore.Verdict memory v) {
-        v = ITMPDiamond(diamond).getTaskVerdict(taskId);
-        if (v.issued) return v;
-        ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
-        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({
-            worker: task.worker, amount: task.mode == TMP_AUCTION ? task.stakeAmount : task.reward, rank: 1
-        });
-        v.issued = true;
-        v.verdictType = ITMPCore.VerdictType.APPROVE;
-        v.score = 1000;
-        v.confidence = 1000;
-        v.awards = awards;
     }
 }

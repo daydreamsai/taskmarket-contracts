@@ -1,0 +1,57 @@
+[
+  {
+    "type": "event",
+    "name": "DefaultHooksSet",
+    "inputs": [
+      {
+        "name": "hooks",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookCallFailed",
+    "inputs": [
+      {
+        "name": "hook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HookRegistered",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "hookContract",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "HookCheckFundRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientGasForHook",
+    "inputs": []
+  }
+]

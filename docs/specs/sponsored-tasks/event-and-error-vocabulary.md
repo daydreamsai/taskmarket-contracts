@@ -129,7 +129,7 @@ enforced by an account constraint or seed derivation and surfaces as a framework
 | `SettlementCommitmentRequired`, `UnexpectedSettlementCommitment` | none | EVM-only: Base settles from the hook's committed verdict; Solana settles from a settler-signed root. |
 | `ConflictingSettlement(allocationId)` | `ReservationWrongState` | A second settle finds the reservation already `Settled`. |
 | `ClaimExpired(deadline)` | none | EVM-only, with the `claimTo` signature path; a Solana claim pays the bound address without a per-claim signature. |
-| `InvalidClaimNonce`, `InvalidClaimSignature` | `InvalidPayoutSignature`, `StalePayoutNonce` (section 5) | The Solana signature is checked once at `bind_payout`, not per claim. |
+| `InvalidClaimNonce`, `InvalidClaimSignature` | `InvalidPayoutSignature`, `StalePayoutNonce`, `PayoutSignatureExpired` (section 5) | The Solana signature is checked once at `bind_payout`, not per claim. |
 | `InvalidClaimProof` | `InvalidClaimProof` (section 5) | |
 | `ClaimAlreadyPaid(allocationId, index)` | `ClaimAlreadyPaid` (section 5) | The claim receipt PDA is the guard; the program checks it first so the error is named. |
 | `ClaimIndexOutOfBounds(index, leafCount)` | `ClaimIndexOutOfBounds` (section 5) | |
@@ -174,6 +174,7 @@ and sponsor is the same PDA.
 | `ManagerChainMismatch` | A Solana manager is keyed by EVM chain; the reservation's `task_chain_id` must match it. |
 | `VaultCapExceeded` | Scheduled for removal with `VaultCapSet`. |
 | `DeadlineInPast` | The settler-signed reservation message carries a deadline. |
+| `ReservationNotExpired` | `release_expired` before the reservation's deadline has passed; the deadline is enforced only through this permissionless release. |
 | `SettlementHasClaims` | Guard on `revoke_settlement`. |
 | `InvalidClaimDelay` | `set_claim_delay` rejects zero and values above `i64::MAX`; the claim delay exists only on Solana (see [`settlement.md`](settlement.md)). |
 | `ClaimDelayNotElapsed` | `claim` and `claim_fee` before `Config.claim_delay_seconds` has passed since `settle`. An EVM root comes from same-chain award events and pays at once. |
@@ -334,6 +335,7 @@ section 3.
 | `SponsoredTaskClaimed` | `vault`, `reservation`, `task_chain_id`, `task_id`, `leaf_index: u32`, `worker: [u8; 20]`, `destination: Pubkey`, `amount: u64` | `reward_claimed` | `SponsoredTasksVault.SponsoredTaskClaimed` |
 | `FeeClaimed` | `vault`, `reservation`, `task_chain_id`, `task_id`, `fee_recipient: Pubkey`, `destination: Pubkey`, `amount: u64` | `fee_claimed` | `SponsoredTasksVault.FeeClaimed` |
 | `PayoutBound` | `task_chain_id`, `agent: [u8; 20]`, `payout: Pubkey`, `nonce: u64` | `payout_bound` | none |
+| `PayoutBindingPending` | `task_chain_id`, `agent: [u8; 20]`, `payout: Pubkey`, `nonce: u64`, `effective_at: i64` | `payout_binding_pending` | none |
 
 `distributed_gross`, `fee_total` and `released_amount` keep the EVM meaning: the reserved amount
 covered by awards, the fee carved from it, and the reserved amount returned to the vault's

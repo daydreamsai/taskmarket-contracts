@@ -11,8 +11,9 @@ import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/pr
 import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../../interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../../interfaces/ITMPProject.sol";
-import { TMP_AUCTION } from "../../interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_CLAIM, TMP_PITCH } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHookV2 } from "../base/BaseTMPHookV2.sol";
+import { LibSettledAwards } from "../base/LibSettledAwards.sol";
 import { SponsoredTaskSettlement } from "./libraries/SponsoredTaskSettlement.sol";
 import { SponsoredTaskTerms } from "./libraries/SponsoredTaskTerms.sol";
 
@@ -122,6 +123,7 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
     error CommitmentNotFound(bytes32 taskId);
     error CommitmentWrongStatus(bytes32 taskId, HookStatus status);
     error TaskTermsMismatch(bytes32 expected, bytes32 actual);
+    error CommitmentTermsFrozen(bytes32 taskId);
     error TaskNotTerminal(bytes32 taskId, ITMPCore.TaskStatus status);
     error VerdictNotIssued();
     error VerdictCommitmentMismatch(bytes32 taskId);
@@ -211,12 +213,24 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         return _s().outcomes[taskId];
     }
 
+    /// @notice The task a commitment was made for, by the manager that created it. Rev030: the key
+    ///         includes the manager, so another task creator cannot use up a vault's nonce first.
+    function taskByCommitment(uint256 remoteChainId, address vault, uint64 commitmentNonce, address manager)
+        external
+        view
+        returns (bytes32)
+    {
+        return _s().taskByCommitment[_commitmentKey(remoteChainId, vault, commitmentNonce, manager)];
+    }
+
+    /// @notice The task a commitment made before rev030 was recorded for, keyed without a manager.
+    ///         Such a nonce stays used.
     function taskByCommitment(uint256 remoteChainId, address vault, uint64 commitmentNonce)
         external
         view
         returns (bytes32)
     {
-        return _s().taskByCommitment[_commitmentKey(remoteChainId, vault, commitmentNonce)];
+        return _s().taskByCommitment[_legacyCommitmentKey(remoteChainId, vault, commitmentNonce)];
     }
 
     /// @notice When the keeper may release a reservation that has no settlement: seven days after
@@ -246,6 +260,9 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         returns (bytes32 rewardsRoot)
     {
         _requireCommitment(taskId);
+        // Rev030: a stored verdict is the awards the diamond paid; a provisional commitment from the
+        // core awards gives way to it first, so only the paid awards can settle.
+        if (_s().outcomes[taskId].status == HookStatus.CompletionCommitted) _adoptStoredVerdict(taskId);
         ITMPCore.Award[] memory awardsMemory = awards;
         return _finalizeSettlement(taskId, awardsMemory);
     }
@@ -283,7 +300,11 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         if (o.status == HookStatus.CompletionCommitted) {
             ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
             ITMPCore.Award[] memory awards = verdict.awards;
-            if (!verdict.issued) {
+            if (verdict.issued) {
+                // Rev030: the stored verdict is what the diamond paid; recommit from it first. An
+                // oversized one marks the sponsorship unsettleable; the settlement then does nothing.
+                _adoptStoredVerdict(taskId);
+            } else {
                 if (o.awardCount != 1) revert AwardsRequired(taskId);
                 awards = new ITMPCore.Award[](1);
                 uint256 amount = task.mode == TMP_AUCTION ? task.stakeAmount : task.reward;
@@ -299,17 +320,17 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         // accepted price. Any other mode with no verdict has nothing to rebuild.
         if (o.status == HookStatus.Committed) {
             ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
-            if (!verdict.issued && (task.mode != TMP_AUCTION || task.worker == address(0))) {
-                revert AwardsRequired(taskId);
-            }
+            // Rev030: a Claim or Pitch completion with no stored verdict pays its sole worker too.
+            bool singlePayee = task.worker != address(0)
+                && (task.mode == TMP_AUCTION || task.mode == TMP_CLAIM || task.mode == TMP_PITCH);
+            if (!verdict.issued && !singlePayee) revert AwardsRequired(taskId);
             ITMPCore.VerdictType verdictType = ITMPCore.VerdictType.APPROVE;
             ITMPCore.Award[] memory awards;
             if (verdict.issued) {
                 verdictType = verdict.verdictType;
                 awards = verdict.awards;
             } else {
-                awards = new ITMPCore.Award[](1);
-                awards[0] = ITMPCore.Award({ worker: task.worker, amount: task.stakeAmount, rank: 1 });
+                awards = LibSettledAwards.singlePayee(diamond, taskId);
             }
             uint256 pool = _nativePayoutPool(
                 taskId, task.mode, task.reward, ITMPDiamond(diamond).getTaskEvaluatorConfig(taskId).evaluatorFeeBps
@@ -343,14 +364,19 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         bytes32 termsHash = _currentTermsHash(taskId, ctx);
         if (request.taskTermsHash != termsHash) revert TaskTermsMismatch(request.taskTermsHash, termsHash);
 
-        bytes32 key = _commitmentKey(request.remoteChainId, request.vault, request.commitmentNonce);
+        address manager = _chargedManager(taskId, ctx.requester);
+        bytes32 key = _commitmentKey(request.remoteChainId, request.vault, request.commitmentNonce, manager);
         bytes32 existing = _s().taskByCommitment[key];
+        if (existing == bytes32(0)) {
+            existing = _s()
+            .taskByCommitment[_legacyCommitmentKey(request.remoteChainId, request.vault, request.commitmentNonce)];
+        }
         if (existing != bytes32(0)) {
             revert CommitmentNonceUsed(request.remoteChainId, request.vault, request.commitmentNonce, existing);
         }
         _s().taskByCommitment[key] = taskId;
 
-        _recordCommitment(taskId, _chargedManager(taskId, ctx.requester), request);
+        _recordCommitment(taskId, manager, request);
         _s().commitments[taskId].requester = ctx.requester;
         return true;
     }
@@ -459,6 +485,26 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         if (o.status == HookStatus.AwardCountExceeded) return;
         if (o.status != HookStatus.Committed) revert CommitmentWrongStatus(taskId, o.status);
         _commitAwards(taskId, verdict.verdictType, awards, pool);
+    }
+
+    /// @dev Rev030: the commitment `beforeAccept` makes from the core verdict is provisional. When a
+    ///      transforming hook replaces the awards, the diamond stores the awards it paid as the
+    ///      task's verdict, and `afterComplete`, `reconcile` and `finalizeSettlement` recommit from
+    ///      it here, so the root the settler relays follows the paid awards. An accept no hook
+    ///      changed stores no verdict, so its commitment stands. The caller has checked the status
+    ///      is `CompletionCommitted`. The native payout pool depends only on the task's terms, so it
+    ///      is kept. Never reverts (an oversized stored verdict marks the sponsorship unsettleable),
+    ///      so it is safe in `afterComplete`.
+    function _adoptStoredVerdict(bytes32 taskId) private {
+        ITMPCore.Verdict memory verdict = ITMPDiamond(diamond).getTaskVerdict(taskId);
+        if (!verdict.issued) return;
+        Outcome storage o = _s().outcomes[taskId];
+        ITMPCore.Award[] memory awards = verdict.awards;
+        if (
+            awards.length <= MAX_AWARDS
+                && SponsoredTaskSettlement.awardsDigestMemory(taskId, verdict.verdictType, awards) == o.awardsDigest
+        ) return;
+        _commitAwards(taskId, verdict.verdictType, awards, o.nativePayoutPool);
     }
 
     /// @dev Never reverts on award count: above `MAX_AWARDS` the sponsorship is marked unsettleable
@@ -586,7 +632,16 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         ) revert InvalidFundingRequest();
     }
 
-    function _commitmentKey(uint256 remoteChainId, address vault, uint64 commitmentNonce)
+    function _commitmentKey(uint256 remoteChainId, address vault, uint64 commitmentNonce, address manager)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(remoteChainId, vault, commitmentNonce, manager));
+    }
+
+    /// @dev The key commitments had before rev030, still honoured so a used nonce stays used.
+    function _legacyCommitmentKey(uint256 remoteChainId, address vault, uint64 commitmentNonce)
         private
         pure
         returns (bytes32)
@@ -691,13 +746,46 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
     // rev028 Task Hook V2 callbacks
     // -------------------------------------------------------------------------
 
-    /// @notice beforeCreate (0), beforeEvaluate (11), beforeAccept (13), afterComplete (21),
-    ///         afterCancel (22), afterExpire (23), afterForfeit (24). No result power.
-    uint32 public constant CAPABILITIES = (uint32(1) << 0) | (uint32(1) << 11) | (uint32(1) << 13) | (uint32(1) << 21)
-        | (uint32(1) << 22) | (uint32(1) << 23) | (uint32(1) << 24);
+    /// @notice beforeCreate (0), beforeAssignEvaluator (1), beforeUpdate (2), beforeEvaluate (11),
+    ///         beforeAccept (13), afterComplete (21), afterCancel (22), afterExpire (23),
+    ///         afterForfeit (24). No result power. Rev030: bits 1 and 2 freeze the terms the remote
+    ///         vault committed to. The diamond snapshots capabilities at attach, so tasks created
+    ///         before the upgrade keep their old bits and only new tasks are covered.
+    uint32 public constant CAPABILITIES = (uint32(1) << 0) | (uint32(1) << 1) | (uint32(1) << 2) | (uint32(1) << 11)
+        | (uint32(1) << 13) | (uint32(1) << 21) | (uint32(1) << 22) | (uint32(1) << 23) | (uint32(1) << 24);
 
     function hookCapabilities() external pure override returns (uint32) {
         return CAPABILITIES;
+    }
+
+    /// @dev Rev030: the evaluator is part of the committed terms hash, so it cannot change once the
+    ///      task has a commitment.
+    function beforeAssignEvaluator(bytes32 taskId, TaskContextV2 calldata, address, bytes calldata)
+        external
+        view
+        override
+        onlyDiamond
+        returns (bytes4)
+    {
+        _requireNoCommitment(taskId);
+        return this.beforeAssignEvaluator.selector;
+    }
+
+    /// @dev Rev030: the reward and other terms cannot change once the task has a commitment.
+    function beforeUpdate(bytes32 taskId, TaskContextV2 calldata, bytes calldata)
+        external
+        view
+        override
+        onlyDiamond
+        returns (bytes4)
+    {
+        _requireNoCommitment(taskId);
+        return this.beforeUpdate.selector;
+    }
+
+    function _requireNoCommitment(bytes32 taskId) private view {
+        HookStatus status = _s().outcomes[taskId].status;
+        if (status != HookStatus.None) revert CommitmentTermsFrozen(taskId);
     }
 
     /// @dev V1 checkFund: `config` is the V1 hookData.
@@ -734,14 +822,23 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         return _allowAccept();
     }
 
-    /// @dev V1 onComplete, with the diamond's verdict or the single award a single-payee settlement
-    ///      pays (afterComplete carries no verdict).
+    /// @dev V1 onComplete, sized from the awards the diamond settled (LibSettledAwards): the
+    ///      diamond's verdict or the single award a single-payee settlement pays (afterComplete
+    ///      carries no verdict). Rev030: a provisional commitment from `beforeAccept` is recommitted
+    ///      from the stored verdict, which holds the awards a transforming hook made the diamond
+    ///      pay; with none stored the core awards were paid and the commitment stands. Every other
+    ///      status is left alone.
     function afterComplete(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata, uint64)
         external
         override
         onlyDiamond
     {
-        _onComplete(taskId, _v1(taskId, ctx), _settledVerdict(taskId));
+        HookStatus status = _s().outcomes[taskId].status;
+        if (status == HookStatus.CompletionCommitted) {
+            _adoptStoredVerdict(taskId);
+        } else if (status == HookStatus.Committed) {
+            _onComplete(taskId, _v1(taskId, ctx), LibSettledAwards.settledVerdict(diamond, taskId));
+        }
     }
 
     function afterCancel(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata, uint64)
@@ -771,20 +868,5 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
     function _v1(bytes32 taskId, TaskContextV2 calldata ctx) private view returns (ITMPCore.TaskContext memory c) {
         c = ITMPDiamond(diamond).getTaskContext(taskId);
         c.currentState = ctx.currentState;
-    }
-
-    function _settledVerdict(bytes32 taskId) private view returns (ITMPCore.Verdict memory v) {
-        v = ITMPDiamond(diamond).getTaskVerdict(taskId);
-        if (v.issued) return v;
-        ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
-        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({
-            worker: task.worker, amount: task.mode == TMP_AUCTION ? task.stakeAmount : task.reward, rank: 1
-        });
-        v.issued = true;
-        v.verdictType = ITMPCore.VerdictType.APPROVE;
-        v.score = 1000;
-        v.confidence = 1000;
-        v.awards = awards;
     }
 }

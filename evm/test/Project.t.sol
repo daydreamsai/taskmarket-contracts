@@ -563,7 +563,7 @@ contract ProjectTest is DiamondTestHelper {
         );
     }
 
-    function test_Rev028_ReservedAcceptanceClampedToProjectLatestExpiry() public {
+    function test_Rev030_ReservedAcceptanceRevertsWhenClampedBelowDeliveryPeriod() public {
         uint64 endsAt = uint64(block.timestamp) + 8 days;
         uint256 projectId = abi.decode(
             _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, 12 hours))),
@@ -583,9 +583,12 @@ contract ProjectTest is DiamondTestHelper {
         );
         bytes32 taskId = abi.decode(_relay(owner, 0, data), (bytes32));
         vm.warp(block.timestamp + 2 days);
+        // now + 7 days = day 9, past the latest expiry of day 8.5: the worker would get less time
+        // than the reservation promised, so the claim reverts and the expiry is unchanged.
+        uint256 expiryBefore = market.getTask(taskId).expiryTime;
+        vm.expectRevert(ITMPCore.ReservedDeliveryPeriodShortened.selector);
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        // now + 7 days = day 9, past the latest expiry of day 8.5.
-        assertEq(market.getTask(taskId).expiryTime, uint256(endsAt) + 12 hours);
+        assertEq(market.getTask(taskId).expiryTime, expiryBefore);
     }
 
     function test_Rev028_ReviewWindowClampedToProjectLatestExpiry() public {
@@ -689,6 +692,106 @@ contract ProjectTest is DiamondTestHelper {
         ev.appealWindow = 31 days;
         vm.expectRevert(ITMPCore.AppealWindowTooLong.selector);
         _plainCreate(taskConfig(REWARD, DURATION, TMP_CLAIM), ev, REWARD);
+    }
+
+    // -------------------------------------------------------------------------
+    // Rev030: evaluation window ceiling and the project-bounded evaluation deadline
+    // -------------------------------------------------------------------------
+
+    function _evaluatedProjectTask(uint64 endsAt, uint32 grace, uint32 evaluationWindow)
+        internal
+        returns (bytes32 taskId)
+    {
+        uint256 projectId = abi.decode(
+            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, grace))),
+            (uint256)
+        );
+        ITMPCore.TaskEvaluatorConfig memory ev = noEvaluatorConfig();
+        ev.evaluator = evaluator;
+        ev.evaluationWindow = evaluationWindow;
+        ev.appealWindow = 1 days;
+        taskId =
+            abi.decode(_relay(owner, 0, _taskCall(projectId, taskConfig(REWARD, 7 days, TMP_CLAIM), ev)), (bytes32));
+    }
+
+    function test_Rev030_EvaluationWindowAboveMaxReverts() public {
+        (, uint32 maxWindow,,) = market.termsBounds();
+        ITMPCore.TaskEvaluatorConfig memory ev = noEvaluatorConfig();
+        ev.evaluator = evaluator;
+        ev.evaluationWindow = maxWindow + 1;
+        ev.appealWindow = 1 days;
+        vm.expectRevert(abi.encodeWithSelector(ITMPCore.EvaluationWindowTooLong.selector, maxWindow + 1, maxWindow));
+        _plainCreate(taskConfig(REWARD, DURATION, TMP_CLAIM), ev, REWARD);
+    }
+
+    function test_Rev030_ProjectTask_EvaluationWindowAboveMaxReverts() public {
+        (, uint32 maxWindow,,) = market.termsBounds();
+        uint256 id = _open();
+        ITMPCore.TaskEvaluatorConfig memory ev = noEvaluatorConfig();
+        ev.evaluator = evaluator;
+        ev.evaluationWindow = maxWindow + 1;
+        ev.appealWindow = 1 days;
+        bytes memory data = _taskCall(id, taskConfig(REWARD, DURATION, TMP_CLAIM), ev);
+        vm.expectRevert(abi.encodeWithSelector(ITMPCore.EvaluationWindowTooLong.selector, maxWindow + 1, maxWindow));
+        _relay(owner, 0, data);
+
+        // The same ceiling on assignEvaluator to a live project task.
+        bytes32 taskId = _task(id, TMP_CLAIM, REWARD);
+        vm.expectRevert(abi.encodeWithSelector(ITMPCore.EvaluationWindowTooLong.selector, maxWindow + 1, maxWindow));
+        _relay(
+            owner,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, maxWindow + 1, uint32(1 days), address(0)))
+        );
+        _relay(
+            owner,
+            0,
+            abi.encodeCall(market.assignEvaluator, (taskId, evaluator, 0, 0, maxWindow, uint32(1 days), address(0)))
+        );
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluationWindow, maxWindow);
+    }
+
+    /// The evaluation deadline of a project task is held to the project's latest expiry, so
+    /// evaluatorTimeout opens then rather than at submission plus the whole window.
+    function test_Rev030_EvaluationDeadlineClampedToProjectLatestExpiry() public {
+        uint64 endsAt = uint64(block.timestamp) + 8 days;
+        bytes32 taskId = _evaluatedProjectTask(endsAt, 12 hours, 3 days);
+        uint256 latest = uint256(endsAt) + 12 hours;
+        vm.warp(block.timestamp + 6 days);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        // Submission plus the window is day 9; the latest expiry is day 8.5.
+        assertEq(market.getTask(taskId).expiryTime, latest);
+
+        vm.warp(latest);
+        vm.expectRevert(ITMPCore.EvaluationWindowNotExpired.selector);
+        market.evaluatorTimeout(taskId);
+
+        vm.warp(latest + 1);
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
+        awards[0] = ITMPCore.Award({ worker: worker, amount: REWARD, rank: 1 });
+        vm.expectRevert(ITMPCore.EvaluationWindowClosed.selector);
+        _relay(
+            evaluator,
+            0,
+            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 1000, 1000, bytes32(0), awards))
+        );
+        market.evaluatorTimeout(taskId);
+        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "the evaluator is timed out");
+    }
+
+    /// A project task whose window fits before the latest expiry keeps the whole window.
+    function test_Rev030_EvaluationDeadlineUnclampedWhenItFits() public {
+        uint64 endsAt = uint64(block.timestamp) + 20 days;
+        bytes32 taskId = _evaluatedProjectTask(endsAt, 12 hours, 3 days);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        uint256 submittedAt = block.timestamp;
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        vm.warp(submittedAt + 3 days);
+        vm.expectRevert(ITMPCore.EvaluationWindowNotExpired.selector);
+        market.evaluatorTimeout(taskId);
+        vm.warp(submittedAt + 3 days + 1);
+        market.evaluatorTimeout(taskId);
     }
 
     function _v2Terms() internal pure returns (ITMPCore.TaskTerms memory t) {

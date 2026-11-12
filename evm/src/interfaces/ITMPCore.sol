@@ -63,6 +63,7 @@ interface ITMPCore is IERC165 {
     error WorkerAlreadyRated();
     error NotAwarded();
     error InsufficientGasForFeedback();
+    /// @dev Raised by V1 hook dispatch only; nothing raises it since rev030. Declared for decoding old transactions.
     error InsufficientGasForHook();
     error WorkerRequired();
     error DeliverableRequired();
@@ -71,6 +72,13 @@ interface ITMPCore is IERC165 {
     error WorkerNotSelected();
     error WinnerNotSelected();
     error UseEvaluate();
+    /// @notice Rev030: rejectSubmission on a task with an evaluator; the evaluator decides a contest.
+    error EvaluatorDecides();
+    /// @notice Rev030: refundExpired on a Disputed task before the resolver's resolution window ends.
+    error DisputeWindowStillOpen();
+    /// @notice Rev030: accepting a reservation would leave the task less delivery time than the
+    ///         reservation promised, because a project task's expiry is held to the project's end.
+    error ReservedDeliveryPeriodShortened();
 
     // Evaluator / appeal
     error EvaluatorAlreadyAssigned();
@@ -90,6 +98,8 @@ interface ITMPCore is IERC165 {
     /// @notice Rev025: an evaluator's evaluationWindow is below the per-chain
     ///         minEvaluationWindowSecs.
     error EvaluationWindowTooShort(uint32 evaluationWindow, uint32 minWindow);
+    /// @notice Rev030: an evaluator's evaluationWindow is above the termsBounds maxWindowSecs.
+    error EvaluationWindowTooLong(uint32 evaluationWindow, uint32 maxWindow);
     error InvalidMinAppealWindow();
     error InvalidMinFeedbackGas();
     error InvalidHookGasStipend();
@@ -155,7 +165,8 @@ interface ITMPCore is IERC165 {
     error ExcessRefundFailed();
     error NoRewardChange();
 
-    // Hooks
+    // Hooks. The six HookCheck*Rejected errors were raised by V1 hook dispatch; since rev030 nothing
+    // raises them. They stay declared for decoding old transactions.
     error HookCheckFundRejected();
     error HookCheckClaimRejected();
     error HookCheckSelectWorkerRejected();
@@ -167,6 +178,8 @@ interface ITMPCore is IERC165 {
 
     // Awards
     error InvalidAwardRecipient();
+    /// @notice Rev030: a nonzero Bounty or Benchmark award has rank 0. Ranks start at 1.
+    error InvalidAwardRank();
     error DuplicateAwardWorker();
 
     // Diamond (Rev011)
@@ -185,6 +198,8 @@ interface ITMPCore is IERC165 {
     error DecisionWindowNotLapsed();
     error RevisionsExhausted();
     error TooManyWinners();
+    /// @notice Rev030: setMaxSubmissionWinners outside 1..MAX_SUBMISSION_WINNERS.
+    error InvalidMaxSubmissionWinners();
     /// @notice A task's terms cannot change once a worker is committed or a submission is active.
     error TermsFrozen();
     error ReleaseNotAllowed();
@@ -441,8 +456,9 @@ interface ITMPCore is IERC165 {
     }
 
     /// @notice Rev025: per-task settlement clocks.
-    /// @dev deliveredAt is zero when there is no undecided delivery. decisionStartAt was set only
-    ///      when a pre-rev025 task was normalized at the rev025 cut, and is zero otherwise.
+    /// @dev deliveredAt is zero when there is no undecided delivery. decisionStartAt was set
+    ///      when a pre-rev025 task was normalized at the rev025 cut and, from rev030, when
+    ///      evaluatorTimeout clears a Bounty or Benchmark evaluator; it is zero otherwise.
     struct TaskClock {
         uint64 deliveredAt;
         uint64 decisionStartAt;
@@ -487,10 +503,12 @@ interface ITMPCore is IERC165 {
     ///         setTrustedForwarder / removeTrustedForwarder call.
     event ForwarderUpdated(address indexed forwarder, bool trusted);
 
-    /// @notice Emitted when a hook contract is registered for a task.
+    /// @notice Emitted when a V1 hook contract was registered for a task (rev027 and earlier; no longer
+    ///         emitted since rev028, where HookAttached replaced it).
     event HookRegistered(bytes32 indexed taskId, address hookContract);
 
-    /// @notice Emitted when the protocol default hook list is replaced.
+    /// @notice Emitted when the V1 protocol default hook list was replaced (no longer emitted: rev030
+    ///         removed setDefaultHooks).
     event DefaultHooksSet(address[] hooks);
 
     /// @notice Rev017: the protocol-level minimum appeal window changed. Emitted so a protocol
@@ -504,6 +522,9 @@ interface ITMPCore is IERC165 {
 
     /// @notice Rev026: the per-chain gas stipend forwarded to each hook call changed.
     event HookGasStipendUpdated(uint256 hookGasStipend);
+
+    /// @notice Rev030: the per-chain cap on the winners one settlement may pay changed.
+    event MaxSubmissionWinnersUpdated(uint16 maxSubmissionWinners);
 
     /// @notice Rev025: a task's settlement terms were recorded, at creation or on normalization
     ///         of a pre-rev025 task.
@@ -544,8 +565,9 @@ interface ITMPCore is IERC165 {
     /// @notice Rev025: the owner changed the per-chain minimum evaluation window.
     event MinEvaluationWindowUpdated(uint32 minEvaluationWindowSecs);
 
-    /// @notice Emitted when an after-hook call fails. Failures are swallowed so a buggy
-    ///         hook cannot block fund recovery; this event makes failures observable on-chain.
+    /// @notice Emitted when a V1 after-hook call failed. Failures were swallowed so a buggy
+    ///         hook could not block fund recovery. Since rev030 nothing emits it; V2 hooks report
+    ///         failures with HookCallFailedV2.
     event HookCallFailed(address indexed hook);
 
     /// @notice Emitted when a task is created and reward is escrowed.
@@ -711,6 +733,8 @@ interface ITMPCore is IERC165 {
 
     /// @notice Reject a worker's submission on a Bounty or Benchmark task.
     ///         Once all active submissions are rejected, cancelTask becomes available.
+    ///         Rev030: reverts EvaluatorDecides while the task has an evaluator; its timeout
+    ///         clears the evaluator, after which the requester may reject again.
     /// @param taskId Task identifier
     /// @param worker Worker whose submission is being rejected
     function rejectSubmission(bytes32 taskId, address worker) external;
@@ -772,8 +796,9 @@ interface ITMPCore is IERC165 {
 
     /// @notice Forfeit a claimed worker's stake and reopen the task for new claims.
     ///         Only callable by the requester. Task MUST be in Claimed status and
-    ///         past expiry. Forfeited stake goes to the fee recipient; task returns
-    ///         to Open status.
+    ///         past expiry. The forfeited stake goes to the task's `penaltyTo` destination:
+    ///         the requester (the project's pool for a project task) by default, or the
+    ///         protocol; task returns to Open status.
     /// @param taskId Task identifier
     function forfeitAndReopen(bytes32 taskId) external;
 
@@ -781,7 +806,8 @@ interface ITMPCore is IERC165 {
     ///         decision window lapsed with live submissions. Refunds the escrow to the requester
     ///         and emits RequesterReputation with event_ keccak256("requester_timeout"). Winners
     ///         cannot be chosen permissionlessly, so the refund is the only neutral outcome.
-    ///         Reverts DecisionWindowNotLapsed while the requester can still decide.
+    ///         Reverts DecisionWindowNotLapsed while the requester can still decide, or while the
+    ///         task has an evaluator (rev030: evaluatorTimeout clears it and starts the window).
     /// @param taskId Task identifier
     function requesterTimeout(bytes32 taskId) external;
 

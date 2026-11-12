@@ -1,7 +1,14 @@
 # EXT-001: Token Reward Hook
 
-**Status:** Implemented
+**Status:** Retired in rev030 (V1 hook). `TaskTokenRewardHookV2` is the live hook.
 **Type:** Daydreams Extension (not a TMP protocol standard)
+
+> Rev030 removed V1 hook dispatch: the diamond no longer calls a V1 hook, `setDefaultHooks` and
+> `getDefaultHooks` are gone, and the `TaskTokenRewardHook` source and its deploy, swap and upgrade
+> scripts are deleted. This document describes the V1 hook as it ran through rev029, kept as the
+> record of the reward economics and of the vault and budget the V2 hook reuses. Read
+> `specs/erc8195/rev028-task-hook-v2-and-dispute-context.md` and the rev030 spec (change 30) for the
+> current behaviour.
 
 ---
 

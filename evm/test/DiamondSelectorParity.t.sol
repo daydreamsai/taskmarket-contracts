@@ -27,6 +27,7 @@ import { Rev026Upgrade } from "../script/upgrades/Rev026Upgrade.s.sol";
 import { Rev027Upgrade } from "../script/upgrades/Rev027Upgrade.s.sol";
 import { Rev028Upgrade } from "../script/upgrades/Rev028Upgrade.s.sol";
 import { Rev029Upgrade } from "../script/upgrades/Rev029Upgrade.s.sol";
+import { Rev030Upgrade } from "../script/upgrades/Rev030Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
@@ -110,6 +111,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         // The rev018 createTask and normalizeTerms, which rev026 Removes: the earlier steps
         // Replace or Add them.
         _routeRemovedRev026(diamond, owner);
+        _routeRemovedRev030(diamond, owner, false);
 
         bytes4[] memory preRev014CreateTask = new bytes4[](1);
         preRev014CreateTask[0] = PRE_REV014_CREATE_TASK;
@@ -126,7 +128,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
 
         bytes4[] memory rev026Selectors = _rev026Selectors();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = IDiamondCut.FacetCut(coreFacet, IDiamondCut.FacetCutAction.Add, preRev014CreateTask);
         cuts[1] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev017AdminSelectors);
         cuts[2] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, rev024AdminSelectors);
@@ -138,6 +140,9 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         );
         cuts[7] = IDiamondCut.FacetCut(
             address(0), IDiamondCut.FacetCutAction.Remove, FacetSelectors.selectorsAddedRev029()
+        );
+        cuts[8] = IDiamondCut.FacetCut(
+            address(0), IDiamondCut.FacetCutAction.Remove, FacetSelectors.selectorsAddedRev030()
         );
 
         vm.prank(owner);
@@ -223,6 +228,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         new Rev027Upgrade().run();
         new Rev028Upgrade().run();
         new Rev029Upgrade().run();
+        new Rev030Upgrade().run();
     }
 
     /// @dev The one reconstruction _runFullSequence documents: unroute the rev018 evaluator-aware

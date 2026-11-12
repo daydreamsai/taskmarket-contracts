@@ -21,6 +21,7 @@ import { TMP_AUCTION, TMP_BENCHMARK, TMP_BOUNTY, TMP_CLAIM, TMP_PITCH } from "..
 import { IRewardVault } from "../interfaces/IRewardVault.sol";
 import { IRewardVaultToken } from "../interfaces/IRewardVaultToken.sol";
 import { EpochBudget } from "./EpochBudget.sol";
+import { LibSettledAwards } from "./base/LibSettledAwards.sol";
 
 interface ISettlementStatus {
     function isSettling() external view returns (bool);
@@ -60,6 +61,8 @@ interface ISettlementStatus {
 ///         reward hook for new tasks is this one; tasks created before the cut keep the V1 hook.
 ///         The reward logic is the V1 hook's, reached through the V2 callbacks at the end of this
 ///         file. Its configuration is empty (all configuration lives on this contract, as in V1).
+///         Rev030: the completion bonus is paid in afterComplete from the awards the diamond
+///         settled, not in beforeAccept, so it follows a transforming hook's result.
 contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
@@ -344,6 +347,7 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     error WithdrawNonceUsed();
     error WalletHistoryAlreadySealed();
     error SeedLengthMismatch();
+    error FutureFirstSeen();
     error RewardStateAlreadySealed();
     error RewardStateAlreadySettled(bytes32 taskId);
     error InvalidBps();
@@ -388,6 +392,9 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         if (_dreamsPerUsdc == 0) revert ZeroRate();
         if (_bonusBps > 10000) revert InvalidBps();
         if (_workerSplitBps > 10000) revert InvalidBps();
+        // Rev030: the vault must pay the token this hook credits, as `setVault` requires.
+        address vaultToken = IRewardVaultToken(_vault).token();
+        if (vaultToken != _token) revert VaultTokenMismatch(_token, vaultToken);
 
         _s().vault = IRewardVault(_vault);
         _s().epochBudget = EpochBudget(_epochBudget);
@@ -487,71 +494,47 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         return true;
     }
 
-    /// @notice Atomic _s().token credit at task completion.
-    ///         Tokens are transferred from the _s().vault to this hook, then credited to
-    ///         _s().claimable balances for the worker and requester according to _s().workerSplitBps
-    ///         and the wallet-age ramp. Ramp-discounted tokens remain in hook balance
-    ///         and are recoverable via sweepUnclaimed.
-    ///
-    ///         Path A (reserved): the rate and bonus % were locked at reserve time. Pay the
-    ///                            reservation scaled by the reserved worker's award and
-    ///                            release the rest; a zero award releases all of it.
-    ///         Path B (Bounty):   pay each winner proportionally using verdict.awards, at the
-    ///                            current _s().dreamsPerUsdc rate and _s().bonusBps. Skips the _s().token
-    ///                            bonus gracefully if no rate/bonus is configured or
-    ///                            _s().vault/budget is exhausted — the USDC payout is never blocked.
-    function _v1CheckComplete(bytes32 taskId, ITMPCore.TaskContext memory ctx, ITMPCore.Verdict memory verdict)
-        internal
-        returns (bool)
-    {
-        RewardState storage state = _s().rewardStates[taskId];
-
-        if (state.paid) revert RewardAlreadyPaid(taskId);
-
-        // Effects before interactions: mark paid up front so a _s().token-transfer
-        // callback cannot re-enter and double-pay.
-        state.paid = true;
-
-        if (state.reserved) {
-            // Path A — Claim / Pitch / Auction
-            // Rate and USD budget were locked and consumed at reserve time (_reserveForWorker).
-            // The payout is the reservation scaled by what the verdict awards the reserved worker.
-            _payReserved(taskId, ctx, verdict);
-        } else {
-            // Path B — Bounty (no pre-reservation): pay each winner proportionally.
-            _payBounty(taskId, ctx.requester, verdict.awards);
-        }
-
-        return true;
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // ITMPHook — on hooks (try-catch wrapped by Diamond, must not revert)
     // ─────────────────────────────────────────────────────────────────────────
 
-    function _v1OnComplete(bytes32 taskId, ITMPCore.TaskContext memory ctx, ITMPCore.Verdict memory verdict) internal {
-        // checkComplete normally settles the reservation first, which leaves nothing here. A
-        // completion that skips the check hooks (settleLapsedReview, a finalizeVerdict past
-        // expiry) reaches this with the reservation still unpaid. The worker was paid for the
-        // work, so the bonus is paid the same way checkComplete pays it, scaled by the award;
-        // otherwise a requester could deny it by letting the review lapse.
+    /// @notice Atomic _s().token credit at task completion, sized from the awards the diamond
+    ///         actually paid. Tokens are transferred from the _s().vault to this hook, then
+    ///         credited to _s().claimable balances for the worker and requester according to
+    ///         _s().workerSplitBps and the wallet-age ramp. Ramp-discounted tokens remain in hook
+    ///         balance and are recoverable via sweepUnclaimed.
+    ///
+    ///         Path A (reserved): the rate and bonus % were locked at reserve time. Pay the
+    ///                            reservation scaled by the reserved worker's paid award and
+    ///                            release the rest; a zero award releases all of it.
+    ///         Path B (Bounty):   pay each winner proportionally to its paid award, at the
+    ///                            current _s().dreamsPerUsdc rate and _s().bonusBps. Skips the _s().token
+    ///                            bonus gracefully if no rate/bonus is configured or
+    ///                            _s().vault/budget is exhausted — the USDC payout is never blocked.
+    /// @dev Rev030: this runs from afterComplete on every completion path, never from beforeAccept.
+    ///      A transforming hook attached after this one (a protocol default runs first) can change
+    ///      the awards after beforeAccept, so a bonus sized there could follow an award the worker
+    ///      was never paid. `paid` makes it pay at most once per task; a completion whose
+    ///      afterComplete was skipped or failed is paid by recoverReserve.
+    function _v1OnComplete(bytes32 taskId, ITMPCore.TaskContext memory ctx, ITMPCore.Award[] memory awards) internal {
         RewardState storage state = _s().rewardStates[taskId];
-        if (state.reserved && !state.paid && state.reservedTokenAmount > 0 && !_releasePending(taskId)) {
+        // A reservation that holds no tokens is marked paid and pays nothing, as before rev030.
+        if (state.reserved && !state.paid && !_releasePending(taskId)) {
+            // Effects before interactions: mark paid up front so a _s().token-transfer callback
+            // cannot re-enter and double-pay.
             state.paid = true;
-            _payReserved(taskId, ctx, verdict);
+            _payReserved(taskId, ctx, _awardTo(awards, state.worker));
             return;
         }
-        // The same for a Bounty or Benchmark: checkComplete is what pays its winners, so a
-        // finalizeVerdict past expiry would otherwise leave them without a bonus. `rewardUsd` is
-        // nonzero once checkFund has run, and `paid` is set by checkComplete, so a completion that
-        // ran checkComplete is never paid twice. The gas stipend matches checkComplete's, so the
-        // same MAX_BONUS_AWARDS and BONUS_AWARD_GAS_FLOOR bounds apply.
+        // A Bounty or Benchmark has no reservation. `rewardUsd` is nonzero once checkFund has run,
+        // and `paid` is set here, so a completion is never paid twice. The gas stipend is the
+        // diamond's hook stipend, so the MAX_BONUS_AWARDS and BONUS_AWARD_GAS_FLOOR bounds apply.
         if (
             (ctx.mode == TMP_BOUNTY || ctx.mode == TMP_BENCHMARK) && !state.reserved && !state.paid
                 && state.rewardUsd != 0
         ) {
             state.paid = true;
-            _payBounty(taskId, ctx.requester, verdict.awards);
+            _payBounty(taskId, ctx.requester, awards);
             return;
         }
         _releaseReserve(taskId);
@@ -561,10 +544,13 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         bytes32 taskId,
         ITMPCore.TaskContext memory,
         /* ctx */
-        address /* worker */
+        address worker
     )
         internal
     {
+        // Rev030: an evaluator timeout on a delivered Claim, Pitch or Auction task also reports a
+        // forfeit, but the worker stays on the task and the reservation is still owed to them.
+        if (worker != address(0)) return;
         _releaseReserve(taskId);
     }
 
@@ -630,20 +616,15 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         if (stale && status == ITMPCore.TaskStatus.Accepted && !_releasePending(taskId)) {
             // The task completed but no after-hook paid the reservation (an onComplete that
             // failed). Pay it as onComplete would have, from what the diamond recorded: the stored
-            // evaluator verdict's award to the reserved worker, or the whole awardable basis for a
-            // requester acceptance, which has no stored verdict. A vault that cannot pay now
-            // releases the reservation through the progress record instead.
+            // verdict's award to the reserved worker (an evaluator verdict, or the awards a
+            // transforming hook made a requester acceptance pay), or the whole awardable basis for
+            // a requester acceptance with no stored verdict. A vault that cannot pay now releases
+            // the reservation through the progress record instead.
             ITMPCore.TaskEvaluatorConfig memory ec = ITMPDiamond(_s().diamond).getTaskEvaluatorConfig(taskId);
             uint256 awardable = state.rewardUsd;
             if (ec.evaluator != address(0)) awardable -= awardable * ec.evaluatorFeeBps / 10000;
             ITMPCore.Verdict memory v = ITMPDiamond(_s().diamond).getTaskVerdict(taskId);
-            uint256 award = awardable;
-            if (v.issued) {
-                award = 0;
-                for (uint256 i; i < v.awards.length; ++i) {
-                    if (v.awards[i].worker == state.worker) award += v.awards[i].amount;
-                }
-            }
+            uint256 award = v.issued ? _awardTo(v.awards, state.worker) : awardable;
             state.paid = true;
             _payReservedAward(taskId, awardable, award);
             return;
@@ -758,7 +739,9 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     ///
     ///      1. It only ever writes where `_s().firstSeen` is still 0. A wallet that has already
     ///         interacted with this hook has real history, and real history always wins over
-    ///         seeded history -- so a late or repeated seed cannot rewrite it.
+    ///         seeded history -- so a late or repeated seed cannot rewrite it. A ban is the
+    ///         exception: it is applied even for a wallet with history or none, and a
+    ///         `firstSeenAt` in the future is refused.
     ///      2. `sealWalletHistory()` disables it permanently. Migration is a phase, not a
     ///         standing capability, and an owner key that can backdate wallet age forever is
     ///         a bigger power than the migration needs.
@@ -775,14 +758,18 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
 
         for (uint256 i = 0; i < wallets.length; i++) {
             address wallet = wallets[i];
-            // slither-disable-next-line incorrect-equality
-            if (_s().firstSeen[wallet] != 0) continue; // real history wins; never overwrite
-            if (firstSeenAt[i] == 0) continue; // 0 is the "never seen" sentinel, not a value
+            uint40 seen = firstSeenAt[i];
+            // A future date would put a wallet's age below zero.
+            if (seen > block.timestamp) revert FutureFirstSeen();
 
-            _s().firstSeen[wallet] = firstSeenAt[i];
+            // A ban is applied first, whether or not the wallet has history to seed.
             if (isBanned[i]) _s().banned[wallet] = true;
 
-            emit WalletHistorySeeded(wallet, firstSeenAt[i], isBanned[i]);
+            // Real history wins; never overwrite. 0 is the "never seen" sentinel, not a value.
+            // slither-disable-next-line incorrect-equality
+            if (seen != 0 && _s().firstSeen[wallet] == 0) _s().firstSeen[wallet] = seen;
+
+            emit WalletHistorySeeded(wallet, _s().firstSeen[wallet], isBanned[i]);
         }
     }
 
@@ -827,6 +814,9 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
             if (incoming.paid) revert RewardStateAlreadySettled(taskId);
 
             _s().rewardStates[taskId] = incoming;
+            // Rev030: pin the vault and budget the carried reservation settles against, so a later
+            // `setVault` or `setEpochBudget` cannot retarget its release or payout.
+            if (incoming.reservedTokenAmount != 0) _pinReserveDependencies(taskId);
             _touchFirstSeen(incoming.requester);
             if (incoming.worker != address(0)) _touchFirstSeen(incoming.worker);
 
@@ -942,7 +932,8 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         // uint40 sentinel: 0 means "never seen"; equality is the only correct check
         // slither-disable-next-line incorrect-equality
         if (seen == 0) return 0;
-        uint256 age = block.timestamp - uint256(seen);
+        // Rev030: a first-seen time in the future counts as age zero.
+        uint256 age = block.timestamp > seen ? block.timestamp - uint256(seen) : 0;
         if (age < _s().rampThresholds[0]) return _s().rampMultipliers[0];
         if (age < _s().rampThresholds[1]) return _s().rampMultipliers[1];
         if (age < _s().rampThresholds[2]) return _s().rampMultipliers[2];
@@ -1038,8 +1029,7 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
             try _s().vault.reserve(taskId, tokenAmount) {
                 state.reservedTokenAmount = tokenAmount;
                 state.consumedEpoch = epoch;
-                _s().reserveDependencies[taskId] =
-                    Dependencies({ vault: address(_s().vault), budget: address(_s().epochBudget) });
+                _pinReserveDependencies(taskId);
             } catch {
                 try _s().epochBudget.release(taskId, requester, worker, bonusUsd, epoch) { } catch { }
             }
@@ -1076,6 +1066,11 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     }
 
     /// @dev The vault a reservation was made against, or the current one if not recorded.
+    function _pinReserveDependencies(bytes32 taskId) private {
+        _s().reserveDependencies[taskId] =
+            Dependencies({ vault: address(_s().vault), budget: address(_s().epochBudget) });
+    }
+
     function _vaultFor(Dependencies storage deps) internal view returns (IRewardVault) {
         return deps.vault == address(0) ? _s().vault : IRewardVault(deps.vault);
     }
@@ -1119,16 +1114,15 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     }
 
     /// @dev Path A payout. Pays `reservedTokenAmount * award / awardable`, where `award` is what
-    ///      the verdict awards the reserved worker (capped at `awardable`) and `awardable` is the
+    ///      the reserved worker was paid (capped at `awardable`) and `awardable` is the
     ///      locked USD basis (the accepted price for an auction) less the evaluator fee when the
     ///      task has an evaluator, since an evaluator verdict can award at most that much. The
     ///      unpaid part of the reservation and its epoch budget are released; a zero award, or a
     ///      vault that cannot pay, releases all of it. Expects `state.paid` to be set already.
-    function _payReserved(bytes32 taskId, ITMPCore.TaskContext memory ctx, ITMPCore.Verdict memory verdict) internal {
-        RewardState storage state = _s().rewardStates[taskId];
-        uint256 awardable = state.rewardUsd;
+    function _payReserved(bytes32 taskId, ITMPCore.TaskContext memory ctx, uint256 award) internal {
+        uint256 awardable = _s().rewardStates[taskId].rewardUsd;
         if (ctx.evaluator != address(0)) awardable -= awardable * ctx.evaluatorFeeBps / 10000;
-        _payReservedAward(taskId, awardable, _awardTo(verdict, state.worker));
+        _payReservedAward(taskId, awardable, award);
     }
 
     /// @dev The payout half of `_payReserved`, shared with `recoverReserve`.
@@ -1268,11 +1262,11 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         }
     }
 
-    /// @dev Sum of the verdict's awards to `worker`.
-    function _awardTo(ITMPCore.Verdict memory verdict, address worker) internal pure returns (uint256 total) {
-        uint256 n = verdict.awards.length;
+    /// @dev Sum of the awards to `worker`.
+    function _awardTo(ITMPCore.Award[] memory awards, address worker) internal pure returns (uint256 total) {
+        uint256 n = awards.length;
         for (uint256 i; i < n; ++i) {
-            if (verdict.awards[i].worker == worker) total += verdict.awards[i].amount;
+            if (awards[i].worker == worker) total += awards[i].amount;
         }
     }
 
@@ -1347,21 +1341,29 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         return this.beforeSubmitWork.selector;
     }
 
-    function beforeAccept(bytes32 taskId, TaskContextV2 calldata ctx, ITMPCore.Verdict calldata verdict, bytes calldata)
+    /// @dev Rev030: pays nothing. The awards shown here are the core's, before a transforming hook
+    ///      attached after this one has run, so the bonus is sized and paid in afterComplete from
+    ///      what was settled. A task whose bonus is already paid is still refused, and the awards of
+    ///      an unreserved task are kept for afterComplete in transient storage, since a requester
+    ///      acceptance stores no verdict for the shares it pays.
+    function beforeAccept(bytes32 taskId, TaskContextV2 calldata, ITMPCore.Verdict calldata verdict, bytes calldata)
         external
         onlyDiamond
         returns (bytes4, SettlementDelta memory, ITMPCore.Award[] memory)
     {
-        _v1CheckComplete(taskId, _v1(taskId, ctx), verdict);
+        RewardState storage state = _s().rewardStates[taskId];
+        if (state.paid) revert RewardAlreadyPaid(taskId);
+        if (!state.reserved) LibSettledAwards.keep(ACCEPTED_AWARDS_BASE, taskId, verdict.awards);
         bytes4 sel = this.beforeAccept.selector;
         return (sel, SettlementDelta(sel, 0, 0), new ITMPCore.Award[](0));
     }
 
+    /// @dev Rev030: the bonus is paid here, from the awards the diamond settled.
     function afterComplete(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata, uint64)
         external
         onlyDiamond
     {
-        _v1OnComplete(taskId, _v1(taskId, ctx), _settledVerdict(taskId));
+        _v1OnComplete(taskId, _v1(taskId, ctx), _settledAwards(taskId));
     }
 
     function afterCancel(bytes32 taskId, TaskContextV2 calldata ctx, SettlementAmounts calldata, uint64)
@@ -1491,20 +1493,15 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         c.currentState = ctx.currentState;
     }
 
-    /// @dev afterComplete carries no verdict: the diamond's stored verdict, or the single award a
-    ///      single-payee settlement pays.
-    function _settledVerdict(bytes32 taskId) private view returns (ITMPCore.Verdict memory v) {
-        v = ITMPDiamond(_s().diamond).getTaskVerdict(taskId);
-        if (v.issued) return v;
-        ITMPCore.Task memory task = ITMPCore(_s().diamond).getTask(taskId);
-        ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
-        awards[0] = ITMPCore.Award({
-            worker: task.worker, amount: task.mode == TMP_AUCTION ? task.stakeAmount : task.reward, rank: 1
-        });
-        v.issued = true;
-        v.verdictType = ITMPCore.VerdictType.APPROVE;
-        v.score = 1000;
-        v.confidence = 1000;
-        v.awards = awards;
+    /// @dev afterComplete carries no verdict. The awards the diamond paid are, in order: its stored
+    ///      verdict (an evaluator verdict or dispute ruling, or the awards a transforming hook made
+    ///      a requester acceptance pay, each as paid); the awards beforeAccept kept in this
+    ///      transaction (a requester acceptance no hook changed); or the single award a
+    ///      single-payee settlement pays. See LibSettledAwards.
+    function _settledAwards(bytes32 taskId) private returns (ITMPCore.Award[] memory) {
+        return LibSettledAwards.settledAwards(_s().diamond, taskId, ACCEPTED_AWARDS_BASE);
     }
+
+    /// @dev The transient slot base for the awards beforeAccept keeps (LibSettledAwards.keep).
+    bytes32 private constant ACCEPTED_AWARDS_BASE = keccak256("taskmarket.tokenrewardhookv2.rev030.acceptedAwards");
 }

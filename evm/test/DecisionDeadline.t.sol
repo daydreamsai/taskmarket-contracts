@@ -240,7 +240,8 @@ contract DecisionDeadlineTest is DiamondTestHelper {
         bytes32 taskId = _create(TMP_BOUNTY, ev);
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
         vm.warp(market.getTask(taskId).expiryTime + DECISION + 30 days);
-        _relay(requester, 0, _rejectData(taskId, worker));
+        // Rev030: with an evaluator the evaluator decides the contest; the requester cannot reject.
+        _expectRelayRevert(requester, _rejectData(taskId, worker), ITMPCore.EvaluatorDecides.selector);
         assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Open));
     }
 

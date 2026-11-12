@@ -812,6 +812,17 @@ contract PayoutGateHookTest is DiamondTestHelper {
     uint256 internal otherProjectId;
 
     function _openProjects() internal {
+        _openProjectsWith(
+            ITMPProject.GrantTerms({
+                cap: 0,
+                requesterOfRecord: ITMPProject.RequesterOfRecord.Owner,
+                ownerOverride: true,
+                revokeRemovesControl: true
+            })
+        );
+    }
+
+    function _openProjectsWith(ITMPProject.GrantTerms memory terms) internal {
         initMockPool(address(market), owner);
         uint256 budget = 500e6;
         uint64 endsAt = uint64(block.timestamp) + 60 days;
@@ -823,12 +834,6 @@ contract PayoutGateHookTest is DiamondTestHelper {
             _relay(requester, budget, abi.encodeCall(projects.createProject, (address(usdc), budget, endsAt, 30 days))),
             (uint256)
         );
-        ITMPProject.GrantTerms memory terms = ITMPProject.GrantTerms({
-            cap: 0,
-            requesterOfRecord: ITMPProject.RequesterOfRecord.Owner,
-            ownerOverride: true,
-            revokeRemovesControl: true
-        });
         _relay(requester, 0, abi.encodeCall(projects.grantOperator, (projectId, runner, terms)));
         _relay(runner, 0, abi.encodeCall(projects.acceptGrant, (projectId, keccak256(abi.encode(terms)))));
     }
@@ -984,5 +989,123 @@ contract PayoutGateHookTest is DiamondTestHelper {
     function _assertProjectClosed(bytes32 taskId) internal {
         vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, WORK, 0)));
+    }
+
+    // -------------------------------------------------------------------------
+    // Rev030: the creating operator's roles follow its control of the task
+    // -------------------------------------------------------------------------
+
+    function _runnerTerms(ITMPProject.RequesterOfRecord ror, bool revokeRemovesControl)
+        internal
+        pure
+        returns (ITMPProject.GrantTerms memory)
+    {
+        return ITMPProject.GrantTerms({
+            cap: 0, requesterOfRecord: ror, ownerOverride: true, revokeRemovesControl: revokeRemovesControl
+        });
+    }
+
+    function _revokeRunner() internal {
+        _relay(requester, 0, abi.encodeCall(projects.revokeOperator, (projectId, runner)));
+    }
+
+    /// @dev A revoke with revokeRemovesControl hands the task to the owner, so the runner can no
+    ///      longer move the deadline (which would hold the owner's accept) or spend the one re-link,
+    ///      whether the owner or the runner is the requester of record.
+    function test_RevokedRunnerCannotExtendOrRelink() public {
+        ITMPProject.RequesterOfRecord[2] memory rors =
+            [ITMPProject.RequesterOfRecord.Owner, ITMPProject.RequesterOfRecord.Operator];
+        for (uint256 i; i < 2; ++i) {
+            uint256 snap = vm.snapshotState();
+            _openProjectsWith(_runnerTerms(rors[i], true));
+            uint64 start = uint64(block.timestamp);
+            bytes32 review = _projectTask(runner, projectId, "");
+            bytes32 gated = _projectTask(runner, projectId, abi.encode(review, start + 5 days, new bytes32[](0)));
+            _relay(requester, 0, abi.encodeCall(market.cancelTask, (review, 0)));
+            bytes32 review2 = _projectTask(requester, projectId, "");
+            _revokeRunner();
+
+            assertEq(v2.taskCallerRoles(gated, runner), ROLE_STRANGER, "no role once control is removed");
+            vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCallRoleRefused.selector, ROLE_STRANGER));
+            _extend(runner, gated, start + 9 days);
+            vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCallRoleRefused.selector, ROLE_STRANGER));
+            _link(runner, gated, review2);
+
+            // The owner, who now controls the task, still can.
+            _link(requester, gated, review2);
+            _extend(requester, gated, start + 9 days);
+            (bytes32 g, uint64 d,,) = gate.gateOf(gated);
+            assertEq(g, review2);
+            assertEq(d, start + 9 days);
+            vm.revertToState(snap);
+        }
+    }
+
+    /// @dev A revoke without revokeRemovesControl leaves the runner in control of the tasks it
+    ///      created (mayAct), so it keeps the project role on them and may still extend and re-link.
+    function test_RevokedRunnerKeepingControlStillExtendsAndRelinks() public {
+        _openProjectsWith(_runnerTerms(ITMPProject.RequesterOfRecord.Owner, false));
+        uint64 start = uint64(block.timestamp);
+        bytes32 review = _projectTask(runner, projectId, "");
+        bytes32 gated = _projectTask(runner, projectId, abi.encode(review, start + 5 days, new bytes32[](0)));
+        _relay(requester, 0, abi.encodeCall(market.cancelTask, (review, 0)));
+        bytes32 review2 = _projectTask(requester, projectId, "");
+        _revokeRunner();
+
+        assertEq(v2.taskCallerRoles(gated, runner), ROLE_PROJECT, "the creator keeps the role with the control");
+        _link(runner, gated, review2);
+        _extend(runner, gated, start + 9 days);
+        (bytes32 g, uint64 d,,) = gate.gateOf(gated);
+        assertEq(g, review2);
+        assertEq(d, start + 9 days);
+        // A task it did not create gives it nothing: the revoked grant is no project role.
+        bytes32 ownerGate = _projectTask(requester, projectId, abi.encode(bytes32(0), start + 5 days, new bytes32[](0)));
+        vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCallRoleRefused.selector, ROLE_STRANGER));
+        _extend(runner, ownerGate, start + 9 days);
+    }
+
+    /// @dev After an owner transfer the previous owner, still the requester of record of a task
+    ///      the runner created, may no longer act for it, so it holds no role and cannot extend the
+    ///      gate. The new owner can.
+    function test_PreviousOwnerCannotExtendAfterTransfer() public {
+        _openProjects();
+        uint64 start = uint64(block.timestamp);
+        bytes32 gated = _projectTask(runner, projectId, abi.encode(bytes32(0), start + 5 days, new bytes32[](0)));
+        assertEq(market.getTask(gated).requester, requester, "the owner is the requester of record");
+        _relay(requester, 0, abi.encodeCall(projects.proposeProjectOwner, (projectId, other)));
+        _relay(other, 0, abi.encodeCall(projects.acceptProjectOwner, (projectId)));
+
+        assertEq(v2.taskCallerRoles(gated, requester), ROLE_STRANGER, "the previous owner holds no role");
+        vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCallRoleRefused.selector, ROLE_STRANGER));
+        _extend(requester, gated, start + 9 days);
+
+        assertEq(v2.taskCallerRoles(gated, other), ROLE_PROJECT, "the new owner holds the project role");
+        _extend(other, gated, start + 9 days);
+        (, uint64 d,,) = gate.gateOf(gated);
+        assertEq(d, start + 9 days);
+    }
+
+    function test_PreviousOwnerCannotLinkAfterTransfer() public {
+        _openProjects();
+        bytes32 gated =
+            _projectTask(runner, projectId, abi.encode(bytes32(0), uint64(block.timestamp + 5 days), new bytes32[](0)));
+        bytes32 review = _projectTask(runner, projectId, "");
+        assertEq(market.getTask(gated).requester, requester, "the owner is the requester of record");
+        _relay(requester, 0, abi.encodeCall(projects.proposeProjectOwner, (projectId, other)));
+        _relay(other, 0, abi.encodeCall(projects.acceptProjectOwner, (projectId)));
+
+        assertEq(v2.taskCallerRoles(gated, requester), ROLE_STRANGER, "the previous owner holds no role");
+        vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCallRoleRefused.selector, ROLE_STRANGER));
+        _link(requester, gated, review);
+        (bytes32 g,,,) = gate.gateOf(gated);
+        assertEq(g, bytes32(0), "nothing linked");
+
+        vm.expectEmit(address(market));
+        emit ITMPHooksV2.TaskHookCalled(
+            gated, address(gate), other, ROLE_PROJECT, keccak256(abi.encode(ACT_LINK, review))
+        );
+        _link(other, gated, review);
+        (g,,,) = gate.gateOf(gated);
+        assertEq(g, review);
     }
 }

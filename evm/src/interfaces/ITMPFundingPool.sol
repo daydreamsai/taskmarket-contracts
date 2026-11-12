@@ -34,9 +34,10 @@ interface ITMPFundingPool {
         uint256 totalShares;
         // Everything paid out of the pot to backers so far.
         uint256 claimed;
-        // The share generation. A credit to a pool worth nothing while shares exist starts the
-        // next one: every older share is worth nothing then, so totalShares restarts from zero
-        // and a backing from an older generation counts as no shares.
+        // The share generation. A credit to a pool worth nothing while shares exist and nothing
+        // is outstanding (rev030) starts the next one: every older share is worth nothing then,
+        // so totalShares restarts from zero and a backing from an older generation counts as no
+        // shares.
         uint256 generation;
     }
 
@@ -86,8 +87,8 @@ interface ITMPFundingPool {
     /// @notice The pool was closed explicitly; pot is what it held then, now the backers' pot.
     event PoolClosed(bytes32 indexed poolId, uint256 pot);
     event PoolClaimed(bytes32 indexed poolId, address indexed backer, uint256 amount);
-    /// @notice A credit found the open pool worth nothing while shares existed, so every share
-    ///         was worth nothing: share generation `generation` starts, totalShares restarts from
+    /// @notice A credit found the open pool worth nothing while shares existed and nothing was
+    ///         outstanding, so every share was worth nothing: share generation `generation` starts, totalShares restarts from
     ///         zero and every backing from an earlier generation now holds no shares. Emitted
     ///         before the PoolFunded of the credit that started it.
     event PoolSharesReset(bytes32 indexed poolId, uint256 generation);
@@ -121,8 +122,8 @@ interface ITMPFundingPool {
     ///         10^12 shares per base unit; every later one mints
     ///         amount * totalShares / (available + outstanding), so a backer pays the pool's value
     ///         now and shares neither what was spent nor what was won before it joined. A credit
-    ///         to a pool worth nothing while shares exist starts a new share generation
-    ///         (PoolSharesReset): the old shares are worth nothing, totalShares restarts and the
+    ///         to a pool worth nothing while shares exist and nothing is outstanding starts a new
+    ///         share generation (PoolSharesReset): the old shares are worth nothing, totalShares restarts and the
     ///         credit mints at the first price. Reverts PoolSharesZero when the amount buys no share. Through a
     ///         trusted forwarder the funder is the relayed sender and the forwarder must have moved
     ///         exactly `amount` into escrow. Called directly, the diamond pulls `amount` from the

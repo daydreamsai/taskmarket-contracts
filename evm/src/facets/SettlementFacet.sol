@@ -41,7 +41,9 @@ contract SettlementFacet {
     /// @notice Reject a submission from a worker on a bounty or benchmark task.
     ///         The requester is the authenticated actor (pgtrSender).
     ///         Costs the standard relay fee as anti-spam. Once all active submissions
-    ///         are rejected, cancelTask becomes available.
+    ///         are rejected, cancelTask becomes available. Rev030: reverts EvaluatorDecides while
+    ///         the task has an evaluator; the evaluator decides the contest, and only its timeout
+    ///         (which clears the evaluator) hands the decision back to the requester.
     function rejectSubmission(bytes32 taskId, address worker) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarderNoPayment(s);
@@ -56,6 +58,10 @@ contract SettlementFacet {
         if (task.status != ITMPCore.TaskStatus.Open && task.status != ITMPCore.TaskStatus.PendingApproval) {
             revert ITMPCore.TaskNotOpen();
         }
+        // Rev030: with an evaluator the evaluator has the final word on the contest, so the
+        // requester cannot reject its way to cancelTask. The evaluator timeout clears the evaluator,
+        // after which the requester may reject again.
+        if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) revert ITMPCore.EvaluatorDecides();
         if (s.taskRejectedWorkers[taskId][worker]) revert ITMPCore.SubmissionAlreadyRejected();
         if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
         LibReview.requireDecisionOpen(s, taskId, task);
@@ -190,12 +196,17 @@ contract SettlementFacet {
         // A task whose hooks can veto the delivery cannot lock its worker in: the worker would be unable
         // to deliver or leave and would forfeit the stake at expiry. Only a hook that can actually
         // veto submitWork lifts Disallowed; a task with no such hook keeps its term.
-        if (t.releaseAllowed == ITMPCore.ReleaseAllowed.Disallowed && !_canVetoSubmit(s, taskId)) {
+        // Rev030: a worker that became an acting party (it accepted the project's ownership mid-claim)
+        // can no longer submit, so it may always leave, without penalty.
+        bool actingParty = LibProject.isActingParty(s, taskId, worker);
+        if (!actingParty && t.releaseAllowed == ITMPCore.ReleaseAllowed.Disallowed && !_canVetoSubmit(s, taskId)) {
             revert ITMPCore.ReleaseNotAllowed();
         }
 
         uint256 stake = task.stakeAmount;
-        uint256 penalty = _releasePenalty(stake, s.taskMetadata[taskId].claimedAt, task.expiryTime, t.releaseGraceBps);
+        uint256 penalty = actingParty
+            ? 0
+            : _releasePenalty(stake, s.taskMetadata[taskId].claimedAt, task.expiryTime, t.releaseGraceBps);
         uint256 returned = stake - penalty;
 
         // Rev027: a task with a reserved worker never reopens. The hand-back settles the stake as
@@ -230,14 +241,17 @@ contract SettlementFacet {
 
     /// @dev storedGrace is grace + 1 (0 = default). now < expiry is checked by the caller, so a
     ///      100% grace (graceEnd == expiry) never reaches the division.
-    /// @dev Whether any hook on the task can veto submitWork: a V1 hook always can (checkSubmit), a V2
-    ///      hook only when it declares the beforeSubmitWork capability bit.
+    /// @dev Whether any hook on the task can veto submitWork: a hook that declares the
+    ///      beforeSubmitWork capability bit. Rev030: a V2 hook whose live
+    ///      codehash differs from the one pinned at attach can veto too, whatever its bits, because the
+    ///      vetoable observer callback on submitWork reverts HookCodeChanged for it; such a task never
+    ///      locks its worker in.
     function _canVetoSubmit(AppStorage storage s, bytes32 taskId) private view returns (bool) {
-        if (s.taskHooks[taskId].length != 0) return true;
         ITMPHookV2.Attachment[] storage list = s.taskHooksV2[taskId];
         uint32 bit = uint32(1) << LibHooksV2.A_SUBMIT_WORK;
         for (uint256 i; i < list.length; ++i) {
             if (list[i].capabilities & bit != 0) return true;
+            if (list[i].hook.codehash != list[i].codehash) return true;
         }
         return false;
     }
@@ -323,7 +337,10 @@ contract SettlementFacet {
         // the evaluator its fee, and expiry waits while the appeal window is still open. The call
         // goes back through the diamond before this function takes the reentrancy lock.
         // A dispute the resolver leaves unresolved until expiry lapses, and the original verdict stands.
+        // Rev030: the dispute lapses only after the resolver's resolution window (phaseDeadline, set
+        // by appeal), which a project task's clamped expiry may end before.
         if (task.status == ITMPCore.TaskStatus.Disputed && block.timestamp > task.expiryTime) {
+            if (block.timestamp <= s.phaseDeadline[taskId]) revert ITMPCore.DisputeWindowStillOpen();
             task.status = ITMPCore.TaskStatus.Appealing;
         }
         if (task.status == ITMPCore.TaskStatus.Appealing) {
@@ -383,7 +400,7 @@ contract SettlementFacet {
 
     /// @notice The reserved worker declines the open task by its accept-by time. The worker is the
     ///         authenticated actor (pgtrSender). The task is Cancelled and the reward, and any
-    ///         evaluator stake, goes back to the requester. Runs no check hook; onCancel runs as on
+    ///         evaluator stake, goes back to the requester. Runs no before-callback; afterCancel runs as on
     ///         cancelTask.
     /// @param workerAgentId ERC-8004 agent ID of the worker (0 if unknown), bound for reservation
     ///                      feedback.

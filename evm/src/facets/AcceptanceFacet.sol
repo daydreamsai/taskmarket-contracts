@@ -98,15 +98,27 @@ contract AcceptanceFacet {
             s.workerStats[worker].completedTasks--;
             s.taskAwarded[taskId][worker] = false;
             if (awards.length == 0) awards = verdict.awards;
+            else _recordPaidAwards(taskId, awards, s);
             _payResult(taskId, requester, awards, paymentAmount, task.feeBps, hookFeeBps, feeHook, s);
         } else {
             if (paymentAmount > 0) s.taskAwarded[taskId][worker] = true;
-            LibHooks._checkCompleteHooks(taskId, s, verdict, false);
             _payWorkerShare(taskId, requester, worker, paymentAmount, task.feeBps, s);
         }
         _returnStakeAndPriceCap(taskId, task, s);
 
-        if (LibProject.isActingParty(s, taskId, worker)) {
+        // Rev030: when a transforming hook changed the awards, self-dealing is read from the awards
+        // actually paid, as the multi-winner path does, not from the core worker.
+        bool selfPaid = worker == requester;
+        if (changed) {
+            selfPaid = false;
+            for (uint256 i; i < awards.length; ++i) {
+                if (awards[i].amount == 0) continue;
+                if (LibProject.isActingParty(s, taskId, awards[i].worker)) {
+                    emit ITMPCore.SelfAward(taskId, requester, awards[i].worker);
+                }
+                if (awards[i].worker == requester) selfPaid = true;
+            }
+        } else if (LibProject.isActingParty(s, taskId, worker)) {
             emit ITMPCore.SelfAward(taskId, requester, worker);
         }
         if (mode == BOUNTY || mode == BENCHMARK) {
@@ -116,7 +128,7 @@ contract AcceptanceFacet {
                 keccak256("completed"),
                 task.reward,
                 uint32(s.taskActiveSubmissionCount[taskId]),
-                worker == requester
+                selfPaid
             );
             LibFeedback.requester(s, taskId, requester, requesterAgentId, LibFeedback.COMPLETED, mode);
         }
@@ -143,10 +155,11 @@ contract AcceptanceFacet {
         bytes32[] calldata deliverables,
         uint256 requesterAgentId
     ) external {
-        if (workers.length > LibTaskMarket.MAX_SUBMISSION_WINNERS) {
+        AppStorage storage s = LibAppStorage.appStorage();
+        // Rev030: the cap is per chain (s.maxSubmissionWinners, 50 when unset).
+        if (workers.length > LibTaskMarket._maxSubmissionWinners(s)) {
             revert ITMPCore.TooManyWinners();
         }
-        AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
         LibGuards._nonReentrantBefore(s);
@@ -315,10 +328,11 @@ contract AcceptanceFacet {
             LibHooks._acceptV2(s, taskId, verdict, true, false, task.reward);
         if (changed) {
             if (result.length == 0) result = awards;
+            else _recordPaidAwards(taskId, result, s);
             _payResult(taskId, requester, result, task.reward, task.feeBps, hookFeeBps, feeHook, s);
             awards = result;
         } else {
-            _payMultiCore(taskId, task, requester, awards, verdict, s);
+            _payMultiCore(taskId, task, requester, awards, s);
         }
         bool anySelfAward = false;
         for (uint256 i; i < awards.length; ++i) {
@@ -343,13 +357,12 @@ contract AcceptanceFacet {
     }
 
     /// @dev The core multi-winner payout, unchanged from rev027 apart from the settlement tally:
-    ///      bookkeeping, the V1 check hook, then transfers.
+    ///      bookkeeping, then transfers.
     function _payMultiCore(
         bytes32 taskId,
         ITMPCore.Task storage task,
         address requester,
         ITMPCore.Award[] memory awards,
-        ITMPCore.Verdict memory verdict,
         AppStorage storage s
     ) private {
         uint256 totalFee = 0;
@@ -360,8 +373,6 @@ contract AcceptanceFacet {
             s.taskAwarded[taskId][awards[i].worker] = true;
         }
         if (totalFee > 0) s.totalFeesCollected += totalFee;
-
-        LibHooks._checkCompleteHooks(taskId, s, verdict, false);
 
         uint256 totalNet = 0;
         // slither-disable-next-line calls-loop
@@ -395,6 +406,22 @@ contract AcceptanceFacet {
         uint256 total = LibPayout.payAwards(s, taskId, requester, awards, feeBps, hookFeeBps, feeHook);
         if (budget > total) {
             if (!LibProject.payRequester(s, taskId, budget - total)) revert ITMPCore.ExcessRefundFailed();
+        }
+    }
+
+    /// @dev Rev030: when a transforming hook replaced the awards, the task's verdict records the
+    ///      awards paid, as EvaluatorFacet._payAwards does, so getTaskVerdict reports what was paid
+    ///      and an after-callback (the DREAMS reward hook's bonus) is sized from it. A requester
+    ///      acceptance no hook changed still stores no verdict.
+    function _recordPaidAwards(bytes32 taskId, ITMPCore.Award[] memory awards, AppStorage storage s) private {
+        delete s.taskVerdicts[taskId];
+        ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
+        v.issued = true;
+        v.verdictType = ITMPCore.VerdictType.APPROVE;
+        v.score = 1000;
+        v.confidence = 1000;
+        for (uint256 i; i < awards.length; ++i) {
+            v.awards.push(awards[i]);
         }
     }
 

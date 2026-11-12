@@ -19,7 +19,7 @@ import { SponsoredTaskFeeConfig } from "./helpers/SponsoredTaskFeeConfig.sol";
 import { SponsoredTasksVaultV2 } from "../src/hooks/sponsored-task/SponsoredTasksVaultV2.sol";
 import { SponsoredTaskHookV2 } from "../src/hooks/sponsored-task/SponsoredTaskHookV2.sol";
 import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
-import { MockTaskmarketForSponsoredTask } from "./SponsoredTaskHook.t.sol";
+import { MockTaskmarketForSponsoredTask } from "./mocks/MockTaskmarketForSponsoredTask.sol";
 import { MockSponsoredTasksVault } from "./mocks/MockSponsoredTasksVault.sol";
 
 /// @dev The V1 mock market, also driving SponsoredTaskHookV2 through its V2 callbacks.
@@ -520,6 +520,47 @@ contract SponsoredTaskHookV2SuiteTest is Test {
         SponsoredTaskTypes.Allocation memory settled = _vaultAllocation(vault, claimTaskId);
         assertEq(settled.distributedGross, GROSS);
         assertEq(settled.sponsoredTaskOutstanding, 9_950);
+    }
+
+    function testReconcileUncommittedClaimPaysSoleWorker() external {
+        bytes32 claimTaskId = keccak256("claim-lapsed");
+        market.primeTask(claimTaskId, MANAGER, address(usdc), NATIVE_REWARD, TMP_CLAIM, address(hook));
+        _fundLocalTask(claimTaskId);
+        market.setWorkerAndStake(claimTaskId, ALICE, 0, keccak256("delivered"));
+        // A lapsed-review settlement whose hook callbacks were all swallowed: no commitment, no verdict.
+        market.setStatus(claimTaskId, ITMPCore.TaskStatus.Accepted);
+        assertFalse(market.getTaskVerdict(claimTaskId).issued);
+
+        assertEq(uint8(hook.reconcile(claimTaskId)), uint8(SponsoredTaskHookV2.HookStatus.SettlementPrepared));
+        assertEq(_vaultAllocation(vault, claimTaskId).distributedGross, GROSS);
+    }
+
+    function testEvaluatorAndTermsFrozenWhileSponsored() external {
+        uint32 caps = hook.hookCapabilities();
+        assertTrue(caps & (uint32(1) << 1) != 0 && caps & (uint32(1) << 2) != 0, "bits 1 and 2 declared");
+        ITMPHookV2.TaskContextV2 memory ctx;
+
+        // Before funding there is no sponsorship to protect.
+        vm.startPrank(address(market));
+        hook.beforeAssignEvaluator(TASK_ID, ctx, ALICE, "");
+        hook.beforeUpdate(TASK_ID, ctx, "");
+        vm.stopPrank();
+
+        _fundLocal();
+        vm.startPrank(address(market));
+        vm.expectPartialRevert(SponsoredTaskHookV2.SponsorshipTermsFrozen.selector);
+        hook.beforeAssignEvaluator(TASK_ID, ctx, ALICE, "");
+        vm.expectPartialRevert(SponsoredTaskHookV2.SponsorshipTermsFrozen.selector);
+        hook.beforeUpdate(TASK_ID, ctx, "");
+        vm.stopPrank();
+
+        // Once the sponsorship is released the terms are the requester's again.
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Expired);
+        hook.reconcile(TASK_ID);
+        vm.startPrank(address(market));
+        hook.beforeAssignEvaluator(TASK_ID, ctx, ALICE, "");
+        hook.beforeUpdate(TASK_ID, ctx, "");
+        vm.stopPrank();
     }
 
     function testAcceptedMultiAwardWithoutStoredVerdictStillRequiresAwards() external {

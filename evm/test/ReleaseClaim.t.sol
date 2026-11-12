@@ -10,7 +10,6 @@ import { LibGuards } from "../src/libraries/LibGuards.sol";
 import { TMP_CLAIM, TMP_PITCH } from "../src/interfaces/ITMPModes.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
-import { MockTaskHook } from "./mocks/MockTaskHook.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
@@ -38,9 +37,6 @@ contract ReleaseClaimTest is DiamondTestHelper {
         vm.startPrank(owner);
         usdc = new MockUSDC();
         market = deployDiamond(owner, address(usdc), feeRecipient, 500);
-        // These tests exercise V1 hook dispatch, which rev028 keeps for tasks created
-        // before its cut; the diamond is placed at rev027 so new tasks take the V1 path.
-        placeAtVersion(address(market), 27);
         forwarder = new MockPGTRForwarder(address(usdc));
         market.addForwarder(address(forwarder));
         vm.stopPrank();
@@ -283,13 +279,5 @@ contract ReleaseClaimTest is DiamondTestHelper {
         uint256 oldExpiry = market.getTask(taskId).expiryTime;
         _release(taskId);
         assertEq(market.getTask(taskId).expiryTime, oldExpiry, "expiry already beyond the extension");
-    }
-
-    function test_Release_DispatchesOnForfeitHook() public {
-        MockTaskHook hook = new MockTaskHook();
-        bytes32 taskId = _create(TMP_CLAIM, _terms(), address(hook));
-        _relay(worker, STAKE, abi.encodeCall(market.claimTask, (taskId, STAKE)));
-        _release(taskId);
-        assertEq(hook.onForfeitCalls(), 1);
     }
 }

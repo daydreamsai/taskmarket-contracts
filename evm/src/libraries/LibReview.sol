@@ -72,8 +72,10 @@ library LibReview {
 
     /// @notice Whether a Bounty or Benchmark without an evaluator still has live submissions past
     ///         its decision deadline, `max(expiryTime, decisionStartAt) + decisionWindowSecs`.
-    ///         `decisionStartAt` is read as stored; it is set only for a task normalized at the
-    ///         rev025 cut and is zero otherwise. This function seeds nothing.
+    ///         `decisionStartAt` is read as stored; it is set for a task normalized at the rev025
+    ///         cut and, from rev030, by evaluatorTimeout when it clears the task's evaluator, and
+    ///         is zero otherwise. This function seeds nothing. A task with an evaluator never
+    ///         lapses here: it exits through the verdict or evaluatorTimeout.
     function decisionLapsed(AppStorage storage s, bytes32 taskId, ITMPCore.Task storage task) internal returns (bool) {
         if (task.mode != TMP_BOUNTY && task.mode != TMP_BENCHMARK) return false;
         if (s.taskEvaluatorConfigs[taskId].evaluator != address(0)) return false;

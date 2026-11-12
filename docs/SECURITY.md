@@ -187,7 +187,7 @@ The owner (`LibDiamond.contractOwner`) can:
 - `pause` / `unpause` all state-mutating operations
 - `addForwarder` / `removeForwarder`, which decides which relayer may act for users
 - `setDefaultFeeBps` and `setFeeRecipient`
-- `setReputationRegistry` and `setDefaultHooks`
+- `setReputationRegistry` and `setDefaultHooksV2` (the V1 `setDefaultHooks` was removed in rev030)
 - `setMinAppealWindowSecs` and `setMinFeedbackGas`
 - `setDiamondVersion`
 - `transferOwnership` (two-step, completed by `acceptOwnership`)

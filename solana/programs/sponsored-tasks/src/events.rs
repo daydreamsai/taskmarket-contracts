@@ -9,6 +9,7 @@ pub struct ConfigInitialized {
     pub threshold: u8,
     pub fee_bps: u16,
     pub fee_recipient: Pubkey,
+    pub cluster_id: [u8; 32],
 }
 
 #[event]
@@ -124,6 +125,16 @@ pub struct PayoutBound {
     pub agent: [u8; 20],
     pub payout: Pubkey,
     pub nonce: u64,
+}
+
+/// A settler-attested payout change was stored; claims use `payout` from `effective_at` on.
+#[event]
+pub struct PayoutBindingPending {
+    pub task_chain_id: u64,
+    pub agent: [u8; 20],
+    pub payout: Pubkey,
+    pub nonce: u64,
+    pub effective_at: i64,
 }
 
 #[event]

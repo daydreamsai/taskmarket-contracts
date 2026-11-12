@@ -6,6 +6,8 @@ import { LibDiamond } from "../libraries/LibDiamond.sol";
 import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
+import { LibTaskLimits } from "../libraries/LibTaskLimits.sol";
+import { LibProject } from "../libraries/LibProject.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
 import { ITMPHooksV2 } from "../interfaces/ITMPHooksV2.sol";
@@ -62,7 +64,9 @@ contract HooksV2Facet is ITMPHooksV2 {
 
     function setDefaultHooksV2(address[] calldata hooks) external onlyOwner {
         AppStorage storage s = LibAppStorage.appStorage();
-        if (hooks.length > LibHooksV2.MAX_DEFAULT_HOOKS_V2) revert TooManyDefaultHooks();
+        if (hooks.length > LibHooksV2.MAX_DEFAULT_HOOKS_V2 || hooks.length > LibTaskLimits.maxHooks(s)) {
+            revert TooManyDefaultHooks();
+        }
         delete s.defaultHooksV2;
         bool transforming = false;
         for (uint256 i; i < hooks.length; i++) {
@@ -153,10 +157,14 @@ contract HooksV2Facet is ITMPHooksV2 {
         ITMPCore.Task storage t = s.tasks[taskId];
         if (who == address(0)) return LibHooksV2.ROLE_STRANGER;
         // Rev029: a project owner's own task is acted for by the project's current owner.
+        // Rev030: on a task an operator created, the requester of record holds the role only while
+        // it may still act for the task (LibProject.mayAct), so neither an operator whose revoke
+        // removed its control nor a previous owner keeps it.
         uint256 projectId = s.taskProjects[taskId];
         bool isRequester = who == t.requester;
-        if (projectId != 0 && s.taskOperators[taskId] == address(0)) {
-            isRequester = who == s.projects[projectId].owner;
+        if (projectId != 0) {
+            if (s.taskOperators[taskId] == address(0)) isRequester = who == s.projects[projectId].owner;
+            else if (isRequester) isRequester = LibProject.mayAct(s, taskId, who);
         }
         if (isRequester) roles |= LibHooksV2.ROLE_REQUESTER;
         if (_isProject(s, taskId, who)) roles |= LibHooksV2.ROLE_PROJECT;
@@ -166,12 +174,15 @@ contract HooksV2Facet is ITMPHooksV2 {
         if (roles == 0) roles = LibHooksV2.ROLE_STRANGER;
     }
 
-    /// @dev The owner of the task's project, the operator that created the task, or an operator
-    ///      with an accepted, unrevoked grant on that project.
+    /// @dev The owner of the task's project, the operator that created the task while it may still
+    ///      act for it, or an operator with an accepted, unrevoked grant on that project. Rev030: the
+    ///      creating operator follows LibProject.mayAct, so a revoke with revokeRemovesControl takes
+    ///      the role away with the control, and a revoke without it leaves the role with the control.
     function _isProject(AppStorage storage s, bytes32 taskId, address who) private view returns (bool) {
         uint256 projectId = s.taskProjects[taskId];
         if (projectId == 0) return false;
-        if (who == s.projects[projectId].owner || who == s.taskOperators[taskId]) return true;
+        if (who == s.projects[projectId].owner) return true;
+        if (who == s.taskOperators[taskId]) return LibProject.mayAct(s, taskId, who);
         ITMPProject.Grant storage g = s.projectGrants[projectId][who];
         return g.accepted && !g.revoked;
     }

@@ -55,7 +55,7 @@ library LibTaskCreation {
         // Rev028: every task created after the cut is a Task Hook V2 task. hookConfig.contracts
         // holds the requester's V2 hooks (after the protocol defaults); hookConfig.data is empty or
         // abi.encode(bytes[] configs), one configuration per requester hook. A V1-only hook reverts
-        // HookV1Retired. Below rev028 the rev027 V1 build runs instead.
+        // HookV1Retired.
         LibHooks._attach(taskId, hookConfig);
         _announceAndBook(s, taskId, requester, reservedWorker);
     }

@@ -6,7 +6,6 @@ import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPHooksV2 } from "../src/interfaces/ITMPHooksV2.sol";
 import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
-import { LibAppStorage, AppStorage } from "../src/libraries/LibAppStorage.sol";
 import { LibHooksV2 } from "../src/libraries/LibHooksV2.sol";
 import { ProofGateHook } from "../src/hooks/proof-gate/ProofGateHook.sol";
 import { BaseTMPHookV2 } from "../src/hooks/base/BaseTMPHookV2.sol";
@@ -15,17 +14,6 @@ import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
-
-/// @dev Reads the position of taskHookVersion in AppStorage so a test can zero one task's entry.
-contract HookVersionSlot {
-    function baseSlot() external view returns (uint256 slot) {
-        AppStorage storage s = LibAppStorage.appStorage();
-        mapping(bytes32 => uint8) storage m = s.taskHookVersion;
-        assembly {
-            slot := m.slot
-        }
-    }
-}
 
 contract ProofGateHookTest is DiamondTestHelper {
     ITMPDiamond internal market;
@@ -150,19 +138,6 @@ contract ProofGateHookTest is DiamondTestHelper {
         assertEq(market.taskProofHashes(taskId, 0), keccak256("ok"));
     }
 
-    function test_ProofGate_v1TaskKeepsSubmitProofUngated() public {
-        bytes32 taskId = _createGated();
-
-        // A task created before the cut reads version zero and dispatches V1, which has no
-        // submitProof check; zero this one task's entry to stand in for it.
-        uint256 base = new HookVersionSlot().baseSlot();
-        vm.store(address(market), keccak256(abi.encode(taskId, base)), bytes32(0));
-        assertEq(ITMPHooksV2(address(market)).getTaskHookVersion(taskId), 0);
-
-        _submitProof(taskId, otherWorker, keccak256("proof"));
-        assertEq(market.taskProofHashes(taskId, 0), keccak256("proof"));
-    }
-
     function test_ProofGate_emptyConfigStartsClosedAndRequesterCanAllow() public {
         bytes32 taskId = _create("");
 
@@ -184,5 +159,51 @@ contract ProofGateHookTest is DiamondTestHelper {
         ITMPHookV2.TaskContextV2 memory ctx;
         vm.expectRevert(abi.encodeWithSelector(BaseTMPHookV2.BaseTMPHookV2__UnauthorizedCaller.selector, address(this)));
         gate.beforeSubmitProof(taskId, ctx, otherWorker, bytes32(0), "");
+    }
+}
+
+/// @dev A diamond whose live roles a test sets, standing in for a project task whose control moved.
+contract ProofGateRolesDiamond {
+    mapping(address => uint32) public roles;
+
+    function setRoles(address who, uint32 r) external {
+        roles[who] = r;
+    }
+
+    function taskCallerRoles(bytes32, address who) external view returns (uint32) {
+        return roles[who] == 0 ? LibHooksV2.ROLE_STRANGER : roles[who];
+    }
+
+    function create(ProofGateHook gate, bytes32 taskId, address pinnedRequester) external {
+        ITMPHookV2.TaskContextV2 memory ctx;
+        ctx.requester = pinnedRequester;
+        gate.beforeCreate(taskId, ctx, "", "");
+    }
+}
+
+contract ProofGateLiveRoleTest is Test {
+    bytes32 internal constant TASK = keccak256("task");
+
+    function test_ProofGate_allowFollowsLiveRequesterRole() public {
+        ProofGateRolesDiamond d = new ProofGateRolesDiamond();
+        ProofGateHook gate = new ProofGateHook(address(d));
+        address oldOwner = address(0xA1);
+        address newOwner = address(0xA2);
+        address operator = address(0xA3);
+        d.create(gate, TASK, oldOwner);
+        d.setRoles(newOwner, LibHooksV2.ROLE_REQUESTER);
+        d.setRoles(operator, LibHooksV2.ROLE_PROJECT);
+
+        // The requester pinned at creation no longer controls the task.
+        vm.prank(oldOwner);
+        vm.expectRevert(ProofGateHook.ProofGate__NotRequester.selector);
+        gate.allow(TASK, address(0xB1));
+
+        vm.prank(newOwner);
+        gate.allow(TASK, address(0xB1));
+        vm.prank(operator);
+        gate.allow(TASK, address(0xB2));
+        assertTrue(gate.isAllowed(TASK, address(0xB1)));
+        assertTrue(gate.isAllowed(TASK, address(0xB2)));
     }
 }

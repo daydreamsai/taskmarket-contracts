@@ -1,5 +1,11 @@
 # EXT-002: Reference ITMPHook Implementations
 
+> **Retired in rev030.** These were V1 `ITMPHook` hooks built on `BaseTMPHook`. The diamond no longer
+> dispatches V1 hooks and refuses to attach one (`HookV1Retired`), so the three contracts, `BaseTMPHook`
+> and their tests are deleted from the sources. The V2 equivalents the tests use live in
+> `evm/test/mocks/` (`MockAllowlistedWorkerHookV2`, `MockCompletionReceiptHookV2`); write a V2 hook on
+> `BaseTMPHookV2`. The text below describes the V1 contracts as they were.
+
 This directory contains deliberately small hook implementations intended as secure starting
 points built on `BaseTMPHook`, not as a second general-purpose hook framework:
 

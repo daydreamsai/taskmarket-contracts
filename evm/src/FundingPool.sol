@@ -15,7 +15,8 @@ import { IFundingPoolManager, IDiamondForPool } from "./interfaces/IFundingPoolM
 ///         closes them. Backers fund and claim directly. Shares are priced at the pool's current
 ///         value (available + outstanding), the first credit of a share generation mints
 ///         SHARE_SCALE shares per base unit, and a credit to a pool worth nothing while shares
-///         exist starts the next generation. See rev027-funding-pool-contract.md.
+///         exist and nothing is outstanding (rev030) starts the next generation. See
+///         rev027-funding-pool-contract.md.
 /// @dev Accounting. totalLiabilities is the sum of every pool's `available`, booked the way
 ///      LibEscrow books the Diamond's escrow: credits and refunds add to it, spend and claim
 ///      release it. Every state-changing call ends with balanceOf(this) >= totalLiabilities.
@@ -309,7 +310,7 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
 
     /// @inheritdoc IFundingPoolManager
     function fundingPoolRevision() external pure virtual returns (uint256) {
-        return 29;
+        return 30;
     }
 
     // -------------------------------------------------------------------------
@@ -333,7 +334,11 @@ contract FundingPool is Initializable, UUPSUpgradeable, ITMPFundingPool, IFundin
         // Dust: a value of zero, or so small against the supply that the next credit would mint
         // more shares than the supply can hold, prices every share at nothing. Either starts the
         // next generation; the dust stays in the pool and belongs to it.
-        if (supply != 0 && (value == 0 || supply / value > MAX_SHARES_PER_UNIT)) {
+        // Rev030: never while anything is outstanding. Money a live task holds comes back to the
+        // pool or is spent on its work, and the shares of the current generation are its claim on
+        // what comes back; starting a new generation would hand that to the next funder. A credit
+        // that cannot be priced then reverts on overflow instead, until the work finishes.
+        if (supply != 0 && p.outstanding == 0 && (value == 0 || supply / value > MAX_SHARES_PER_UNIT)) {
             supply = 0;
             p.generation = ++generation;
             emit PoolSharesReset(poolId, generation);

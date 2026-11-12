@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { LibSettlement } from "./LibSettlement.sol";
+import { LibEscrow } from "./LibEscrow.sol";
 import { AppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPProject } from "../interfaces/ITMPProject.sol";
@@ -35,7 +36,10 @@ library LibProject {
 
     /// @notice The longest task grace period createProject accepts: how long after its end date
     ///         a project's tasks may run. A backer's money is held at most
-    ///         MAX_LIFETIME + MAX_TASK_GRACE after the project is created.
+    ///         until the project's current end date plus this grace plus the evaluation and decision
+    ///         windows of a task running to its expiry. The owner can move the end date later
+    ///         repeatedly with extendProject (each time to at most MAX_LIFETIME from that moment),
+    ///         so there is no fixed bound from creation.
     uint32 internal constant MAX_TASK_GRACE = 90 days;
 
     /// @notice Rev029: the bits of GrantLimits.allowedModesMask, one per built-in mode (bounty 0,
@@ -47,6 +51,17 @@ library LibProject {
     function latestExpiry(AppStorage storage s, uint256 projectId) internal view returns (uint256) {
         ITMPProject.ProjectRecord storage p = s.projects[projectId];
         return uint256(p.endsAt) + p.taskGraceSecs;
+    }
+
+    /// @notice Rev030: `wanted` held to the latest expiry of the task's project (end date plus task
+    ///         grace), the bound extendExpiry clamps a project task's expiry to; `wanted` unchanged
+    ///         for a task in no project. Used for a phase deadline set with an expiry extension,
+    ///         so the phase cannot end after the latest time the task may run.
+    function boundDeadline(AppStorage storage s, bytes32 taskId, uint256 wanted) internal view returns (uint256) {
+        uint256 projectId = s.taskProjects[taskId];
+        if (projectId == 0) return wanted;
+        uint256 latest = latestExpiry(s, projectId);
+        return wanted > latest ? latest : wanted;
     }
 
     /// @notice Refuses updateTask's extension of a project task's expiry to `newExpiry` past the
@@ -141,20 +156,32 @@ library LibProject {
     ///         each.
     function refund(AppStorage storage s, bytes32 taskId, uint256 amount) internal {
         uint256 projectId = s.taskProjects[taskId];
-        _release(s, projectId, taskId, amount);
-        if (amount == 0) return;
+        if (amount == 0) {
+            _release(s, projectId, taskId, 0);
+            return;
+        }
         address fundingPool = s.fundingPool;
         if (!s.usdcToken.transfer(fundingPool, amount)) revert ITMPProject.FundingTransferFailed();
         bytes32 poolId = poolOf(projectId);
         IFundingPoolManager(fundingPool).refund(poolId, amount);
         // The refunded money is available again, so it leaves outstanding in the same call. Hooks
         // run before LibEscrow.release, and would otherwise see it counted in both and mint or
-        // price shares against the doubled value. The rest of the task's draw leaves at release. When
-        // the refund includes money that was never drawn from the pool (a forfeited worker stake), the
-        // draw is reduced by that part too, so outstanding reads low until release; the total over the
-        // task's life is correct.
+        // price shares against the doubled value. The rest of the task's draw leaves at release.
+        // Rev030: only pool money the task no longer holds leaves: the draw is lowered at most to
+        // what the task still holds of it (LibEscrow.owedParts, read after the caller has already
+        // updated the task for this payout), never below. A refund that includes money the pool
+        // never paid, such as a worker's stake forfeited on a task that reopens with its reward
+        // still in escrow, then lowers nothing for that part and only adds to available. Lowering
+        // the draw by it would leave outstanding reading less than the live tasks hold, and a pool
+        // worth nothing on paper starts a new share generation on the next credit.
         uint256 drawn = s.taskPoolDraws[taskId];
-        uint256 applied = amount > drawn ? drawn : amount;
+        (uint256 held,) = LibEscrow.owedParts(s, taskId);
+        uint256 gone = drawn > held ? drawn - held : 0;
+        uint256 applied = amount > gone ? gone : amount;
+        // Rev030: the operator's cap and period meter get back the same `applied`, project money
+        // coming back and nothing else. The forfeited stake still goes to the pool, but it was
+        // never counted against the operator, so it must not raise the operator's cap.
+        _release(s, projectId, taskId, applied);
         if (applied != 0) {
             s.taskPoolDraws[taskId] = drawn - applied;
             IFundingPoolManager(fundingPool).finish(poolId, applied);
@@ -290,6 +317,10 @@ library LibProject {
     function drawForTask(AppStorage storage s, bytes32 taskId, address caller, uint256 amount) internal {
         uint256 projectId = s.taskProjects[taskId];
         address operator = s.taskOperators[taskId];
+        // Rev030: a caller that is now the project's owner is not held to the operator's grant,
+        // whether or not it is also the task's operator: acceptProjectOwner revoked the promoted
+        // owner's old grant, and the owner tops up its own tasks from the pool all the same.
+        if (caller == s.projects[projectId].owner) caller = address(0);
         // Rev029: an operator topping up its own task keeps the task inside maxRewardPerTask.
         if (operator != address(0) && caller == operator) {
             _requireRewardWithin(s.projectGrantLimits[projectId][operator], s.taskPoolDraws[taskId] + amount);
@@ -307,7 +338,8 @@ library LibProject {
     ///         would leave the evaluator stake in outstanding after evaluate pays it to the
     ///         evaluator or evaluatorTimeout to the protocol while the worker's stake is still
     ///         held, and a backer would then buy shares at a value the pool does not have. The
-    ///         draw never grows, so a forfeited stake refunded to the pool is still a windfall.
+    ///         draw never grows, so a forfeited stake refunded to the pool is a windfall in
+    ///         available; refund never lowers the draw for it (rev030).
     function finishDraw(AppStorage storage s, bytes32 taskId, uint256 heldNow) internal {
         uint256 drawn = s.taskPoolDraws[taskId];
         if (drawn > heldNow) _finish(s, taskId, drawn - heldNow, heldNow);
@@ -320,9 +352,9 @@ library LibProject {
         pool(s).finish(poolOf(s.taskProjects[taskId]), amount);
     }
 
-    /// @dev Gives back to the operator's cap what a refund returns. An amount that was not drawn
-    ///      from the budget, such as a worker's forfeited stake, can exceed the draw, so it floors
-    ///      at zero.
+    /// @dev Gives back to the operator's cap the project money a refund returns (refund passes
+    ///      `applied`, never the full amount, so a worker's forfeited stake is not credited). The
+    ///      amount still floors at zero against committed.
     function _release(AppStorage storage s, uint256 projectId, bytes32 taskId, uint256 amount) private {
         address operator = s.taskOperators[taskId];
         if (operator == address(0)) return;

@@ -4,8 +4,12 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { ITMPCore } from "./ITMPCore.sol";
 
-/// @title ITMPHook — ERC-8195 task lifecycle hook interface
-/// @notice Implemented by external contracts that wish to observe or gate task
+/// @title ITMPHook — ERC-8195 task lifecycle hook interface (V1, retired)
+/// @notice Retired in rev030: the diamond no longer calls any function of this interface. It stays
+///         so the diamond can recognise a V1 hook by its ERC-165 id and refuse it at task creation
+///         with HookV1Retired. The text below describes the V1 behaviour for the record.
+///
+///         Implemented by external contracts that wish to observe or gate task
 ///         state transitions. Registered immutably at task creation via createTask().
 ///
 ///         check* hooks: return false OR revert to block the transition. Called AFTER

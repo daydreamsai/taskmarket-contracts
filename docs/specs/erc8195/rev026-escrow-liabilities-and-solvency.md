@@ -172,6 +172,11 @@ rev026 makes the stipend a per-chain value:
   also raises the gas every after-hook transaction must carry. A chain should run the smallest
   stipend its hooks need.
 
+Correction (rev030, 11 November 2026): Tempo's per-transaction gas cap is 30M and its relay ceiling
+28M, not 2^24 as stated above. The 8,000,000 stipend ceiling fits under either. The same slot price
+means a Bounty or Benchmark payout to many recipients that hold no balance can exceed Tempo's cap
+well below the 50-winner limit rev025 sized on a 16M figure; rev030 makes that limit per chain.
+
 Tempo runs 7,000,000: the measured 6.0M peak plus about 16% headroom. Base keeps the default. The
 backend's relay gas limits size each hook call from the same per-chain figure, so a change to it on
 chain ships with the matching backend change.

@@ -6,6 +6,8 @@ import { LibDiamond } from "../libraries/LibDiamond.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
 import { LibProject } from "../libraries/LibProject.sol";
+import { LibHooks } from "../libraries/LibHooks.sol";
+import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { IFundingPoolManager } from "../interfaces/IFundingPoolManager.sol";
 import { LibTaskCreation } from "../libraries/LibTaskCreation.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
@@ -152,6 +154,7 @@ contract ProjectFacet {
         if (s.tasks[taskId].expiryTime > LibProject.latestExpiry(s, projectId)) {
             revert ITMPProject.ProjectTaskPastGrace();
         }
+        LibHooks._observe(s, taskId, LibHooksV2.A_CREATE, true);
         LibGuards._nonReentrantAfter(s);
     }
 
@@ -455,7 +458,10 @@ contract ProjectFacet {
         // Rev028: the creator is recorded before the task's hooks run, which happens inside create,
         // so a checkFund hook can charge whoever actually called rather than the requester of
         // record. `_link` writes the same value again once the task exists.
-        s.taskCreators[LibTaskCreation.nextTaskId(s, requester)] = caller;
+        // Rev030: the project is recorded with it, so beforeCreate sees ctx.projectId.
+        bytes32 nextId = LibTaskCreation.nextTaskId(s, requester);
+        s.taskCreators[nextId] = caller;
+        s.taskProjects[nextId] = projectId;
     }
 
     /// @dev Rev028: the requester of record is the owner or the operator, but either may act for

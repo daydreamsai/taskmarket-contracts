@@ -34,6 +34,8 @@ pub const DECIMALS: u8 = 6;
 pub const TASK_CHAIN_ID: u64 = 8453;
 pub const TEMPO_CHAIN_ID: u64 = 4217;
 pub const DEADLINE: i64 = 1_000_000;
+/// The cluster id every test config is initialised with.
+pub const TEST_CLUSTER_ID: [u8; 32] = [0xC1; 32];
 
 pub fn code(e: SponsoredTasksError) -> u32 {
     e as u32 + anchor_lang::error::ERROR_CODE_OFFSET
@@ -108,11 +110,13 @@ pub fn bind_payout_ix(
     agent: [u8; 20],
     payout: Pubkey,
     nonce: u64,
+    deadline: u64,
     signature: [u8; 65],
 ) -> Instruction {
     Instruction {
         program_id: ID,
         accounts: accounts::BindPayout {
+            config: config_pda(),
             binding: payout_pda(task_chain_id, &agent),
             payer: *payer,
             system_program: anchor_lang::system_program::ID,
@@ -125,6 +129,7 @@ pub fn bind_payout_ix(
             agent,
             payout,
             nonce,
+            deadline,
             signature,
         }
         .data(),
@@ -286,6 +291,27 @@ impl Env {
         threshold: u8,
         fee_bps: u16,
     ) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.pubkey();
+        self.init_config_as(
+            authority,
+            admin,
+            TEST_CLUSTER_ID,
+            settlers,
+            threshold,
+            fee_bps,
+        )
+    }
+
+    /// `init_config` with an explicit admin and cluster id.
+    pub fn init_config_as(
+        &mut self,
+        authority: &Keypair,
+        admin: Pubkey,
+        cluster_id: [u8; 32],
+        settlers: Vec<Pubkey>,
+        threshold: u8,
+        fee_bps: u16,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: ID,
             accounts: accounts::InitConfig {
@@ -299,11 +325,12 @@ impl Env {
             }
             .to_account_metas(None),
             data: instruction::InitConfig {
-                admin: self.admin.pubkey(),
+                admin,
                 settlers,
                 threshold,
                 fee_bps,
                 fee_recipient: self.fee_recipient.pubkey(),
+                cluster_id,
             }
             .data(),
         };
@@ -455,6 +482,8 @@ impl Env {
             payout,
             nonce: 1,
             bump: 0,
+            pending_payout: Pubkey::default(),
+            pending_effective_at: 0,
         };
         self.put(
             &payout_pda(TASK_CHAIN_ID, &worker),
@@ -632,6 +661,21 @@ impl VaultFixture {
             program_id: ID,
             accounts: metas,
             data: instruction::Release {}.data(),
+        }
+    }
+
+    /// `release_expired` is permissionless: no settlers, no signer beyond the fee payer.
+    pub fn release_expired_ix(&self, reservation: Pubkey) -> Instruction {
+        Instruction {
+            program_id: ID,
+            accounts: accounts::ReleaseExpired {
+                vault: self.vault,
+                reservation,
+                event_authority: event_authority(),
+                program: ID,
+            }
+            .to_account_metas(None),
+            data: instruction::ReleaseExpired {}.data(),
         }
     }
 

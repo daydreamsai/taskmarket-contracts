@@ -1930,7 +1930,7 @@ export const SponsoredTaskHookV2ABI = [
     "name": "beforeAssignEvaluator",
     "inputs": [
       {
-        "name": "",
+        "name": "taskId",
         "type": "bytes32",
         "internalType": "bytes32"
       },
@@ -2116,7 +2116,7 @@ export const SponsoredTaskHookV2ABI = [
         "internalType": "bytes4"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -4315,7 +4315,7 @@ export const SponsoredTaskHookV2ABI = [
     "name": "beforeUpdate",
     "inputs": [
       {
-        "name": "",
+        "name": "taskId",
         "type": "bytes32",
         "internalType": "bytes32"
       },
@@ -4496,7 +4496,7 @@ export const SponsoredTaskHookV2ABI = [
         "internalType": "bytes4"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -5885,6 +5885,11 @@ export const SponsoredTaskHookV2ABI = [
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SponsorshipTermsFrozen",
+    "inputs": []
   },
   {
     "type": "error",

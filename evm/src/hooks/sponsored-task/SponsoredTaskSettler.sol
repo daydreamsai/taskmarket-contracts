@@ -477,6 +477,12 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
             revert InvalidClaimDelay(newClaimDelaySeconds);
         }
         if (newClaimDelaySeconds >= claimDelaySeconds) {
+            // A raise supersedes any scheduled reduction, so the stale lower value cannot be applied later.
+            if (pendingClaimDelayEta != 0) {
+                delete pendingClaimDelay;
+                delete pendingClaimDelayEta;
+                emit ClaimDelayChangeCancelled();
+            }
             claimDelaySeconds = newClaimDelaySeconds;
             emit ClaimDelaySet(newClaimDelaySeconds);
             return;

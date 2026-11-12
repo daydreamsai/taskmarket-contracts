@@ -59,9 +59,11 @@
       "name": "bind_payout",
       "docs": [
         "Binds an agent's Solana payout address from the agent's EIP-712 signature over",
-        "`PayoutBinding(agent, payout, nonce)`. Anyone may relay it: the signature, not the payer,",
-        "authorizes. A newer binding replaces the old one only with a higher nonce. Open while",
-        "paused, since it moves no funds."
+        "`PayoutBinding(agent, payout, nonce, deadline)`. Anyone may relay it, but only until",
+        "`deadline` (unix seconds; `u64::MAX` for none): the signature, not the payer, authorizes.",
+        "A newer binding replaces the old one only with a higher nonce, and the nonce is below",
+        "`u64::MAX` so the agent can always bind again. The signed domain carries the cluster id",
+        "from `Config`. Open while paused, since it moves no funds."
       ],
       "discriminator": [
         240,
@@ -74,6 +76,24 @@
         166
       ],
       "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
         {
           "name": "binding",
           "writable": true,
@@ -140,6 +160,10 @@
           "type": "u64"
         },
         {
+          "name": "deadline",
+          "type": "u64"
+        },
+        {
           "name": "signature",
           "type": {
             "array": [
@@ -158,7 +182,9 @@
         "ERC-1271 signature the program cannot verify. The settlers check that signature on the",
         "agent's chain and attest the binding with the settler threshold. The nonce must be the",
         "current one plus one (1 for a first binding) and never `u64::MAX`, so the agent's own signed binding with a higher nonce still",
-        "replaces an attested one."
+        "replaces an attested one. The attested payout is stored as pending and used by `claim`",
+        "only one claim delay later, so the settlers cannot re-point payouts faster than the",
+        "admin can revoke their roots."
       ],
       "discriminator": [
         204,
@@ -430,8 +456,9 @@
     {
       "name": "claim_fee",
       "docs": [
-        "Open while paused. The config fee recipient takes a settled reservation's fee to any",
-        "token account of the vault's mint, once, after the claim delay."
+        "Blocked while paused. The config fee recipient takes a settled reservation's fee to any",
+        "token account of the vault's mint, once, after the claim delay. Claiming the fee ends",
+        "`revoke_settlement` for that reservation, so a pause keeps a wrong root revocable."
       ],
       "discriminator": [
         169,
@@ -849,6 +876,15 @@
         {
           "name": "fee_recipient",
           "type": "pubkey"
+        },
+        {
+          "name": "cluster_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -939,6 +975,47 @@
             ]
           }
         },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "reservation"
+          ]
+        },
+        {
+          "name": "reservation",
+          "writable": true
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "release_expired",
+      "docs": [
+        "Permissionless and open while paused: once a reservation's deadline has passed, anyone may",
+        "return its unsettled amount to the vault. It does the same bookkeeping and emits the same",
+        "`TaskReleased` event as `release`, but needs no settler, so a reservation the settlers",
+        "abandon cannot hold the sponsor's funds. A settled or revoked-and-settled reservation is",
+        "refused, a released one is a no-op, and a reservation before its deadline fails with",
+        "`ReservationNotExpired`."
+      ],
+      "discriminator": [
+        150,
+        199,
+        225,
+        10,
+        15,
+        244,
+        46,
+        47
+      ],
+      "accounts": [
         {
           "name": "vault",
           "writable": true,
@@ -1326,8 +1403,9 @@
       "docs": [
         "Adds or updates managers; an existing manager's cap may not drop below what it has",
         "already reserved or spent. Adding a manager to a full list replaces the first one that",
-        "is inactive with nothing reserved and nothing spent: a manager with spent history may",
-        "still have a settled reservation that `revoke_settlement` must restore against it."
+        "is inactive with nothing reserved and nothing spent. Spent alone does not prove there is",
+        "no settled reservation (a zero-gross settle leaves spent at zero), so",
+        "`revoke_settlement` refuses until the manager is re-added."
       ],
       "discriminator": [
         193,
@@ -1700,6 +1778,19 @@
       ]
     },
     {
+      "name": "PayoutBindingPending",
+      "discriminator": [
+        75,
+        145,
+        148,
+        254,
+        250,
+        88,
+        225,
+        107
+      ]
+    },
+    {
       "name": "PayoutBound",
       "discriminator": [
         36,
@@ -2015,6 +2106,31 @@
       "code": 6036,
       "name": "InvalidAttestedNonce",
       "msg": "Attested payout nonce must be the current nonce plus one and below u64::MAX"
+    },
+    {
+      "code": 6037,
+      "name": "InvalidAdmin",
+      "msg": "Admin must not be the zero key"
+    },
+    {
+      "code": 6038,
+      "name": "InvalidClusterId",
+      "msg": "Cluster id must not be zero"
+    },
+    {
+      "code": 6039,
+      "name": "PayoutSignatureExpired",
+      "msg": "Payout binding signature has expired"
+    },
+    {
+      "code": 6040,
+      "name": "InvalidPayoutNonce",
+      "msg": "Payout binding nonce must be below u64::MAX"
+    },
+    {
+      "code": 6041,
+      "name": "ReservationNotExpired",
+      "msg": "Reservation deadline has not passed"
     }
   ],
   "types": [
@@ -2141,6 +2257,19 @@
               "no rotation is pending."
             ],
             "type": "pubkey"
+          },
+          {
+            "name": "cluster_id",
+            "docs": [
+              "Identifies the Solana cluster this config lives on (its genesis hash), mixed with the",
+              "program id into the payout binding's signed `salt`. Set once by `init_config`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }
@@ -2171,6 +2300,15 @@
           {
             "name": "fee_recipient",
             "type": "pubkey"
+          },
+          {
+            "name": "cluster_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }
@@ -2395,7 +2533,8 @@
       "name": "PayoutBinding",
       "docs": [
         "Where an agent's Solana awards are paid. `bind_payout` creates or replaces it from an",
-        "EIP-712 signature by the agent; a replacement must carry a higher nonce."
+        "EIP-712 signature by the agent; a replacement must carry a higher nonce below `u64::MAX`.",
+        "A payout the settlers attest is held in `pending_payout` for one claim delay first."
       ],
       "type": {
         "kind": "struct",
@@ -2424,6 +2563,55 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "pending_payout",
+            "docs": [
+              "A payout the settlers attested (`bind_payout_attested`); it replaces `payout` for claims",
+              "only once the clock reaches `pending_effective_at`, one claim delay after the attestation.",
+              "Zero when none is pending. An agent-signed `bind_payout` clears it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_effective_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PayoutBindingPending",
+      "docs": [
+        "A settler-attested payout change was stored; claims use `payout` from `effective_at` on."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "task_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "agent",
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          },
+          {
+            "name": "payout",
+            "type": "pubkey"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
+          },
+          {
+            "name": "effective_at",
+            "type": "i64"
           }
         ]
       }

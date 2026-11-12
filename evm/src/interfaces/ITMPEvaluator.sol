@@ -62,6 +62,9 @@ interface ITMPEvaluator is IERC165 {
     ///         Only task.evaluator may call this.
     ///         For CLAIM/PITCH/AUCTION: task must be in Review status.
     ///         For BOUNTY/BENCHMARK: task must be Open (evaluator selects winners via awards).
+    ///         Rev030: reverts EvaluationWindowClosed after the evaluation deadline, Review's
+    ///         phase deadline or, for a Bounty or Benchmark, `max(expiryTime, decisionStartAt)
+    ///         + evaluationWindow`.
     ///         Transitions the task to Appealing and starts the appeal window.
     function evaluate(
         bytes32 taskId,
@@ -94,6 +97,9 @@ interface ITMPEvaluator is IERC165 {
     ///         Permissionless: anyone may call it directly once the window has passed, so the
     ///         worker can return a delivered task to review. Forfeits the evaluator stake to the fee recipient and
     ///         returns a delivered Claim/Pitch/Auction task to the review window, else PendingApproval.
+    ///         Rev030: a Bounty or Benchmark with live submissions times out from Open once
+    ///         `max(expiryTime, decisionStartAt) + evaluationWindow` has passed; the timeout sets
+    ///         decisionStartAt, so the requester's decision window runs from it.
     function evaluatorTimeout(bytes32 taskId) external;
 
     /// @notice Returns the evaluator assigned to a task (address(0) if none).

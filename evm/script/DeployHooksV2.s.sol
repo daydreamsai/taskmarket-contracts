@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { ScriptBounds } from "./lib/ScriptBounds.sol";
@@ -57,12 +58,13 @@ contract DeployPayoutGateHook is Script {
 ///   FORGE_SPONSORED_TASK_ADMIN         -- a contract (Safe or timelock) that owns the proxy
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT
 /// Optional: FORGE_SPONSORED_TASK_CREATION_FEE_USDC (default 1,000,000).
+/// Rev030: refuses a diamond below rev030, whose stored verdicts the hook relies on.
 contract DeploySponsoredTaskHookV2 is Script {
     function run() external returns (SponsoredTaskHookV2 hook, SponsoredTaskFactoryV2 factory) {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
-        Rev028Precondition.requireRev028(diamond);
+        Rev030Precondition.requireRev030(diamond, "Sponsored Task V2: diamond is not at rev030");
         IERC20 usdc = IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS"));
         SponsoredTaskRegistry registry = SponsoredTaskRegistry(vm.envAddress("FORGE_SPONSORED_TASK_REGISTRY"));
         address admin = vm.envAddress("FORGE_SPONSORED_TASK_ADMIN");
@@ -112,7 +114,7 @@ contract DeployRemoteSponsoredTaskHookV2 is Script {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
-        Rev028Precondition.requireRev028(diamond);
+        Rev030Precondition.requireRev030(diamond, "Remote hook V2: diamond is not at rev030");
         address admin = vm.envAddress("FORGE_SPONSORED_TASK_REMOTE_HOOK_ADMIN");
         require(admin.code.length != 0, "Remote hook V2: admin must be a contract");
         require(admin != deployer, "Remote hook V2: admin must not be the deployer");
@@ -135,10 +137,13 @@ contract DeployRemoteSponsoredTaskHookV2 is Script {
 /// @notice Deploys TaskTokenRewardHookV2 (the DREAMS reward hook for V2 tasks) behind its own proxy,
 ///         with its own RewardVault and EpochBudget, each pointed at it. It does not touch the
 ///         diamond's default hooks: SetDefaultHooksV2 does that as a separate step.
-/// @dev Same env vars as DeployRewardHook: FORGE_DEV_PRIVATE_KEY, FORGE_PROTOCOL_TOKEN,
+/// @dev Env vars: FORGE_DEV_PRIVATE_KEY, FORGE_PROTOCOL_TOKEN,
 ///      FORGE_DIAMOND_ADDRESS, FORGE_PGTR_FORWARDER, FORGE_DREAMS_PER_USDC, FORGE_BONUS_BPS,
 ///      FORGE_EPOCH_DURATION, FORGE_GLOBAL_EPOCH_CAP_USD, FORGE_WORKER_CAP_USD,
 ///      FORGE_REQUESTER_CAP_USD, FORGE_MAX_USD_PER_TASK; optional FORGE_WORKER_SPLIT_BPS.
+///      Rev030: also FORGE_REWARD_HOOK_V2_ADMIN, a contract (Safe or timelock) that owns the hook, the
+///      vault and the epoch budget once they are wired; the script refuses without it, so no
+///      deployer key is left holding them.
 contract DeployRewardHookV2 is Script {
     function run() external returns (TaskTokenRewardHookV2 hook) {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -146,6 +151,9 @@ contract DeployRewardHookV2 is Script {
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
         Rev028Precondition.requireRev028(diamond);
         address token = vm.envAddress("FORGE_PROTOCOL_TOKEN");
+        address admin = vm.envAddress("FORGE_REWARD_HOOK_V2_ADMIN");
+        require(admin.code.length != 0, "Reward hook V2: admin must be a contract");
+        require(admin != deployer, "Reward hook V2: admin must not be the deployer");
 
         vm.startBroadcast(deployerKey);
         RewardVault vault = new RewardVault(token, deployer);
@@ -157,10 +165,16 @@ contract DeployRewardHookV2 is Script {
             vm.envUint("FORGE_MAX_USD_PER_TASK"),
             deployer
         );
-        hook = _proxy(address(vault), address(budget), diamond, token, deployer);
+        hook = _proxy(address(vault), address(budget), diamond, token, admin);
         vault.setHook(address(hook));
         budget.setHook(address(hook));
+        vault.transferOwnership(admin);
+        budget.transferOwnership(admin);
         vm.stopBroadcast();
+
+        require(hook.owner() == admin, "Reward hook V2: hook owner is not the admin");
+        require(vault.owner() == admin, "Reward hook V2: vault owner is not the admin");
+        require(budget.owner() == admin, "Reward hook V2: budget owner is not the admin");
 
         console.log("=== TaskTokenRewardHookV2 deployment ===");
         console.log("RewardVault:           ", address(vault));
@@ -189,6 +203,129 @@ contract DeployRewardHookV2 is Script {
             )
         );
         return TaskTokenRewardHookV2(address(new ERC1967Proxy(address(new TaskTokenRewardHookV2()), init)));
+    }
+}
+
+/// @notice Deploys a new TaskTokenRewardHookV2 implementation and upgrades the existing proxy in place
+///         via UUPS. The proxy address, its vault and budget wiring, its attachment on every task
+///         (the proxy's codehash does not change) and every in-flight RewardState stay as they are.
+///         Only for a fix that appends to the hook's storage at most.
+/// @dev Rev030 moves the bonus payout to afterComplete and relies on the diamond recording the awards
+///      a transforming hook makes a requester acceptance pay, so it refuses a diamond below rev030:
+///      cut the diamond first. When the key does not own the hook (a Safe does), it deploys the
+///      implementation only and prints the `upgradeToAndCall` call for the owner to execute.
+///      Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_REWARD_HOOK_V2_ADDRESS (the existing proxy).
+contract UpgradeRewardHookV2 is Script {
+    function run() external returns (address newImplementation) {
+        uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
+        TaskTokenRewardHookV2 hook = TaskTokenRewardHookV2(vm.envAddress("FORGE_REWARD_HOOK_V2_ADDRESS"));
+        address diamond = hook.diamond();
+        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSignature("diamondVersion()"));
+        require(ok && ret.length == 32 && abi.decode(ret, (uint256)) >= 30, "Reward hook V2: diamond is not at rev030");
+        bool senderOwnsHook = hook.owner() == vm.addr(ownerKey);
+
+        vm.startBroadcast(ownerKey);
+        newImplementation = address(new TaskTokenRewardHookV2());
+        if (senderOwnsHook) hook.upgradeToAndCall(newImplementation, "");
+        vm.stopBroadcast();
+
+        if (senderOwnsHook) {
+            console.log("=== TaskTokenRewardHookV2 in-place upgrade complete ===");
+            console.log("Proxy (unchanged):", address(hook));
+            console.log("New implementation:", newImplementation);
+            return newImplementation;
+        }
+        console.log("=== TaskTokenRewardHookV2 implementation deployed; upgrade NOT applied ===");
+        console.log("The hook is owned by", hook.owner(), "(not this key). Propose from that owner:");
+        console.log("  to:   ", address(hook));
+        console.log("  value: 0");
+        console.log("  data:");
+        console.logBytes(abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (newImplementation, "")));
+    }
+}
+
+/// @dev The sponsored hook upgrades below rely on the diamond recording the awards a transforming hook
+///      makes a requester acceptance pay (rev030), so each refuses a diamond below rev030.
+library Rev030Precondition {
+    function requireRev030(address diamond, string memory message) internal view {
+        require(diamond.code.length != 0, "Hooks V2: diamond must be a contract");
+        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSignature("diamondVersion()"));
+        require(ok && ret.length == 32 && abi.decode(ret, (uint256)) >= 30, message);
+    }
+
+    /// @dev Prints the applied upgrade, or the `upgradeToAndCall` call for the hook owner to propose.
+    function reportOrPropose(string memory name, address proxy, address owner, address implementation, bool applied)
+        internal
+        pure
+    {
+        if (applied) {
+            console.log(string.concat("=== ", name, " in-place upgrade complete ==="));
+            console.log("Proxy (unchanged):", proxy);
+            console.log("New implementation:", implementation);
+            return;
+        }
+        console.log(string.concat("=== ", name, " implementation deployed; upgrade NOT applied ==="));
+        console.log("The hook is owned by", owner, "(not this key). Propose from that owner:");
+        console.log("  to:   ", proxy);
+        console.log("  value: 0");
+        console.log("  data:");
+        console.logBytes(abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (implementation, "")));
+    }
+}
+
+/// @notice Deploys a new SponsoredTaskHookV2 implementation and upgrades the existing proxy in place
+///         via UUPS. The proxy address, its attachment on every task (the proxy's codehash does not
+///         change), the vaults bound to it and every in-flight TaskAllocation stay as they are.
+/// @dev Rev030: the sponsorship follows the awards the diamond settled, recommitted in
+///      afterComplete, reconcile and finalizeSettlement from the stored verdict. The implementation's
+///      `diamond`, `usdc` and `registry` are immutables, re-read from the live proxy so an in-place
+///      upgrade cannot swap a dependency. When the key does not own the hook (a Safe does), it
+///      deploys the implementation only and prints the `upgradeToAndCall` call for the owner.
+///      Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_SPONSORED_TASK_HOOK_V2_ADDRESS (the proxy).
+contract UpgradeSponsoredTaskHookV2 is Script {
+    function run() external returns (address newImplementation) {
+        uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
+        SponsoredTaskHookV2 hook = SponsoredTaskHookV2(vm.envAddress("FORGE_SPONSORED_TASK_HOOK_V2_ADDRESS"));
+        address diamond = hook.diamond();
+        Rev030Precondition.requireRev030(diamond, "Sponsored Task V2: diamond is not at rev030");
+        IERC20 usdc = hook.usdc();
+        ISponsoredTaskRegistry registry = hook.registry();
+        bool senderOwnsHook = hook.owner() == vm.addr(ownerKey);
+
+        vm.startBroadcast(ownerKey);
+        newImplementation = address(new SponsoredTaskHookV2(diamond, usdc, registry));
+        if (senderOwnsHook) hook.upgradeToAndCall(newImplementation, "");
+        vm.stopBroadcast();
+
+        Rev030Precondition.reportOrPropose(
+            "SponsoredTaskHookV2", address(hook), hook.owner(), newImplementation, senderOwnsHook
+        );
+    }
+}
+
+/// @notice Deploys a new RemoteSponsoredTaskHookV2 implementation and upgrades the existing proxy in
+///         place via UUPS, as UpgradeSponsoredTaskHookV2 does for the Base-local hook. The settler
+///         and the remote vaults are unaffected: only the roots this hook emits change, for a task
+///         whose transforming hook replaced the awards.
+/// @dev Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_SPONSORED_TASK_REMOTE_HOOK_V2_ADDRESS (the
+///      proxy).
+contract UpgradeRemoteSponsoredTaskHookV2 is Script {
+    function run() external returns (address newImplementation) {
+        uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
+        RemoteSponsoredTaskHookV2 hook =
+            RemoteSponsoredTaskHookV2(vm.envAddress("FORGE_SPONSORED_TASK_REMOTE_HOOK_V2_ADDRESS"));
+        address diamond = hook.diamond();
+        Rev030Precondition.requireRev030(diamond, "Remote hook V2: diamond is not at rev030");
+        bool senderOwnsHook = hook.owner() == vm.addr(ownerKey);
+
+        vm.startBroadcast(ownerKey);
+        newImplementation = address(new RemoteSponsoredTaskHookV2(diamond));
+        if (senderOwnsHook) hook.upgradeToAndCall(newImplementation, "");
+        vm.stopBroadcast();
+
+        Rev030Precondition.reportOrPropose(
+            "RemoteSponsoredTaskHookV2", address(hook), hook.owner(), newImplementation, senderOwnsHook
+        );
     }
 }
 

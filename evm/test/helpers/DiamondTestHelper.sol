@@ -122,6 +122,7 @@ abstract contract DiamondTestHelper is Test {
     ) internal returns (address diamond) {
         diamond = address(deployDiamond(_owner, _usdc, _feeRecipient, _feeBps));
         if (_version < 26) _routeRemovedRev026(diamond, _owner);
+        if (_version < 30) _routeRemovedRev030(diamond, _owner, _version >= 28);
         placeAtVersion(diamond, _version);
     }
 
@@ -144,6 +145,56 @@ abstract contract DiamondTestHelper is Test {
         );
         vm.prank(_owner);
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+    }
+
+    /// @dev Route the selectors rev030 Removes, so an earlier step's Replace and rev030's Remove find them
+    ///      on a fresh deploy placed at an earlier revision. The current facets no longer implement
+    ///      them: a call reverts, as on a diamond with no route. The V1 checkComplete dispatch only
+    ///      exists from rev028, so a diamond rewound below it leaves rev028 to Add it.
+    function _routeRemovedRev030(address diamond, address _owner, bool withDispatch) internal {
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](withDispatch ? 2 : 1);
+        cuts[0] = IDiamondCut.FacetCut(
+            IDiamondLoupe(diamond).facetAddress(AdminFacet.diamondVersion.selector),
+            IDiamondCut.FacetCutAction.Add,
+            FacetSelectors.adminSelectorsRemovedRev030()
+        );
+        if (withDispatch) {
+            bytes4[] memory dispatch = new bytes4[](1);
+            dispatch[0] = FacetSelectors.HOOK_CHECK_COMPLETE_V1;
+            cuts[1] = IDiamondCut.FacetCut(
+                IDiamondLoupe(diamond).facetAddress(HookDispatchFacet.hookAttach.selector),
+                IDiamondCut.FacetCutAction.Add,
+                dispatch
+            );
+        }
+        vm.prank(_owner);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+    }
+
+    /// @dev Storage slots of AppStorage.taskHooks (V1 hook lists, retired in rev030) and
+    ///      AppStorage.taskHookVersion, from the struct's layout (`forge inspect AppStorageLayout
+    ///      storageLayout`). A wrong slot shows as the read-back assertions in makeLegacyV1Task failing.
+    uint256 internal constant TASK_HOOKS_SLOT = uint256(keccak256("taskmarket.appstorage.v1")) + 28;
+    uint256 internal constant TASK_HOOK_VERSION_SLOT = uint256(keccak256("taskmarket.appstorage.v1")) + 56;
+
+    /// @dev Turns an existing task into what a task created before the rev028 cut looks like on a
+    ///      rev030 diamond: dispatch version 0 and a V1 hook list left in storage. Rev030 dispatches
+    ///      nothing for it, so the list is dormant data; writing it directly is the only way to
+    ///      get it there, as no code path can create a V1 task any more.
+    function makeLegacyV1Task(address diamond, bytes32 taskId, address[] memory hooks) internal {
+        vm.store(diamond, keccak256(abi.encode(taskId, TASK_HOOK_VERSION_SLOT)), bytes32(0));
+        bytes32 list = keccak256(abi.encode(taskId, TASK_HOOKS_SLOT));
+        vm.store(diamond, list, bytes32(hooks.length));
+        bytes32 first = keccak256(abi.encode(list));
+        for (uint256 i; i < hooks.length; ++i) {
+            vm.store(diamond, bytes32(uint256(first) + i), bytes32(uint256(uint160(hooks[i]))));
+        }
+        assertEq(uint256(vm.load(diamond, list)), hooks.length, "makeLegacyV1Task: TASK_HOOKS_SLOT is stale");
+        assertEq(
+            uint256(vm.load(diamond, keccak256(abi.encode(taskId, TASK_HOOK_VERSION_SLOT)))),
+            0,
+            "makeLegacyV1Task: TASK_HOOK_VERSION_SLOT is stale"
+        );
     }
 
     /// @dev Storage slot of AppStorage.diamondVersion: the struct's base slot plus the field's

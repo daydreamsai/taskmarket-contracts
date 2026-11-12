@@ -9,9 +9,9 @@ use sha3::{Digest, Keccak256};
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 use sponsored_tasks::error::SponsoredTasksError as E;
-use sponsored_tasks::events::PayoutBound;
+use sponsored_tasks::events::{PayoutBindingPending, PayoutBound};
 use sponsored_tasks::payout_binding_digest;
-use sponsored_tasks::state::PayoutBinding;
+use sponsored_tasks::state::{PayoutBinding, DEFAULT_CLAIM_DELAY_SECONDS};
 
 fn keccak(parts: &[&[u8]]) -> [u8; 32] {
     let mut hasher = Keccak256::new();
@@ -28,21 +28,29 @@ fn word(value: u64) -> [u8; 32] {
 }
 
 /// The EIP-712 digest built here from the spec, independently of the program's own helper.
-fn digest(chain_id: u64, agent: &[u8; 20], payout: &Pubkey, nonce: u64) -> [u8; 32] {
+fn digest(
+    chain_id: u64,
+    cluster_id: &[u8; 32],
+    agent: &[u8; 20],
+    payout: &Pubkey,
+    nonce: u64,
+    deadline: u64,
+) -> [u8; 32] {
     let domain = keccak(&[
         &keccak(&[b"EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)"]),
         &keccak(&[b"Taskmarket Sponsored Tasks"]),
         &keccak(&[b"1"]),
         &word(chain_id),
-        sponsored_tasks::ID.as_ref(),
+        &keccak(&[sponsored_tasks::ID.as_ref(), cluster_id]),
     ]);
     let mut agent_word = [0u8; 32];
     agent_word[12..].copy_from_slice(agent);
     let message = keccak(&[
-        &keccak(&[b"PayoutBinding(address agent,bytes32 payout,uint64 nonce)"]),
+        &keccak(&[b"PayoutBinding(address agent,bytes32 payout,uint64 nonce,uint64 deadline)"]),
         &agent_word,
         payout.as_ref(),
         &word(nonce),
+        &word(deadline),
     ]);
     keccak(&[b"\x19\x01", &domain, &message])
 }
@@ -63,9 +71,27 @@ impl Agent {
 
     /// `r || s || v` with `v` as 27 or 28, as an EVM wallet returns it.
     fn sign(&self, chain_id: u64, payout: &Pubkey, nonce: u64) -> [u8; 65] {
+        self.sign_for(chain_id, &TEST_CLUSTER_ID, payout, nonce, NO_EXPIRY)
+    }
+
+    fn sign_for(
+        &self,
+        chain_id: u64,
+        cluster_id: &[u8; 32],
+        payout: &Pubkey,
+        nonce: u64,
+        deadline: u64,
+    ) -> [u8; 65] {
         let (sig, recovery) = self
             .key
-            .sign_prehash_recoverable(&digest(chain_id, &self.address, payout, nonce))
+            .sign_prehash_recoverable(&digest(
+                chain_id,
+                cluster_id,
+                &self.address,
+                payout,
+                nonce,
+                deadline,
+            ))
             .unwrap();
         let mut out = [0u8; 65];
         out[..64].copy_from_slice(&sig.to_bytes());
@@ -73,6 +99,9 @@ impl Agent {
         out
     }
 }
+
+/// A deadline no clock reaches: the binding never expires.
+const NO_EXPIRY: u64 = u64::MAX;
 
 fn bind(
     env: &mut Env,
@@ -82,10 +111,22 @@ fn bind(
     nonce: u64,
     signature: [u8; 65],
 ) -> Result<(), litesvm::types::FailedTransactionMetadata> {
+    bind_until(env, chain_id, agent, payout, nonce, NO_EXPIRY, signature)
+}
+
+fn bind_until(
+    env: &mut Env,
+    chain_id: u64,
+    agent: [u8; 20],
+    payout: Pubkey,
+    nonce: u64,
+    deadline: u64,
+    signature: [u8; 65],
+) -> Result<(), litesvm::types::FailedTransactionMetadata> {
     let payer = env.payer.pubkey();
     env.send(
         &[bind_payout_ix(
-            &payer, chain_id, agent, payout, nonce, signature,
+            &payer, chain_id, agent, payout, nonce, deadline, signature,
         )],
         &[],
     )
@@ -103,17 +144,36 @@ fn hex<const N: usize>(s: &str) -> [u8; N] {
 // Produced by viem's `signTypedData` (the path the CLI and web app sign with) for the test-only
 // key 0x11..11; see packages/contracts/docs/specs/sponsored-tasks/payout-binding.md.
 const VIEM_AGENT: &str = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
-const VIEM_DIGEST: &str = "0x6487768809e6bf617bfe502e362f8a0db51deee4171da691b3c8e0656f6bead7";
-const VIEM_SIGNATURE: &str = "0xc34316633dae9bb4bb6bfb6041beea4144899cabe846c87d4230fcbd6611c34529b26459c488220b34abd0db636c1d3edb83f5596bc7e6451e1251a90ab727821b";
+const VIEM_DIGEST: &str = "0xe0688b70b12b56d8ad6bb1a5a7b30b7328ae7016450cc01cf6b514e2d56d1bfa";
+const VIEM_SIGNATURE: &str = "0x94284c90b348f5c4865a2ff0c2488f1a38f375036690ec0b63811e71a5b7b9e841c3bdd815b674291a6eb281a35af4de79a0e7090ffb7c76917e2ffb911308121b";
+/// The vector's cluster id (the test config's), nonce 1 and deadline.
+const VIEM_DEADLINE: u64 = 4_000_000_000;
 
 #[test]
 fn digest_matches_viem_typed_data() {
     let agent: [u8; 20] = hex(VIEM_AGENT);
     let payout = Pubkey::new_from_array([0x44; 32]);
     let expected: [u8; 32] = hex(VIEM_DIGEST);
-    assert_eq!(digest(TASK_CHAIN_ID, &agent, &payout, 1), expected);
     assert_eq!(
-        payout_binding_digest(TASK_CHAIN_ID, &agent, &payout, 1),
+        digest(
+            TASK_CHAIN_ID,
+            &TEST_CLUSTER_ID,
+            &agent,
+            &payout,
+            1,
+            VIEM_DEADLINE
+        ),
+        expected
+    );
+    assert_eq!(
+        payout_binding_digest(
+            TASK_CHAIN_ID,
+            &TEST_CLUSTER_ID,
+            &agent,
+            &payout,
+            1,
+            VIEM_DEADLINE
+        ),
         expected
     );
 }
@@ -123,12 +183,13 @@ fn bind_payout_accepts_a_viem_signature() {
     let mut env = Env::new();
     let agent: [u8; 20] = hex(VIEM_AGENT);
     let payout = Pubkey::new_from_array([0x44; 32]);
-    bind(
+    bind_until(
         &mut env,
         TASK_CHAIN_ID,
         agent,
         payout,
         1,
+        VIEM_DEADLINE,
         hex(VIEM_SIGNATURE),
     )
     .unwrap();
@@ -310,6 +371,7 @@ fn bindings_are_per_chain_and_relayed_by_anyone_while_paused() {
         agent.address,
         on_base,
         1,
+        NO_EXPIRY,
         agent.sign(TASK_CHAIN_ID, &on_base, 1),
     );
     env.send(&[ix], &[&relayer]).unwrap();
@@ -358,8 +420,15 @@ fn attested_binding_needs_the_settler_threshold() {
     let both = bind_payout_attested_ix(&payer, &[&first, &second], TASK_CHAIN_ID, agent, payout, 1);
     env.send(&[both], &[&first, &second]).unwrap();
     let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent));
-    assert_eq!((binding.payout, binding.nonce), (payout, 1));
-    assert_eq!(env.events::<PayoutBound>()[0].agent, agent);
+    // The attested payout is pending; nothing is bound until the claim delay has passed.
+    assert_eq!((binding.pending_payout, binding.nonce), (payout, 1));
+    assert_eq!(binding.payout, Pubkey::default());
+    let effective_at = env.now() + DEFAULT_CLAIM_DELAY_SECONDS as i64;
+    assert_eq!(binding.pending_effective_at, effective_at);
+    let events = env.events::<PayoutBindingPending>();
+    assert_eq!(events[0].agent, agent);
+    assert_eq!(events[0].effective_at, effective_at);
+    assert!(env.events::<PayoutBound>().is_empty());
 }
 
 #[test]
@@ -404,6 +473,10 @@ fn attested_and_signed_bindings_share_one_nonce_sequence() {
     .unwrap();
     let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
     assert_eq!((binding.payout, binding.nonce), (signed, 3));
+    // The signed binding is immediate and clears the attested change that was waiting.
+    assert_eq!(binding.pending_payout, Pubkey::default());
+    assert_eq!(binding.pending_effective_at, 0);
+    assert_eq!(binding.effective_payout(env.now()), signed);
     // The attested sequence continues from the signed nonce.
     assert_error(attest(&mut env, attested, 2), E::InvalidAttestedNonce);
     attest(&mut env, attested, 4).unwrap();
@@ -417,4 +490,110 @@ fn a_first_attested_binding_starts_at_nonce_one() {
     let agent = [0x55u8; 20];
     let ix = bind_payout_attested_ix(&payer, &[&s], TASK_CHAIN_ID, agent, Pubkey::new_unique(), 7);
     assert_error(env.send(&[ix], &[&s]), E::InvalidAttestedNonce);
+}
+
+#[test]
+fn bind_payout_rejects_a_signature_from_another_cluster() {
+    let mut env = Env::new();
+    let agent = Agent::new();
+    let payout = Pubkey::new_unique();
+    // Signed under a different cluster id: the same program id on another cluster.
+    let other_cluster = [0xC2u8; 32];
+    let foreign = agent.sign_for(TASK_CHAIN_ID, &other_cluster, &payout, 1, NO_EXPIRY);
+    assert_error(
+        bind(&mut env, TASK_CHAIN_ID, agent.address, payout, 1, foreign),
+        E::InvalidPayoutSignature,
+    );
+    assert!(env
+        .svm
+        .get_account(&payout_pda(TASK_CHAIN_ID, &agent.address))
+        .is_none());
+}
+
+#[test]
+fn bind_payout_expires_at_its_deadline() {
+    let mut env = Env::new();
+    let agent = Agent::new();
+    let payout = Pubkey::new_unique();
+    let deadline = 2_000u64;
+    let sig = agent.sign_for(TASK_CHAIN_ID, &TEST_CLUSTER_ID, &payout, 1, deadline);
+
+    // A signature is bound to its deadline: it cannot be resubmitted with a later one.
+    assert_error(
+        bind_until(
+            &mut env,
+            TASK_CHAIN_ID,
+            agent.address,
+            payout,
+            1,
+            deadline + 1_000,
+            sig,
+        ),
+        E::InvalidPayoutSignature,
+    );
+
+    env.warp_to(deadline as i64 + 1);
+    assert_error(
+        bind_until(
+            &mut env,
+            TASK_CHAIN_ID,
+            agent.address,
+            payout,
+            1,
+            deadline,
+            sig,
+        ),
+        E::PayoutSignatureExpired,
+    );
+    assert!(env
+        .svm
+        .get_account(&payout_pda(TASK_CHAIN_ID, &agent.address))
+        .is_none());
+
+    // At the deadline itself the signature still works.
+    env.warp_to(deadline as i64);
+    bind_until(
+        &mut env,
+        TASK_CHAIN_ID,
+        agent.address,
+        payout,
+        1,
+        deadline,
+        sig,
+    )
+    .unwrap();
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
+    assert_eq!(binding.payout, payout);
+}
+
+#[test]
+fn bind_payout_rejects_the_saturated_nonce() {
+    let mut env = Env::new();
+    let agent = Agent::new();
+    let payout = Pubkey::new_unique();
+    // A signed nonce of u64::MAX could never be replaced, so it would lock the binding.
+    assert_error(
+        bind(
+            &mut env,
+            TASK_CHAIN_ID,
+            agent.address,
+            payout,
+            u64::MAX,
+            agent.sign(TASK_CHAIN_ID, &payout, u64::MAX),
+        ),
+        E::InvalidPayoutNonce,
+    );
+    // The highest nonce that stays replaceable binds, and a later key rotation still can.
+    let near = u64::MAX - 1;
+    bind(
+        &mut env,
+        TASK_CHAIN_ID,
+        agent.address,
+        payout,
+        near,
+        agent.sign(TASK_CHAIN_ID, &payout, near),
+    )
+    .unwrap();
+    let binding: PayoutBinding = env.account(&payout_pda(TASK_CHAIN_ID, &agent.address));
+    assert_eq!(binding.nonce, near);
 }

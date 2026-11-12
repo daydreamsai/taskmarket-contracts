@@ -7,7 +7,6 @@ import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibProject } from "../libraries/LibProject.sol";
 import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
-import { ITMPHook } from "../interfaces/ITMPHook.sol";
 import {
     TMP_AUCTION,
     TMP_AUCTION_DUTCH,
@@ -133,7 +132,7 @@ contract AuctionFacet {
         task.stakeAmount = price;
         task.status = ITMPCore.TaskStatus.Claimed;
 
-        // V1: checkSelectWorker; V2: beforeAcceptAuction.
+        // beforeAcceptAuction.
         LibHooks._before(s, taskId, LibHooksV2.A_ACCEPT_AUCTION, worker, bytes32(0));
 
         emit ITMPCore.AuctionAccepted(taskId, worker, price);

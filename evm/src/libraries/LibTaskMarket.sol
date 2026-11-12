@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import { AppStorage, LibAppStorage } from "./LibAppStorage.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPEvaluator } from "../interfaces/ITMPEvaluator.sol";
+import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
+import { ITMPHooksV2 } from "../interfaces/ITMPHooksV2.sol";
 import { LibGuards } from "./LibGuards.sol";
 import { LibTerms } from "./LibTerms.sol";
 import { TMP_AUCTION } from "../interfaces/ITMPModes.sol";
@@ -24,7 +26,13 @@ library LibTaskMarket {
     uint256 internal constant MAX_FEEDBACK_GAS = 5_000_000;
 
     // Rev025: most winners one Bounty or Benchmark settlement may pay. 50 winners measured about
-    // 3.6M gas on Base and 9M on Tempo, under the 16M relay ceiling; 100 would exceed it on Tempo.
+    // 3.6M gas on Base, where a new storage slot costs 20k.
+    // Correction (rev030): the rev025 note also gave 9M on Tempo under a 16M relay ceiling. Tempo
+    // charges about 250k per new storage slot and its relay ceiling is 28M (30M transaction cap),
+    // so a 50-winner payout to recipients holding no balance needs about 40M there and cannot
+    // settle in one transaction. Since rev030 this constant is the ceiling and the default of the
+    // owner-set per-chain cap s.maxSubmissionWinners (see _maxSubmissionWinners), which Tempo sets
+    // lower.
     uint256 internal constant MAX_SUBMISSION_WINNERS = 50;
 
     // Rev017: default floor for assignEvaluator's appealWindowSecs, used whenever
@@ -74,6 +82,12 @@ library LibTaskMarket {
         if (cfg.evaluator == address(0)) revert ITMPCore.InvalidEvaluator();
         if (cfg.evaluator == requester) revert ITMPCore.EvaluatorCannotBeRequester();
         if (cfg.disputeResolver == requester) revert ITMPCore.DisputeResolverCannotBeRequester();
+        // Rev030: a transforming hook can change an evaluator's awards, so its task keeps a neutral
+        // appeal: an evaluator assigned to it must come with a dispute resolver. At creation the hooks
+        // are attached after this runs and HookDispatchFacet checks the same rule.
+        if (cfg.disputeResolver == address(0) && _hasTransformingHook(s, taskId)) {
+            revert ITMPHooksV2.TransformingHookNeedsDisputeResolver();
+        }
         if (evalCfg.evaluator != address(0)) revert ITMPCore.EvaluatorAlreadyAssigned();
         if (cfg.evaluatorFeeBps > 10000) revert ITMPCore.FeeBpsTooHigh();
         if (cfg.appealWindow < _minAppealWindowSecs(s)) revert ITMPCore.AppealWindowTooShort();
@@ -86,6 +100,12 @@ library LibTaskMarket {
         uint32 minWindow = _minEvaluationWindowSecs(s);
         if (cfg.evaluationWindow < minWindow) {
             revert ITMPCore.EvaluationWindowTooShort(cfg.evaluationWindow, minWindow);
+        }
+        // Rev030: the evaluation window is held to the same ceiling as the appeal window, so a
+        // verdict deadline (and evaluatorTimeout, which recovers the escrow from a silent
+        // evaluator) cannot sit decades out.
+        if (cfg.evaluationWindow > maxWindow) {
+            revert ITMPCore.EvaluationWindowTooLong(cfg.evaluationWindow, maxWindow);
         }
 
         evalCfg.evaluator = cfg.evaluator;
@@ -103,6 +123,15 @@ library LibTaskMarket {
         // event vocabulary for "this task has an evaluator" rather than having to infer it from
         // TaskCreated on the creation path.
         emit ITMPEvaluator.EvaluatorAssigned(taskId, cfg.evaluator, cfg.evaluatorStake);
+    }
+
+    /// @notice Whether any of the task's V2 hooks is transforming.
+    function _hasTransformingHook(AppStorage storage s, bytes32 taskId) internal view returns (bool) {
+        ITMPHookV2.Attachment[] storage list = s.taskHooksV2[taskId];
+        for (uint256 i; i < list.length; ++i) {
+            if (list[i].transforming) return true;
+        }
+        return false;
     }
 
     /// @notice The evaluator fee on a task: basis points of what the task actually pays. An
@@ -131,6 +160,14 @@ library LibTaskMarket {
     function _minEvaluationWindowSecs(AppStorage storage s) internal view returns (uint32) {
         uint32 configured = s.minEvaluationWindowSecs;
         return configured == 0 ? DEFAULT_MIN_EVALUATION_WINDOW_SECS : configured;
+    }
+
+    /// @notice Rev030: the effective cap on the winners one Bounty or Benchmark settlement may pay:
+    ///         the owner-set value, or MAX_SUBMISSION_WINNERS when it has never been set.
+    ///         AdminFacet's setter rejects zero, so zero always means unset.
+    function _maxSubmissionWinners(AppStorage storage s) internal view returns (uint256) {
+        uint16 configured = s.maxSubmissionWinners;
+        return configured == 0 ? MAX_SUBMISSION_WINNERS : configured;
     }
 
     /// @dev Reverts when too little gas is left for a reputation-registry call that failures

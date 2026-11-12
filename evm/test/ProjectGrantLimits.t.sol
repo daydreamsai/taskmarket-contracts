@@ -214,6 +214,52 @@ contract ProjectGrantLimitsTest is DiamondTestHelper {
         _relay(owner, 0, abi.encodeCall(market.updateTask, (t, 3e6, 0, 0, 0)));
     }
 
+    /// @dev A task created at the cap, claimed with a stake and forfeited: the forfeited stake is
+    ///      the worker's money, not a draw, so it neither raises what the task holds nor gives the
+    ///      operator room to top up past maxRewardPerTask.
+    function test_MaxReward_ForfeitedStakeGivesNoRoomToTopUp() public {
+        _accept();
+        _set(_limits(0, 0, uint128(REWARD), 0, 0));
+        ITMPCore.TaskTerms memory terms;
+        terms.version = 2;
+        terms.penaltyTo = ITMPCore.PenaltyTo.Requester;
+        bytes32 t = abi.decode(
+            _relay(
+                operator,
+                0,
+                abi.encodeCall(
+                    projects.createProjectTask,
+                    (
+                        id,
+                        taskConfig(REWARD, 7 days, TMP_CLAIM),
+                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig(),
+                        terms,
+                        address(0)
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        address claimer = address(0xC2);
+        uint256 stake = 1e6;
+        _relay(claimer, stake, abi.encodeCall(market.claimTask, (t, stake)));
+        vm.warp(market.getTask(t).expiryTime + 1);
+        _relay(owner, 0, abi.encodeCall(market.forfeitAndReopen, (t)));
+        assertEq(uint8(market.getTask(t).status), uint8(ITMPCore.TaskStatus.Open));
+
+        uint256 availableBefore = projects.getProject(id).available;
+        uint256 committedBefore = projects.getGrant(id, operator).committed;
+        assertEq(committedBefore, REWARD, "the stake is not part of the operator's commitment");
+
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantRewardTooHigh.selector, REWARD, REWARD + 1));
+        _relay(operator, 0, abi.encodeCall(market.updateTask, (t, REWARD + 1, 0, 0, 0)));
+
+        assertEq(projects.getProject(id).available, availableBefore, "the pool is untouched by the refused top-up");
+        assertEq(projects.getGrant(id, operator).committed, committedBefore);
+    }
+
     function test_Expiry_ExtendedByTheOwnerLetsTheOperatorDrawAgain() public {
         _accept();
         uint64 exp = uint64(block.timestamp + 1 days);

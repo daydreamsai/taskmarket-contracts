@@ -6,37 +6,47 @@ import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
-import { TaskTokenRewardHook } from "../src/hooks/TaskTokenRewardHook.sol";
-import { SponsoredTaskHook } from "../src/hooks/sponsored-task/SponsoredTaskHook.sol";
-import { RemoteSponsoredTaskHook } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHook.sol";
+import { RewardVault } from "../src/hooks/RewardVault.sol";
+import { TaskTokenRewardHookV2 } from "../src/hooks/TaskTokenRewardHookV2.sol";
+import { SponsoredTaskHookV2 } from "../src/hooks/sponsored-task/SponsoredTaskHookV2.sol";
+import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskRegistry.sol";
 import { RemoteSponsoredTaskHookV2 } from "../src/hooks/sponsored-task/RemoteSponsoredTaskHookV2.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
-import { DeployRewardHookProxy } from "../script/lib/DeployRewardHookProxy.sol";
-import { DeploySponsoredTaskProxy } from "../script/lib/DeploySponsoredTaskProxy.sol";
 
-/// @dev The three UUPS hooks hand upgrade authority over in two steps and cannot renounce it.
+/// @dev The three UUPS V2 hooks hand upgrade authority over in two steps and cannot renounce it.
 contract Rev028OwnershipTest is Test {
     address private constant OWNER = address(0x0A11);
     address private constant NEXT = address(0x0B0B);
     address private constant MISTAKE = address(0xDEAD);
     address private constant DIAMOND = address(0xD1A);
 
-    address[4] private hooks;
+    address[3] private hooks;
 
     function setUp() public {
         MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6, address(this));
         SponsoredTaskRegistry registry = new SponsoredTaskRegistry(address(this));
 
-        hooks[0] = address(
-            DeployRewardHookProxy.deploy(
-                address(0x1), address(0x2), DIAMOND, 18, 1e18, 0, address(0x3), 8000, address(0x4), OWNER
+        bytes memory rewardInit = abi.encodeCall(
+            TaskTokenRewardHookV2.initialize,
+            (
+                address(new RewardVault(address(0x3), OWNER)),
+                address(0x2),
+                DIAMOND,
+                18,
+                1e18,
+                0,
+                address(0x3),
+                8000,
+                address(0x4),
+                OWNER
             )
         );
-        hooks[1] = address(DeploySponsoredTaskProxy.deploy(DIAMOND, usdc, registry, OWNER));
-        address impl = address(new RemoteSponsoredTaskHook(DIAMOND));
-        hooks[2] = address(new ERC1967Proxy(impl, abi.encodeCall(RemoteSponsoredTaskHook.initialize, (OWNER))));
+        hooks[0] = address(new ERC1967Proxy(address(new TaskTokenRewardHookV2()), rewardInit));
+        address sponsoredImpl =
+            address(new SponsoredTaskHookV2(DIAMOND, usdc, ISponsoredTaskRegistry(address(registry))));
+        hooks[1] = address(new ERC1967Proxy(sponsoredImpl, abi.encodeCall(SponsoredTaskHookV2.initialize, (OWNER))));
         address implV2 = address(new RemoteSponsoredTaskHookV2(DIAMOND));
-        hooks[3] = address(new ERC1967Proxy(implV2, abi.encodeCall(RemoteSponsoredTaskHookV2.initialize, (OWNER))));
+        hooks[2] = address(new ERC1967Proxy(implV2, abi.encodeCall(RemoteSponsoredTaskHookV2.initialize, (OWNER))));
     }
 
     function test_TransferNeedsAcceptanceAndAWrongAddressCanBeCorrected() public {

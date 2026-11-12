@@ -1287,7 +1287,7 @@ export const TaskTokenRewardHookV2ABI = [
         "internalType": "bytes32"
       },
       {
-        "name": "ctx",
+        "name": "",
         "type": "tuple",
         "internalType": "struct ITMPHookV2.TaskContextV2",
         "components": [
@@ -5971,6 +5971,11 @@ export const TaskTokenRewardHookV2ABI = [
   {
     "type": "error",
     "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FutureFirstSeen",
     "inputs": []
   },
   {

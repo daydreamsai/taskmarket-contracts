@@ -32,20 +32,21 @@ instructions, every account constraint and PDA derivation, and the helpers they 
 
 | Instruction | Authority | Invariants to break |
 | --- | --- | --- |
-| `init_config` | program upgrade authority, once | Anyone other than the upgrade authority initializes `Config`; a second init; a settler set with duplicates, more than 5 keys or a threshold of 0 or above its size (`validate_settlers`); `fee_bps` above 10,000. |
+| `init_config` | program upgrade authority, once | A zero admin or a zero cluster id; anyone other than the upgrade authority initializes `Config`; a second init; a settler set with duplicates, more than 5 keys or a threshold of 0 or above its size (`validate_settlers`); `fee_bps` above 10,000. |
 | `set_admin`, `set_settlers`, `pause`, `set_claim_delay`, `set_fee` | admin | A non-admin changes any of them; a claim delay of zero is stored; `fee_bps` above 10,000. |
 | `accept_admin` | proposed admin | Anyone but the key `set_admin` proposed takes the admin role; the role moves without the proposed key signing. |
 | `create_vault` | sponsor | A vault over a mint with a refused Token-2022 extension (below); a vault whose token account is not the `Vault` PDA's associated account; a collision between two sponsors' `vault_id`s. |
 | `fund` | anyone | The vault credits more than it received (`TransferAmountMismatch` must catch every shortfall); funding an exited vault. |
 | `set_managers` | sponsor | A manager's cap set below what it has reserved plus spent; more than 8 managers unless an inactive manager with nothing reserved is replaced; a non-sponsor edits managers. |
-| `bind_payout_attested` | settler threshold | A binding written without the settler threshold; a replacement without a higher nonce. |
+| `bind_payout_attested` | settler threshold | A binding written without the settler threshold; a replacement without a higher nonce; an attested payout used by `claim` before its claim delay has passed; an attested change that outlives the agent's own later signed binding. |
 | `reserve` | settler threshold | Reserving above the available balance or the manager's remaining allowance; a manager on another chain than the task (`ManagerChainMismatch`); a deadline in the past; two reservations for one task. |
 | `release` | settler threshold | Returning funds twice; releasing a settled reservation; acting across epochs. |
+| `release_expired` | anyone | Releasing before the reservation deadline has passed; releasing a settled reservation; returning funds twice; acting across epochs. |
 | `settle` | settler threshold | A root whose totals exceed the reservation; a fee above `Config::fee_bps` of the distributed amount; inconsistent `settled_total`, `fee_total` and `distributed_gross`; a second settle; settling another vault's reservation or across an epoch. |
 | `claim` | anyone (relayer) | Paying a leaf twice (`ClaimReceipt`); paying before the claim delay; paying to an address other than the worker's `PayoutBinding`; a proof that verifies against the wrong root, vault, epoch or reservation; claimed totals exceeding `settled_total`. |
 | `claim_fee` | config fee recipient | Taking the fee twice, before the claim delay, or by anyone else. |
 | `revoke_settlement` | admin, paused or not | Revoking a settlement after any leaf or the fee was claimed (`SettlementHasClaims`); the manager allowance or vault totals not restored exactly. |
-| `bind_payout` | anyone (relayer) | A binding without the agent's valid signature; replaying an older binding (the nonce must strictly increase); a signature from another chain id or program id (the EIP-712 domain carries both). |
+| `bind_payout` | anyone (relayer) | A binding without the agent's valid signature; replaying an older binding (the nonce must strictly increase); a signature from another chain id, program id or Solana cluster (the EIP-712 domain carries all three); a signature used after its deadline; a nonce of `u64::MAX`, which could never be replaced. |
 | `emergency_exit` | sponsor | Anyone else exits; an exit that leaves tokens behind or lets an open reservation or unclaimed award be paid afterwards (the epoch advance must default them). |
 
 ### Cross-cutting checks
@@ -60,16 +61,19 @@ instructions, every account constraint and PDA derivation, and the helpers they 
   with `secp256k1_recover`. Check malleability and the zero-address case: a replay is blocked
   only by the strictly increasing nonce.
 - **Pause semantics.** Paths that add funds or return them to the sponsor stay open while paused
-  (`fund`, `release`, `claim_fee`, `bind_payout`, `emergency_exit`); paths that commit or pay
-  rewards are blocked (`create_vault`, `reserve`, `settle`, `claim`). Look for a path that moves
+  (`fund`, `release`, `bind_payout`, `emergency_exit`); paths that commit or pay rewards are
+  blocked (`create_vault`, `reserve`, `settle`, `claim`, `claim_fee`). `claim_fee` is blocked
+  because it ends `revoke_settlement` for its reservation: the containment is pause, make room,
+  revoke. Look for a path that moves
   reward funds while paused.
 - **Accounting.** The vault's totals (funded, reserved, settled, claimed, withdrawn, defaulted)
   must never let `available` exceed the real token balance, under any order of instructions,
   across epochs.
 - **Token-2022 extensions.** `check_mint_extensions` refuses mints with transfer fee, transfer
-  hook, permanent delegate, non-transferable or confidential transfer
-  (`UnsupportedMintExtension`). Freeze authority, pausable, default-frozen, metadata, metadata
-  pointer and mint close authority are accepted on purpose; confirm none of them lets anyone but
+  hook, permanent delegate, non-transferable, confidential transfer or mint close authority
+  (`UnsupportedMintExtension`); a close authority could close a zero-supply mint and recreate it
+  at the same address with another extension after the one-time check. Freeze authority,
+  pausable, default-frozen, metadata and metadata pointer are accepted on purpose; confirm none of them lets anyone but
   the issuer move or lock vault funds beyond what freezing already allows. Confirm the token
   program passed in is always the mint's owner.
 
@@ -81,11 +85,14 @@ report any assumption the program relies on that they do not uphold.
 - **Settler key.** One Ed25519 key per cluster, held by the backend, with the settler set 1 of 1 at
   launch. It signs `reserve`, `release` and `settle` only after the EVM task reaches a final
   outcome. A compromised settler can install a wrong root; the controls are the claim delay
-  (one hour by default), the admin's `pause` and `revoke_settlement`, and rotation with
+  (one day by default), the admin's `pause` and `revoke_settlement`, and rotation with
   `set_settlers`.
 - **Root watcher.** An independent service checks every `settle` against the award root computed
-  from the EVM chain's own events, and alerts within the claim delay so a bad root can be revoked
-  before it pays.
+  from the EVM chain's own events, comparing `root`, `leaf_count`, `distributed_gross`,
+  `settled_total` and `fee_total`, and alerts within the claim delay so a bad root can be revoked
+  before it pays. It is not deployed at launch. Before signing, the settler itself asserts that
+  the leaf amounts sum to `settled_total`, the leaf count matches, and `settled_total` plus
+  `fee_total` equals `distributed_gross`, and refuses to sign otherwise.
 - **Relayer fee payer.** A backend-held key pays fees and rent for `claim`, `bind_payout` and the
   gasless vault actions. It holds no vault authority: confirm no instruction trusts the fee payer.
 - **Admin and upgrade authority.** Held by a multisig with a time lock before mainnet value.
