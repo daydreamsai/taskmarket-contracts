@@ -28,8 +28,8 @@ the underlying USDC settlement.
 
 V1 is Base-local only. Robinhood Chain / cross-chain settlement was part of the originally
 prototyped design and is explicitly out of scope for this revision — see Non-goals in
-RFC-0018, "Sponsored Task: project-token sponsorship rewards on Taskmarket tasks" (not yet
-merged to this branch).
+the Daydreams design proposal "Sponsored Task: project-token sponsorship rewards on Taskmarket
+tasks" (an internal document, not part of this repository).
 
 This is a Daydreams-specific extension. It is not part of the ERC-8195 or TMP protocol
 standard.
