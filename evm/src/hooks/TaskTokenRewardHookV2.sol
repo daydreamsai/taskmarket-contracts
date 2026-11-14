@@ -970,9 +970,8 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         RewardState storage state = _s().rewardStates[taskId];
 
         // Guard against double-reservation: a task can return to Open after already
-        // being reserved once (e.g. EvaluatorFacet.finalizeVerdict's REJECT branch
-        // reopens a claimed task without calling any reward-hook release path), and
-        // then be claimed/selected again. Release any stale reservation first so the
+        // being reserved once (e.g. SettlementFacet.forfeitAndReopen or releaseClaim
+        // reopens a claimed task), and then be claimed/selected again. Release any stale reservation first so the
         // _s().vault and EpochBudget accounting for the old worker never gets orphaned or
         // double-consumed when this function reserves fresh for the new worker below.
         // _s().vault.release/_s().epochBudget.release are pure internal-accounting calls on
