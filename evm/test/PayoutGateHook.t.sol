@@ -986,6 +986,83 @@ contract PayoutGateHookTest is DiamondTestHelper {
         assertEq(uint8(_state(gated)), uint8(ITMPCore.TaskStatus.Accepted));
     }
 
+    // -------------------------------------------------------------------------
+    // Gating mode at creation: the creator must hold a role on each gated task, as on the link call
+    // -------------------------------------------------------------------------
+
+    uint8 internal constant A_CREATE = 0;
+
+    function _gatingCfg(bytes32 gated) internal pure returns (bytes memory) {
+        return abi.encode(bytes32(0), uint64(0), _ids(gated));
+    }
+
+    function _createRefused(bytes4 err) internal pure returns (bytes memory) {
+        return
+            abi.encodeWithSelector(ITMPHooksV2.HookRejected.selector, uint8(0), A_CREATE, abi.encodeWithSelector(err));
+    }
+
+    /// @dev The owner is the requester of record of the runner's task, so the same-requester rule
+    ///      alone would let the runner take the one link slot of any of the owner's gated tasks.
+    ///      The runner holds no role on a gated task outside its project, so it is refused there.
+    function test_RunnerGatingModeRefusedOutsideItsProject() public {
+        _openProjects();
+        uint64 deadline = uint64(block.timestamp + 5 days);
+        bytes32 ownerGated = _projectTask(requester, otherProjectId, abi.encode(bytes32(0), deadline, new bytes32[](0)));
+        bytes32 plainGated = _gated(bytes32(0), deadline);
+        assertEq(v2.taskCallerRoles(ownerGated, runner), ROLE_STRANGER, "no role in the other project");
+        assertEq(v2.taskCallerRoles(plainGated, runner), ROLE_STRANGER, "no role on a task outside projects");
+
+        bytes memory refused = _createRefused(PayoutGateHook.PayoutGate__NotAuthorized.selector);
+        _expectProjectTaskRefused(runner, projectId, _gatingCfg(ownerGated), refused);
+        _expectProjectTaskRefused(runner, projectId, _gatingCfg(plainGated), refused);
+
+        (bytes32 g,,,) = gate.gateOf(ownerGated);
+        assertEq(g, bytes32(0), "the slot stays free");
+        (g,,,) = gate.gateOf(plainGated);
+        assertEq(g, bytes32(0), "the slot stays free");
+        // The owner can still link its own sign-off task to both.
+        bytes32 review = _create(
+            requester, _one(address(gate)), _cfg(abi.encode(bytes32(0), uint64(0), _two(ownerGated, plainGated)))
+        );
+        (g,,,) = gate.gateOf(ownerGated);
+        assertEq(g, review);
+        (g,,,) = gate.gateOf(plainGated);
+        assertEq(g, review);
+    }
+
+    /// @dev Within its project the runner holds ROLE_PROJECT on the gated task, whoever created it,
+    ///      so gating mode links as before.
+    function test_RunnerGatingModeLinksInItsProject() public {
+        _openProjects();
+        uint64 deadline = uint64(block.timestamp + 5 days);
+        bytes32 ownGated = _projectTask(runner, projectId, abi.encode(bytes32(0), deadline, new bytes32[](0)));
+        bytes32 ownerGated = _projectTask(requester, projectId, abi.encode(bytes32(0), deadline, new bytes32[](0)));
+        bytes32 review = _projectTask(runner, projectId, _gatingCfg(ownGated));
+        (bytes32 g,,,) = gate.gateOf(ownGated);
+        assertEq(g, review);
+        bytes32 review2 = _projectTask(runner, projectId, _gatingCfg(ownerGated));
+        (g,,,) = gate.gateOf(ownerGated);
+        assertEq(g, review2);
+    }
+
+    /// @dev _projectTask decodes the returned id, which a refused create does not return.
+    function _expectProjectTaskRefused(address sender, uint256 pid, bytes memory config, bytes memory err) internal {
+        (bool ok, bytes memory ret) =
+            address(this).call(abi.encodeCall(this.projectTaskExternal, (sender, pid, config)));
+        assertFalse(ok, "create refused");
+        assertEq(ret, err);
+    }
+
+    function projectTaskExternal(address sender, uint256 pid, bytes memory config) external returns (bytes32) {
+        return _projectTask(sender, pid, config);
+    }
+
+    function _two(bytes32 a, bytes32 b) internal pure returns (bytes32[] memory ids) {
+        ids = new bytes32[](2);
+        ids[0] = a;
+        ids[1] = b;
+    }
+
     function _assertProjectClosed(bytes32 taskId) internal {
         vm.expectPartialRevert(ITMPHooksV2.HookRejected.selector);
         _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, WORK, 0)));

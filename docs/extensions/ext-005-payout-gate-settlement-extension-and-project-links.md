@@ -88,7 +88,53 @@ A link or re-link names a gating task that must belong to the same owner as the 
 Otherwise it is refused with `PayoutGate__RequesterMismatch`. A forged or mistaken link can only
 point at a task the gated task's own requester or project already controls. A caller with only
 `ROLE_REQUESTER` gets no project rule. Gating mode at creation (a new task listing the tasks it
-gates) still requires the same requester.
+gates) still requires the same requester, and also the role check in section 4.
+
+## 4. Gating mode at creation: the creator needs a role on each gated task
+
+A new task in gating mode links itself to each listed gated task inside `beforeCreate`, without a
+`callTaskHook` call, so the diamond's role check on the gated task never runs. Checking only that
+the gated task has the new task's requester of record left a gap. Under a grant whose requester of
+record is the owner, an operator granted in one project creates tasks whose requester is the owner.
+It could list any of the owner's gated tasks that had no gating task yet, in another project or in
+none, and take the one link slot. The owner then could not link the intended sign-off task until
+the operator's task was cancelled or expired (and then only through the one re-link), and if the
+operator's task was accepted, the gate opened early.
+
+So for each listed task the creator (`ctx.actor`, the caller of the create, resolved through a
+trusted forwarder) must now pass the same role check as the link call on that task:
+
+- the hook reads the creator's roles on the gated task with the diamond's
+  `taskCallerRoles(gatedTaskId, actor)`, the same function `callTaskHook` uses to authorize a call;
+- it accepts them as `onCall` does: `ROLE_REQUESTER` with the creator being the gated task's
+  requester, or `ROLE_PROJECT` (the project's owner, the operator that created the gated task while
+  it may still act for it, or an operator with an accepted, unrevoked grant on the gated task's
+  project);
+- otherwise the create is refused with `PayoutGate__NotAuthorized`.
+
+The same-requester rule is unchanged, so both must hold.
+
+Two fixes were weighed:
+
+- **The link call's role check on each gated task.** One read of the diamond, the same answer the
+  link call gets, so the two paths cannot drift. Revocation, `revokeRemovesControl` and an owner
+  transfer (rev030) apply without the hook knowing about them.
+- **The same project when the creator is an operator.** The hook would have to decide on its own who
+  is an operator, from the project's owner, the task's creating operator and the grants, which is
+  the rule the diamond already computes for `taskCallerRoles`, and keep it in step with every later
+  change to that rule (rev030 changed it once already). A copy that drifts would let gating mode
+  allow what the link call refuses.
+
+The hook uses the first. Creates that were already legitimate keep working: a requester listing its
+own tasks holds `ROLE_REQUESTER` on them, and an operator listing gated tasks of the project it
+works in holds `ROLE_PROJECT` there, whoever created them.
+
+Gas: each listed task costs one more `taskCallerRoles` read in `beforeCreate`.
+
+The hook keeps no new state, so its storage is unchanged. It is not upgradeable: the fix takes
+effect only on a chain where the hook is redeployed and the configuration (and the hook registry
+manifest for the new address) points at the new address. Tasks that already carry the previous
+deployment keep its rules.
 
 ## Call data
 
@@ -113,7 +159,8 @@ Changed or added: `PayoutGate__NotAuthorized` (replaces `PayoutGate__NotRequeste
 
 ## Testing
 
-- `evm/test/PayoutGateHook.t.sol`: every path above, the original gate behaviour, gating mode, and a
-  project operator under a grant.
+- `evm/test/PayoutGateHook.t.sol`: every path above, the original gate behaviour, gating mode, a
+  project operator under a grant, and gating mode refused to an operator outside the gated task's
+  project (section 4).
 - `evm/test/DeployHooksV2Scripts.t.sol`: the deploy script and its rev028 check.
 - `make smoke payout-gate` (and `make smoke payout-gate local-tempo`) runs it end to end.

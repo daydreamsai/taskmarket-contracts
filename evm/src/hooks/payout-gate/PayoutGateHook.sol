@@ -17,7 +17,9 @@ import { ITMPProject } from "../../interfaces/ITMPProject.sol";
 ///         - Gating task (gatesTaskIds non-empty, at most MAX_GATES_PER_TASK; gatingTaskId and
 ///           deadline zero): this new task becomes the gating task of each listed task, linked
 ///           automatically at creation. Each listed task must carry this gate with no gating task
-///           yet, must not have settled, and must have the same requester as the new task.
+///           yet, must not have settled, and must have the same requester as the new task. The
+///           creator must hold a role on each listed task that the link call accepts: its requester,
+///           or a project operator holding ROLE_PROJECT on it.
 ///         The gate opens when ANY of these holds:
 ///         - the gating task has ended Accepted, read from the diamond's settlement record;
 ///         - the deadline has passed, so a stuck or failed gating task cannot trap the funds;
@@ -214,7 +216,7 @@ contract PayoutGateHook is BaseTMPHookV2 {
                 revert PayoutGate__InvalidConfig();
             }
             for (uint256 i; i < gatesTaskIds.length; ++i) {
-                _linkAsGating(gatesTaskIds[i], taskId, ctx.requester);
+                _linkAsGating(gatesTaskIds[i], taskId, ctx);
             }
             return this.beforeCreate.selector;
         }
@@ -238,13 +240,20 @@ contract PayoutGateHook is BaseTMPHookV2 {
     }
 
     /// @dev Gating mode: the task being created (`gatingTaskId`) becomes `gatedTaskId`'s gating task.
-    function _linkAsGating(bytes32 gatedTaskId, bytes32 gatingTaskId, address requester) private {
+    ///      Besides the same requester of record, the creator (ctx.actor) must hold on the gated task
+    ///      a role the link call would accept, read from the diamond exactly as callTaskHook reads
+    ///      it. Without that, an operator whose new task has the owner as requester of record could
+    ///      take the one link slot of any of the owner's gated tasks, in any project.
+    function _linkAsGating(bytes32 gatedTaskId, bytes32 gatingTaskId, TaskContextV2 calldata ctx) private {
         Gate storage g = _gates[gatedTaskId];
         if (!g.set) revert PayoutGate__NotGated();
         if (g.gatingTaskId != bytes32(0)) revert PayoutGate__AlreadyLinked();
         if (gatedTaskId == gatingTaskId) revert PayoutGate__InvalidGatingTask();
         ITMPCore.Task memory gated = ITMPCore(diamond).getTask(gatedTaskId);
-        if (gated.requester != requester) revert PayoutGate__RequesterMismatch();
+        if (gated.requester != ctx.requester) revert PayoutGate__RequesterMismatch();
+        uint32 roles = ITMPHooksV2(diamond).taskCallerRoles(gatedTaskId, ctx.actor);
+        bool asRequester = _hasRole(roles, ROLE_REQUESTER) && ctx.actor == gated.requester;
+        if (!asRequester && !_hasRole(roles, ROLE_PROJECT)) revert PayoutGate__NotAuthorized();
         if (
             gated.status == ITMPCore.TaskStatus.Accepted || gated.status == ITMPCore.TaskStatus.Expired
                 || gated.status == ITMPCore.TaskStatus.Cancelled
