@@ -95,7 +95,15 @@ report any assumption the program relies on that they do not uphold.
   `fee_total` equals `distributed_gross`, and refuses to sign otherwise.
 - **Relayer fee payer.** A backend-held key pays fees and rent for `claim`, `bind_payout` and the
   gasless vault actions. It holds no vault authority: confirm no instruction trusts the fee payer.
-- **Admin and upgrade authority.** Held by a multisig with a time lock before mainnet value.
+- **Upgrade authority.** Held by a multisig with a time lock before mainnet value. The time lock
+  covers program upgrades only.
+- **Admin.** `set_settlers`, `set_claim_delay` and `set_fee` take effect in the transaction that
+  calls them; the program has no on-chain delay for them. This is an accepted risk for now, with an
+  on-chain delay deferred. A compromised admin key can install its own settler, cut the claim delay
+  to one second and settle, reserve and claim against every vault, bounded by all reserved balances
+  plus the remaining manager caps, and redirect unclaimed fees with `set_fee`. The only control is
+  how the admin key is held. Review the program on that basis, and report any further reach of
+  these three instructions beyond that bound.
 
 ## Out of scope
 
