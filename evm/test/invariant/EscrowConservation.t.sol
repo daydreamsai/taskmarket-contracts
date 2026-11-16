@@ -44,6 +44,8 @@ contract EscrowHandler is Test {
     // Bounty, failed, left the status wrong, or did not move exactly the reward to the requester.
     uint256 public timeoutViolations;
     mapping(bytes32 => uint256) internal activeSubs;
+    /// @dev Mirrors taskClocks.decisionStartAt: set when evaluatorTimeout clears a Bounty's evaluator.
+    mapping(bytes32 => uint256) internal decisionStartAt;
     mapping(bytes32 => mapping(address => uint256)) internal subsBy;
 
     constructor(ITMPDiamond _market, MockUSDC _usdc, MockPGTRForwarder _forwarder) {
@@ -265,7 +267,15 @@ contract EscrowHandler is Test {
         if (t.mode != TMP_BOUNTY || activeSubs[id] == 0) return false;
         if (market.getTaskEvaluatorConfig(id).evaluator != address(0)) return false;
         uint32 w = market.getTaskTerms(id).decisionWindowSecs;
-        return block.timestamp > t.expiryTime + (w == 0 ? 7 days : w);
+        uint256 start = t.expiryTime;
+        if (decisionStartAt[id] > start) start = decisionStartAt[id];
+        return block.timestamp > start + (w == 0 ? 7 days : w);
+    }
+
+    /// @dev The contract starts the requester's decision window at the evaluator timeout when it
+    ///      clears a Bounty's evaluator over live submissions; record the same instant.
+    function _noteDecisionStart(bytes32 id, bool hadEvaluator, bool ok) internal {
+        if (ok && hadEvaluator && market.getTask(id).mode == TMP_BOUNTY) decisionStartAt[id] = block.timestamp;
     }
 
     /// @dev Runs a requester call that must fail without moving funds once the decision lapsed.
@@ -391,7 +401,10 @@ contract EscrowHandler is Test {
 
     function evaluatorTimeout(uint256 seed) external {
         if (taskIds.length == 0) return;
-        _relay(REQUESTER, 0, abi.encodeCall(market.evaluatorTimeout, (_task(seed))));
+        bytes32 id = _task(seed);
+        bool hadEvaluator = market.getTaskEvaluatorConfig(id).evaluator != address(0);
+        bool ok = _relay(REQUESTER, 0, abi.encodeCall(market.evaluatorTimeout, (id)));
+        _noteDecisionStart(id, hadEvaluator, ok);
     }
 
     // -------------------------------------------------------------------------
@@ -405,9 +418,12 @@ contract EscrowHandler is Test {
     /// @dev evaluatorTimeout from an arbitrary caller, not through the forwarder.
     function evaluatorTimeoutDirect(uint256 seed, uint256 callerSeed) external {
         if (taskIds.length == 0) return;
+        bytes32 id = _task(seed);
+        bool hadEvaluator = market.getTaskEvaluatorConfig(id).evaluator != address(0);
         vm.prank(_stranger(callerSeed));
-        try market.evaluatorTimeout(_task(seed)) {
+        try market.evaluatorTimeout(id) {
             ++calls["evaluatorTimeoutDirect"];
+            _noteDecisionStart(id, hadEvaluator, true);
         } catch { }
     }
 
@@ -635,6 +651,52 @@ contract EscrowConservationInvariantTest is DiamondTestHelper {
         // An auction records its accepted price in stakeAmount; it is part of the reward, not a stake.
         if (t.mode == TMP_CLAIM) owed += t.stakeAmount;
         owed += ev.evaluatorStake;
+    }
+
+    /// @dev Replay of a shrunk counterexample. A Bounty with an evaluator and a live submission has its
+    ///      evaluator timed out, which starts the requester's decision window at the timeout; a later
+    ///      rejectSubmission past expiryTime plus the default window is still allowed, so it must not
+    ///      count as a lapsed-decision breach.
+    function test_replay_rejectAfterEvaluatorTimeoutIsNotLapsed() public {
+        handler.createClaim(253725, false, 74187599965771476837, true, 5);
+        handler.createClaim(25464856962380209, false, 3491375760037322005145589189763791771542319458222189, false, 9);
+        handler.reviewThenEvaluatorTimeoutDirect(7832, 0, 16841, 6267);
+        handler.cancel(5);
+        handler.reviewThenEvaluatorTimeoutDirect(23, 2809, 2097152, 3309);
+        handler.createBountyTerms(7470, 21);
+        handler.createAuction(
+            72850092559108193163659003043187684773304436223513979676199898818091166805,
+            false,
+            4506358806079568424325160958705504841,
+            true,
+            451
+        );
+        handler.claimAndSubmit(4, 1000000);
+        handler.createBounty(31466281, false, 2293738338, true, 11177);
+        handler.reviewThenEvaluatorTimeoutDirect(200000, 4707, 10000, 1709459800);
+        handler.createAuction(32, false, 9, true, 21);
+        handler.cancel(22);
+        handler.createClaimTerms(512, 809, true, 17596);
+        handler.accept(16777216, 8);
+        handler.cancel(4838400);
+        handler.createClaimTerms(4838400, 31466281, false, 9001);
+        handler.createBounty(24, true, 0, true, 7045);
+        handler.warp(4);
+        handler.cancel(3714);
+        handler.submit(24, 200000);
+        handler.createAuction(1837, false, 1000, true, 21);
+        handler.cancel(6277101735386680763835789423207666416102355444464034512895);
+        handler.reviewThenEvaluatorTimeoutDirect(2, 8, 8388608, 3036272301);
+        handler.warp(8);
+        handler.evaluatorTimeout(8192);
+        handler.warp(1500000);
+        handler.settleLapsedReview(2063284231715407366930);
+        handler.reviewThenEvaluatorTimeoutDirect(2448129935, 6300457, 41, 6450);
+        handler.refundExpired(23);
+        handler.warp(4194304);
+        handler.createClaim(5000, false, 4194304, true, 809);
+        handler.rejectSubmission(270799407913114934259483668, 10860);
+        assertEq(handler.lapsedViolations(), 0, "evaluator timeout restarts the decision window");
     }
 
     /// @dev rev026: the on-chain counter tracks the same formula, so one pass also checks that
