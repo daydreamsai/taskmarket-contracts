@@ -62,7 +62,7 @@ contract SponsoredTaskFactoryTest is Test {
         assertEq(vault.settlementChain(), block.chainid);
         assertEq(vault.epoch(), 1);
         assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));
-        assertEq(factory.IMPLEMENTATION_VERSION(), 2);
+        assertEq(factory.IMPLEMENTATION_VERSION(), 3);
         assertGt(factory.implementation().code.length, 0);
     }
 

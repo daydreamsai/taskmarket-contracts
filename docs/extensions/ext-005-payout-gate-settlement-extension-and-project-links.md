@@ -136,6 +136,10 @@ effect only on a chain where the hook is redeployed and the configuration (and t
 manifest for the new address) points at the new address. Tasks that already carry the previous
 deployment keep its rules.
 
+This change ships with rev031, which carries the redeploy: see
+`packages/contracts/docs/specs/erc8195/rev031-sponsored-tasks-payouts-sweeps-and-releases.md`,
+section 7, and its upgrade steps.
+
 ## Call data
 
 `onCall` takes `abi.encode(uint8 action, bytes32 value)` and nothing else:

@@ -76,6 +76,7 @@ interface ITMPDiamond {
     ) external;
 
     function taskSubmissionHashes(bytes32 taskId, address worker) external view returns (bytes32[] memory);
+    function taskActiveSubmissionCount(bytes32 taskId) external view returns (uint256);
 
     // -------------------------------------------------------------------------
     // EvaluatorFacet

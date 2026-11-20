@@ -27,7 +27,7 @@ import {
 const TEMPO_SH = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
-  "tempo.sh",
+  "tempo.sh"
 );
 
 const KEY =
@@ -46,6 +46,7 @@ const OTHER = "0x4444444444444444444444444444444444444444";
 const FORGE = `#!/usr/bin/env bash
 ${FORGE_GAS}
 echo "$*" >> "$CALLS"
+echo "FORGE_PGTR_FORWARDER=\${FORGE_PGTR_FORWARDER-<unset>}" >> "$CALLS.env"
 case "$2" in
   *DeployForwarderV2*) ;;
   *AddForwarder*) [ -n "\${FAIL_ADD:-}" ] && exit 1; touch "$TRUSTED_FILE"; exit 0 ;;
@@ -116,11 +117,13 @@ function run({
               contractName: "TaskMarketForwarderV2",
               contractAddress: FORWARDER,
               transaction: {
-                input: `0x6080${[USDC, DIAMOND, RELAYER].map((a) => a.slice(2).padStart(64, "0")).join("")}`,
+                input: `0x6080${[USDC, DIAMOND, RELAYER]
+                  .map((a) => a.slice(2).padStart(64, "0"))
+                  .join("")}`,
               },
             },
           ],
-        }),
+        })
       );
     }
   }
@@ -162,7 +165,11 @@ function run({
   try {
     gasCalls = readFileSync(join(dir, "gas-calls"), "utf8").trim().split("\n");
   } catch {}
-  return { ...r, forgeCalls, gasCalls, out: r.stdout + r.stderr };
+  let forgeEnv = [];
+  try {
+    forgeEnv = readFileSync(`${calls}.env`, "utf8").trim().split("\n");
+  } catch {}
+  return { ...r, forgeCalls, forgeEnv, gasCalls, out: r.stdout + r.stderr };
 }
 
 const broadcasts = (r) => r.forgeCalls.some((c) => / --broadcast( |$)/.test(c));
@@ -195,6 +202,16 @@ for (const action of ["deploy", "upgrade"]) {
     assert.equal(r.forgeCalls.filter(Boolean).length, 0, "nothing sent");
   });
 }
+
+// Cyclops 4405: a Base forwarder left in .env must not be trusted by a fresh Tempo diamond.
+test("deploy does not pass an unsuffixed FORGE_PGTR_FORWARDER to forge", () => {
+  const r = run({ env: { FORGE_PGTR_FORWARDER: OTHER } });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.forgeEnv.length > 0, r.out);
+  for (const line of r.forgeEnv) {
+    assert.equal(line, "FORGE_PGTR_FORWARDER=<unset>");
+  }
+});
 
 test("a broadcast to a remote RPC sends the contracts for verification", () => {
   const r = run({});
@@ -238,7 +255,7 @@ for (const [name, override] of [
     assert.notEqual(r.status, 0, r.out);
     assert.match(
       r.stderr,
-      new RegExp(`Forwarder ${name.replace(/[()]/g, "\\$&")} is ${OTHER}`, "i"),
+      new RegExp(`Forwarder ${name.replace(/[()]/g, "\\$&")} is ${OTHER}`, "i")
     );
   });
 }
@@ -275,7 +292,7 @@ for (const [network, chainId] of [
         assert.notEqual(r.status, 0, r.out);
         assert.match(
           r.stderr,
-          new RegExp(`expected ${chainId} for ${network}`),
+          new RegExp(`expected ${chainId} for ${network}`)
         );
         assert.deepEqual(r.forgeCalls, []);
       }
@@ -290,7 +307,7 @@ for (const [network, chainId] of [
 }
 
 const RESUME_HINT = new RegExp(
-  `FORWARDER_ADDRESS_RESUME=${FORWARDER} make deploy-forwarder 42431`,
+  `FORWARDER_ADDRESS_RESUME=${FORWARDER} make deploy-forwarder 42431`
 );
 const ran = (r, name) => r.forgeCalls.some((c) => c.includes(name));
 
@@ -418,12 +435,12 @@ test("deploy refuses before broadcasting when a node estimate reaches the 30M ca
   assert.equal(r.status, 1, r.out);
   assert.deepEqual(
     r.forgeCalls.filter((c) => c),
-    [],
+    []
   );
   assert.equal(r.gasCalls.length, 1);
   assert.match(
     r.out,
-    /tx 1 \(CALL Diamond diamondCut\): node estimate 29900000 >= 29900000/,
+    /tx 1 \(CALL Diamond diamondCut\): node estimate 29900000 >= 29900000/
   );
 });
 
@@ -511,14 +528,16 @@ const SCRIPT_ACTIONS = [
 ];
 
 for (const { action, target, verifies, env, required } of SCRIPT_ACTIONS) {
-  test(`${action} broadcasts ${target} with the fee token${verifies ? " and Sourcify" : ""}`, () => {
+  test(`${action} broadcasts ${target} with the fee token${
+    verifies ? " and Sourcify" : ""
+  }`, () => {
     const r = run({ action, env });
     assert.equal(r.status, 0, r.out);
     const sent = r.forgeCalls.filter((c) => / --broadcast( |$)/.test(c));
     assert.equal(sent.length, 1, r.out);
     assert.match(
       sent[0],
-      new RegExp(`script/${target.replace(/\./g, "\\.")} `),
+      new RegExp(`script/${target.replace(/\./g, "\\.")} `)
     );
     assert.match(sent[0], / --tempo\.fee-token /);
     assert.match(sent[0], / --gas-estimate-multiplier /);

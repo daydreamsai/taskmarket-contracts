@@ -44,6 +44,7 @@ contract SponsoredTaskSettlerTest is Test {
     bytes32 private constant TASK_ID = keccak256("base-task");
     bytes32 private constant TERMS_HASH = keccak256("terms");
     uint64 private constant NONCE = 7;
+    uint64 private constant RESERVE_WINDOW = 1 hours;
     uint256 private constant GROSS = 10_000;
     uint16 private constant FEE_BPS = 750;
     address private constant FEE_RECIPIENT = address(0xFEE);
@@ -79,7 +80,7 @@ contract SponsoredTaskSettlerTest is Test {
         (address v,) = factory.createVault(address(token), address(this), keccak256("remote"));
         vault = SponsoredTasksVaultV2(v);
         vaultIdOfVault = vault.vaultId();
-        vault.configureManager(MANAGER, GROSS * 10, true);
+        vault.configureManagerForChain(TASK_CHAIN_ID, MANAGER, GROSS * 10, true);
         token.mint(address(this), GROSS * 10);
         token.approve(address(vault), type(uint256).max);
         vault.fund(GROSS * 10);
@@ -137,7 +138,8 @@ contract SponsoredTaskSettlerTest is Test {
             epoch: 1,
             feeBps: FEE_BPS,
             feeRecipient: FEE_RECIPIENT,
-            termsHash: TERMS_HASH
+            termsHash: TERMS_HASH,
+            deadline: uint64(block.timestamp + RESERVE_WINDOW)
         });
     }
 
@@ -423,6 +425,69 @@ contract SponsoredTaskSettlerTest is Test {
         bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
         vm.expectRevert(Pausable.EnforcedPause.selector);
         settler.reserve(r, sigs);
+    }
+
+    /// @dev A reserve whose relay failed (its signatures are in the reverted calldata) must not land
+    ///      long afterwards, when the task may have been cancelled on the task chain.
+    function testStaleReserveSignatureIsRefused() public {
+        SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
+        bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
+        vm.warp(block.timestamp + 30 days);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.ReserveExpired.selector, r.deadline));
+        vm.prank(RELAYER);
+        settler.reserve(r, sigs);
+        assertEq(uint8(_state()), uint8(SponsoredTaskSettler.AllocationState.None));
+        assertEq(vault.totalReserved(), 0);
+    }
+
+    function testReserveLandsUpToItsDeadlineAndNotAfter() public {
+        SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
+        bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
+        uint256 snapshot = vm.snapshotState();
+        vm.warp(r.deadline + 1);
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTaskSettler.ReserveExpired.selector, r.deadline));
+        settler.reserve(r, sigs);
+        vm.revertToState(snapshot);
+        vm.warp(r.deadline);
+        settler.reserve(r, sigs);
+        assertEq(uint8(_state()), uint8(SponsoredTaskSettler.AllocationState.Reserved));
+    }
+
+    function testReserveDeadlineIsSigned() public {
+        SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
+        bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
+        vm.warp(r.deadline + 1);
+        // A relayer cannot extend the window: the deadline is part of the signed struct.
+        r.deadline = uint64(block.timestamp + RESERVE_WINDOW);
+        vm.expectPartialRevert(SponsoredTaskSettler.NotSettler.selector);
+        settler.reserve(r, sigs);
+    }
+
+    /// @dev The sponsor approved MANAGER for tasks from TASK_CHAIN_ID. Whoever controls the same
+    ///      address on another task chain must not be able to spend that allowance.
+    function testAllowanceForOneTaskChainIsNotSpentByAnother() public {
+        uint256 otherTaskChain = 4217;
+        SponsoredTaskSettler.ReserveRequest memory r = _reserveRequest();
+        r.taskChainId = otherTaskChain;
+        r.allocationId = keccak256(abi.encode(otherTaskChain, TASK_ID));
+        bytes[] memory sigs = _sign(settler.reserveDigest(r), _keys1(keyA));
+        vm.expectRevert(abi.encodeWithSelector(SponsoredTasksVaultV2.ManagerNotActive.selector, MANAGER));
+        settler.reserve(r, sigs);
+
+        // The allowance stays whole for tasks from the chain the sponsor named.
+        assertEq(vault.managerRemainingForChain(TASK_CHAIN_ID, MANAGER), GROSS * 10);
+        _reserve();
+        assertEq(vault.managerRemainingForChain(TASK_CHAIN_ID, MANAGER), GROSS * 9);
+        assertEq(vault.managerRemainingForChain(otherTaskChain, MANAGER), 0);
+    }
+
+    function testReserveTypehashCarriesTheDeadline() public view {
+        assertEq(
+            settler.RESERVE_TYPEHASH(),
+            keccak256(
+                "Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash,uint64 deadline)"
+            )
+        );
     }
 
     // ---------------------------------------------------------------------------------------------

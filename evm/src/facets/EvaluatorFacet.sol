@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibAwards } from "../libraries/LibAwards.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
@@ -140,11 +141,14 @@ contract EvaluatorFacet {
             revert ITMPCore.EvaluationWindowClosed();
         }
         // Rev030: a Bounty or Benchmark has the same boundary, at its evaluation deadline.
-        if (task.status != ITMPCore.TaskStatus.Review && block.timestamp > _submissionsDeadline(task, taskId, s)) {
-            revert ITMPCore.EvaluationWindowClosed();
+        if (task.status != ITMPCore.TaskStatus.Review) {
+            if (block.timestamp > _submissionsDeadline(task, taskId, s)) revert ITMPCore.EvaluationWindowClosed();
+            // Rev031: a contest with no live submission has nothing to judge, and a verdict would
+            // close it to submissions and earn the evaluator its fee.
+            if (s.taskActiveSubmissionCount[taskId] == 0) revert ITMPCore.NoActiveSubmissions();
         }
 
-        _validateAwardRecipients(task, taskId, awards, s);
+        uint256 primary = _validateAwardRecipients(task, taskId, awards, s);
         LibHooksV2.snap(taskId, uint8(task.status));
 
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
@@ -153,17 +157,10 @@ contract EvaluatorFacet {
         v.score = score;
         v.confidence = confidence;
         v.evidenceHash = evidenceHash;
-        delete v.awards;
-        for (uint256 i; i < awards.length; ++i) {
-            v.awards.push(awards[i]);
-        }
+        _storeAwards(v, awards);
 
-        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
-            for (uint256 i; i < awards.length; ++i) {
-                if (awards[i].amount == 0) continue;
-                task.worker = awards[i].worker;
-                break;
-            }
+        if ((task.mode == BOUNTY || task.mode == BENCHMARK) && primary != LibAwards.NONE) {
+            task.worker = awards[primary].worker;
         }
 
         uint256 stakeReturn = evalCfg.evaluatorStake;
@@ -178,9 +175,7 @@ contract EvaluatorFacet {
         emit ITMPEvaluator.TaskEvaluated(taskId, evaluatorAddr, uint8(verdictType), score);
 
         if (stakeReturn > 0) {
-            if (!s.usdcToken.transfer(evalCfg.evaluator, stakeReturn)) {
-                revert ITMPCore.EvaluatorPaymentFailed();
-            }
+            _send(s, evalCfg.evaluator, stakeReturn, ITMPCore.EvaluatorPaymentFailed.selector);
         }
         LibEscrow.release(s, taskId, balanceBefore);
         LibHooks._observe(s, taskId, LibHooksV2.A_EVALUATE, true);
@@ -207,13 +202,18 @@ contract EvaluatorFacet {
         // appeal -- otherwise any other past submitter (including one already rejected
         // pre-evaluation) could appeal a verdict they were never part of, stalling a
         // legitimately-awarded worker's payout.
+        // Rev031: a co-winner the verdict awarded something may also appeal, since a transforming
+        // hook's cut applies to its award at finalizeVerdict and the appeal is its only remedy.
         bool authorized = worker == task.worker;
-        if (!authorized && task.worker == address(0) && (task.mode == BOUNTY || task.mode == BENCHMARK)) {
-            authorized = s.taskSubmissionHashes[taskId][worker].length > 0;
+        if (!authorized && (task.mode == BOUNTY || task.mode == BENCHMARK)) {
+            authorized = task.worker == address(0)
+                ? s.taskSubmissionHashes[taskId][worker].length > 0
+                : _awarded(s.taskVerdicts[taskId].awards, worker);
         }
         if (!authorized) revert ITMPCore.NotWorker();
         // Rev030: a worker that became an acting party after its claim cannot appeal its own task.
         LibProject.requireNotActingParty(s, taskId, worker);
+        LibProject.requireNotJudge(s, taskId, worker);
         if (task.status != ITMPCore.TaskStatus.Appealing) revert ITMPCore.NotInAppealingState();
         if (block.timestamp >= s.phaseDeadline[taskId]) revert ITMPCore.AppealWindowClosed();
         // Only the dispute resolver can settle a Disputed task, and nothing can call
@@ -270,26 +270,21 @@ contract EvaluatorFacet {
     ///      re-claimable with no escrow left behind it.
     function _finalizeReject(bytes32 taskId, ITMPCore.Task storage task, AppStorage storage s) private {
         ITMPCore.TaskEvaluatorConfig storage evalCfg = s.taskEvaluatorConfigs[taskId];
-        uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
-        uint256 refund = task.reward - evalFee;
-        address requesterAddr = task.requester;
-        address evaluatorAddr = evalCfg.evaluator;
+        uint256 refund = task.reward - LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         address claimant = task.worker;
         task.status = ITMPCore.TaskStatus.Cancelled;
         task.worker = address(0);
         task.deliverable = bytes32(0);
-        evalCfg.evaluator = address(0);
-        evalCfg.evaluationWindow = 0;
-        evalCfg.appealWindow = 0;
         if (refund > 0) {
             if (!LibProject.payRequester(s, taskId, refund)) revert ITMPCore.RefundFailed();
         }
         _forfeitClaimStake(taskId, task, claimant, s);
-        if (evalFee > 0) {
-            if (!s.usdcToken.transfer(evaluatorAddr, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
-            LibSettlement.add(taskId, LibSettlement.EVALUATOR_FEE, evalFee);
-        }
-        emit ITMPCore.TaskCancelled(taskId, requesterAddr, refund);
+        // The fee base (reward, or an Auction's price) is untouched by the stake forfeit above.
+        _payEvaluatorFee(taskId, task, true, s);
+        evalCfg.evaluator = address(0);
+        evalCfg.evaluationWindow = 0;
+        evalCfg.appealWindow = 0;
+        emit ITMPCore.TaskCancelled(taskId, task.requester, refund);
         if (block.timestamp <= task.expiryTime) LibHooks._onCancelHooksStrict(taskId);
         else LibHooks._onCancelHooks(taskId, s);
     }
@@ -309,7 +304,7 @@ contract EvaluatorFacet {
         }
         uint256 stake = task.stakeAmount;
         task.stakeAmount = 0;
-        if (!s.usdcToken.transfer(task.worker, stake)) revert ITMPCore.StakeReturnFailed();
+        _send(s, task.worker, stake, ITMPCore.StakeReturnFailed.selector);
         emit ITMPCore.StakeReturned(taskId, task.worker, stake);
     }
 
@@ -344,7 +339,7 @@ contract EvaluatorFacet {
 
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.status != ITMPCore.TaskStatus.Disputed) revert ITMPCore.NotInDisputedState();
-        address caller = s.trustedForwarders[msg.sender] ? LibGuards._effectiveSender(s) : msg.sender;
+        address caller = LibGuards._effectiveSender(s);
         if (caller != s.taskEvaluatorConfigs[taskId].disputeResolver) revert ITMPCore.NotDisputeResolver();
         // Rev030: as for evaluate, a resolver that became an acting party after assignment is refused.
         if (LibProject.isActingParty(s, taskId, caller)) revert ITMPCore.DisputeResolverCannotBeRequester();
@@ -355,10 +350,7 @@ contract EvaluatorFacet {
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
         bool upheld = _sameVerdict(v, verdictType, awards);
         v.verdictType = verdictType;
-        delete v.awards;
-        for (uint256 i; i < awards.length; ++i) {
-            v.awards.push(awards[i]);
-        }
+        _storeAwards(v, awards);
 
         // A task's beforeAccept is best effort on a resolution (see _payAwards), so the requester's
         // hook cannot veto the resolver's decision there.
@@ -368,7 +360,8 @@ contract EvaluatorFacet {
     }
 
     /// @dev A resolution upholds the verdict only when it repeats it exactly: same type and the same
-    ///      awards in the same order. A REJECT can never be upheld, since a resolution must award.
+    ///      awards (worker, amount and rank) in the same order. A REJECT can never be upheld, since a
+    ///      resolution must award.
     function _sameVerdict(
         ITMPCore.Verdict storage v,
         ITMPCore.VerdictType verdictType,
@@ -378,7 +371,8 @@ contract EvaluatorFacet {
             return false;
         }
         for (uint256 i; i < awards.length; ++i) {
-            if (v.awards[i].worker != awards[i].worker || v.awards[i].amount != awards[i].amount) return false;
+            ITMPCore.Award storage a = v.awards[i];
+            if (a.worker != awards[i].worker || a.amount != awards[i].amount || a.rank != awards[i].rank) return false;
         }
         return true;
     }
@@ -437,7 +431,7 @@ contract EvaluatorFacet {
 
         if (forfeited > 0) {
             s.totalFeesCollected += forfeited;
-            if (!s.usdcToken.transfer(s.feeRecipient, forfeited)) revert ITMPCore.ForfeitTransferFailed();
+            _send(s, s.feeRecipient, forfeited, ITMPCore.ForfeitTransferFailed.selector);
         }
 
         emit ITMPEvaluator.EvaluatorTimedOut(taskId, timedOutEvaluator, forfeited);
@@ -463,47 +457,24 @@ contract EvaluatorFacet {
         return start + s.taskEvaluatorConfigs[taskId].evaluationWindow;
     }
 
-    /// @dev Ensures every award recipient is a legitimate party for this task: the locked
-    ///      worker for Claim/Pitch/Auction, or an address that actually submitted work for
-    ///      Bounty/Benchmark (mirrors AcceptanceFacet._resolveDeliverables' submission
-    ///      check). Called by both evaluate() and resolveDispute() before their respective
-    ///      awards arrays are committed to storage, so a caller-supplied awards array can
-    ///      never redirect payout to a party who was never actually the worker/submitter.
-    ///      Zero-amount awards are skipped -- they never trigger a transfer or touch
-    ///      task.worker, so their recipient is inert. A non-zero award to address(0) reverts
-    ///      here rather than at _payAwards: the verdict is one-shot on chain, so letting it
-    ///      be stored would move the task to Appealing and then revert finalizeVerdict
-    ///      permanently, stranding the escrow. For the same reason the non-zero award total
-    ///      must fit the award budget (reward less the evaluator fee), or it reverts
-    ///      AwardsExceedEscrow. Rev030: a non-zero Bounty or Benchmark award must have rank >= 1
-    ///      (InvalidAwardRank), and a verdict of any mode may carry at most the chain's winner
-    ///      cap of awards (TooManyWinners).
+    /// @dev Called by evaluate() and resolveDispute() before their awards are stored. The verdict is
+    ///      one-shot on chain, so an award list that could never settle (a paid award to address(0)
+    ///      or over the award budget) must revert here rather than at _payAwards, where it would
+    ///      strand the escrow in Appealing. Rev031: the rules are LibAwards.check's, the same ones a
+    ///      transforming hook's result is held to (rev030's winner cap and rank >= 1, plus one paid
+    ///      award per worker and per contest rank). Returns the primary award's index
+    ///      (LibAwards.primary), so the primary worker is the lowest-ranked paid award, not the first
+    ///      entry.
     function _validateAwardRecipients(
         ITMPCore.Task storage task,
         bytes32 taskId,
         ITMPCore.Award[] calldata awards,
         AppStorage storage s
-    ) private view {
-        bool bountyLike = task.mode == BOUNTY || task.mode == BENCHMARK;
-        // Rev030: the cap is per chain (s.maxSubmissionWinners, 50 when unset), on every mode.
-        if (awards.length > LibTaskMarket._maxSubmissionWinners(s)) revert ITMPCore.TooManyWinners();
-        uint256 total = 0;
-        for (uint256 i; i < awards.length; ++i) {
-            if (awards[i].amount == 0) continue;
-            total += awards[i].amount;
-            address worker = awards[i].worker;
-            if (worker == address(0)) revert ITMPCore.InvalidAwardRecipient();
-            if (bountyLike) {
-                // Rev030: a paid contest place is ranked from 1; rank 0 names no place.
-                if (awards[i].rank == 0) revert ITMPCore.InvalidAwardRank();
-                if (s.taskSubmissionHashes[taskId][worker].length == 0) revert ITMPCore.SubmissionNotFound();
-            } else if (worker != task.worker) {
-                revert ITMPCore.WorkerMismatch();
-            }
-        }
-        // Same bound _payAwards applies at settlement. Checking it here keeps a verdict that can
-        // never finalize from being stored; the settlement check stays as a backstop.
-        if (total > _awardBudget(task, taskId, s)) revert ITMPCore.AwardsExceedEscrow();
+    ) private view returns (uint256) {
+        ITMPCore.Award[] memory list = awards;
+        bytes4 err = LibAwards.check(s, taskId, list, _awardBudget(task, taskId, s), true);
+        if (err != bytes4(0)) _revert(err);
+        return LibAwards.primary(list);
     }
 
     /// @dev The most a verdict may award: the task's reward less the evaluator fee. For an auction
@@ -528,16 +499,8 @@ contract EvaluatorFacet {
         bool feeToEvaluator,
         bool runCheckHooks
     ) private {
-        // Validate recipients before touching any state.
-        uint256 awardLen = v.awards.length;
-        for (uint256 i; i < awardLen; i++) {
-            if (v.awards[i].amount > 0 && v.awards[i].worker == address(0)) {
-                revert ITMPCore.InvalidAwardRecipient();
-            }
-        }
-
         uint256 remaining = _awardBudget(task, taskId, s);
-        ITMPCore.Verdict memory verdictMem = s.taskVerdicts[taskId];
+        ITMPCore.Verdict memory verdictMem = v;
         // Rev028: a dispute resolution is settling a Disputed task; hooks are shown that state.
         bool disputed = task.status == ITMPCore.TaskStatus.Disputed;
         LibHooksV2.snap(taskId, uint8(task.status));
@@ -566,18 +529,12 @@ contract EvaluatorFacet {
             }
         }
         ITMPCore.Award[] memory awards = verdictMem.awards;
-        awardLen = awards.length;
 
         task.status = ITMPCore.TaskStatus.Accepted;
-        bool selectedWorker = false;
-        for (uint256 i; i < awardLen; ++i) {
-            // slither-disable-next-line incorrect-equality
-            if (awards[i].amount == 0) continue;
-            task.worker = awards[i].worker;
-            selectedWorker = true;
-            break;
-        }
-        if (!selectedWorker && (task.mode == BOUNTY || task.mode == BENCHMARK)) {
+        uint256 primary = LibAwards.primary(awards);
+        if (primary != LibAwards.NONE) {
+            task.worker = awards[primary].worker;
+        } else if (task.mode == BOUNTY || task.mode == BENCHMARK) {
             // An evaluator-selected worker has no authority after a zero-only verdict.
             task.worker = address(0);
         }
@@ -603,12 +560,29 @@ contract EvaluatorFacet {
         else LibHooks._onCompleteHooks(taskId, s, verdictMem);
     }
 
-    /// @dev Whether any award in the list pays a nonzero amount.
-    function _anyAward(ITMPCore.Award[] memory awards) private pure returns (bool) {
+    function _storeAwards(ITMPCore.Verdict storage v, ITMPCore.Award[] calldata awards) private {
+        delete v.awards;
         for (uint256 i; i < awards.length; ++i) {
-            if (awards[i].amount > 0) return true;
+            v.awards.push(awards[i]);
+        }
+    }
+
+    /// @dev Whether the stored verdict pays `worker` a nonzero amount.
+    function _awarded(ITMPCore.Award[] storage awards, address worker) private view returns (bool) {
+        for (uint256 i; i < awards.length; ++i) {
+            if (awards[i].worker == worker && awards[i].amount > 0) return true;
         }
         return false;
+    }
+
+    /// @dev Whether any award in the list pays a nonzero amount. Reverts on a paid award to
+    ///      address(0), before any hook or transfer runs.
+    function _anyAward(ITMPCore.Award[] memory awards) private pure returns (bool any) {
+        for (uint256 i; i < awards.length; ++i) {
+            if (awards[i].amount == 0) continue;
+            if (awards[i].worker == address(0)) revert ITMPCore.InvalidAwardRecipient();
+            any = true;
+        }
     }
 
     /// @dev The fee stays in escrow from evaluate until the verdict is final. A verdict an appeal
@@ -621,7 +595,7 @@ contract EvaluatorFacet {
         uint256 evalFee = LibTaskMarket._evaluatorFee(task, evalCfg.evaluatorFeeBps);
         if (evalFee == 0) return;
         if (toEvaluator) {
-            if (!s.usdcToken.transfer(evalCfg.evaluator, evalFee)) revert ITMPCore.EvaluatorPaymentFailed();
+            _send(s, evalCfg.evaluator, evalFee, ITMPCore.EvaluatorPaymentFailed.selector);
             LibSettlement.add(taskId, LibSettlement.EVALUATOR_FEE, evalFee);
         } else if (!LibProject.payRequester(s, taskId, evalFee)) {
             revert ITMPCore.EvaluatorPaymentFailed();
@@ -652,5 +626,16 @@ contract EvaluatorFacet {
         }
         if (totalAwarded > remaining) revert ITMPCore.AwardsExceedEscrow();
         if (totalFee > 0) s.totalFeesCollected += totalFee;
+    }
+
+    function _send(AppStorage storage s, address to, uint256 amount, bytes4 err) private {
+        if (!s.usdcToken.transfer(to, amount)) _revert(err);
+    }
+
+    function _revert(bytes4 err) private pure {
+        assembly ("memory-safe") {
+            mstore(0, err)
+            revert(0, 4)
+        }
     }
 }

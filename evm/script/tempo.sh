@@ -253,6 +253,9 @@ case "$ACTION" in
     export FORGE_FEE_RECIPIENT_ADDRESS="$FEE_RECIPIENT"
     export FORGE_DEFAULT_PLATFORM_FEE_BPS="$FEE_BPS"
     if [ -n "$REGISTRY" ]; then export FORGE_ERC8004_REPUTATION_REGISTRY="$REGISTRY"; else unset FORGE_ERC8004_REPUTATION_REGISTRY; fi
+    # DiamondDeploy trusts FORGE_PGTR_FORWARDER, which in .env is a Base forwarder. A Tempo diamond
+    # trusts only the forwarder deploy-forwarder builds and checks for it.
+    unset FORGE_PGTR_FORWARDER
     # Refuses before anything is sent if a node estimate reaches Tempo's 30M cap; sets
     # TEMPO_GAS_FLAGS so no gas limit forge sends exceeds it (script/lib/tempo-gas.sh).
     tempo_gas_preflight script/DiamondDeploy.s.sol:DiamondDeploy "$(tempo_rpc_url "$RPC_ALIAS")" \

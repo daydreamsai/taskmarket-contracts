@@ -40,6 +40,19 @@ export const TaskTokenRewardHookV2ABI = [
   },
   {
     "type": "function",
+    "name": "DEFAULT_ZERO_AGE_RESERVE_SHARE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_BONUS_AWARDS",
     "inputs": [],
     "outputs": [
@@ -1287,7 +1300,7 @@ export const TaskTokenRewardHookV2ABI = [
         "internalType": "bytes32"
       },
       {
-        "name": "",
+        "name": "ctx",
         "type": "tuple",
         "internalType": "struct ITMPHookV2.TaskContextV2",
         "components": [
@@ -5350,6 +5363,19 @@ export const TaskTokenRewardHookV2ABI = [
   },
   {
     "type": "function",
+    "name": "setZeroAgeReserveShareBps",
+    "inputs": [
+      {
+        "name": "shareBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {
@@ -5549,6 +5575,19 @@ export const TaskTokenRewardHookV2ABI = [
   {
     "type": "function",
     "name": "workerSplitBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "zeroAgeReserveShareBps",
     "inputs": [],
     "outputs": [
       {
@@ -6137,22 +6176,6 @@ export const TaskTokenRewardHookV2ABI = [
     "type": "error",
     "name": "SeedLengthMismatch",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "StringsInsufficientHexLength",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",

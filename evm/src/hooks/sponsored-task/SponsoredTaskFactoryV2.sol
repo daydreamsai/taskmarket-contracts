@@ -17,7 +17,8 @@ import { ISponsoredTaskRegistry } from "./interfaces/ISponsoredTaskRegistry.sol"
 ///      allowance for `createVault` and `createVaultBySig`, or by an EIP-3009 authorization bound to
 ///      the signed create for `createVaultBySigWithFeeAuthorization`.
 contract SponsoredTaskFactoryV2 is EIP712, SponsoredTaskCreationFee {
-    uint32 public constant IMPLEMENTATION_VERSION = 2;
+    /// @notice The `VAULT_VERSION` of the vaults this factory clones: 3 from rev031, 2 before.
+    uint32 public constant IMPLEMENTATION_VERSION = 3;
 
     bytes32 public constant CREATE_VAULT_TYPEHASH =
         keccak256("CreateVault(address token,address vaultOwner,bytes32 userSalt,uint256 nonce,uint256 deadline)");

@@ -27,6 +27,14 @@ library SponsoredTaskTerms {
     bytes32 internal constant TERMS_HASH_TYPEHASH =
         keccak256("SponsoredTaskTermsHash(bytes32 taskTermsHash,bytes32 settlementTermsHash)");
 
+    /// @dev Rev031: the commitment of a task created with a reserved worker wraps the one above
+    ///      with the worker, `keccak256(abi.encode(RESERVED_TERMS_HASH_TYPEHASH, termsHash,
+    ///      reservedWorker))`, so a sponsorship cannot be bound to a reservation offered to someone
+    ///      the commitment did not name. A task without one keeps the commitment above, unchanged
+    ///      from rev030.
+    bytes32 internal constant RESERVED_TERMS_HASH_TYPEHASH =
+        keccak256("SponsoredTaskReservedTermsHash(bytes32 termsHash,address reservedWorker)");
+
     struct SettlementTerms {
         uint8 penaltyTo;
         uint32 reviewWindowSecs;

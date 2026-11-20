@@ -453,6 +453,37 @@ impl Env {
         ata
     }
 
+    /// Creates a token account of `mint` owned by `owner` at a fresh keypair address, so not
+    /// `owner`'s associated token account.
+    pub fn token_account(
+        &mut self,
+        token_program: &Pubkey,
+        mint: &Pubkey,
+        owner: &Pubkey,
+    ) -> Pubkey {
+        let account = Keypair::new();
+        let space = spl_token_interface::state::Account::LEN;
+        let lamports = self.svm.minimum_balance_for_rent_exemption(space);
+        let ixs = [
+            solana_system_interface::instruction::create_account(
+                &self.payer.pubkey(),
+                &account.pubkey(),
+                lamports,
+                space as u64,
+                token_program,
+            ),
+            spl_token_2022_interface::instruction::initialize_account3(
+                token_program,
+                &account.pubkey(),
+                mint,
+                owner,
+            )
+            .unwrap(),
+        ];
+        self.send(&ixs, &[&account]).expect("create token account");
+        account.pubkey()
+    }
+
     /// Creates a program-owned account holding `value`, for states no instruction can reach in
     /// a test (a binding for an EVM address whose key the test does not hold).
     pub fn put<T: AccountSerialize>(&mut self, key: &Pubkey, value: &T, space: usize) {
@@ -664,6 +695,28 @@ impl VaultFixture {
         }
     }
 
+    pub fn extend_deadline_ix(
+        &self,
+        settlers: &[&Keypair],
+        reservation: Pubkey,
+        new_deadline: i64,
+    ) -> Instruction {
+        let mut metas = accounts::ExtendDeadline {
+            config: config_pda(),
+            vault: self.vault,
+            reservation,
+            event_authority: event_authority(),
+            program: ID,
+        }
+        .to_account_metas(None);
+        metas.extend(settler_metas(settlers));
+        Instruction {
+            program_id: ID,
+            accounts: metas,
+            data: instruction::ExtendDeadline { new_deadline }.data(),
+        }
+    }
+
     /// `release_expired` is permissionless: no settlers, no signer beyond the fee payer.
     pub fn release_expired_ix(&self, reservation: Pubkey) -> Instruction {
         Instruction {
@@ -803,6 +856,24 @@ impl VaultFixture {
             }
             .to_account_metas(None),
             data: instruction::EmergencyExit {}.data(),
+        }
+    }
+
+    pub fn sweep_ix(&self, sponsor: &Pubkey, recipient_token: &Pubkey) -> Instruction {
+        Instruction {
+            program_id: ID,
+            accounts: accounts::SweepExited {
+                vault: self.vault,
+                sponsor: *sponsor,
+                mint: self.mint,
+                vault_token_account: self.vault_token,
+                recipient_token_account: *recipient_token,
+                token_program: self.token_program,
+                event_authority: event_authority(),
+                program: ID,
+            }
+            .to_account_metas(None),
+            data: instruction::SweepExited {}.data(),
         }
     }
 }

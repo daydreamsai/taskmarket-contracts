@@ -24,6 +24,10 @@ library LibTaskMarket {
     // gas cap would make acceptance unreachable; 5M is well above the worst measured registry
     // cost (about 1.8M on Tempo) and well below any supported chain's cap.
     uint256 internal constant MAX_FEEDBACK_GAS = 5_000_000;
+    // Rev031: the most gas a giveFeedback call is given. Without it the call takes all but 1/64 of
+    // what is left, so a registry that burns gas could use up a settlement's transaction; 3M is
+    // well above the worst measured registry cost (about 1.8M on Tempo).
+    uint256 internal constant FEEDBACK_CALL_GAS = 3_000_000;
 
     // Rev025: most winners one Bounty or Benchmark settlement may pay. 50 winners measured about
     // 3.6M gas on Base, where a new storage slot costs 20k.

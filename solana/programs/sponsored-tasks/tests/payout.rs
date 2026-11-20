@@ -483,6 +483,96 @@ fn attested_and_signed_bindings_share_one_nonce_sequence() {
 }
 
 #[test]
+fn a_second_attested_binding_keeps_paying_the_first_until_it_takes_effect() {
+    let mut env = Env::new();
+    let payer = env.payer.pubkey();
+    let s = env.settlers[0].insecure_clone();
+    let agent = [0x66u8; 20];
+    let first = Pubkey::new_unique();
+    let second = Pubkey::new_unique();
+    let pda = payout_pda(TASK_CHAIN_ID, &agent);
+    let delay = DEFAULT_CLAIM_DELAY_SECONDS as i64;
+
+    env.send(
+        &[bind_payout_attested_ix(
+            &payer,
+            &[&s],
+            TASK_CHAIN_ID,
+            agent,
+            first,
+            1,
+        )],
+        &[&s],
+    )
+    .unwrap();
+    env.warp_to(env.now() + delay);
+    let binding: PayoutBinding = env.account(&pda);
+    assert_eq!(binding.effective_payout(env.now()), first);
+
+    // A second attestation must not fall back to the payout before the first one.
+    env.send(
+        &[bind_payout_attested_ix(
+            &payer,
+            &[&s],
+            TASK_CHAIN_ID,
+            agent,
+            second,
+            2,
+        )],
+        &[&s],
+    )
+    .unwrap();
+    let binding: PayoutBinding = env.account(&pda);
+    assert_eq!(binding.payout, first);
+    assert_eq!(binding.effective_payout(env.now()), first);
+    assert_eq!(binding.pending_payout, second);
+
+    env.warp_to(env.now() + delay);
+    let binding: PayoutBinding = env.account(&pda);
+    assert_eq!(binding.effective_payout(env.now()), second);
+}
+
+#[test]
+fn a_second_attested_binding_replaces_a_first_that_never_took_effect() {
+    let mut env = Env::new();
+    let payer = env.payer.pubkey();
+    let s = env.settlers[0].insecure_clone();
+    let agent = [0x67u8; 20];
+    let first = Pubkey::new_unique();
+    let second = Pubkey::new_unique();
+    let pda = payout_pda(TASK_CHAIN_ID, &agent);
+
+    env.send(
+        &[bind_payout_attested_ix(
+            &payer,
+            &[&s],
+            TASK_CHAIN_ID,
+            agent,
+            first,
+            1,
+        )],
+        &[&s],
+    )
+    .unwrap();
+    env.send(
+        &[bind_payout_attested_ix(
+            &payer,
+            &[&s],
+            TASK_CHAIN_ID,
+            agent,
+            second,
+            2,
+        )],
+        &[&s],
+    )
+    .unwrap();
+    // The first was still pending, so it is never promoted.
+    let binding: PayoutBinding = env.account(&pda);
+    assert_eq!(binding.payout, Pubkey::default());
+    assert_eq!(binding.pending_payout, second);
+}
+
+#[test]
 fn a_first_attested_binding_starts_at_nonce_one() {
     let mut env = Env::new();
     let payer = env.payer.pubkey();

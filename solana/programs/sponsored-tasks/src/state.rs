@@ -11,6 +11,10 @@ pub const MAX_MANAGERS: usize = 8;
 pub const MAX_FEE_BPS: u16 = 10_000;
 /// Claim delay used while `Config::claim_delay_seconds` is unset (zero).
 pub const DEFAULT_CLAIM_DELAY_SECONDS: u64 = 86_400;
+/// Longest a reservation may be held from the clock at `reserve` or `extend_deadline`: a task's
+/// expiry is at most 365 days out on the task chain and `RESERVATION_RELEASE_GRACE` adds 7 days,
+/// so 400 days leaves a margin while keeping `release_expired` reachable.
+pub const MAX_RESERVATION_SECS: i64 = 400 * 86_400;
 
 #[account]
 #[derive(InitSpace)]

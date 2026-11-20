@@ -6,7 +6,7 @@ pub enum SponsoredTasksError {
     NotAdmin,
     #[msg("Caller is not the vault sponsor")]
     NotSponsor,
-    #[msg("Settler set is empty, too large or has duplicates")]
+    #[msg("Settler set is empty, too large, has duplicates or the zero key")]
     InvalidSettlers,
     #[msg("Threshold must be between 1 and the number of settlers")]
     InvalidThreshold,
@@ -87,4 +87,10 @@ pub enum SponsoredTasksError {
     InvalidPayoutNonce,
     #[msg("Reservation deadline has not passed")]
     ReservationNotExpired,
+    #[msg("Vault has not exited")]
+    VaultNotExited,
+    #[msg("Reservation deadline is more than MAX_RESERVATION_SECS from now")]
+    DeadlineTooFar,
+    #[msg("Destination is not the payout's associated token account")]
+    PayoutAccountNotAssociated,
 }

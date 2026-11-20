@@ -11,6 +11,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits, storedGrantHash } from "./helpers/GrantHelper.sol";
 
 /// @dev rev029: the owner's limits on a grant (expiry, modes, reward per task, a budget per period),
 ///      lowering a cap, and the GrantCommitted event after every draw and refund.
@@ -55,7 +56,7 @@ contract ProjectGrantLimitsTest is DiamondTestHelper {
             ownerOverride: true,
             revokeRemovesControl: true
         });
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, t)));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, t, noGrantLimits())));
     }
 
     // -------------------------------------------------------------------------
@@ -67,7 +68,7 @@ contract ProjectGrantLimitsTest is DiamondTestHelper {
     }
 
     function _accept() internal {
-        bytes32 h = keccak256(abi.encode(projects.getGrant(id, operator).terms));
+        bytes32 h = storedGrantHash(projects, id, operator);
         _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, h)));
     }
 
@@ -465,7 +466,7 @@ contract ProjectGrantLimitsTest is DiamondTestHelper {
             ownerOverride: true,
             revokeRemovesControl: true
         });
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, op2, t)));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, op2, t, noGrantLimits())));
         _lower(owner, op2, 7e6);
         assertEq(projects.getGrant(id, op2).terms.cap, 7e6);
     }
@@ -498,7 +499,8 @@ contract ProjectGrantLimitsTest is DiamondTestHelper {
         }
     }
 
-    function test_Regrant_KeepsTheLimitsAndTheMeter() public {
+    /// @dev Rev031: a regrant states its limits, like any grant. The same period keeps the meter.
+    function test_Regrant_SetsItsLimitsAndKeepsTheMeterForTheSamePeriod() public {
         _accept();
         _set(_limits(0, 1, 0, 7 days, 8e6));
         _task(operator, 3e6);
@@ -509,9 +511,57 @@ contract ProjectGrantLimitsTest is DiamondTestHelper {
             ownerOverride: true,
             revokeRemovesControl: true
         });
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, t)));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, t, _limits(0, 1, 0, 7 days, 8e6))));
         ITMPProject.GrantLimits memory l = projects.getGrantLimits(id, operator);
         assertEq(l.allowedModesMask, 1);
         assertEq(l.periodSpent, 3e6);
+
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, t, noGrantLimits())));
+        l = projects.getGrantLimits(id, operator);
+        assertEq(l.allowedModesMask, 0, "the regrant's limits replace the old ones");
+        assertEq(l.periodSpent, 0, "a new period restarts the meter");
+    }
+
+    /// @dev Cyclops 7663: limits land with the grant, so the operator's first draw is already inside
+    ///      them, and the operator accepts the limits it reviewed.
+    function test_GrantWithLimits_BindsTheFirstDraw() public {
+        address op2 = address(0xB2);
+        ITMPProject.GrantTerms memory t = ITMPProject.GrantTerms({
+            cap: 20e6,
+            requesterOfRecord: ITMPProject.RequesterOfRecord.Owner,
+            ownerOverride: true,
+            revokeRemovesControl: true
+        });
+        ITMPProject.GrantLimitsInput memory l = _limits(0, 0, 3e6, 0, 0);
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, op2, t, l)));
+        assertEq(projects.getGrantLimits(id, op2).maxRewardPerTask, 3e6, "stored with the grant");
+
+        // The hash of the terms alone, or of the terms with other limits, is refused.
+        bytes32 stored = grantHash(t, l);
+        vm.expectRevert(
+            abi.encodeWithSelector(ITMPProject.GrantTermsMismatch.selector, stored, keccak256(abi.encode(t)))
+        );
+        _relay(op2, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(t)))));
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantTermsMismatch.selector, stored, grantHash(t)));
+        _relay(op2, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(t))));
+        _relay(op2, 0, abi.encodeCall(projects.acceptGrant, (id, stored)));
+
+        vm.expectRevert(abi.encodeWithSelector(ITMPProject.GrantRewardTooHigh.selector, 3e6, 10e6));
+        _relay(op2, 0, _taskCall(10e6, TMP_BOUNTY));
+        _task(op2, 3e6);
+    }
+
+    /// @dev Cyclops 7663: limits the owner changes on a pending grant must be accepted again.
+    function test_PendingGrant_LimitsChangedAfterReviewCannotBeAccepted() public {
+        bytes32 reviewed = storedGrantHash(projects, id, operator);
+        _set(_limits(0, 0, 0, 1 days, 1e6));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITMPProject.GrantTermsMismatch.selector, storedGrantHash(projects, id, operator), reviewed
+            )
+        );
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, reviewed)));
+        _accept();
+        assertTrue(projects.getGrant(id, operator).accepted);
     }
 }

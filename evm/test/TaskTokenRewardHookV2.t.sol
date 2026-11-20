@@ -351,4 +351,24 @@ contract TaskTokenRewardHookV2Test is DiamondTestHelper {
         vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHookV2.ReleaseNotDue.selector, taskId));
         hook2.recoverReserve(taskId);
     }
+
+    /// @dev Rev031 (Cyclops 7613): a requester acceptance no hook changed stores no verdict, so a
+    ///      missed afterComplete on an unreserved Bounty is recovered from the awards beforeAccept
+    ///      recorded.
+    function test_Rev031_MissedAfterCompleteRecoversRequesterAcceptedBounty() public {
+        _defaultRewardHook();
+        bytes32 taskId = _bountyWith(_transformer());
+        vm.mockCallRevert(address(hook2), abi.encodeWithSelector(ITMPHookV2.afterComplete.selector), "");
+        _acceptBoth(taskId);
+        vm.clearMockedCalls();
+        assertFalse(market.getTaskVerdict(taskId).issued, "an unchanged acceptance stores no verdict");
+        assertEq(hook2.claimable(worker), 0, "no bonus yet");
+
+        hook2.recoverReserve(taskId);
+        assertEq(hook2.claimable(worker), 5e18 * 8000 / 10000, "worker half recovered");
+        assertEq(hook2.claimable(worker2), 5e18 * 8000 / 10000, "worker2 half recovered");
+        assertTrue(_paid(taskId), "paid once");
+        vm.expectRevert(abi.encodeWithSelector(TaskTokenRewardHookV2.ReleaseNotDue.selector, taskId));
+        hook2.recoverReserve(taskId);
+    }
 }

@@ -157,6 +157,36 @@ contract EpochBudgetTest is Test {
         assertEq(budget.workerUsed(WORKER), 100e18);
     }
 
+    /// @dev Cyclops 7627: a longer duration set after an epoch lapsed unrolled must not put the clock
+    ///      back inside the lapsed epoch, whose usage would count again.
+    function test_setEpochDuration_afterLapse_startsUsageFromZero() public {
+        vm.prank(HOOK);
+        budget.checkAndConsume(TASK, REQUESTER, WORKER, MAX_PER_TASK);
+        uint64 lapsed = budget.currentEpoch();
+
+        vm.warp(block.timestamp + EPOCH + 1);
+        vm.prank(OWNER);
+        budget.setEpochDuration(EPOCH * 4);
+
+        assertGt(budget.currentEpoch(), lapsed, "rolled before the duration changed");
+        assertEq(budget.epochDuration(), EPOCH * 4);
+        assertEq(budget.globalUsed(), 0);
+        assertEq(budget.workerUsed(WORKER), 0);
+        assertEq(budget.requesterUsed(REQUESTER), 0);
+        vm.prank(HOOK);
+        budget.checkAndConsume(TASK_B, REQUESTER, WORKER, MAX_PER_TASK);
+        assertEq(budget.workerUsed(WORKER), MAX_PER_TASK);
+    }
+
+    function test_setEpochDuration_insideTheEpoch_keepsItsUsage() public {
+        vm.prank(HOOK);
+        budget.checkAndConsume(TASK, REQUESTER, WORKER, 200e18);
+        vm.warp(block.timestamp + EPOCH - 1);
+        vm.prank(OWNER);
+        budget.setEpochDuration(EPOCH * 4);
+        assertEq(budget.workerUsed(WORKER), 200e18, "the live epoch's usage still counts");
+    }
+
     function test_release_onlyHook() public {
         vm.prank(STRANGER);
         vm.expectRevert(EpochBudget.OnlyHook.selector);

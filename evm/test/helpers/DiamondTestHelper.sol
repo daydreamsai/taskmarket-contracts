@@ -217,6 +217,20 @@ abstract contract DiamondTestHelper is Test {
     ///      untouched and remain those of the current build -- these fixtures reconstruct
     ///      historical *routing* where a step's cut depends on it, never historical bytecode,
     ///      which this repo no longer contains.
+    /// @dev Routes ProjectFacet's grantOperator as rev027 to rev030 did (`toRev030`): the terms-only
+    ///      selector in place of the one that takes limits, which rev031 Adds; or back again.
+    function routeGrantOperator(address diamond, address _owner, bool toRev030) internal {
+        bytes4[] memory current = FacetSelectors.projectSelectorsAddedRev031();
+        bytes4[] memory old = FacetSelectors.selectorsRemovedRev031();
+        bytes4[] memory from = toRev030 ? current : old;
+        address project = IDiamondLoupe(diamond).facetAddress(from[0]);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
+        cuts[0] = IDiamondCut.FacetCut(address(0), IDiamondCut.FacetCutAction.Remove, from);
+        cuts[1] = IDiamondCut.FacetCut(project, IDiamondCut.FacetCutAction.Add, toRev030 ? old : current);
+        vm.prank(_owner);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+    }
+
     function placeAtVersion(address diamond, uint256 version) internal {
         vm.store(diamond, bytes32(DIAMOND_VERSION_SLOT), bytes32(version));
         assertEq(

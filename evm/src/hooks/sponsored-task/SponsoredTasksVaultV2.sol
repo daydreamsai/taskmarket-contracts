@@ -41,15 +41,20 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     bytes32 public constant CLAIM_TO_TYPEHASH = keccak256(
         "ClaimTo(bytes32 vaultId,uint64 epoch,bytes32 allocationId,bytes32 taskId,uint256 index,address worker,address destination,uint256 amount,uint256 nonce,uint256 deadline)"
     );
-    uint32 public constant VAULT_VERSION = 2;
+    /// @notice 3 from rev031 (the manager allowance is keyed by task chain); 2 before. Every v2
+    ///         entry point is unchanged, so a client treats any version from 2 on as supporting the
+    ///         v2 signed actions.
+    uint32 public constant VAULT_VERSION = 3;
     /// @notice The most cancelOwnerSignaturesUpTo can move the owner nonce forward in one call.
     uint256 public constant MAX_OWNER_NONCE_JUMP = 1_000_000;
 
     bytes32 public constant CONFIGURE_MANAGER_TYPEHASH = keccak256(
         "ConfigureManager(bytes32 vaultId,address manager,uint256 cap,bool active,uint256 nonce,uint256 deadline)"
     );
-    bytes32 public constant WITHDRAW_AVAILABLE_TYPEHASH = keccak256(
-        "WithdrawAvailable(bytes32 vaultId,address recipient,uint256 amount,uint256 nonce,uint256 deadline)"
+    bytes32 public constant WITHDRAW_AVAILABLE_TYPEHASH =
+        keccak256("WithdrawAvailable(bytes32 vaultId,address recipient,uint256 amount,uint256 nonce,uint256 deadline)");
+    bytes32 public constant CONFIGURE_MANAGER_FOR_CHAIN_TYPEHASH = keccak256(
+        "ConfigureManagerForChain(bytes32 vaultId,uint256 taskChainId,address manager,uint256 cap,bool active,uint256 nonce,uint256 deadline)"
     );
     bytes32 public constant EMERGENCY_EXIT_TYPEHASH =
         keccak256("EmergencyExitVault(bytes32 vaultId,address recipient,uint256 nonce,uint256 deadline)");
@@ -72,20 +77,34 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     uint256 public totalDefaultedReserved;
     uint256 public totalDefaultedClaimable;
 
+    /// @dev Unused from rev031 (kept so the layout only appends): manager accounts are keyed by
+    ///      task chain in `_chainManagers`.
     mapping(address manager => SponsoredTaskTypes.ManagerAccount account) private _managers;
     mapping(bytes32 allocationId => SponsoredTaskTypes.Allocation allocation) private _allocations;
     mapping(bytes32 allocationId => mapping(uint256 word => uint256 bitmap)) private _claimedBitmaps;
     mapping(address worker => uint256 nonce) public claimNonces;
     /// @notice The nonce the owner's next signed action must carry.
     uint256 public ownerNonce;
+    /// @dev Manager accounts keyed by the task chain whose tasks may spend them. A remote vault
+    ///      funds tasks from more than one task chain, and the same address can be controlled by
+    ///      different parties on different chains (a contract wallet), so an allowance the sponsor
+    ///      granted for one task chain must not be spendable by tasks from another. The entry points
+    ///      that name no chain act on `block.chainid`, the only task chain a hook-mode vault serves.
+    mapping(uint256 taskChainId => mapping(address manager => SponsoredTaskTypes.ManagerAccount account)) private
+        _chainManagers;
+    /// @dev The task chain each allocation's manager account was charged on, so its release and
+    ///      settlement refund and spend the same account.
+    mapping(bytes32 allocationId => uint256 taskChainId) private _allocationTaskChain;
 
     error AlreadyInitialized();
     error ZeroAddress();
     error InvalidContract(address account);
     error InvalidVaultId();
     error VaultNotActive();
+    error VaultNotExited();
     error OnlyController(address caller);
     error InvalidManagerCap(uint256 minimum, uint256 provided);
+    error TaskChainRequired();
     error ManagerNotActive(address manager);
     error ManagerAllowanceExceeded(address manager, uint256 requested, uint256 remaining);
     error AllocationIdRequired();
@@ -134,6 +153,9 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     event VaultFunded(address indexed funder, uint256 amount);
     event AvailableWithdrawn(address indexed owner, address indexed recipient, uint256 amount);
     event ManagerConfigured(address indexed manager, uint256 cap, uint256 reserved, uint256 spent, bool active);
+    event ManagerConfiguredForChain(
+        uint256 indexed taskChainId, address indexed manager, uint256 cap, uint256 reserved, uint256 spent, bool active
+    );
     event TaskReserved(
         bytes32 indexed allocationId,
         bytes32 indexed taskId,
@@ -181,6 +203,7 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         uint256 affectedReserved,
         uint256 affectedClaimable
     );
+    event ExitedVaultSwept(bytes32 indexed vaultId, address indexed owner, address indexed recipient, uint256 amount);
     event OwnerSignatureUsed(address indexed owner, uint256 indexed nonce);
     event OwnerSignaturesCancelled(address indexed owner, uint256 previousNonce, uint256 newNonce);
 
@@ -268,8 +291,18 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         return balance - liabilities;
     }
 
+    /// @notice The manager's account for tasks from this chain (`block.chainid`).
     function managerAccount(address manager) external view returns (SponsoredTaskTypes.ManagerAccount memory account) {
-        account = _managers[manager];
+        return managerAccountForChain(block.chainid, manager);
+    }
+
+    /// @notice The manager's account for tasks from `taskChainId`.
+    function managerAccountForChain(uint256 taskChainId, address manager)
+        public
+        view
+        returns (SponsoredTaskTypes.ManagerAccount memory account)
+    {
+        account = _chainManagers[taskChainId][manager];
         if (vaultStatus == SponsoredTaskTypes.VaultStatus.Exited) account.active = false;
     }
 
@@ -287,9 +320,15 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         return super.owner();
     }
 
-    function managerRemaining(address manager) public view returns (uint256) {
+    /// @notice What the manager may still reserve for tasks from this chain (`block.chainid`).
+    function managerRemaining(address manager) external view returns (uint256) {
+        return managerRemainingForChain(block.chainid, manager);
+    }
+
+    /// @notice What the manager may still reserve for tasks from `taskChainId`.
+    function managerRemainingForChain(uint256 taskChainId, address manager) public view returns (uint256) {
         if (vaultStatus != SponsoredTaskTypes.VaultStatus.Active) return 0;
-        SponsoredTaskTypes.ManagerAccount storage account = _managers[manager];
+        SponsoredTaskTypes.ManagerAccount storage account = _chainManagers[taskChainId][manager];
         uint256 used = account.reserved + account.spent;
         return account.cap > used ? account.cap - used : 0;
     }
@@ -367,19 +406,43 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         return word & (uint256(1) << (index & 255)) != 0;
     }
 
-    /// @notice Grant, increase, reduce, revoke, or reactivate a manager's lifetime token allowance.
+    /// @notice Grant, increase, reduce, revoke, or reactivate a manager's lifetime token allowance
+    ///         for tasks from this chain (`block.chainid`).
     function configureManager(address manager, uint256 newCap, bool active) external onlyOwner onlyActive {
         _configureManager(manager, newCap, active);
     }
 
+    /// @notice `configureManager` for tasks from `taskChainId`: only tasks created on that chain can
+    ///         spend this allowance.
+    function configureManagerForChain(uint256 taskChainId, address manager, uint256 newCap, bool active)
+        external
+        onlyOwner
+        onlyActive
+    {
+        _configureManagerForChain(taskChainId, manager, newCap, active);
+    }
+
     function _configureManager(address manager, uint256 newCap, bool active) internal {
+        SponsoredTaskTypes.ManagerAccount storage account = _setManager(block.chainid, manager, newCap, active);
+        emit ManagerConfigured(manager, newCap, account.reserved, account.spent, active);
+    }
+
+    function _configureManagerForChain(uint256 taskChainId, address manager, uint256 newCap, bool active) internal {
+        if (taskChainId == 0) revert TaskChainRequired();
+        SponsoredTaskTypes.ManagerAccount storage account = _setManager(taskChainId, manager, newCap, active);
+        emit ManagerConfiguredForChain(taskChainId, manager, newCap, account.reserved, account.spent, active);
+    }
+
+    function _setManager(uint256 taskChainId, address manager, uint256 newCap, bool active)
+        private
+        returns (SponsoredTaskTypes.ManagerAccount storage account)
+    {
         if (manager == address(0)) revert ZeroAddress();
-        SponsoredTaskTypes.ManagerAccount storage account = _managers[manager];
+        account = _chainManagers[taskChainId][manager];
         uint256 minimum = account.reserved + account.spent;
         if (newCap < minimum) revert InvalidManagerCap(minimum, newCap);
         account.cap = newCap;
         account.active = active;
-        emit ManagerConfigured(manager, newCap, account.reserved, account.spent, active);
     }
 
     function withdrawAvailable(address recipient, uint256 amount) external onlyOwner onlyActive nonReentrant {
@@ -397,6 +460,7 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     }
 
     /// @inheritdoc ISponsoredTasksVault
+    /// @dev Charges the manager's account for tasks from this chain (`block.chainid`).
     function reserveTask(
         bytes32 allocationId,
         bytes32 taskId,
@@ -407,6 +471,56 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         address expectedFeeRecipient,
         bytes32 termsHash
     ) external override onlyController onlyActive nonReentrant {
+        _reserveTask(
+            allocationId,
+            block.chainid,
+            taskId,
+            manager,
+            grossAmount,
+            expectedEpoch,
+            expectedFeeBps,
+            expectedFeeRecipient,
+            termsHash
+        );
+    }
+
+    /// @inheritdoc ISponsoredTasksVault
+    function reserveTaskForChain(
+        bytes32 allocationId,
+        uint256 taskChainId,
+        bytes32 taskId,
+        address manager,
+        uint256 grossAmount,
+        uint64 expectedEpoch,
+        uint16 expectedFeeBps,
+        address expectedFeeRecipient,
+        bytes32 termsHash
+    ) external override onlyController onlyActive nonReentrant {
+        if (taskChainId == 0) revert TaskChainRequired();
+        _reserveTask(
+            allocationId,
+            taskChainId,
+            taskId,
+            manager,
+            grossAmount,
+            expectedEpoch,
+            expectedFeeBps,
+            expectedFeeRecipient,
+            termsHash
+        );
+    }
+
+    function _reserveTask(
+        bytes32 allocationId,
+        uint256 taskChainId,
+        bytes32 taskId,
+        address manager,
+        uint256 grossAmount,
+        uint64 expectedEpoch,
+        uint16 expectedFeeBps,
+        address expectedFeeRecipient,
+        bytes32 termsHash
+    ) private {
         if (allocationId == bytes32(0)) revert AllocationIdRequired();
         if (manager == address(0)) revert ZeroAddress();
         if (grossAmount == 0) revert GrossAmountRequired();
@@ -417,7 +531,9 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         }
 
         (uint16 feeBps, address feeRecipient) =
-            _checkReservation(manager, grossAmount, expectedFeeBps, expectedFeeRecipient);
+            _checkReservation(taskChainId, manager, grossAmount, expectedFeeBps, expectedFeeRecipient);
+        _chainManagers[taskChainId][manager].reserved += grossAmount;
+        _allocationTaskChain[allocationId] = taskChainId;
         _recordReservation(allocationId, taskId, manager, grossAmount, feeBps, feeRecipient, termsHash);
     }
 
@@ -428,14 +544,15 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     ///      every local live, unlike the default optimized build). Same reasoning as
     ///      `SponsoredTaskHook._checkFund`/`_reserveLocal`'s own split.
     function _checkReservation(
+        uint256 taskChainId,
         address manager,
         uint256 grossAmount,
         uint16 expectedFeeBps,
         address expectedFeeRecipient
     ) private view returns (uint16 feeBps, address feeRecipient) {
-        SponsoredTaskTypes.ManagerAccount storage account = _managers[manager];
+        SponsoredTaskTypes.ManagerAccount storage account = _chainManagers[taskChainId][manager];
         if (!account.active) revert ManagerNotActive(manager);
-        uint256 remaining = managerRemaining(manager);
+        uint256 remaining = managerRemainingForChain(taskChainId, manager);
         if (grossAmount > remaining) revert ManagerAllowanceExceeded(manager, grossAmount, remaining);
 
         uint256 availableAmount = available();
@@ -457,7 +574,6 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         address feeRecipient,
         bytes32 termsHash
     ) private {
-        _managers[manager].reserved += grossAmount;
         totalReserved += grossAmount;
         _allocations[allocationId] = SponsoredTaskTypes.Allocation({
             taskId: taskId,
@@ -509,7 +625,8 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
             revert AllocationWrongStatus(allocationId, item.status);
         }
 
-        SponsoredTaskTypes.ManagerAccount storage account = _managers[item.manager];
+        SponsoredTaskTypes.ManagerAccount storage account =
+            _chainManagers[_allocationTaskChain[allocationId]][item.manager];
         account.reserved -= item.grossAmount;
         totalReserved -= item.grossAmount;
         item.releasedAmount = item.grossAmount;
@@ -560,7 +677,8 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
             revert UnexpectedSettlementCommitment();
         }
 
-        SponsoredTaskTypes.ManagerAccount storage account = _managers[item.manager];
+        SponsoredTaskTypes.ManagerAccount storage account =
+            _chainManagers[_allocationTaskChain[allocationId]][item.manager];
         account.reserved -= item.grossAmount;
         account.spent += distributedGross;
         totalReserved -= item.grossAmount;
@@ -674,6 +792,8 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     ///      that starts charging a transfer fee after funding makes every exact transfer revert, and
     ///      the exit is the only path left that can move the balance. It still reverts when the
     ///      recipient receives nothing, so a redirecting token cannot send the balance elsewhere.
+    ///      `totalWithdrawn`, the returned amount and `VaultEmergencyExited` record what the
+    ///      recipient received, net of any such fee.
     function emergencyExitVault(address recipient) external onlyOwner onlyActive nonReentrant returns (uint256 amount) {
         return _emergencyExitVault(msg.sender, recipient);
     }
@@ -685,7 +805,7 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         uint64 closedEpoch = epoch;
         uint256 affectedReserved = totalReserved;
         uint256 affectedClaimable = totalClaimable;
-        amount = projectToken.balanceOf(address(this));
+        uint256 balance = projectToken.balanceOf(address(this));
 
         vaultStatus = SponsoredTaskTypes.VaultStatus.Exited;
         epoch = closedEpoch + 1;
@@ -693,12 +813,24 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         totalDefaultedClaimable += affectedClaimable;
         totalReserved = 0;
         totalClaimable = 0;
-        totalWithdrawn += amount;
 
-        _transferExit(recipient, amount);
+        amount = _transferExit(recipient, balance);
+        totalWithdrawn += amount;
         emit VaultEmergencyExited(
             vaultId, vaultOwner, recipient, closedEpoch, epoch, amount, affectedReserved, affectedClaimable
         );
+    }
+
+    /// @notice Sends every token held by an exited vault to `recipient`: what an inexact exit
+    ///         delivery left behind, or tokens sent to the vault after it exited. An exited vault
+    ///         owes nothing, so its whole balance is the owner's. Returns what the recipient received.
+    /// @dev Uses the exit's transfer check, so a token that charges a fee can still be swept.
+    function sweepExited(address recipient) external onlyOwner nonReentrant returns (uint256 amount) {
+        if (vaultStatus != SponsoredTaskTypes.VaultStatus.Exited) revert VaultNotExited();
+        if (recipient == address(0)) revert ZeroAddress();
+        amount = _transferExit(recipient, projectToken.balanceOf(address(this)));
+        totalWithdrawn += amount;
+        emit ExitedVaultSwept(vaultId, msg.sender, recipient, amount);
     }
 
     /// @dev Renouncing would remove the only terminal recovery authority and can permanently lock funds.
@@ -791,8 +923,8 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
     /// @dev Rejects tokens that debit this vault or credit the recipient by anything other than
     ///      the exact accounted amount. This also rejects self-transfers and transfer-tax behavior.
     /// @dev The exit's transfer: the vault must not lose more than it sends, and the recipient must
-    ///      receive something, but a token's fee may take part of it.
-    function _transferExit(address recipient, uint256 amount) private {
+    ///      receive something, but a token's fee may take part of it. Returns what it received.
+    function _transferExit(address recipient, uint256 amount) private returns (uint256 received) {
         uint256 vaultBalanceBefore = projectToken.balanceOf(address(this));
         uint256 recipientBalanceBefore = projectToken.balanceOf(recipient);
 
@@ -801,8 +933,7 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
         uint256 vaultBalanceAfter = projectToken.balanceOf(address(this));
         uint256 recipientBalanceAfter = projectToken.balanceOf(recipient);
         uint256 sent = vaultBalanceBefore >= vaultBalanceAfter ? vaultBalanceBefore - vaultBalanceAfter : 0;
-        uint256 received =
-            recipientBalanceAfter >= recipientBalanceBefore ? recipientBalanceAfter - recipientBalanceBefore : 0;
+        received = recipientBalanceAfter >= recipientBalanceBefore ? recipientBalanceAfter - recipientBalanceBefore : 0;
         // The zero checks are deliberate: a balance delta of exactly zero means nothing moved, which
         // the exit refuses, while any positive delta is accepted as a fee-reduced delivery.
         // slither-disable-next-line incorrect-equality
@@ -841,6 +972,28 @@ contract SponsoredTasksVaultV2 is ISponsoredTasksVault, Ownable2StepUpgradeable,
             signature
         );
         _configureManager(manager, newCap, active);
+    }
+
+    /// @notice `configureManagerForChain`, authorized by the owner's signature instead of the caller.
+    function configureManagerForChainBySig(
+        uint256 taskChainId,
+        address manager,
+        uint256 newCap,
+        bool active,
+        uint256 deadline,
+        bytes calldata signature
+    ) external onlyActive {
+        uint256 nonce = ownerNonce;
+        _useOwnerSignature(
+            keccak256(
+                abi.encode(
+                    CONFIGURE_MANAGER_FOR_CHAIN_TYPEHASH, vaultId, taskChainId, manager, newCap, active, nonce, deadline
+                )
+            ),
+            deadline,
+            signature
+        );
+        _configureManagerForChain(taskChainId, manager, newCap, active);
     }
 
     /// @notice `withdrawAvailable`, authorized by the owner's signature instead of the caller.

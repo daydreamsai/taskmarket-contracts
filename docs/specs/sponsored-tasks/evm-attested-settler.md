@@ -24,18 +24,18 @@ One settler per remote chain, deployed first; a settler-mode `SponsoredTaskFacto
 with the settler as its immutable controller. Every vault that factory creates is an ordinary vault
 whose controller is the settler.
 
-| Function                                                             | Who                             | Paused  | Effect                                                                                   |
-| -------------------------------------------------------------------- | ------------------------------- | ------- | ---------------------------------------------------------------------------------------- |
-| `reserve(ReserveRequest, bytes[])`                                   | anyone, with settler signatures | blocked | records the commitment and calls `vault.reserveTask`                                     |
-| `release(ReleaseRequest, bytes[])`                                   | anyone, with settler signatures | open    | calls `vault.releaseTask`; a second release is a no-op                                   |
-| `settle(SettleRequest, bytes[])`                                     | anyone, with settler signatures | blocked | stores the root as pending with `settledAt`; does not touch the vault                    |
-| `finalize(vault, allocationId)`                                      | anyone                          | blocked | once `block.timestamp >= settledAt + claimDelaySeconds`, calls `vault.installSettlement` |
-| `revokeSettlement(vault, allocationId)`                              | owner                           | open    | deletes a pending root; the allocation returns to reserved; its digest stays used        |
-| `reopenRevokedSettlement(digest)`                                    | owner                           | open    | lets a revoked digest be submitted again; valid settler signatures are still required    |
-| `pause`, `unpause`                                                   | owner                           | --      | immediate                                                                                |
-| `setSettlers(address[], uint8)` / `applySettlers` / `cancelSettlers` | owner schedules, anyone applies | --      | 48h timelock                                                                             |
-| `setAuthority(address)` / `applyAuthority` / `cancelAuthority`       | owner schedules, anyone applies | --      | 48h timelock                                                                             |
-| `setClaimDelay(uint64)` / `applyClaimDelay` / `cancelClaimDelay`     | owner                           | --      | a raise is immediate; a reduction waits 48h                                              |
+| Function                                                             | Who                             | Paused  | Effect                                                                                    |
+| -------------------------------------------------------------------- | ------------------------------- | ------- | ----------------------------------------------------------------------------------------- |
+| `reserve(ReserveRequest, bytes[])`                                   | anyone, with settler signatures | blocked | until its signed `deadline`, records the commitment and calls `vault.reserveTaskForChain` |
+| `release(ReleaseRequest, bytes[])`                                   | anyone, with settler signatures | open    | calls `vault.releaseTask`; a second release is a no-op                                    |
+| `settle(SettleRequest, bytes[])`                                     | anyone, with settler signatures | blocked | stores the root as pending with `settledAt`; does not touch the vault                     |
+| `finalize(vault, allocationId)`                                      | anyone                          | blocked | once `block.timestamp >= settledAt + claimDelaySeconds`, calls `vault.installSettlement`  |
+| `revokeSettlement(vault, allocationId)`                              | owner                           | open    | deletes a pending root; the allocation returns to reserved; its digest stays used         |
+| `reopenRevokedSettlement(digest)`                                    | owner                           | open    | lets a revoked digest be submitted again; valid settler signatures are still required     |
+| `pause`, `unpause`                                                   | owner                           | --      | immediate                                                                                 |
+| `setSettlers(address[], uint8)` / `applySettlers` / `cancelSettlers` | owner schedules, anyone applies | --      | 48h timelock                                                                              |
+| `setAuthority(address)` / `applyAuthority` / `cancelAuthority`       | owner schedules, anyone applies | --      | 48h timelock                                                                              |
+| `setClaimDelay(uint64)` / `applyClaimDelay` / `cancelClaimDelay`     | owner                           | --      | a raise is immediate; a reduction waits 48h                                               |
 
 Per-allocation state, keyed by `(vault, allocationId)`: `None`, `Reserved`, `Pending`, `Settled`,
 `Released`. `release` requires `Reserved`, so a pending root must be revoked before its allocation
@@ -49,7 +49,7 @@ chain>, verifyingContract: <settler> }`.
 ```text
 Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
         uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,
-        address feeRecipient,bytes32 termsHash)
+        address feeRecipient,bytes32 termsHash,uint64 deadline)
 Release(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
         uint64 commitmentNonce)
 Settle(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
@@ -60,6 +60,25 @@ Settle(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,
 `Settle` is the field-for-field EVM form of the Solana settle authorization (program, vault, task
 chain id, task id, nonce, root, totals). `Reserve` carries what `vault.reserveTask` needs plus
 the task and commitment nonce; `Release` carries only the identifiers.
+
+`Reserve` also carries a `deadline` (unix seconds, from rev031). `reserve` reverts with
+`ReserveExpired(deadline)` once `block.timestamp > deadline`, before anything else. The settlers
+check that the task is still open when they sign; without a bound, the signatures of a reserve
+whose relay failed (they are in its reverted calldata, and in the signer's store) could be
+submitted much later for a task that has since been cancelled, holding the amount in the vault and
+the same amount of the manager's cap until the settlers sign a release. The Solana program's
+`reserve` has the same bound. The backend signer sets the deadline to the earlier of one reserve
+lifetime after signing (one hour by default) and the task's release deadline less ten minutes, and
+re-signs a reserve that misses it while the task is still open. `release` and `settle` carry no
+deadline: a late release only returns funds, and a settle is bound to the reserved allocation's
+commitment and can be revoked during the claim delay. A settler deployed before rev031 verifies the
+`Reserve` without `deadline`; it is not upgradeable, so it keeps that format for the vaults it
+controls (see the rev031 revision doc).
+
+From rev031 the settler reserves with `vault.reserveTaskForChain(..., taskChainId, ...)`, passing the
+signed `taskChainId`, so the vault charges the manager's allowance for that task chain only (see
+`signed-vault-actions-and-signed-funding.md`, "Manager allowances keyed by task chain"). The vaults
+it controls are the ones its own factory created, all from rev031.
 
 Every field is a static type, so the struct hash is `keccak256(abi.encode(TYPEHASH, request))`. The
 settler exposes `reserveDigest`, `releaseDigest` and `settleDigest` so a signer can check its
@@ -111,7 +130,10 @@ commitmentNonce, epoch, feeBps, feeRecipient, taskTermsHash }`, checks the task 
   settlers sign and the remote vault verifies.
 - `reconcile` repairs a missed callback from Taskmarket's terminal state, as on the local hook.
 - `reservationReleaseAfter(taskId)` is the task's expiry plus `RESERVATION_RELEASE_GRACE`
-  (7 days): the time after which the keeper releases a reservation that has no settlement.
+  (7 days): the time after which the keeper releases a reservation that has no settlement. From
+  rev031 it reverts `ReleaseHeldForLiveSubmissions` while the task is still open with live work (a
+  Bounty or Benchmark submission not rejected, or another mode's undecided delivery), since the
+  task can still be accepted then.
 
 ## Reasoning
 

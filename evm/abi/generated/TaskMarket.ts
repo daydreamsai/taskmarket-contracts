@@ -1172,6 +1172,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ReputationRegistryHasNoCode",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SafeCastOverflowedUintDowncast",
     "inputs": [
       {
@@ -2684,6 +2689,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "PriceZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TaskIsExpired",
     "inputs": []
   },
@@ -3555,11 +3565,6 @@ export const TaskMarketABI = [
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidAwardRank",
-    "inputs": []
   },
   {
     "type": "error",
@@ -5759,6 +5764,11 @@ export const TaskMarketABI = [
   },
   {
     "type": "error",
+    "name": "ReviewWindowShortened",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StakePaymentMismatch",
     "inputs": []
   },
@@ -6391,6 +6401,38 @@ export const TaskMarketABI = [
             "name": "revokeRemovesControl",
             "type": "bool",
             "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "limits",
+        "type": "tuple",
+        "internalType": "struct ITMPProject.GrantLimitsInput",
+        "components": [
+          {
+            "name": "expiresAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "allowedModesMask",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRewardPerTask",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "periodSecs",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "periodCap",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }
@@ -8610,6 +8652,41 @@ export const TaskMarketABI = [
   {
     "type": "error",
     "name": "InsufficientGasForHook",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCheckClaimRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCheckCompleteRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCheckEvaluateRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCheckSelectWorkerRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HookCheckSubmitRejected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAwardRank",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RequesterRefundFailed",
     "inputs": []
   }
 ] as const;

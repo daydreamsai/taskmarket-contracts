@@ -150,12 +150,9 @@ contract Rev030HookSafetyTest is DiamondTestHelper {
         vm.expectRevert(ITMPCore.ReleaseNotAllowed.selector);
         _relay(worker, 0, abi.encodeCall(market.releaseClaim, (id)));
 
-        // The hook's code changes after the claim: its vetoable observer callback now blocks delivery.
+        // The hook's code changes after the claim, so the worker may leave with the stake despite
+        // the Disallowed term (rev031: the changed observer no longer blocks delivery either).
         vm.etch(address(hook), address(usdc).code);
-        vm.expectRevert(abi.encodeWithSelector(ITMPHooksV2.HookCodeChanged.selector, uint8(0)));
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (id, WORK)));
-
-        // So the worker may leave with the stake despite the Disallowed term.
         _relay(worker, 0, abi.encodeCall(market.releaseClaim, (id)));
         assertEq(usdc.balanceOf(worker), STAKE, "stake returned in full inside the grace period");
         assertEq(uint8(market.getTaskState(id)), uint8(ITMPCore.TaskStatus.Open), "task reopened");

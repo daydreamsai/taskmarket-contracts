@@ -28,6 +28,7 @@ import { Rev027Upgrade } from "../script/upgrades/Rev027Upgrade.s.sol";
 import { Rev028Upgrade } from "../script/upgrades/Rev028Upgrade.s.sol";
 import { Rev029Upgrade } from "../script/upgrades/Rev029Upgrade.s.sol";
 import { Rev030Upgrade } from "../script/upgrades/Rev030Upgrade.s.sol";
+import { Rev031Upgrade } from "../script/upgrades/Rev031Upgrade.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 
@@ -229,6 +230,7 @@ contract DiamondSelectorParityTest is Test, DiamondTestHelper {
         new Rev028Upgrade().run();
         new Rev029Upgrade().run();
         new Rev030Upgrade().run();
+        new Rev031Upgrade().run();
     }
 
     /// @dev The one reconstruction _runFullSequence documents: unroute the rev018 evaluator-aware

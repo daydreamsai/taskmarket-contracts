@@ -190,6 +190,9 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     event ReservationReleased(bytes32 indexed taskId, bytes32 indexed allocationId, uint8 route);
     event SponsoredTaskDefaultedByOwner(bytes32 indexed taskId, bytes32 indexed vaultId, bytes32 indexed allocationId);
     event SponsoredTaskUnsettleableAwardCount(bytes32 indexed taskId, bytes32 indexed allocationId, uint256 awardCount);
+    event SponsoredTaskDefaultedByRequester(
+        bytes32 indexed taskId, bytes32 indexed allocationId, address indexed requester
+    );
 
     /// @dev Immutable dependencies are fixed for the life of this implementation contract and are
     ///      shared by every proxy that ever points at it -- correct only because there is exactly
@@ -463,10 +466,19 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         returns (bool)
     {
         TaskAllocation storage allocation = _requireMatchingAllocation(taskId, ctx);
+        HookStatus prior = allocation.status;
         // A full owner exit terminates only the project-token sponsor. Once its default has been
         // reflected locally, this mandatory hook must not block Taskmarket's independent USDC rail.
-        if (allocation.status == HookStatus.DefaultedByOwner) return true;
+        if (prior == HookStatus.DefaultedByOwner) return true;
         _commitCompletion(taskId, allocation, ctx, verdict);
+        // Rev031: a task with no evaluator reaches this callback only through the requester's
+        // acceptSubmission(s) (an evaluator verdict, and so an appeal and a dispute, needs an
+        // evaluator), so an award list over the ceiling is the requester's own. No balance effect:
+        // the release stands; the event records who caused it.
+        if (
+            prior == HookStatus.Reserved && allocation.status == HookStatus.AwardCountExceeded
+                && ctx.evaluator == address(0)
+        ) emit SponsoredTaskDefaultedByRequester(taskId, allocation.allocationId, ctx.requester);
         return true;
     }
 
@@ -496,7 +508,15 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         _commitAndTryRelease(taskId, ctx, ITMPCore.TaskStatus.Expired);
     }
 
+    /// @dev A forfeit that ends the task (a rejected delivery whose outcome is a refund leaves it
+    ///      Expired, and the diamond dispatches only afterForfeit) releases the reservation as
+    ///      afterExpire would. A forfeit that reopens the task keeps the reservation for the next
+    ///      worker.
     function _onForfeit(bytes32 taskId, ITMPCore.TaskContext memory ctx, address worker) internal {
+        if (ctx.currentState == ITMPCore.TaskStatus.Expired) {
+            _commitAndTryRelease(taskId, ctx, ITMPCore.TaskStatus.Expired);
+            return;
+        }
         TaskAllocation storage allocation = _s().taskAllocations[taskId];
         if (allocation.status != HookStatus.Reserved || allocation.requester != ctx.requester) return;
         emit ForfeitReservationRetained(taskId, allocation.allocationId, worker);
@@ -541,7 +561,9 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
     /// @dev Commits the completion of a `Reserved` allocation, or recommits a `CompletionCommitted`
     ///      one; an unchanged recommitment writes nothing. The count guard runs before the digest is
     ///      built, so an oversized verdict releases the sponsorship without spending more of the
-    ///      hook's gas first.
+    ///      hook's gas first. Only awards that pay something count toward `MAX_AWARDS`: a
+    ///      zero-amount entry gets no leaf, so padding a verdict with them cannot void the
+    ///      sponsorship. The digest and the stored `awardCount` still cover every entry.
     function _commit(
         bytes32 taskId,
         TaskAllocation storage allocation,
@@ -550,8 +572,9 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
         uint256 payoutPool
     ) private {
         uint256 count = awards.length;
-        if (count > MAX_AWARDS) {
-            _releaseForAwardOverflow(taskId, allocation, count);
+        uint256 paying = SponsoredTaskSettlement.payingAwardCount(awards);
+        if (paying > MAX_AWARDS) {
+            _releaseForAwardOverflow(taskId, allocation, paying);
             return;
         }
         // An AwardCountExceeded allocation is already released and stays so.
@@ -681,12 +704,8 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
             awards
         );
 
+        if (_defaultIfOwnerExited(taskId, allocation)) return bytes32(0);
         ISponsoredTasksVault vault = ISponsoredTasksVault(allocation.vault);
-        if (vault.status() == SponsoredTaskTypes.VaultStatus.Exited && vault.epoch() != allocation.epoch) {
-            allocation.status = HookStatus.DefaultedByOwner;
-            emit SponsoredTaskDefaultedByOwner(taskId, allocation.vaultId, allocation.allocationId);
-            return bytes32(0);
-        }
 
         return _installSettlementAndEmit(taskId, allocation, vault, result);
     }
@@ -763,18 +782,27 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
             revert AllocationWrongStatus(taskId, allocation.status);
         }
 
+        if (_defaultIfOwnerExited(taskId, allocation)) return;
         ISponsoredTasksVault vault = ISponsoredTasksVault(allocation.vault);
-        if (vault.status() == SponsoredTaskTypes.VaultStatus.Exited && vault.epoch() != allocation.epoch) {
-            allocation.status = HookStatus.DefaultedByOwner;
-            emit SponsoredTaskDefaultedByOwner(taskId, allocation.vaultId, allocation.allocationId);
-            return;
-        }
         // `changed` is false only when this allocation was already released (idempotent retry) --
         // safe to ignore, the caller only needs the release to have happened by return.
         // slither-disable-next-line unused-return
         vault.releaseTask(allocation.allocationId);
         allocation.status = HookStatus.AwardCountExceeded;
         emit SponsoredTaskUnsettleableAwardCount(taskId, allocation.allocationId, count);
+    }
+
+    /// @dev Marks the allocation DefaultedByOwner when its vault exited after it was reserved (the
+    ///      vault's epoch moved on). Shared by the settlement and release paths, which each stop
+    ///      when it returns true.
+    function _defaultIfOwnerExited(bytes32 taskId, TaskAllocation storage allocation) private returns (bool) {
+        ISponsoredTasksVault vault = ISponsoredTasksVault(allocation.vault);
+        if (vault.status() != SponsoredTaskTypes.VaultStatus.Exited || vault.epoch() == allocation.epoch) {
+            return false;
+        }
+        allocation.status = HookStatus.DefaultedByOwner;
+        emit SponsoredTaskDefaultedByOwner(taskId, allocation.vaultId, allocation.allocationId);
+        return true;
     }
 
     function _commitAndTryRelease(bytes32 taskId, ITMPCore.TaskContext memory ctx, ITMPCore.TaskStatus expected)
@@ -798,12 +826,8 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
             revert AllocationWrongStatus(taskId, allocation.status);
         }
 
+        if (_defaultIfOwnerExited(taskId, allocation)) return;
         ISponsoredTasksVault vault = ISponsoredTasksVault(allocation.vault);
-        if (vault.status() == SponsoredTaskTypes.VaultStatus.Exited && vault.epoch() != allocation.epoch) {
-            allocation.status = HookStatus.DefaultedByOwner;
-            emit SponsoredTaskDefaultedByOwner(taskId, allocation.vaultId, allocation.allocationId);
-            return;
-        }
         // `changed` is false only when this allocation was already released (idempotent retry) --
         // safe to ignore, the caller only needs the release to have happened by return.
         // slither-disable-next-line unused-return
@@ -919,13 +943,17 @@ contract SponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2StepUpgr
             tagsHash: keccak256(abi.encode(ctx.tags)),
             hooksHash: keccak256(abi.encode(hooks))
         });
-        return keccak256(
+        bytes32 h = keccak256(
             abi.encode(
                 SponsoredTaskTerms.TERMS_HASH_TYPEHASH,
                 keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms)),
                 _settlementTermsHash(market, taskId)
             )
         );
+        (address reserved,) = market.getReservation(taskId);
+        return reserved == address(0)
+            ? h
+            : keccak256(abi.encode(SponsoredTaskTerms.RESERVED_TERMS_HASH_TYPEHASH, h, reserved));
     }
 
     /// @dev The second half of the terms commitment: the task's settlement policy as stored by the

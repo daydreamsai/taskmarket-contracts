@@ -591,42 +591,6 @@ contract ProjectTest is DiamondTestHelper {
         assertEq(market.getTask(taskId).expiryTime, expiryBefore);
     }
 
-    function test_Rev028_ReviewWindowClampedToProjectLatestExpiry() public {
-        uint64 endsAt = uint64(block.timestamp) + 8 days;
-        uint256 projectId = abi.decode(
-            _relay(owner, BUDGET, abi.encodeCall(projects.createProject, (address(usdc), BUDGET, endsAt, 12 hours))),
-            (uint256)
-        );
-        ITMPCore.TaskEvaluatorConfig memory ev = noEvaluatorConfig();
-        ev.evaluator = evaluator;
-        ev.evaluationWindow = 3 days;
-        ev.appealWindow = 1 days;
-        bytes32 taskId = abi.decode(
-            _relay(
-                owner,
-                0,
-                abi.encodeCall(
-                    projects.createProjectTask,
-                    (
-                        projectId,
-                        taskConfig(REWARD, 7 days, TMP_CLAIM),
-                        ITMPCore.HookConfig({ contracts: new address[](0), data: hex"" }),
-                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
-                        ev,
-                        _v2Terms(),
-                        address(0)
-                    )
-                )
-            ),
-            (bytes32)
-        );
-        vm.warp(block.timestamp + 6 days);
-        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
-        // The review window ends on day 9, past the latest expiry of day 8.5: expiry stops at day 8.5.
-        assertEq(market.getTask(taskId).expiryTime, uint256(endsAt) + 12 hours);
-    }
-
     function test_Rev028_RevisionThatCannotFitBeforeProjectExpiryReverts() public {
         uint64 endsAt = uint64(block.timestamp) + 8 days;
         uint256 projectId = abi.decode(
@@ -751,33 +715,46 @@ contract ProjectTest is DiamondTestHelper {
         assertEq(market.getTaskEvaluatorConfig(taskId).evaluationWindow, maxWindow);
     }
 
-    /// The evaluation deadline of a project task is held to the project's latest expiry, so
-    /// evaluatorTimeout opens then rather than at submission plus the whole window.
-    function test_Rev030_EvaluationDeadlineClampedToProjectLatestExpiry() public {
+    /// Cyclops 7618: a delivery the project's latest expiry would leave short of the evaluation
+    /// window reverts, so evaluatorTimeout cannot take the evaluator's stake for lack of time.
+    function test_Rev031_LateDeliveryThatWouldShortenReviewWindowReverts() public {
         uint64 endsAt = uint64(block.timestamp) + 8 days;
         bytes32 taskId = _evaluatedProjectTask(endsAt, 12 hours, 3 days);
         uint256 latest = uint256(endsAt) + 12 hours;
-        vm.warp(block.timestamp + 6 days);
+        vm.warp(block.timestamp + 5 days);
         _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        uint256 expiryBefore = market.getTask(taskId).expiryTime;
+
+        // One second past the last moment that leaves the whole window before the latest expiry.
+        vm.warp(latest - 3 days + 1);
+        vm.expectRevert(ITMPCore.ReviewWindowShortened.selector);
         _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
-        // Submission plus the window is day 9; the latest expiry is day 8.5.
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Claimed));
+        assertEq(market.getTask(taskId).expiryTime, expiryBefore);
+    }
+
+    /// A delivery that leaves exactly the whole window before the latest expiry keeps it.
+    function test_Rev031_DeliveryWithTheWholeWindowLeftBeforeProjectExpiry() public {
+        uint64 endsAt = uint64(block.timestamp) + 8 days;
+        bytes32 taskId = _evaluatedProjectTask(endsAt, 12 hours, 3 days);
+        uint256 latest = uint256(endsAt) + 12 hours;
+        vm.warp(block.timestamp + 5 days);
+        _relay(worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        vm.warp(latest - 3 days);
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
         assertEq(market.getTask(taskId).expiryTime, latest);
 
         vm.warp(latest);
         vm.expectRevert(ITMPCore.EvaluationWindowNotExpired.selector);
         market.evaluatorTimeout(taskId);
-
-        vm.warp(latest + 1);
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](1);
         awards[0] = ITMPCore.Award({ worker: worker, amount: REWARD, rank: 1 });
-        vm.expectRevert(ITMPCore.EvaluationWindowClosed.selector);
         _relay(
             evaluator,
             0,
             abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 1000, 1000, bytes32(0), awards))
         );
-        market.evaluatorTimeout(taskId);
-        assertEq(market.getTaskEvaluatorConfig(taskId).evaluator, address(0), "the evaluator is timed out");
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Appealing));
     }
 
     /// A project task whose window fits before the latest expiry keeps the whole window.

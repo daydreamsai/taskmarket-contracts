@@ -29,7 +29,7 @@ contract AuctionFacet {
     ///         Valid for English and Reverse-English subtypes.
     ///         The worker is the authenticated actor (pgtrSender).
     /// @param taskId Task identifier
-    /// @param price  Bid price in USDC base units (must be <= maxPrice)
+    /// @param price  Bid price in USDC base units (nonzero and <= maxPrice)
     function submitBid(bytes32 taskId, uint256 price) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarderNoPayment(s);
@@ -41,12 +41,14 @@ contract AuctionFacet {
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         LibProject.requireNotActingParty(s, taskId, worker);
+        LibProject.requireNotJudge(s, taskId, worker);
         if (task.mode != AUCTION) revert ITMPCore.NotAnAuctionTask();
         if (!(auctionCfg.auctionSubtype == AUCTION_ENGLISH || auctionCfg.auctionSubtype == AUCTION_REVERSE_ENGLISH)) {
             revert ITMPCore.NotABidAuction();
         }
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp >= auctionCfg.bidDeadline) revert ITMPCore.BidDeadlinePassed();
+        if (price == 0) revert ITMPCore.PriceZero();
         if (price > auctionCfg.maxPrice) revert ITMPCore.BidExceedsMaxPrice();
         uint256 bidCount = s.taskBids[taskId].length;
         bool lowest = bidCount == 0 || price < auctionCfg.lowestBidPrice;
@@ -90,6 +92,10 @@ contract AuctionFacet {
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         if (block.timestamp < auctionCfg.bidDeadline) revert ITMPCore.BidDeadlineNotPassed();
         if (auctionCfg.lowestBidder == address(0)) revert ITMPCore.NoBidsSubmitted();
+        // Rev031: the lowest bidder may have come to act for or judge the task since it bid; it is
+        // refused, and the auction lapses to a refund at expiry.
+        LibProject.requireNotActingParty(s, taskId, auctionCfg.lowestBidder);
+        LibProject.requireNotJudge(s, taskId, auctionCfg.lowestBidder);
 
         LibHooksV2.snap(taskId, uint8(task.status));
         task.worker = auctionCfg.lowestBidder;
@@ -107,7 +113,7 @@ contract AuctionFacet {
     ///         Used by clock-based auction subtypes (Dutch, Reverse-Dutch).
     ///         The worker is the authenticated actor (pgtrSender).
     /// @param taskId Task identifier
-    /// @param price  Accepted price in USDC base units (must be <= task maxPrice)
+    /// @param price  Accepted price in USDC base units (nonzero and <= task maxPrice)
     function acceptAuction(bytes32 taskId, uint256 price) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarderNoPayment(s);
@@ -119,12 +125,14 @@ contract AuctionFacet {
         ITMPCore.TaskAuctionConfig storage auctionCfg = s.taskAuctionConfigs[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         LibProject.requireNotActingParty(s, taskId, worker);
+        LibProject.requireNotJudge(s, taskId, worker);
         if (task.mode != AUCTION) revert ITMPCore.NotAnAuctionTask();
         if (!(auctionCfg.auctionSubtype == AUCTION_DUTCH || auctionCfg.auctionSubtype == AUCTION_REVERSE_DUTCH)) {
             revert ITMPCore.NotAClockPriceAuction();
         }
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
+        if (price == 0) revert ITMPCore.PriceZero();
         if (price > auctionCfg.maxPrice) revert ITMPCore.PriceExceedsMaxPrice();
 
         LibHooksV2.snap(taskId, uint8(task.status));

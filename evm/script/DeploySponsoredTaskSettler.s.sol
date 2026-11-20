@@ -100,3 +100,83 @@ contract DeploySponsoredTaskSettler is Script {
         return list;
     }
 }
+
+/// @notice Rev031: replaces a remote chain's settler-mode pair. Deploys a new `SponsoredTaskSettler`
+///         (its signed `Reserve` carries a `deadline`) with the live settler's owner, settler set,
+///         threshold and registry, and a new settler-mode `SponsoredTaskFactoryV2` whose controller
+///         is the new settler, with the live factory's fee policy, registry and creation fee. The
+///         settler is not upgradeable and a vault's controller is fixed at creation, so vaults
+///         created on the live factory keep the old settler for life; it keeps running for them.
+///         The registry then authorizes the new factory and deauthorizes the live one, so no new
+///         vault gets the old settler. Deauthorizing a factory does not unregister its vaults.
+///         When the key does not own the registry (a Safe does), it prints both `setFactory` calls
+///         for the owner, in order.
+/// @dev Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_SPONSORED_TASK_PREVIOUS_FACTORY (the live
+///      settler-mode factory). The old settler's claim delay and authority are not copied: both are
+///      the owner's to set on the new settler (a lower claim delay and any authority are timelocked),
+///      and the script prints what differs.
+contract RedeploySponsoredTaskSettler is Script {
+    function run() external returns (SponsoredTaskSettler settler, SponsoredTaskFactoryV2 factory) {
+        return redeploy(SponsoredTaskFactoryV2(vm.envAddress("FORGE_SPONSORED_TASK_PREVIOUS_FACTORY")));
+    }
+
+    function redeploy(SponsoredTaskFactoryV2 previous)
+        public
+        returns (SponsoredTaskSettler settler, SponsoredTaskFactoryV2 factory)
+    {
+        uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
+        require(address(previous).code.length != 0, "Settler redeploy: previous factory must be a contract");
+        SponsoredTaskSettler previousSettler = SponsoredTaskSettler(previous.controller());
+        SponsoredTaskRegistry registry = SponsoredTaskRegistry(address(previous.registry()));
+        require(
+            address(previousSettler.registry()) == address(registry),
+            "Settler redeploy: previous factory's controller is not a settler on its registry"
+        );
+        bool registryOwner = registry.owner() == vm.addr(deployerKey);
+
+        vm.startBroadcast(deployerKey);
+        settler = new SponsoredTaskSettler(
+            previousSettler.owner(), previousSettler.settlers(), previousSettler.threshold(), registry
+        );
+        factory = new SponsoredTaskFactoryV2(
+            address(settler),
+            previous.feePolicy(),
+            registry,
+            SponsoredTaskCreationFee.CreationFeeConfig({
+                token: previous.feeToken(), amount: previous.creationFee(), recipient: previous.creationFeeRecipient()
+            })
+        );
+        if (registryOwner) {
+            registry.setFactory(address(factory), true);
+            registry.setFactory(address(previous), false);
+        }
+        vm.stopBroadcast();
+
+        require(factory.controller() == address(settler), "Settler redeploy: factory controller is not the settler");
+        require(settler.owner() == previousSettler.owner(), "Settler redeploy: owner mismatch");
+
+        console.log("=== Sponsored Task settler-mode pair redeployed (rev031) ===");
+        console.log("Chain id:                 ", block.chainid);
+        console.log("Previous settler:         ", address(previousSettler));
+        console.log("Previous factory:         ", address(previous));
+        console.log("SponsoredTaskSettler:     ", address(settler));
+        console.log("SponsoredTaskFactoryV2:   ", address(factory));
+        console.log("Vault implementation:     ", factory.implementation());
+        if (!registryOwner) {
+            console.log("Registry owner must execute on the registry, in order:", address(registry));
+            console.logBytes(abi.encodeCall(SponsoredTaskRegistry.setFactory, (address(factory), true)));
+            console.logBytes(abi.encodeCall(SponsoredTaskRegistry.setFactory, (address(previous), false)));
+        }
+        if (previousSettler.claimDelaySeconds() != settler.claimDelaySeconds()) {
+            console.log(
+                "Claim delay differs; the owner may call setClaimDelay with:", previousSettler.claimDelaySeconds()
+            );
+        }
+        if (address(previousSettler.authority()) != address(0)) {
+            console.log(
+                "Previous settler has an authority; the owner may schedule setAuthority:",
+                address(previousSettler.authority())
+            );
+        }
+    }
+}

@@ -22,6 +22,7 @@ import { HooksV2Facet } from "../src/facets/HooksV2Facet.sol";
 import { DeployTarget } from "./lib/DeployTarget.sol";
 import { FacetSelectors } from "./lib/FacetSelectors.sol";
 import { DeployFundingPool } from "./lib/DeployFundingPool.sol";
+import { WinnerCap } from "./lib/WinnerCap.sol";
 import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
 
 /// @title DiamondDeploy — deploy TaskMarket Diamond proxy + all facets
@@ -39,7 +40,11 @@ import { ITMPProject } from "../src/interfaces/ITMPProject.sol";
 ///      FORGE_HOOK_GAS_STIPEND            — if set, the hook gas stipend passed to setHookGasStipend;
 ///                                          unset leaves the 1,000,000 default (script/tempo.sh
 ///                                          requires FORGE_HOOK_GAS_STIPEND_TEMPO_* for Tempo)
+/// @dev On Tempo (4217, 42431) it also sets the submission winner cap (script/lib/WinnerCap.sol).
 contract DiamondDeploy is Script {
+    /// @notice The diamond the last run deployed.
+    address public deployed;
+
     function run() external {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
@@ -120,6 +125,13 @@ contract DiamondDeploy is Script {
             AdminFacet(address(diamond)).setHookGasStipend(hookStipend);
         }
 
+        // rev031: the per-chain winner cap. A fresh diamond stamps the current revision, so the
+        // rev030 upgrade that sets it on upgraded diamonds never runs on one.
+        uint16 winnerCap = WinnerCap.forChain(block.chainid);
+        if (winnerCap != 0) {
+            AdminFacet(address(diamond)).setMaxSubmissionWinners(winnerCap);
+        }
+
         vm.stopBroadcast();
 
         if (forwarder == address(0)) {
@@ -144,6 +156,7 @@ contract DiamondDeploy is Script {
         console.log("HooksV2Facet:       ", cuts[14].facetAddress);
         console.log("FundingPool implementation:", poolImpl);
         console.log("FundingPool proxy:         ", pool);
+        deployed = address(diamond);
     }
 
     function _buildCuts(

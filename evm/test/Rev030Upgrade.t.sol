@@ -18,6 +18,7 @@ import { MockTaskHook } from "./mocks/MockTaskHook.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits } from "./helpers/GrantHelper.sol";
 
 /// @title Rev030UpgradeTest
 /// @dev Rev030 replaces every facet whose code changed, Adds the AdminFacet winner-cap selectors and
@@ -205,8 +206,8 @@ contract Rev030UpgradeTest is Test, DiamondTestHelper {
             ownerOverride: false,
             revokeRemovesControl: true
         });
-        _relay(projectOwner, 0, abi.encodeCall(projects.grantOperator, (projectId, operator, terms)));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (projectId, keccak256(abi.encode(terms)))));
+        _relay(projectOwner, 0, abi.encodeCall(projects.grantOperator, (projectId, operator, terms, noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (projectId, grantHash(terms))));
         ITMPCore.TaskTerms memory t;
         t.version = 2;
         bytes32 taskId = abi.decode(

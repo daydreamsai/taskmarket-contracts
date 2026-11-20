@@ -13,6 +13,7 @@ import { MockTaskHookV2 } from "./mocks/MockTaskHookV2.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
+import { noGrantLimits, storedGrantHash } from "./helpers/GrantHelper.sol";
 
 /// @dev rev030 settlement fixes: the dispute window outlives a clamped project expiry, the
 ///      acting-party guards hold at use time, a promoted owner tops up and leaves its own tasks, a
@@ -215,12 +216,8 @@ contract Rev030SettlementFixesTest is DiamondTestHelper {
             ownerOverride: false,
             revokeRemovesControl: false
         });
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (pid, operator, gt)));
-        _relay(
-            operator,
-            0,
-            abi.encodeCall(projects.acceptGrant, (pid, keccak256(abi.encode(projects.getGrant(pid, operator).terms))))
-        );
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (pid, operator, gt, noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (pid, storedGrantHash(projects, pid, operator))));
         bytes32 taskId = _pTask(operator, 5 days, noEvaluatorConfig(), _v2());
         _transferOwner(operator);
         assertTrue(projects.getGrant(pid, operator).revoked, "the promotion revoked the old grant");

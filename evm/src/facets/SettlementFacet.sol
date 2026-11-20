@@ -346,6 +346,9 @@ contract SettlementFacet {
         if (task.status == ITMPCore.TaskStatus.Appealing) {
             if (block.timestamp < s.phaseDeadline[taskId]) revert ITMPCore.AppealWindowStillOpen();
             if (block.timestamp <= task.expiryTime) revert ITMPCore.TaskNotYetExpired();
+            // Rev031: this path takes no lock of its own, so it records its caller here for the
+            // hooks finalizeVerdict calls; the self-call leaves the actor as it is.
+            LibHooksV2.setActor(msg.sender);
             ITMPEvaluator(address(this)).finalizeVerdict(taskId);
             return;
         }

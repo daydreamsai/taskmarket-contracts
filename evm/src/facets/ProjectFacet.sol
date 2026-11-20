@@ -172,7 +172,12 @@ contract ProjectFacet {
     }
 
     /// @notice See ITMPProject.
-    function grantOperator(uint256 projectId, address operator, ITMPProject.GrantTerms calldata terms) external {
+    function grantOperator(
+        uint256 projectId,
+        address operator,
+        ITMPProject.GrantTerms calldata terms,
+        ITMPProject.GrantLimitsInput calldata limits
+    ) external {
         AppStorage storage s = LibAppStorage.appStorage();
         LibGuards._requireForwarderNoPayment(s);
         LibGuards._requireNotPaused(s);
@@ -193,6 +198,7 @@ contract ProjectFacet {
         g.revoked = false;
         g.accepted = false;
         emit ITMPProject.OperatorGranted(projectId, operator, terms);
+        LibProject.setLimits(s, projectId, operator, limits);
     }
 
     /// @notice See ITMPProject.
@@ -265,7 +271,19 @@ contract ProjectFacet {
         if (!g.exists) revert ITMPProject.GrantNotFound();
         if (g.revoked) revert ITMPProject.GrantRevoked();
         if (g.accepted) revert ITMPProject.GrantAlreadyAccepted();
-        bytes32 current = keccak256(abi.encode(g.terms));
+        ITMPProject.GrantLimits storage lim = s.projectGrantLimits[projectId][operator];
+        bytes32 current = keccak256(
+            abi.encode(
+                g.terms,
+                ITMPProject.GrantLimitsInput({
+                    expiresAt: lim.expiresAt,
+                    allowedModesMask: lim.allowedModesMask,
+                    maxRewardPerTask: lim.maxRewardPerTask,
+                    periodSecs: lim.periodSecs,
+                    periodCap: lim.periodCap
+                })
+            )
+        );
         if (current != termsHash) revert ITMPProject.GrantTermsMismatch(current, termsHash);
         g.accepted = true;
         emit ITMPProject.GrantAccepted(projectId, operator);

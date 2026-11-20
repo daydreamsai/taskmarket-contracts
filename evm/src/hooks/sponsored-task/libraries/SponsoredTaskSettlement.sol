@@ -72,6 +72,15 @@ library SponsoredTaskSettlement {
         }
     }
 
+    /// @notice How many awards pay something. A zero-amount entry gets no leaf and costs the
+    ///         settlement nothing, so the hooks' `MAX_AWARDS` bound counts only these.
+    function payingAwardCount(ITMPCore.Award[] memory awards) internal pure returns (uint256 count) {
+        uint256 length = awards.length;
+        for (uint256 i; i < length; ++i) {
+            if (awards[i].amount != 0) ++count;
+        }
+    }
+
     /// @notice Computes the authoritative reward root and exact vault accounting.
     /// @param nativePayoutPool Taskmarket reward remaining after any evaluator fee.
     /// @dev APPROVE distributes the entire gross sponsor across nonzero awards. PARTIAL scales

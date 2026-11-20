@@ -129,6 +129,13 @@ than trusted by inspection: a wrong field name or ABI type produces a hash that 
    gaslessly. Destination is bound inside the signature — no manager or owner can redirect it.
 7. **Release.** Cancellation, expiry, or forfeiture returns the unearned reservation to
    `available` and restores the manager's spend capacity via `finalizeRelease`/`reconcile`.
+   A forfeit that ends the task releases at once: a rejected delivery whose outcome is a refund
+   leaves the task `Expired`, but the diamond dispatches only `afterForfeit` for it, so
+   `SponsoredTaskHookV2` releases there when the reported status is `Expired`, as `afterExpire`
+   would. Before this, the reservation and the manager's cap stayed held until someone called
+   `finalizeRelease` or `reconcile`. A forfeit that reopens the task keeps the reservation for the
+   next worker. `RemoteSponsoredTaskHookV2` records nothing on that path; the settler service
+   releases the remote reservation from the task's `Expired` status.
 
 ---
 
@@ -141,6 +148,26 @@ Diamond's fixed 1,000,000 gas hook stipend. A verdict exceeding this count does 
 reservation is released back to `available` and the allocation moves to the terminal
 `AwardCountExceeded` status. `_checkEvaluate` does not enforce this cap at all — enforcement
 lives solely at the completion boundary, where failure is provably non-terminal for USDC.
+
+Only awards that pay something count toward `MAX_AWARDS`, in both V2 hooks and in the settler
+service. A zero-amount entry gets no leaf and costs the settlement nothing, but the diamond lets
+an evaluator verdict carry up to 50 entries (zero-amount ones included, with any worker), so
+counting every entry let a padded verdict release the whole sponsorship and leave the workers with
+their USDC but no project tokens. The awards digest and the stored `awardCount` still cover every
+entry, so `finalizeSettlement` must be given the same array. A 50-entry verdict with eight paying
+awards commits well inside the stipend (`testWidestPaddedCommitmentStaysWellInsideHookStipend`).
+More than eight paying awards still release the sponsorship, including dust awards a requester or
+evaluator spreads over extra addresses of its own.
+
+Since rev031 a release the requester caused is recorded against it. When the overflow release
+happens in `beforeAccept` on a task with no evaluator, both V2 hooks also emit
+`SponsoredTaskDefaultedByRequester(taskId, allocationId, requester)`. Such a task reaches
+`beforeAccept` only through the requester's `acceptSubmission` or `acceptSubmissions`, because an
+evaluator verdict, an appeal and a dispute resolution all need an evaluator. The event fires only
+when that call moves the allocation into `AwardCountExceeded`; an owner default, an evaluator's
+verdict and an overflow found later from awards a transforming hook chose record nothing. It
+changes no balance and no status. The backend counts it in the requester's stats
+(`sponsoredTaskDefaultCount`).
 
 This is a deliberate correctness property distinguishing this hook from the originally
 prototyped design, which reverted `evaluate()` itself on an oversized verdict (see the PR that

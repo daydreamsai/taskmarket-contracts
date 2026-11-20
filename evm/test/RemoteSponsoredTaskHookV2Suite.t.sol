@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 // Generated from RemoteSponsoredTaskHook.t.sol for the rev028 V2 port: the same cases, with the
 // mock market driving the V2 callbacks the diamond maps the V1 ones to.
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
@@ -68,7 +68,7 @@ contract RemoteSponsoredTaskHookTest is Test {
         usdc.approve(address(factory), CREATION_FEE);
         (address v,) = factory.createVault(address(token), address(this), keccak256("remote"));
         vault = SponsoredTasksVaultV2(v);
-        vault.configureManager(MANAGER, GROSS * 10, true);
+        vault.configureManagerForChain(TASK_CHAIN_ID, MANAGER, GROSS * 10, true);
         token.mint(address(this), GROSS * 10);
         token.approve(address(vault), type(uint256).max);
         vault.fund(GROSS * 10);
@@ -266,7 +266,8 @@ contract RemoteSponsoredTaskHookTest is Test {
             epoch: c.epoch,
             feeBps: c.feeBps,
             feeRecipient: c.feeRecipient,
-            termsHash: c.termsHash
+            termsHash: c.termsHash,
+            deadline: uint64(block.timestamp + 1 hours)
         });
         settler.reserve(r, _sign(settler.reserveDigest(r)));
         assertEq(vault.totalReserved(), GROSS);
@@ -338,6 +339,57 @@ contract RemoteSponsoredTaskHookTest is Test {
         assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, awards)));
         assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHookV2.HookStatus.AwardCountExceeded));
         assertEq(hook.finalizeSettlement(TASK_ID, awards), bytes32(0));
+    }
+
+    function _nineAwards() private pure returns (ITMPCore.Award[] memory awards) {
+        awards = new ITMPCore.Award[](9);
+        for (uint256 i; i < 9; ++i) {
+            awards[i] = ITMPCore.Award({ worker: address(uint160(0x1000 + i)), amount: 1, rank: uint16(i + 1) });
+        }
+    }
+
+    /// Rev031: with no evaluator the award list is the requester's (acceptSubmissions), so the
+    /// overflow also records a default against the requester.
+    function testRequesterAwardOverflowRecordsDefaultByRequester() public {
+        _fund();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        vm.expectEmit(address(hook));
+        emit RemoteSponsoredTaskHookV2.SponsoredTaskDefaultedByRequester(
+            TASK_ID, hook.allocationIdFor(TASK_CHAIN_ID, TASK_ID), MANAGER
+        );
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, _nineAwards())));
+        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHookV2.HookStatus.AwardCountExceeded));
+    }
+
+    /// An evaluator's oversized verdict is unsettleable without blaming the requester.
+    function testEvaluatorAwardOverflowRecordsNoRequesterDefault() public {
+        _fund();
+        ITMPCore.TaskEvaluatorConfig memory config;
+        config.evaluator = address(0xE1A1);
+        market.setEvaluator(TASK_ID, config);
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        vm.recordLogs();
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, _nineAwards())));
+        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHookV2.HookStatus.AwardCountExceeded));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics.length == 0
+                    || logs[i].topics[0] != RemoteSponsoredTaskHookV2.SponsoredTaskDefaultedByRequester.selector,
+                "no requester default"
+            );
+        }
+    }
+
+    /// Zero-amount entries pay nobody and do not count toward MAX_AWARDS.
+    function testZeroAmountAwardsDoNotMakeAVerdictUnsettleable() public {
+        _fund();
+        ITMPCore.Award[] memory awards = new ITMPCore.Award[](20);
+        awards[0] = ITMPCore.Award({ worker: address(0x1000), amount: 1, rank: 1 });
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, awards)));
+        assertEq(uint8(_status()), uint8(RemoteSponsoredTaskHookV2.HookStatus.CompletionCommitted));
+        assertTrue(hook.finalizeSettlement(TASK_ID, awards) != bytes32(0), "settled");
     }
 
     function testReconcileUsesStoredVerdict() public {
@@ -461,7 +513,8 @@ contract RemoteSponsoredTaskHookTest is Test {
             epoch: c.epoch,
             feeBps: c.feeBps,
             feeRecipient: c.feeRecipient,
-            termsHash: c.termsHash
+            termsHash: c.termsHash,
+            deadline: uint64(block.timestamp + 1 hours)
         });
         settler.reserve(r, _sign(settler.reserveDigest(r)));
 

@@ -81,6 +81,15 @@ contract HooksV2Facet is ITMPHooksV2 {
             a.configHash = keccak256("");
             s.defaultHooksV2.push(a);
         }
+        // Rev031: hookAttach keeps a task with a transforming hook free of appeal vetoes, so a
+        // transforming default next to a default declaring the appeal bit, itself included, would
+        // revert every task creation. A transforming default on its own is allowed.
+        if (transforming) {
+            uint32 appealBit = uint32(1) << LibHooksV2.A_APPEAL;
+            for (uint256 i; i < hooks.length; i++) {
+                if (s.defaultHooksV2[i].capabilities & appealBit != 0) revert TransformingHookWithAppealHook();
+            }
+        }
         emit DefaultHooksV2Set(hooks);
     }
 

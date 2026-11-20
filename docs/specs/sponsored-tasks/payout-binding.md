@@ -59,7 +59,7 @@ threshold like `settle` (signers as remaining accounts; `SettlerThresholdNotMet`
 - It writes the same `PayoutBinding` account, but the new payout is held as pending: the account
   stores it in `pending_payout` with `pending_effective_at` set to the attestation time plus
   `Config.claim_delay`, and the event is `PayoutBindingPending { task_chain_id, agent, payout,
-  nonce, effective_at }`. `claim` pays the current `payout` until the clock reaches
+nonce, effective_at }`. `claim` pays the current `payout` until the clock reaches
   `pending_effective_at` and the pending payout from then on. An agent with no earlier binding
   has no payout until then: a claim fails with `PayoutNotBound`.
 - The wait matters because the settlers also decide which worker each award leaf names. Without
@@ -68,6 +68,12 @@ threshold like `settle` (signers as remaining accounts; `SettlerThresholdNotMet`
 - An agent-signed `bind_payout` stays immediate: it sets `payout`, clears any pending attested
   change, and needs a higher nonce as before. A second attestation replaces the first pending
   one and restarts the wait.
+- A second attestation first promotes the first into `payout` when the first is already
+  effective, and only then stores the new one as pending. Without that step the effective
+  attested payout would be dropped and claims, which anyone may relay, would pay the older
+  `payout` (or fail with `PayoutNotBound` for an agent that never signed a binding) for a whole
+  claim delay. A first attestation that is still pending when the second arrives was never paid
+  and is simply replaced.
 - The attested nonce must be the current binding's nonce plus one (1 for a first binding) and
   never `u64::MAX` (`InvalidAttestedNonce`), so settlers advance the sequence one step at a time
   and cannot lock the agent out of its own signed `bind_payout`. Both paths share one sequence: a
@@ -81,17 +87,17 @@ threshold like `settle` (signers as remaining accounts; `SettlerThresholdNotMet`
 Signed with viem by the test-only key `0x1111...11` (32 bytes of `0x11`) for the program id
 `STvau1t111111111111111111111111111111111111`:
 
-| Field | Value |
-| --- | --- |
-| `chainId` | `8453` |
-| program id bytes | `0x0685f6908c03b1c23d54add539d49548ef326302ffdbd3bffd4eaeb000000000` |
-| `cluster_id` | 32 bytes of `0xc1` |
-| `salt` | `0xc7d7e38e3824a254223a4b22a0fe03a48f1c77b784dff1fe15e6274c0b0d9fe0` |
-| `agent` | `0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A` |
-| `payout` | 32 bytes of `0x44` |
-| `nonce` | `1` |
-| `deadline` | `4000000000` |
-| digest | `0xe0688b70b12b56d8ad6bb1a5a7b30b7328ae7016450cc01cf6b514e2d56d1bfa` |
-| signature | `0x94284c90b348f5c4865a2ff0c2488f1a38f375036690ec0b63811e71a5b7b9e841c3bdd815b674291a6eb281a35af4de79a0e7090ffb7c76917e2ffb911308121b` |
+| Field            | Value                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `chainId`        | `8453`                                                                                                                                 |
+| program id bytes | `0x0685f6908c03b1c23d54add539d49548ef326302ffdbd3bffd4eaeb000000000`                                                                   |
+| `cluster_id`     | 32 bytes of `0xc1`                                                                                                                     |
+| `salt`           | `0xc7d7e38e3824a254223a4b22a0fe03a48f1c77b784dff1fe15e6274c0b0d9fe0`                                                                   |
+| `agent`          | `0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A`                                                                                           |
+| `payout`         | 32 bytes of `0x44`                                                                                                                     |
+| `nonce`          | `1`                                                                                                                                    |
+| `deadline`       | `4000000000`                                                                                                                           |
+| digest           | `0xe0688b70b12b56d8ad6bb1a5a7b30b7328ae7016450cc01cf6b514e2d56d1bfa`                                                                   |
+| signature        | `0x94284c90b348f5c4865a2ff0c2488f1a38f375036690ec0b63811e71a5b7b9e841c3bdd815b674291a6eb281a35af4de79a0e7090ffb7c76917e2ffb911308121b` |
 
 The program's LiteSVM tests (`tests/payout.rs`) bind with this exact signature.

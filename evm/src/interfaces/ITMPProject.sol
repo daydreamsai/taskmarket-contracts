@@ -316,7 +316,14 @@ interface ITMPProject {
     ///         new terms. `committed` carries over, so a nonzero cap below it reverts
     ///         GrantCapBelowCommitted. An accepted grant that is not revoked reverts
     ///         GrantAlreadyAccepted.
-    function grantOperator(uint256 projectId, address operator, GrantTerms calldata terms) external;
+    ///         rev031: `limits` are stored in the same call, as setGrantLimits stores them, so no
+    ///         operator can accept and draw before the owner's limits apply. Zero limits mean none.
+    function grantOperator(
+        uint256 projectId,
+        address operator,
+        GrantTerms calldata terms,
+        GrantLimitsInput calldata limits
+    ) external;
 
     /// @notice rev029: the owner raises the cap of a pending or accepted grant that is not revoked.
     ///         `newCap` must be strictly above a nonzero current cap (GrantCapNotRaised otherwise;
@@ -330,19 +337,21 @@ interface ITMPProject {
     function lowerGrantCap(uint256 projectId, address operator, uint256 newCap) external;
 
     /// @notice rev029: the owner sets all of a grant's limits as stated. A pending grant is edited
-    ///         freely. On an accepted grant the owner may tighten and may loosen: limits are not in
-    ///         the terms hash, loosening only widens what the operator may do, and the owner can
-    ///         revoke at any time anyway. A revoked grant reverts GrantRevoked. The period meter
-    ///         restarts when periodSecs changes. Owner only.
+    ///         freely; from rev031 the operator must then accept the new limits. On an accepted
+    ///         grant the owner may tighten and may loosen: loosening only widens what the operator
+    ///         may do, and the owner can revoke at any time anyway. A revoked grant reverts
+    ///         GrantRevoked. The period meter restarts when periodSecs changes. Owner only.
     function setGrantLimits(uint256 projectId, address operator, GrantLimitsInput calldata limits) external;
 
     /// @notice rev029: the grant's limits and period meter as stored.
     function getGrantLimits(uint256 projectId, address operator) external view returns (GrantLimits memory);
 
     /// @notice The operator accepts its grant as recorded, which freezes the terms. The operator
-    ///         can spend only after this. `termsHash` is `keccak256(abi.encode(terms))` of the
-    ///         terms the operator reviewed; it must equal the stored terms, so terms the owner
-    ///         replaced after the operator read them cannot be accepted by mistake.
+    ///         can spend only after this. `termsHash` is `keccak256(abi.encode(terms, limits))` of
+    ///         the terms and limits (the GrantLimitsInput fields of getGrantLimits) the operator
+    ///         reviewed; it must equal the stored ones, so terms or limits the owner replaced after
+    ///         the operator read them cannot be accepted by mistake. rev031: the limits are part of
+    ///         the hash; before, it was `keccak256(abi.encode(terms))`.
     function acceptGrant(uint256 projectId, bytes32 termsHash) external;
 
     /// @notice The owner ends an operator's right to create tasks. What happens to the tasks it

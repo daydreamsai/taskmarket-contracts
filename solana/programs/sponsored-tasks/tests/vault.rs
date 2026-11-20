@@ -8,7 +8,9 @@ use solana_signer::Signer;
 use spl_token_2022_interface::extension::ExtensionType;
 use sponsored_tasks::error::SponsoredTasksError as E;
 use sponsored_tasks::events::*;
-use sponsored_tasks::state::{ManagerInput, ReservationState, VaultStatus};
+use sponsored_tasks::state::{
+    ManagerInput, ReservationState, VaultStatus, DEFAULT_CLAIM_DELAY_SECONDS, MAX_RESERVATION_SECS,
+};
 
 fn input(key: sponsored_tasks::state::ManagerKey, cap: u64, active: bool) -> ManagerInput {
     ManagerInput { key, cap, active }
@@ -81,6 +83,15 @@ fn init_config_rejects_bad_settler_sets() {
     );
     let six = (0..6).map(|_| Keypair::new().pubkey()).collect();
     assert_error(env.init_config(&authority, six, 1, 0), E::InvalidSettlers);
+    // The zero key is nobody's settler; it would count toward nothing.
+    assert_error(
+        env.init_config(&authority, vec![Pubkey::default()], 1, 0),
+        E::InvalidSettlers,
+    );
+    assert_error(
+        env.init_config(&authority, vec![s, Pubkey::default()], 1, 0),
+        E::InvalidSettlers,
+    );
     assert_error(
         env.init_config(&authority, vec![s], 0, 0),
         E::InvalidThreshold,
@@ -273,6 +284,17 @@ fn set_settlers_rejects_bad_sets_and_non_admin() {
     assert_error(
         env.send(&[set_settlers_ix(&admin.pubkey(), vec![s], 2)], &[&admin]),
         E::InvalidThreshold,
+    );
+    assert_error(
+        env.send(
+            &[set_settlers_ix(
+                &admin.pubkey(),
+                vec![s, Pubkey::default()],
+                1,
+            )],
+            &[&admin],
+        ),
+        E::InvalidSettlers,
     );
     let settler = env.settlers[0].insecure_clone();
     assert_error(
@@ -1045,6 +1067,190 @@ fn release_expired_is_permissionless_only_after_the_reservation_deadline() {
     assert!(env.events::<TaskReleased>().is_empty());
 }
 
+/// The deadline is fixed at `reserve`, but the task chain can push a task's expiry out. Once the
+/// old deadline passes anyone releases the reservation, and the task can never be reserved again.
+#[test]
+fn a_reservation_released_at_its_deadline_cannot_be_reserved_again() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    env.warp_to(DEADLINE + 1);
+    env.send(&[f.release_expired_ix(r)], &[]).unwrap();
+
+    let settler = env.settlers[0].insecure_clone();
+    let payer = env.payer.pubkey();
+    let again = f.reserve_ix_with(
+        &payer,
+        &[&settler],
+        task_id(1),
+        DEADLINE + 1_000,
+        400,
+        manager(1),
+    );
+    assert!(env.send(&[again], &[&settler]).is_err());
+    assert_eq!(env.reservation(&r).state, ReservationState::Released);
+}
+
+#[test]
+fn settlers_extend_a_reservation_deadline_so_a_live_task_is_not_released() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let settler = env.settlers[0].insecure_clone();
+    let later = DEADLINE + 7 * 86_400;
+
+    // Only the settler threshold may extend it, and only forward.
+    let outsider = Keypair::new();
+    assert_error(
+        env.send(
+            &[f.extend_deadline_ix(&[&outsider], r, later)],
+            &[&outsider],
+        ),
+        E::SettlerThresholdNotMet,
+    );
+    assert_error(
+        env.send(
+            &[f.extend_deadline_ix(&[&settler], r, DEADLINE)],
+            &[&settler],
+        ),
+        E::DeadlineInPast,
+    );
+    env.send(&[f.extend_deadline_ix(&[&settler], r, later)], &[&settler])
+        .unwrap();
+    assert_eq!(env.reservation(&r).deadline, later);
+    let events = env.events::<ReservationDeadlineExtended>();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].reservation, r);
+    assert_eq!(
+        (events[0].old_deadline, events[0].new_deadline),
+        (DEADLINE, later)
+    );
+
+    // The old deadline no longer opens release_expired; the new one does.
+    env.warp_to(DEADLINE + 1);
+    assert_error(
+        env.send(&[f.release_expired_ix(r)], &[]),
+        E::ReservationNotExpired,
+    );
+    env.warp_to(later + 1);
+    // Blocked while paused, like `reserve`, since it extends a hold on the sponsor's funds.
+    env.pause(true);
+    assert_error(
+        env.send(
+            &[f.extend_deadline_ix(&[&settler], r, later + 86_400)],
+            &[&settler],
+        ),
+        E::Paused,
+    );
+    env.send(&[f.release_expired_ix(r)], &[]).unwrap();
+    env.pause(false);
+    // A released reservation cannot be extended.
+    assert_error(
+        env.send(
+            &[f.extend_deadline_ix(&[&settler], r, later + 2 * 86_400)],
+            &[&settler],
+        ),
+        E::ReservationWrongState,
+    );
+}
+
+#[test]
+fn reserve_and_extend_deadline_hold_at_most_max_reservation_secs_from_now() {
+    let mut env = Env::new();
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
+    let settler = env.settlers[0].insecure_clone();
+    let payer = env.payer.pubkey();
+    let reserve =
+        |deadline| f.reserve_ix_with(&payer, &[&settler], task_id(1), deadline, 400, manager(1));
+    let latest = env.now() + MAX_RESERVATION_SECS;
+    assert_error(
+        env.send(&[reserve(i64::MAX)], &[&settler]),
+        E::DeadlineTooFar,
+    );
+    assert_error(
+        env.send(&[reserve(latest + 1)], &[&settler]),
+        E::DeadlineTooFar,
+    );
+    env.send(&[reserve(latest)], &[&settler]).unwrap();
+    let r = reservation_pda(&f.vault, &task_id(1));
+
+    assert_error(
+        env.send(
+            &[f.extend_deadline_ix(&[&settler], r, i64::MAX)],
+            &[&settler],
+        ),
+        E::DeadlineTooFar,
+    );
+    // The bound runs from the clock, so a live task's deadline can still be moved later.
+    env.warp_to(env.now() + 86_400);
+    assert_error(
+        env.send(
+            &[f.extend_deadline_ix(&[&settler], r, latest + 86_400 + 1)],
+            &[&settler],
+        ),
+        E::DeadlineTooFar,
+    );
+    env.send(
+        &[f.extend_deadline_ix(&[&settler], r, latest + 86_400)],
+        &[&settler],
+    )
+    .unwrap();
+    assert_eq!(env.reservation(&r).deadline, latest + 86_400);
+}
+
+/// A revoke after the deadline used to hand the reservation straight to `release_expired`, and a
+/// released reservation's account blocks the task from ever being reserved again.
+#[test]
+fn revoke_after_the_deadline_leaves_the_settlers_a_claim_delay_to_settle_again() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let settler = env.settlers[0].insecure_clone();
+    env.send(
+        &[f.settle_ix(&[&settler], r, SettleTerms::awards([9; 32], 1, 400, 0))],
+        &[&settler],
+    )
+    .unwrap();
+    env.warp_to(DEADLINE + 1);
+    let admin = env.admin.insecure_clone();
+    env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
+        .unwrap();
+    let window_end = DEADLINE + 1 + DEFAULT_CLAIM_DELAY_SECONDS as i64;
+    assert_eq!(env.reservation(&r).deadline, window_end);
+    assert_error(
+        env.send(&[f.release_expired_ix(r)], &[]),
+        E::ReservationNotExpired,
+    );
+    env.warp_to(window_end);
+    assert_error(
+        env.send(&[f.release_expired_ix(r)], &[]),
+        E::ReservationNotExpired,
+    );
+    env.send(
+        &[f.settle_ix(&[&settler], r, SettleTerms::awards([8; 32], 1, 300, 0))],
+        &[&settler],
+    )
+    .unwrap();
+    assert_eq!(env.reservation(&r).state, ReservationState::Settled);
+}
+
+#[test]
+fn revoke_keeps_a_deadline_later_than_the_claim_delay_and_it_still_expires() {
+    let mut env = Env::new();
+    let (f, r) = env.reserved_vault(400);
+    let settler = env.settlers[0].insecure_clone();
+    env.send(
+        &[f.settle_ix(&[&settler], r, SettleTerms::awards([9; 32], 1, 400, 0))],
+        &[&settler],
+    )
+    .unwrap();
+    assert!(env.now() + (DEFAULT_CLAIM_DELAY_SECONDS as i64) < DEADLINE);
+    let admin = env.admin.insecure_clone();
+    env.send(&[f.revoke_ix(&admin.pubkey(), r)], &[&admin])
+        .unwrap();
+    assert_eq!(env.reservation(&r).deadline, DEADLINE);
+    env.warp_to(DEADLINE + 1);
+    env.send(&[f.release_expired_ix(r)], &[]).unwrap();
+    assert_eq!(env.reservation(&r).state, ReservationState::Released);
+}
+
 #[test]
 fn release_expired_refuses_a_settled_reservation_and_an_exited_vault() {
     let mut env = Env::new();
@@ -1219,6 +1425,61 @@ fn emergency_exit_runs_once() {
         ),
         E::VaultNotActive,
     );
+}
+
+#[test]
+fn sweep_exited_recovers_tokens_sent_after_the_exit() {
+    let mut env = Env::new();
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
+    let sponsor = f.sponsor.insecure_clone();
+    let recipient = Keypair::new().pubkey();
+    let recipient_token = env.mint_to(&SPL_TOKEN, &f.mint, &recipient, 0);
+
+    // Only an exited vault can be swept; an active one uses its normal withdrawal paths.
+    assert_error(
+        env.send(
+            &[f.sweep_ix(&sponsor.pubkey(), &recipient_token)],
+            &[&sponsor],
+        ),
+        E::VaultNotExited,
+    );
+
+    env.send(
+        &[f.exit_ix(&sponsor.pubkey(), &recipient_token)],
+        &[&sponsor],
+    )
+    .unwrap();
+    // Tokens sent to the vault's token account after the exit.
+    env.mint_to(&SPL_TOKEN, &f.mint, &f.vault, 25);
+    assert_eq!(env.token_balance(&f.vault_token), 25);
+
+    let intruder = Keypair::new();
+    let intruder_token = env.mint_to(&SPL_TOKEN, &f.mint, &intruder.pubkey(), 0);
+    assert_error(
+        env.send(
+            &[f.sweep_ix(&intruder.pubkey(), &intruder_token)],
+            &[&intruder],
+        ),
+        E::NotSponsor,
+    );
+
+    // Open while paused, like the exit.
+    env.pause(true);
+    env.send(
+        &[f.sweep_ix(&sponsor.pubkey(), &recipient_token)],
+        &[&sponsor],
+    )
+    .unwrap();
+    assert_eq!(env.token_balance(&f.vault_token), 0);
+    assert_eq!(env.token_balance(&recipient_token), 1_025);
+    let vault = env.vault(&f.vault);
+    assert_eq!(vault.status, VaultStatus::Exited);
+    assert_eq!(vault.total_withdrawn, 1_025);
+    let events = env.events::<ExitedVaultSwept>();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].vault, f.vault);
+    assert_eq!(events[0].recipient, recipient_token);
+    assert_eq!(events[0].amount, 25);
 }
 
 #[test]

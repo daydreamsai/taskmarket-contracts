@@ -66,6 +66,20 @@ interface ISponsoredTasksVault {
         bytes32 termsHash
     ) external;
 
+    /// @notice `reserveTask` for a task created on `taskChainId`: charges the manager's allowance for
+    ///         that task chain, so only tasks from the chain the sponsor named can spend it.
+    function reserveTaskForChain(
+        bytes32 allocationId,
+        uint256 taskChainId,
+        bytes32 taskId,
+        address manager,
+        uint256 grossAmount,
+        uint64 expectedEpoch,
+        uint16 expectedFeeBps,
+        address expectedFeeRecipient,
+        bytes32 termsHash
+    ) external;
+
     function bindTask(bytes32 allocationId, bytes32 taskId) external returns (bool changed);
 
     function releaseTask(bytes32 allocationId) external returns (bool changed);

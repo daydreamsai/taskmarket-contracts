@@ -23,6 +23,7 @@ import { IFundingPoolManager } from "../../src/interfaces/IFundingPoolManager.so
 import { UUPSUpgradeable } from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import { DeployTarget } from "../lib/DeployTarget.sol";
 import { FacetSelectors } from "../lib/FacetSelectors.sol";
+import { WinnerCap } from "../lib/WinnerCap.sol";
 
 /// @title Rev030Upgrade -- hook roles follow task control, the rev030 security fixes, and the end of V1 hooks
 /// @dev See packages/contracts/docs/specs/erc8195/rev030-hook-roles-follow-task-control.md.
@@ -34,7 +35,7 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 ///      HookDispatchFacet). The FundingPool proxy is upgraded to the rev030 implementation first (no
 ///      new generation while money is outstanding). AppStorage gains one field at its end
 ///      (maxSubmissionWinners); the V1 hook fields stay, unused. On Tempo the winner cap is set to
-///      TEMPO_MAX_SUBMISSION_WINNERS. The version is set to 30 after the cut.
+///      WinnerCap.TEMPO_MAX_SUBMISSION_WINNERS. The version is set to 30 after the cut.
 ///      The DREAMS reward hook is upgraded separately, after this cut (DeployHooksV2.s.sol:
 ///      UpgradeRewardHookV2).
 /// @dev Required env vars:
@@ -46,9 +47,6 @@ import { FacetSelectors } from "../lib/FacetSelectors.sol";
 contract Rev030Upgrade is Script {
     uint256 internal constant EXPECTED_PRE_VERSION = 29;
     uint256 internal constant TARGET_VERSION = 30;
-    /// @notice The winner cap on Tempo: a Bounty payout to fresh recipients costs about 0.78M gas
-    ///         per winner there, so 30 settles well inside the 30M transaction cap.
-    uint16 internal constant TEMPO_MAX_SUBMISSION_WINNERS = 30;
 
     function run() external {
         uint256 ownerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -96,8 +94,7 @@ contract Rev030Upgrade is Script {
 
     /// @notice The winner cap to set on `chainId`, or 0 to keep the default of 50.
     function winnerCapFor(uint256 chainId) public pure returns (uint16) {
-        if (chainId == 4217 || chainId == 42431) return TEMPO_MAX_SUBMISSION_WINNERS;
-        return 0;
+        return WinnerCap.forChain(chainId);
     }
 
     /// @notice Whether the cut goes out as one transaction per facet entry on `chainId`. One cut of

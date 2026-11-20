@@ -14,6 +14,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits } from "./helpers/GrantHelper.sol";
 
 /// @dev rev029: a project's owner changes hands in two steps, and its end date moves later.
 ///      Covers the two-step flow and each refusal, what moves in the pool (the owner's own backing
@@ -191,12 +192,12 @@ contract ProjectOwnerTest is DiamondTestHelper {
 
     function test_Transfer_PreviousOwnerLosesOwnerRights() public {
         _transfer(newOwner);
-        assertFalse(_ok(owner, abi.encodeCall(projects.grantOperator, (id, operator, _terms(true)))));
+        assertFalse(_ok(owner, abi.encodeCall(projects.grantOperator, (id, operator, _terms(true), noGrantLimits()))));
         assertFalse(_ok(owner, abi.encodeCall(projects.closeProject, (id))));
         assertFalse(_ok(owner, abi.encodeCall(projects.proposeProjectOwner, (id, stranger))));
         assertFalse(_ok(owner, abi.encodeCall(projects.extendProject, (id, uint64(block.timestamp + 40 days)))));
         assertFalse(_ok(owner, _taskCall()), "cannot draw on the budget");
-        assertTrue(_ok(newOwner, abi.encodeCall(projects.grantOperator, (id, operator, _terms(true)))));
+        assertTrue(_ok(newOwner, abi.encodeCall(projects.grantOperator, (id, operator, _terms(true), noGrantLimits()))));
         assertTrue(_ok(newOwner, _taskCall()), "the new owner draws on the budget");
     }
 
@@ -346,8 +347,8 @@ contract ProjectOwnerTest is DiamondTestHelper {
     }
 
     function test_Transfer_OperatorGrantsAndTasksFollowTheProject() public {
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _terms(true))));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(_terms(true))))));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _terms(true), noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(_terms(true)))));
         bytes32 opTask = _task(operator);
         _transfer(newOwner);
         // The grant survives; the operator still spends and the new owner revokes and overrides.
@@ -360,8 +361,8 @@ contract ProjectOwnerTest is DiamondTestHelper {
 
     function test_Transfer_NewOwnerHoldingALiveGrantHasItRevoked() public {
         ITMPProject.GrantTerms memory terms = _terms(false);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, newOwner, terms)));
-        _relay(newOwner, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(terms)))));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, newOwner, terms, noGrantLimits())));
+        _relay(newOwner, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(terms))));
         bytes32 asOperator = _task(newOwner);
         uint256 committed = projects.getGrant(id, newOwner).committed;
         assertEq(committed, REWARD);
@@ -383,7 +384,7 @@ contract ProjectOwnerTest is DiamondTestHelper {
         // The previous owner may be made an operator by the new owner, under terms the new owner picks.
         _transfer(newOwner);
         ITMPProject.GrantTerms memory terms = _terms(true);
-        _relay(newOwner, 0, abi.encodeCall(projects.grantOperator, (id, owner, terms)));
+        _relay(newOwner, 0, abi.encodeCall(projects.grantOperator, (id, owner, terms, noGrantLimits())));
         assertFalse(_ok(owner, _taskCall()), "not accepted yet");
     }
 

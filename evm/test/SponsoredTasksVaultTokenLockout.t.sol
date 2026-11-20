@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
+import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
@@ -110,5 +111,58 @@ contract SponsoredTasksVaultTokenLockoutTest is Test {
         assertEq(token.balanceOf(address(vault)), 0, "vault emptied");
         assertGt(token.balanceOf(treasury), 0, "owner's recipient received the balance net of the fee");
         assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Exited));
+    }
+
+    /// The exit records what the recipient received, not the balance before the token's fee.
+    function test_FeeSwitchedOnAfterFunding_ExitRecordsWhatArrived() public {
+        vm.recordLogs();
+        vm.prank(owner);
+        uint256 returned = vault.emergencyExitVault(treasury);
+
+        uint256 arrived = token.balanceOf(treasury);
+        assertLt(arrived, FUNDED, "the token took a fee");
+        assertEq(vault.totalWithdrawn(), arrived, "totalWithdrawn is what arrived");
+        assertEq(returned, arrived, "the exit returns what arrived");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != SponsoredTasksVaultV2.VaultEmergencyExited.selector) continue;
+            (,, uint256 amountWithdrawn,,) = abi.decode(logs[i].data, (uint64, uint64, uint256, uint256, uint256));
+            assertEq(amountWithdrawn, arrived, "the exit event records what arrived");
+            seen = true;
+        }
+        assertTrue(seen, "exit event emitted");
+    }
+
+    /// Tokens sent to a vault after its exit are not locked: the owner sweeps them out.
+    function test_TokensSentAfterExit_OwnerCanSweep() public {
+        vm.prank(owner);
+        vault.emergencyExitVault(treasury);
+        uint256 afterExit = token.balanceOf(treasury);
+        uint256 withdrawnAtExit = vault.totalWithdrawn();
+
+        token.setFeeOn(false);
+        token.mint(address(vault), 25 ether);
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(
+            abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, makeAddr("stranger"))
+        );
+        vault.sweepExited(treasury);
+
+        vm.prank(owner);
+        uint256 swept = vault.sweepExited(treasury);
+
+        assertEq(swept, 25 ether, "sweep returns what arrived");
+        assertEq(token.balanceOf(address(vault)), 0, "vault emptied");
+        assertEq(token.balanceOf(treasury), afterExit + 25 ether, "recipient received the stray tokens");
+        assertEq(vault.totalWithdrawn(), withdrawnAtExit + 25 ether, "totalWithdrawn counts the sweep");
+    }
+
+    /// The sweep is only for an exited vault; an active vault uses withdrawAvailable.
+    function test_SweepExited_RevertsWhileActive() public {
+        vm.prank(owner);
+        vm.expectRevert(SponsoredTasksVaultV2.VaultNotExited.selector);
+        vault.sweepExited(treasury);
     }
 }

@@ -254,8 +254,11 @@ contract EpochBudget is Ownable {
         maxUsdPerTask = _maxUsdPerTask;
     }
 
+    /// @notice Rolls a lapsed epoch under the old duration first: otherwise a longer duration would
+    ///         put the clock back inside an epoch that already ended, and its usage would count again.
     function setEpochDuration(uint256 _epochDuration) external onlyOwner {
         if (_epochDuration == 0) revert EpochDurationZero();
+        _rollEpochIfStale();
         epochDuration = _epochDuration;
     }
 

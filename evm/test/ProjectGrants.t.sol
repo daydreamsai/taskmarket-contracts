@@ -15,6 +15,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits, storedGrantHash } from "./helpers/GrantHelper.sol";
 
 /// @dev Records who the Diamond reports as a task's creator at the moment checkFund runs.
 contract CreatorProbeHook is BaseTMPHookV2 {
@@ -101,7 +102,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
     }
 
     function _grant(address op, ITMPProject.GrantTerms memory t) internal {
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, op, t)));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, op, t, noGrantLimits())));
     }
 
     function _accept(address op) internal {
@@ -109,7 +110,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
     }
 
     function _storedTermsHash(address op) internal view returns (bytes32) {
-        return keccak256(abi.encode(projects.getGrant(id, op).terms));
+        return storedGrantHash(projects, id, op);
     }
 
     function _grantAndAccept(address op, ITMPProject.GrantTerms memory t) internal {
@@ -236,23 +237,23 @@ contract ProjectGrantsTest is DiamondTestHelper {
         _grantAndAccept(operator, _wideOpen());
         assertTrue(projects.getGrant(id, operator).accepted);
         vm.expectRevert(ITMPProject.GrantAlreadyAccepted.selector);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen(), noGrantLimits())));
     }
 
     function test_RevertWhen_Grant_NotOwner() public {
         vm.expectRevert(ITMPProject.NotProjectOwner.selector);
-        _relay(stranger, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _relay(stranger, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen(), noGrantLimits())));
         // An operator cannot grant another operator.
         _grantAndAccept(operator, _wideOpen());
         vm.expectRevert(ITMPProject.NotProjectOwner.selector);
-        _relay(operator, 0, abi.encodeCall(projects.grantOperator, (id, otherOperator, _wideOpen())));
+        _relay(operator, 0, abi.encodeCall(projects.grantOperator, (id, otherOperator, _wideOpen(), noGrantLimits())));
     }
 
     function test_RevertWhen_Grant_ToTheOwnerOrZero() public {
         vm.expectRevert(ITMPProject.InvalidOperator.selector);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, owner, _wideOpen())));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, owner, _wideOpen(), noGrantLimits())));
         vm.expectRevert(ITMPProject.InvalidOperator.selector);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, address(0), _wideOpen())));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, address(0), _wideOpen(), noGrantLimits())));
     }
 
     function test_RevertWhen_Accept_NoGrantOrAlreadyAcceptedOrRevoked() public {
@@ -275,20 +276,18 @@ contract ProjectGrantsTest is DiamondTestHelper {
     function test_RevertWhen_Accept_TermsSwappedAfterOperatorReadThem() public {
         ITMPProject.GrantTerms memory reviewed = _terms(1e6, ITMPProject.RequesterOfRecord.Owner, false, false);
         _grant(operator, reviewed);
-        bytes32 reviewedHash = keccak256(abi.encode(reviewed));
+        bytes32 reviewedHash = grantHash(reviewed);
 
         ITMPProject.GrantTerms memory swapped = _terms(0, ITMPProject.RequesterOfRecord.Operator, true, true);
         _grant(operator, swapped);
 
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ITMPProject.GrantTermsMismatch.selector, keccak256(abi.encode(swapped)), reviewedHash
-            )
+            abi.encodeWithSelector(ITMPProject.GrantTermsMismatch.selector, grantHash(swapped), reviewedHash)
         );
         _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, reviewedHash)));
         assertFalse(projects.getGrant(id, operator).accepted);
 
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(swapped)))));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(swapped))));
         assertTrue(projects.getGrant(id, operator).accepted);
     }
 
@@ -652,15 +651,13 @@ contract ProjectGrantsTest is DiamondTestHelper {
         _grant(operator, fresh);
         // The operator can only accept the terms it reviewed.
         vm.expectRevert(
-            abi.encodeWithSelector(
-                ITMPProject.GrantTermsMismatch.selector, keccak256(abi.encode(fresh)), bytes32(uint256(1))
-            )
+            abi.encodeWithSelector(ITMPProject.GrantTermsMismatch.selector, grantHash(fresh), bytes32(uint256(1)))
         );
         _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, bytes32(uint256(1)))));
 
         vm.expectEmit(true, true, false, false, address(market));
         emit ITMPProject.GrantAccepted(id, operator);
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(fresh)))));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(fresh))));
         assertTrue(projects.getGrant(id, operator).accepted);
 
         bytes32 taskId = _opTask(operator, REWARD);
@@ -708,7 +705,8 @@ contract ProjectGrantsTest is DiamondTestHelper {
             owner,
             0,
             abi.encodeCall(
-                projects.grantOperator, (id, operator, _terms(3e6 - 1, ITMPProject.RequesterOfRecord.Owner, true, true))
+                projects.grantOperator,
+                (id, operator, _terms(3e6 - 1, ITMPProject.RequesterOfRecord.Owner, true, true), noGrantLimits())
             )
         );
         // Equal to committed is allowed (no headroom); so is zero (no cap beyond the budget).
@@ -720,16 +718,16 @@ contract ProjectGrantsTest is DiamondTestHelper {
         _grantAndAccept(operator, _wideOpen());
         // Not revoked and accepted: still frozen.
         vm.expectRevert(ITMPProject.GrantAlreadyAccepted.selector);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen(), noGrantLimits())));
         _revoke(operator);
         vm.expectRevert(ITMPProject.NotProjectOwner.selector);
-        _relay(stranger, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _relay(stranger, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen(), noGrantLimits())));
         vm.expectRevert(ITMPProject.NotProjectOwner.selector);
-        _relay(operator, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _relay(operator, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen(), noGrantLimits())));
         // Granted again and accepted, it is frozen again.
         _grantAndAccept(operator, _wideOpen());
         vm.expectRevert(ITMPProject.GrantAlreadyAccepted.selector);
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen())));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, _wideOpen(), noGrantLimits())));
     }
 
     function test_Regrant_CanBeRevokedAgain() public {
@@ -805,7 +803,7 @@ contract ProjectGrantsTest is DiamondTestHelper {
     function test_RaiseCap_Pending_ChangesTheTermsHashTheOperatorMustAccept() public {
         ITMPProject.GrantTerms memory reviewed = _terms(CAP, ITMPProject.RequesterOfRecord.Owner, true, true);
         _grant(operator, reviewed);
-        bytes32 reviewedHash = keccak256(abi.encode(reviewed));
+        bytes32 reviewedHash = grantHash(reviewed);
         _raise(owner, operator, CAP + 1);
         assertFalse(projects.getGrant(id, operator).accepted);
         assertEq(projects.getGrant(id, operator).terms.cap, CAP + 1);

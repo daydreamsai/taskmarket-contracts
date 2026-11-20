@@ -702,6 +702,33 @@ library FacetSelectors {
         }
     }
 
+    /// @dev rev031: the terms-only grantOperator a rev030 diamond routes and rev031 Removes.
+    function grantOperatorSelectorRev030() internal pure returns (bytes4) {
+        return bytes4(keccak256("grantOperator(uint256,address,(uint256,uint8,bool,bool))"));
+    }
+
+    /// @dev rev031: the ProjectFacet selectors a rev030 diamond routes that rev031 keeps, for a Replace.
+    function projectFacetSelectorsKeptRev031() internal pure returns (bytes4[] memory s) {
+        s = _without(projectFacetSelectors(), projectSelectorsAddedRev031());
+    }
+
+    /// @dev rev031: grantOperator takes the grant's limits. The new selector is an Add and the rev030
+    ///      one is Removed, as rev028 did for acceptGrant.
+    function projectSelectorsAddedRev031() internal pure returns (bytes4[] memory s) {
+        s = _single(ProjectFacet.grantOperator.selector);
+    }
+
+    /// @dev rev031: every selector rev031 Adds.
+    function selectorsAddedRev031() internal pure returns (bytes4[] memory s) {
+        s = projectSelectorsAddedRev031();
+    }
+
+    /// @dev rev031: every selector rev031 Removes (the zero selector, removed only where a chain
+    ///      routes it, is not listed here; Rev031Upgrade adds it).
+    function selectorsRemovedRev031() internal pure returns (bytes4[] memory s) {
+        s = _single(grantOperatorSelectorRev030());
+    }
+
     /// @dev The internal hook dispatch, callable only by the diamond itself. Every selector is new in
     ///      rev028; rev030 drops hookCheckCompleteV1 (hookDispatchFacetSelectorsThroughRev029).
     function hookDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {

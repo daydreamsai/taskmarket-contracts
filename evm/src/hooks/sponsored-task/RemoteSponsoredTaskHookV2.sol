@@ -11,7 +11,7 @@ import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/pr
 import { ITMPCore } from "../../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../../interfaces/ITMPDiamond.sol";
 import { ITMPProject } from "../../interfaces/ITMPProject.sol";
-import { TMP_AUCTION, TMP_CLAIM, TMP_PITCH } from "../../interfaces/ITMPModes.sol";
+import { TMP_AUCTION, TMP_BENCHMARK, TMP_BOUNTY, TMP_CLAIM, TMP_PITCH } from "../../interfaces/ITMPModes.sol";
 import { BaseTMPHookV2 } from "../base/BaseTMPHookV2.sol";
 import { LibSettledAwards } from "../base/LibSettledAwards.sol";
 import { SponsoredTaskSettlement } from "./libraries/SponsoredTaskSettlement.sol";
@@ -125,6 +125,7 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
     error TaskTermsMismatch(bytes32 expected, bytes32 actual);
     error CommitmentTermsFrozen(bytes32 taskId);
     error TaskNotTerminal(bytes32 taskId, ITMPCore.TaskStatus status);
+    error ReleaseHeldForLiveSubmissions(bytes32 taskId);
     error VerdictNotIssued();
     error VerdictCommitmentMismatch(bytes32 taskId);
     error AwardsRequired(bytes32 taskId);
@@ -179,6 +180,9 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         uint256 remoteChainId
     );
     event SponsoredTaskUnsettleableAwardCount(bytes32 indexed taskId, bytes32 indexed allocationId, uint256 awardCount);
+    event SponsoredTaskDefaultedByRequester(
+        bytes32 indexed taskId, bytes32 indexed allocationId, address indexed requester
+    );
 
     constructor(address taskmarket_) BaseTMPHookV2(taskmarket_) {
         _disableInitializers();
@@ -234,10 +238,25 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
     }
 
     /// @notice When the keeper may release a reservation that has no settlement: seven days after
-    ///         the task's expiry.
+    ///         the task's expiry. Reverts `ReleaseHeldForLiveSubmissions` while the task is still
+    ///         open with live work: a Bounty or Benchmark with an unrejected submission, or another
+    ///         mode with an undecided delivery.
+    /// @dev Rev031: a Bounty or Benchmark stays acceptable after its decision deadline while
+    ///      submissions are live, so no fixed time is safe. The hold ends when the task is accepted,
+    ///      every submission is rejected, or anyone calls `requesterTimeout` after the decision
+    ///      deadline, which expires the task and commits its release.
     function reservationReleaseAfter(bytes32 taskId) external view returns (uint256) {
         _requireCommitment(taskId);
-        return ITMPCore(diamond).getTask(taskId).expiryTime + RESERVATION_RELEASE_GRACE;
+        ITMPCore.Task memory task = ITMPCore(diamond).getTask(taskId);
+        ITMPCore.TaskStatus status = task.status;
+        if (
+            status != ITMPCore.TaskStatus.Accepted && status != ITMPCore.TaskStatus.Cancelled
+                && status != ITMPCore.TaskStatus.Expired
+                && (task.mode == TMP_BOUNTY || task.mode == TMP_BENCHMARK
+                        ? ITMPDiamond(diamond).taskActiveSubmissionCount(taskId) != 0
+                        : task.deliverable != bytes32(0))
+        ) revert ReleaseHeldForLiveSubmissions(taskId);
+        return task.expiryTime + RESERVATION_RELEASE_GRACE;
     }
 
     function encodeHookData(FundingRequest calldata request) external pure returns (bytes memory) {
@@ -422,7 +441,16 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         returns (bool)
     {
         _requireMatchingCommitment(taskId, ctx);
+        Outcome storage o = _s().outcomes[taskId];
+        HookStatus prior = o.status;
         _commitCompletion(taskId, ctx, verdict);
+        // Rev031: a task with no evaluator reaches this callback only through the requester's
+        // acceptSubmission(s) (an evaluator verdict, and so an appeal and a dispute, needs an
+        // evaluator), so an award list over the ceiling is the requester's own. No balance effect:
+        // the settler releases the reservation as before; the event records who caused it.
+        if (prior == HookStatus.Committed && o.status == HookStatus.AwardCountExceeded && ctx.evaluator == address(0)) {
+            emit SponsoredTaskDefaultedByRequester(taskId, _s().commitments[taskId].allocationId, ctx.requester);
+        }
         return true;
     }
 
@@ -465,12 +493,13 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         // The count guard runs before the payout pool is read, so an oversized verdict marks the
         // sponsorship unsettleable without spending more of the hook's gas first.
         if (o.status == HookStatus.AwardCountExceeded) return;
-        if (o.status == HookStatus.Committed && verdict.awards.length > MAX_AWARDS) {
-            o.status = HookStatus.AwardCountExceeded;
-            emit SponsoredTaskUnsettleableAwardCount(
-                taskId, _s().commitments[taskId].allocationId, verdict.awards.length
-            );
-            return;
+        if (o.status == HookStatus.Committed) {
+            uint256 paying = SponsoredTaskSettlement.payingAwardCount(verdict.awards);
+            if (paying > MAX_AWARDS) {
+                o.status = HookStatus.AwardCountExceeded;
+                emit SponsoredTaskUnsettleableAwardCount(taskId, _s().commitments[taskId].allocationId, paying);
+                return;
+            }
         }
         uint256 pool = _nativePayoutPool(taskId, ctx.mode, ctx.reward, ctx.evaluatorFeeBps);
         ITMPCore.Award[] memory awards = verdict.awards;
@@ -501,14 +530,16 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         Outcome storage o = _s().outcomes[taskId];
         ITMPCore.Award[] memory awards = verdict.awards;
         if (
-            awards.length <= MAX_AWARDS
+            SponsoredTaskSettlement.payingAwardCount(awards) <= MAX_AWARDS
                 && SponsoredTaskSettlement.awardsDigestMemory(taskId, verdict.verdictType, awards) == o.awardsDigest
         ) return;
         _commitAwards(taskId, verdict.verdictType, awards, o.nativePayoutPool);
     }
 
-    /// @dev Never reverts on award count: above `MAX_AWARDS` the sponsorship is marked unsettleable
-    ///      so the settler releases it, and Taskmarket's own USDC settlement proceeds.
+    /// @dev Never reverts on award count: above `MAX_AWARDS` paying awards the sponsorship is marked
+    ///      unsettleable so the settler releases it, and Taskmarket's own USDC settlement proceeds.
+    ///      Zero-amount entries get no leaf and do not count; the digest and `awardCount` still
+    ///      cover every entry.
     /// @return committed False when the award count was too large.
     function _commitAwards(
         bytes32 taskId,
@@ -519,9 +550,10 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
         Outcome storage o = _s().outcomes[taskId];
         bytes32 allocationId = _s().commitments[taskId].allocationId;
         uint256 count = awards.length;
-        if (count > MAX_AWARDS) {
+        uint256 paying = SponsoredTaskSettlement.payingAwardCount(awards);
+        if (paying > MAX_AWARDS) {
             o.status = HookStatus.AwardCountExceeded;
-            emit SponsoredTaskUnsettleableAwardCount(taskId, allocationId, count);
+            emit SponsoredTaskUnsettleableAwardCount(taskId, allocationId, paying);
             return false;
         }
         o.verdictType = verdictType;
@@ -713,13 +745,17 @@ contract RemoteSponsoredTaskHookV2 is BaseTMPHookV2, ReentrancyGuard, Ownable2St
             tagsHash: keccak256(abi.encode(ctx.tags)),
             hooksHash: keccak256(abi.encode(hooks))
         });
-        return keccak256(
+        bytes32 h = keccak256(
             abi.encode(
                 SponsoredTaskTerms.TERMS_HASH_TYPEHASH,
                 keccak256(abi.encode(SponsoredTaskTerms.TASK_TERMS_TYPEHASH, terms)),
                 _settlementTermsHash(market, taskId)
             )
         );
+        (address reserved,) = market.getReservation(taskId);
+        return reserved == address(0)
+            ? h
+            : keccak256(abi.encode(SponsoredTaskTerms.RESERVED_TERMS_HASH_TYPEHASH, h, reserved));
     }
 
     /// @dev The second half of the terms commitment: the task's settlement policy as stored by the

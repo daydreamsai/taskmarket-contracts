@@ -37,6 +37,14 @@ contract MockTaskmarketForSponsoredTask {
         return _terms[taskId];
     }
 
+    function taskActiveSubmissionCount(bytes32) external pure returns (uint256) {
+        return 0;
+    }
+
+    function getReservation(bytes32) external pure returns (address worker, uint256 acceptBy) {
+        return (address(0), 0);
+    }
+
     function primeTask(
         bytes32 taskId,
         address requester,

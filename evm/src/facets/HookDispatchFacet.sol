@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibAwards } from "../libraries/LibAwards.sol";
 import { LibHooks } from "../libraries/LibHooks.sol";
 import { LibHooksV2 } from "../libraries/LibHooksV2.sol";
 import { LibSettlement } from "../libraries/LibSettlement.sol";
@@ -14,7 +15,6 @@ import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
 import { ITMPHooksV2 } from "../interfaces/ITMPHooksV2.sol";
 import { ITMPHookDispatch } from "../interfaces/ITMPHookDispatch.sol";
 import { IPGTRForwarder } from "../interfaces/IPGTRForwarder.sol";
-import { TMP_BOUNTY, TMP_BENCHMARK } from "../interfaces/ITMPModes.sol";
 
 /// @title HookDispatchFacet -- Task Hook V2 dispatch
 /// @notice Reached only through a call from the diamond to itself (LibHooks). Typed before- and
@@ -70,6 +70,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
             if (i < dLen) {
                 a = s.defaultHooksV2[i];
                 if (a.hook.codehash != a.codehash) revert ITMPHooksV2.HookCodeChanged(uint8(i));
+                // Rev031: a default set before rev030 was never checked for a delegation, and a
+                // matching codehash does not rule one out.
+                if (_delegated(a.hook)) revert ITMPHooksV2.HookDelegatedAccount(uint8(i));
             } else {
                 address h = hooks[i - dLen];
                 for (uint256 j; j < i; ++j) {
@@ -92,7 +95,12 @@ contract HookDispatchFacet is ITMPHookDispatch {
         for (uint256 i; i < n; ++i) {
             if (list[i].capabilities & 1 == 0) continue;
             _callBefore(
-                s, taskId, i, LibHooksV2.A_CREATE, abi.encodeCall(ITMPHookV2.beforeCreate, (taskId, ctx, configs[i], d))
+                s,
+                taskId,
+                i,
+                LibHooksV2.A_CREATE,
+                LibHooksV2.A_CREATE,
+                abi.encodeCall(ITMPHookV2.beforeCreate, (taskId, ctx, configs[i], d))
             );
         }
     }
@@ -125,13 +133,12 @@ contract HookDispatchFacet is ITMPHookDispatch {
         view
         returns (ITMPHookV2.Attachment memory a)
     {
-        uint256 codeLen = h.code.length;
-        if (h == address(0) || codeLen == 0) revert ITMPCore.InvalidHookAddress();
+        if (h == address(0) || h.code.length == 0) revert ITMPCore.InvalidHookAddress();
         uint8 idx = uint8(index);
         // Rev030: an EIP-7702 delegated account's code is the 23-byte designator 0xef0100 || address,
         // which its key holder can re-point at will. The pinned codehash would then stop matching
         // and every vetoable callback would revert, so such an account is never a hook.
-        if (codeLen == 23 && bytes3(h.code) == 0xef0100) revert ITMPHooksV2.HookDelegatedAccount(idx);
+        if (_delegated(h)) revert ITMPHooksV2.HookDelegatedAccount(idx);
         if (!_supports(h, type(ITMPHookV2).interfaceId)) {
             if (_supports(h, type(ITMPHook).interfaceId)) revert ITMPHooksV2.HookV1Retired(idx);
             revert ITMPHooksV2.HookIncompatible(idx, LibHooksV2.R_INTERFACE);
@@ -204,15 +211,19 @@ contract HookDispatchFacet is ITMPHookDispatch {
         uint32 bit = uint32(1) << action;
         for (uint256 i; i < list.length; ++i) {
             if (list[i].capabilities & bit == 0) continue;
-            _callBefore(s, taskId, i, action, cd);
+            _callBefore(s, taskId, i, action, action, cd);
         }
     }
 
-    function _callBefore(AppStorage storage s, bytes32 taskId, uint256 i, uint8 action, bytes memory cd) private {
+    /// @dev `bit` is the capability bit whose budget the call gets: the action id for a before-
+    ///      callback, BIT_HOOK_CALL for onCall (its action id 22 is afterCancel's bit).
+    function _callBefore(AppStorage storage s, bytes32 taskId, uint256 i, uint8 action, uint8 bit, bytes memory cd)
+        private
+    {
         ITMPHookV2.Attachment storage a = s.taskHooksV2[taskId][i];
         address hook = a.hook;
         if (hook.codehash != a.codehash) revert ITMPHooksV2.HookCodeChanged(uint8(i));
-        uint256 budget = _budget(s, action);
+        uint256 budget = _budget(s, bit);
         _requireGas(budget);
         (bool ok, uint256 size, bytes memory ret) = _call(hook, budget, cd, 256);
         if (!ok || size != 32 || _word(ret) != bytes32(_selector(cd))) {
@@ -230,6 +241,7 @@ contract HookDispatchFacet is ITMPHookDispatch {
             taskId,
             index,
             LibHooksV2.A_HOOK_CALL,
+            LibHooksV2.BIT_HOOK_CALL,
             abi.encodeCall(ITMPHookV2.onCall, (taskId, _ctx(s, taskId, false), caller, roles, data))
         );
     }
@@ -320,7 +332,9 @@ contract HookDispatchFacet is ITMPHookDispatch {
     /// @dev Decodes and validates `(bytes4, SettlementDelta, Award[])` without trusting the
     ///      encoding: any malformed word makes the result invalid rather than reverting. An empty
     ///      award list with awardCount zero means "keep the core awards" (returned as a zero-length
-    ///      array, which the facet reads as unchanged awards).
+    ///      array, which the facet reads as unchanged awards). Rev031: the decoded awards are held to
+    ///      LibAwards.check, the rules an evaluator verdict meets, so the chain's winner cap (not the
+    ///      50-entry decoding bound), rank >= 1 and distinct ranks on a contest apply to a hook too.
     function _decodeResult(
         AppStorage storage s,
         bytes32 taskId,
@@ -345,35 +359,16 @@ contract HookDispatchFacet is ITMPHookDispatch {
         if (len > 0 && a.capabilities & (uint32(1) << LibHooksV2.BIT_REALLOCATE) == 0) return (false, awards, 0);
         if (uint256(s.tasks[taskId].feeBps) + bps > 10000) return (false, awards, 0);
         awards = new ITMPCore.Award[](len);
-        uint256 total = 0;
         for (uint256 k; k < len; ++k) {
             uint256 w = uint256(_wordAt(ret, 7 + 3 * k));
-            uint256 amt = uint256(_wordAt(ret, 8 + 3 * k));
             uint256 rank = uint256(_wordAt(ret, 9 + 3 * k));
             if (w > type(uint160).max || rank > type(uint16).max) return (false, awards, 0);
-            address worker = address(uint160(w));
-            if (amt > 0) {
-                if (!_eligible(s, taskId, worker)) return (false, awards, 0);
-                for (uint256 j; j < k; ++j) {
-                    if (awards[j].worker == worker && awards[j].amount > 0) return (false, awards, 0);
-                }
-            }
-            total += amt;
-            if (total > budget) return (false, awards, 0);
-            awards[k] = ITMPCore.Award({ worker: worker, amount: amt, rank: uint16(rank) });
+            awards[k] = ITMPCore.Award({
+                worker: address(uint160(w)), amount: uint256(_wordAt(ret, 8 + 3 * k)), rank: uint16(rank)
+            });
         }
+        if (LibAwards.check(s, taskId, awards, budget, false) != bytes4(0)) return (false, awards, 0);
         return (true, awards, uint16(bps));
-    }
-
-    /// @dev The canonical eligibility set: a worker who submitted on a Bounty or Benchmark, or the
-    ///      locked worker of a Claim, Pitch or Auction.
-    function _eligible(AppStorage storage s, bytes32 taskId, address worker) private view returns (bool) {
-        if (worker == address(0)) return false;
-        ITMPCore.Task storage t = s.tasks[taskId];
-        if (t.mode == TMP_BOUNTY || t.mode == TMP_BENCHMARK) {
-            return s.taskSubmissionHashes[taskId][worker].length > 0;
-        }
-        return worker == t.worker;
     }
 
     // -------------------------------------------------------------------------
@@ -387,7 +382,7 @@ contract HookDispatchFacet is ITMPHookDispatch {
         bytes memory cd = abi.encodeCall(ITMPHookV2.afterAction, (taskId, _ctx(s, taskId, false), action, d, uint64(0)));
         // The seq word is the last head word, before the actionData tail (length word plus data).
         uint256 seqOffset = cd.length - 32 - (d.length % 32 == 0 ? d.length : d.length + 32 - (d.length % 32)) - 32;
-        _after(s, taskId, action, LibHooksV2.BIT_OBSERVER, vetoable, cd, seqOffset);
+        _after(s, taskId, action, LibHooksV2.BIT_OBSERVER, vetoable, 0, cd, seqOffset);
     }
 
     function hookSettle(bytes32 taskId, uint8 kind, ITMPCore.Verdict calldata verdict, address who) external onlySelf {
@@ -427,8 +422,8 @@ contract HookDispatchFacet is ITMPHookDispatch {
         }
         // Terminal and forfeit after-callbacks never compare codehashes and their failures are
         // swallowed. seq is the last argument word.
-        if (strict) _requireGasForAll(s, taskId, bit);
-        _after(s, taskId, action, bit, false, cd, cd.length - 32);
+        uint256 required = strict ? _requireGasForAll(s, taskId, bit) : 0;
+        _after(s, taskId, action, bit, false, required, cd, cd.length - 32);
     }
 
     function _after(
@@ -437,6 +432,7 @@ contract HookDispatchFacet is ITMPHookDispatch {
         uint8 action,
         uint8 bit,
         bool vetoable,
+        uint256 required,
         bytes memory cd,
         uint256 seqOffset
     ) private {
@@ -445,20 +441,41 @@ contract HookDispatchFacet is ITMPHookDispatch {
         uint32 mask = uint32(1) << bit;
         // An observer callback is watch-only: it never blocks the action it watches for gas.
         bool bestEffort = !vetoable || bit == LibHooksV2.BIT_OBSERVER;
+        // Rev031: on a strict dispatch the first `required` callbacks (those whose gas was demanded
+        // up front) run or revert the action, never skip, so a gas estimate cannot settle on a
+        // limit that silently drops one; the forced-exit spend cap does not apply to them.
+        bool capped = !vetoable && required == 0;
         uint256 spent;
         for (uint256 i; i < n; ++i) {
             ITMPHookV2.Attachment storage a = list[i];
             if (a.capabilities & mask == 0) continue;
             address hook = a.hook;
-            if (vetoable && hook.codehash != a.codehash) revert ITMPHooksV2.HookCodeChanged(uint8(i));
             uint64 seq = s.hookCallSeq[taskId][uint8(i)];
             s.hookCallSeq[taskId][uint8(i)] = seq + 1;
+            // Rev031: an observer whose code changed is skipped and reported, never trusted and never
+            // allowed to block the action it only watches; a changed hook that vetoes the action
+            // still reverts in its before-callback.
+            if (vetoable && hook.codehash != a.codehash) {
+                emit ITMPHooksV2.HookCallFailedV2(
+                    taskId,
+                    uint8(i),
+                    hook,
+                    action,
+                    LibHooksV2.PHASE_AFTER,
+                    LibHooksV2.FAIL_CODE_CHANGED,
+                    bytes32(0),
+                    seq
+                );
+                continue;
+            }
             // Memory-safe: overwrites one word inside cd.
             assembly ("memory-safe") {
                 mstore(add(add(cd, 32), seqOffset), seq)
             }
             uint256 budget = _budget(s, bit);
-            if (bestEffort && _skipExit(budget, vetoable ? 0 : spent, n - i)) {
+            if (required != 0) {
+                --required;
+            } else if (bestEffort && _skipExit(budget, capped ? spent : 0, n - i)) {
                 // A best-effort after-callback (terminal exits and observers included) never blocks
                 // the action for gas: it is skipped, reported, and its sequence number is spent, so the hook
                 // can detect the gap and reconcile from the settlement record.
@@ -509,10 +526,22 @@ contract HookDispatchFacet is ITMPHookDispatch {
         c.terms = s.taskTerms[taskId];
     }
 
-    /// @dev The caller of the outermost action, resolved through a trusted forwarder.
+    function _delegated(address h) private view returns (bool) {
+        return h.code.length == 23 && bytes3(h.code) == 0xef0100;
+    }
+
+    /// @dev The caller of the outermost action, resolved through a trusted forwarder. Rev031: a
+    ///      forwarder that reports no sender (a relay naming the zero address) gives the zero
+    ///      address, so a permissionless action it relays works on a hooked task as on any other.
     function _actor(AppStorage storage s) private view returns (address a) {
         a = LibHooksV2.actorRaw();
-        if (a != address(0) && s.trustedForwarders[a]) a = IPGTRForwarder(a).pgtrSender();
+        if (a != address(0) && s.trustedForwarders[a]) {
+            try IPGTRForwarder(a).pgtrSender() returns (address sender) {
+                a = sender;
+            } catch {
+                a = address(0);
+            }
+        }
     }
 
     /// @dev The per-action data of the call under way; emits its hash once per action.
@@ -536,17 +565,21 @@ contract HookDispatchFacet is ITMPHookDispatch {
     }
 
     /// @dev The gas every hook declaring `bit` would be given, demanded before the first call.
-    function _requireGasForAll(AppStorage storage s, bytes32 taskId, uint8 bit) private view {
+    ///      Returns how many of those callbacks the demand covers; each of them must then run.
+    function _requireGasForAll(AppStorage storage s, bytes32 taskId, uint8 bit) private view returns (uint256 covered) {
         ITMPHookV2.Attachment[] storage list = s.taskHooksV2[taskId];
         uint32 mask = uint32(1) << bit;
         uint256 per = (_budget(s, bit) * 64) / 63 + LibHooksV2.GAS_MARGIN;
         uint256 total = 0;
         for (uint256 i; i < list.length; ++i) {
-            if (list[i].capabilities & mask != 0) total += per;
+            if (list[i].capabilities & mask == 0) continue;
+            // Capped, so that however many hooks a task carries the action stays reachable under a
+            // chain's per-transaction gas limit; callbacks beyond the cap are best effort. The
+            // first callback is always covered.
+            if (covered != 0 && total + per > LibHooksV2.MAX_STRICT_HOOK_GAS) break;
+            total += per;
+            ++covered;
         }
-        // Capped, so that however many hooks a task carries the action stays reachable under a
-        // chain's per-transaction gas limit; callbacks beyond the cap are best effort.
-        if (total > LibHooksV2.MAX_STRICT_HOOK_GAS) total = LibHooksV2.MAX_STRICT_HOOK_GAS;
         if (gasleft() < total) revert ITMPHooksV2.InsufficientGasForHooks();
     }
 

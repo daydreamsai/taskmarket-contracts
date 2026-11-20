@@ -132,10 +132,18 @@ library LibFeedback {
         string memory feedbackURI,
         bytes32 feedbackHash
     ) private {
-        if (s.reputationRegistry == address(0)) return;
+        address registry = s.reputationRegistry;
+        if (registry == address(0)) return;
+        // A call to an address with no code reverts in this frame, outside the try, and would take
+        // every settlement path that sends feedback with it.
+        if (registry.code.length == 0) {
+            emit ITMPReputation.ReputationFeedbackFailed(taskId, agentId);
+            return;
+        }
         LibTaskMarket._requireFeedbackGas();
-        try IReputationRegistry(s.reputationRegistry)
-            .giveFeedback(agentId, v, 0, tag1, modeName(mode), "", feedbackURI, feedbackHash) { }
+        try IReputationRegistry(registry).giveFeedback{ gas: LibTaskMarket.FEEDBACK_CALL_GAS }(
+            agentId, v, 0, tag1, modeName(mode), "", feedbackURI, feedbackHash
+        ) { }
         catch {
             emit ITMPReputation.ReputationFeedbackFailed(taskId, agentId);
         }

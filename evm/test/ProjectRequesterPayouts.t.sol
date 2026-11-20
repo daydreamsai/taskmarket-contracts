@@ -13,6 +13,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits } from "./helpers/GrantHelper.sol";
 
 /// @dev rev027: every payout owed to a project task's requester goes through LibProject.payRequester.
 ///      The tasks here are created by an operator that is the requester of record, so a payout that
@@ -75,8 +76,8 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
             ownerOverride: true,
             revokeRemovesControl: true
         });
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, terms)));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(terms)))));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, terms, noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(terms))));
     }
 
     // -------------------------------------------------------------------------
@@ -362,5 +363,44 @@ contract ProjectRequesterPayoutsTest is DiamondTestHelper {
 
         _relay(operator, 0, abi.encodeCall(market.cancelTask, (taskId, 0)));
         assertEq(projects.getGrantLimits(id, operator).periodSpent, 0);
+    }
+
+    /// @dev An evaluator-rejected Claim task: the evaluator is paid its fee, the rest of the reward
+    ///      is refunded and, with `stake`, the worker's stake is forfeited to the project.
+    function _rejectedClaim(uint256 stake) internal returns (bytes32 taskId) {
+        ITMPCore.TaskTerms memory t = _v2Terms();
+        t.penaltyTo = ITMPCore.PenaltyTo.Requester;
+        t.stakeRequired = stake != 0;
+        t.stakeBps = stake != 0 ? uint16(stake * 10000 / REWARD) : 0;
+        taskId = _opTask(taskConfig(REWARD, DURATION, TMP_CLAIM), _evalConfig(), t);
+        _relay(worker, stake, abi.encodeCall(market.claimTask, (taskId, stake)));
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        _relay(
+            evaluator,
+            0,
+            abi.encodeCall(
+                market.evaluate, (taskId, ITMPCore.VerdictType.REJECT, 0, 1000, bytes32(0), new ITMPCore.Award[](0))
+            )
+        );
+        vm.warp(block.timestamp + 1 days + 1);
+        market.finalizeVerdict(taskId);
+        assertTrue(market.getTask(taskId).status >= ITMPCore.TaskStatus.Accepted, "settled");
+    }
+
+    /// @dev Rev031 (Cyclops 7619): a stake forfeited on a terminal settlement is a windfall to the
+    ///      pool. The operator's cap gets back what the task returned of the project's money and
+    ///      nothing for the stake, the same as the identical task without a stake.
+    function test_ForfeitedStakeOnTerminalSettlement_DoesNotCreditTheOperatorCap() public {
+        uint256 before = _committed();
+        _rejectedClaim(0);
+        uint256 withoutStake = _committed() - before;
+
+        uint256 mid = _committed();
+        uint256 availableBefore = _available();
+        _rejectedClaim(STAKE);
+        assertEq(_committed() - mid, withoutStake, "the forfeited stake does not raise the operator's cap");
+        assertEq(withoutStake, EVAL_FEE, "only the evaluator fee stays committed");
+        assertEq(_available(), availableBefore - EVAL_FEE + STAKE, "the stake still reaches the pool as a windfall");
+        _assertRouted();
     }
 }

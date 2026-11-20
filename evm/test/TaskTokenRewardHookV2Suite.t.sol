@@ -1059,6 +1059,162 @@ contract TaskTokenRewardHookTestV2Suite is DiamondTestHelper {
         assertEq(hook.claimable(worker), 250 * 1e18);
     }
 
+    // ─── Rev031: zero-multiplier reservations hold at most a share of the epoch budget ────
+
+    uint256 constant SMALL_GLOBAL_CAP_USD = 1000 * 1e6; // ten 100-USDC bonuses
+
+    function _defaultRamp() internal {
+        vm.prank(owner);
+        hook.setRamp(
+            [uint40(2 weeks), uint40(4 weeks), uint40(8 weeks)], [uint16(0), uint16(2500), uint16(5000), uint16(10_000)]
+        );
+    }
+
+    /// @dev A requester creates a Claim task and a worker claims it; returns the reserved tokens.
+    function _claimAs(address req, address wrk) internal returns (bytes32 taskId, uint256 reservedTokens) {
+        return _claimAs(req, wrk, 365 days);
+    }
+
+    function _claimAs(address req, address wrk, uint256 duration)
+        internal
+        returns (bytes32 taskId, uint256 reservedTokens)
+    {
+        bytes memory result = _relay(
+            req,
+            REWARD_100_USDC,
+            abi.encodeCall(
+                market.createTask,
+                (
+                    taskConfig(REWARD_100_USDC, duration, market.CLAIM(), 0, 0, bytes4(0)),
+                    ITMPCore.HookConfig({ contracts: _hookArr(address(hook)), data: "" }),
+                    ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                    noEvaluatorConfig(),
+                    stakeTerms(false, 0)
+                )
+            )
+        );
+        taskId = abi.decode(result, (bytes32));
+        _relay(wrk, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        (,,, reservedTokens,,,,,) = hook.rewardStates(taskId);
+    }
+
+    function _agedPair() internal returns (address req, address wrk) {
+        req = makeAddr("aged-requester");
+        wrk = makeAddr("aged-worker");
+        vm.warp(block.timestamp + 100 days);
+        address[] memory wallets = new address[](2);
+        wallets[0] = req;
+        wallets[1] = wrk;
+        uint40[] memory seen = new uint40[](2);
+        seen[0] = uint40(block.timestamp - 90 days);
+        seen[1] = uint40(block.timestamp - 90 days);
+        vm.prank(owner);
+        hook.seedWalletHistory(wallets, seen, new bool[](2));
+    }
+
+    /// Reproduces #5962. Fresh requester and worker pairs (age multiplier 0, so they earn nothing at reserve) cannot
+    /// hold the whole epoch budget: wallets that earn still reserve their bonus.
+    function test_zeroAgeReservationsCannotExhaustTheEpochBudget() public {
+        _defaultRamp();
+        vm.prank(owner);
+        budget.setGlobalCapUsd(SMALL_GLOBAL_CAP_USD);
+        (address agedReq, address agedWrk) = _agedPair();
+
+        for (uint256 i; i < 10; ++i) {
+            _claimAs(
+                makeAddr(string.concat("fresh-req-", vm.toString(i))),
+                makeAddr(string.concat("fresh-wrk-", vm.toString(i)))
+            );
+        }
+        uint256 cap = SMALL_GLOBAL_CAP_USD * hook.zeroAgeReserveShareBps() / 10_000;
+        assertLe(budget.globalUsed(), cap, "fresh pairs hold at most the zero-age share");
+
+        (, uint256 agedReserved) = _claimAs(agedReq, agedWrk);
+        assertEq(agedReserved, EXPECTED_REWARD_1000_DREAMS, "an earning pair still reserves its bonus");
+
+        // The share is measured against the epoch's whole usage: once it is passed, by any
+        // reservations, a fresh pair reserves nothing.
+        (, uint256 late) = _claimAs(makeAddr("fresh-late"), makeAddr("fresh-wrk-late"));
+        assertEq(late, 0, "no fresh reservation past the share");
+    }
+
+    /// Reproduces #6007. A Bounty payout to a winner and requester that both have a zero age
+    /// multiplier credits nothing, so it spends no epoch budget and moves no vault tokens.
+    function test_zeroAgeBountyPayoutSpendsNoBudget() public {
+        _defaultRamp();
+        bytes32 taskId = _createBountyTask();
+        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        uint256 vaultBefore = dreamsToken.balanceOf(address(vault));
+
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(worker), 0, "a zero-age winner is credited nothing");
+        assertEq(budget.globalUsed(), 0, "and spends no epoch budget");
+        assertEq(dreamsToken.balanceOf(address(vault)), vaultBefore, "and moves no vault tokens");
+    }
+
+    /// A winner with a non-zero multiplier is still paid from the budget, at its payout age.
+    function test_agedBountyWinnerStillSpendsAndEarns() public {
+        _defaultRamp();
+        (, address agedWorker) = _agedPair();
+        bytes32 taskId = _createBountyTask();
+        _relay(agedWorker, 0, abi.encodeCall(market.submitWork, (taskId, keccak256("work"))));
+        _relay(requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, agedWorker, keccak256("work"), 0)));
+
+        assertEq(hook.claimable(agedWorker), EXPECTED_REWARD_1000_DREAMS, "full multiplier at 90 days");
+        assertEq(budget.globalUsed(), REWARD_100_USDC);
+    }
+
+    /// A released zero-multiplier reservation frees its part of the share for the next fresh pair.
+    function test_zeroAgeReservationReleaseFreesTheShare() public {
+        _defaultRamp();
+        vm.prank(owner);
+        budget.setGlobalCapUsd(SMALL_GLOBAL_CAP_USD);
+
+        (bytes32 first, uint256 firstReserved) = _claimAs(makeAddr("fresh-a"), makeAddr("fresh-wrk-a"), 1 days);
+        assertEq(firstReserved, EXPECTED_REWARD_1000_DREAMS, "the first fresh pair fits the 10% share");
+        (, uint256 blocked) = _claimAs(makeAddr("fresh-b"), makeAddr("fresh-wrk-b"));
+        assertEq(blocked, 0, "the share is full");
+        assertEq(budget.globalUsed(), REWARD_100_USDC, "the refused reservation consumed no budget");
+
+        vm.warp(block.timestamp + 2 days);
+        _relay(makeAddr("fresh-a"), 0, abi.encodeCall(market.forfeitAndReopen, (first)));
+        assertEq(budget.globalUsed(), 0, "the release frees the share");
+
+        (, uint256 next) = _claimAs(makeAddr("fresh-c"), makeAddr("fresh-wrk-c"));
+        assertEq(next, EXPECTED_REWARD_1000_DREAMS, "a later fresh pair reserves again");
+    }
+
+    /// The share is the owner's parameter: 10% until set, at most 10000, and 10000 lifts the cap.
+    function test_zeroAgeReserveShareIsOwnerSet() public {
+        assertEq(hook.zeroAgeReserveShareBps(), hook.DEFAULT_ZERO_AGE_RESERVE_SHARE_BPS());
+        assertEq(hook.DEFAULT_ZERO_AGE_RESERVE_SHARE_BPS(), 1000);
+
+        vm.expectRevert();
+        hook.setZeroAgeReserveShareBps(5000);
+        vm.prank(owner);
+        vm.expectRevert(TaskTokenRewardHook.InvalidBps.selector);
+        hook.setZeroAgeReserveShareBps(10_001);
+
+        _defaultRamp();
+        vm.startPrank(owner);
+        budget.setGlobalCapUsd(SMALL_GLOBAL_CAP_USD);
+        hook.setZeroAgeReserveShareBps(10_000);
+        vm.stopPrank();
+        for (uint256 i; i < 10; ++i) {
+            (, uint256 reserved) = _claimAs(
+                makeAddr(string.concat("lift-req-", vm.toString(i))),
+                makeAddr(string.concat("lift-wrk-", vm.toString(i)))
+            );
+            assertEq(reserved, EXPECTED_REWARD_1000_DREAMS, "no cap at 10000");
+        }
+        assertEq(budget.globalUsed(), SMALL_GLOBAL_CAP_USD);
+
+        vm.prank(owner);
+        hook.setZeroAgeReserveShareBps(0);
+        assertEq(hook.zeroAgeReserveShareBps(), 0, "an explicit 0 is kept, not read as the default");
+    }
+
     function test_ageRamp_halfXBetweenFourAndEightWeeks() public {
         vm.prank(owner);
         hook.setRamp(

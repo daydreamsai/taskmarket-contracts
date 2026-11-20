@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../src/interfaces/ITMPDiamond.sol";
 import { ITMPHookV2 } from "../src/interfaces/ITMPHookV2.sol";
 import { ITMPHooksV2 } from "../src/interfaces/ITMPHooksV2.sol";
-import { TMP_BOUNTY } from "../src/interfaces/ITMPModes.sol";
+import { TMP_BOUNTY, TMP_CLAIM } from "../src/interfaces/ITMPModes.sol";
+import { ITMPTerms } from "../src/interfaces/ITMPTerms.sol";
+import { ITMPReservation } from "../src/interfaces/ITMPReservation.sol";
 import { MockERC20 } from "../src/mocks/MockERC20.sol";
 import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import { SponsoredTaskTypes } from "../src/hooks/sponsored-task/SponsoredTaskTypes.sol";
@@ -130,10 +132,19 @@ contract SponsoredTaskHookV2DiamondTest is DiamondTestHelper {
     }
 
     function _termsHash(address[] memory hooks) internal view returns (bytes32) {
+        SponsoredTaskTerms.SettlementTerms memory settlement;
+        return _termsHash(hooks, TMP_BOUNTY, settlement);
+    }
+
+    function _termsHash(address[] memory hooks, bytes4 mode, SponsoredTaskTerms.SettlementTerms memory settlement)
+        internal
+        view
+        returns (bytes32)
+    {
         SponsoredTaskTerms.Terms memory t = SponsoredTaskTerms.Terms({
             reward: REWARD,
             duration: DURATION,
-            mode: TMP_BOUNTY,
+            mode: mode,
             pitchDuration: 0,
             bidDuration: 0,
             auctionSubtype: bytes4(0),
@@ -151,8 +162,6 @@ contract SponsoredTaskHookV2DiamondTest is DiamondTestHelper {
             tagsHash: keccak256(abi.encode(new bytes32[](0))),
             hooksHash: keccak256(abi.encode(hooks))
         });
-        // Default settlement terms: every window and outcome is left at its zero (protocol default).
-        SponsoredTaskTerms.SettlementTerms memory settlement;
         return keccak256(
             abi.encode(
                 SponsoredTaskTerms.TERMS_HASH_TYPEHASH,
@@ -267,6 +276,189 @@ contract SponsoredTaskHookV2DiamondTest is DiamondTestHelper {
         assertEq(market.getTaskHooks(taskId)[0], address(defaultHook), "defaults first");
         (,,,,,,,, SponsoredTaskHookV2.HookStatus st) = hook.taskAllocationSettlement(taskId);
         assertEq(uint8(st), uint8(SponsoredTaskHookV2.HookStatus.Reserved), "reserved at creation");
+    }
+
+    /// @dev A rejected delivery whose outcome is a refund ends the task (Expired), but the diamond
+    ///      dispatches only afterForfeit. The reservation must still go back to the vault.
+    function test_RejectedDeliveryThatEndsTheTask_ReleasesTheReservation() public {
+        address[] memory hooks = _one(address(hook));
+        SponsoredTaskTerms.SettlementTerms memory settlement;
+        settlement.rejectOutcome = uint8(ITMPCore.RejectOutcome.Refund);
+        bytes[] memory configs = new bytes[](1);
+        configs[0] = hook.encodeHookData(
+            SponsoredTaskHookV2.FundingRequest({
+                route: 0,
+                vault: address(vault),
+                vaultId: vault.vaultId(),
+                allocationId: bytes32(0),
+                epoch: 1,
+                feeBps: 0,
+                feeRecipient: address(0xFEE1),
+                grossAmount: GROSS,
+                taskTermsHash: _termsHash(hooks, TMP_CLAIM, settlement)
+            })
+        );
+        ITMPCore.TaskTerms memory terms;
+        terms.version = 1;
+        terms.rejectOutcome = ITMPCore.RejectOutcome.Refund;
+        bytes32 taskId = abi.decode(
+            forwarder.relay(
+                address(market),
+                requester,
+                REWARD,
+                abi.encodeCall(
+                    ITMPTerms.createTask,
+                    (
+                        taskConfig(REWARD, DURATION, TMP_CLAIM),
+                        ITMPCore.HookConfig({ contracts: hooks, data: abi.encode(configs) }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig(),
+                        terms
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        assertEq(vault.totalReserved(), GROSS, "reserved at creation");
+
+        forwarder.relay(address(market), worker, 0, abi.encodeCall(market.claimTask, (taskId, 0)));
+        forwarder.relay(address(market), worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        forwarder.relay(address(market), requester, 0, abi.encodeCall(market.rejectDelivery, (taskId)));
+        assertEq(uint8(market.getTask(taskId).status), uint8(ITMPCore.TaskStatus.Expired), "task ended");
+
+        (,,,,,,,, SponsoredTaskHookV2.HookStatus st) = hook.taskAllocationSettlement(taskId);
+        assertEq(uint8(st), uint8(SponsoredTaskHookV2.HookStatus.Released), "released in the same call");
+        assertEq(vault.totalReserved(), 0, "reservation back in the vault");
+        assertEq(vault.managerAccount(requester).reserved, 0, "manager cap restored");
+    }
+
+    /// @dev A requester that spreads its acceptSubmissions over more than MAX_AWARDS paying awards
+    ///      (eight of them dust to addresses it controls) releases the sponsorship. No evaluator
+    ///      chose that list, so the hook records the default against the requester (rev031).
+    function test_RequesterPaddedAcceptSubmissions_RecordsDefaultByRequester() public {
+        address[] memory hooks = _one(address(hook));
+        bytes[] memory configs = new bytes[](1);
+        configs[0] = hook.encodeHookData(
+            SponsoredTaskHookV2.FundingRequest({
+                route: 0,
+                vault: address(vault),
+                vaultId: vault.vaultId(),
+                allocationId: bytes32(0),
+                epoch: 1,
+                feeBps: 0,
+                feeRecipient: address(0xFEE1),
+                grossAmount: GROSS,
+                taskTermsHash: _termsHash(hooks)
+            })
+        );
+        bytes32 taskId = abi.decode(
+            forwarder.relay(
+                address(market),
+                requester,
+                REWARD,
+                abi.encodeCall(
+                    market.createTask,
+                    (
+                        taskConfig(REWARD, DURATION, TMP_BOUNTY),
+                        ITMPCore.HookConfig({ contracts: hooks, data: abi.encode(configs) }),
+                        ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                        noEvaluatorConfig(),
+                        stakeTerms(false, 0)
+                    )
+                )
+            ),
+            (bytes32)
+        );
+        uint256 n = hook.MAX_AWARDS() + 1;
+        address[] memory workers = new address[](n);
+        uint16[] memory shares = new uint16[](n);
+        for (uint256 i; i < n; ++i) {
+            workers[i] = address(uint160(0xD000 + i));
+            shares[i] = 1;
+            forwarder.relay(address(market), workers[i], 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
+        }
+        shares[0] = uint16(10_000 - (n - 1));
+
+        vm.recordLogs();
+        forwarder.relay(
+            address(market),
+            requester,
+            0,
+            abi.encodeCall(market.acceptSubmissions, (taskId, workers, shares, new bytes32[](0), 0))
+        );
+
+        (,,,,,,,, SponsoredTaskHookV2.HookStatus st) = hook.taskAllocationSettlement(taskId);
+        assertEq(uint8(st), uint8(SponsoredTaskHookV2.HookStatus.AwardCountExceeded), "sponsorship released");
+        assertEq(vault.totalReserved(), 0, "reservation back in the vault");
+        assertEq(_requesterDefaults(address(hook), taskId), 1, "default recorded against the requester");
+    }
+
+    function _requesterDefaults(address emitter, bytes32 taskId) internal returns (uint256 count) {
+        bytes32 sig = keccak256("SponsoredTaskDefaultedByRequester(bytes32,bytes32,address)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == emitter && logs[i].topics.length == 4 && logs[i].topics[0] == sig
+                    && logs[i].topics[1] == taskId && logs[i].topics[3] == bytes32(uint256(uint160(requester)))
+            ) ++count;
+        }
+    }
+
+    /// @dev A sponsored Claim task offered to `reserved`, funded with `termsHash`.
+    function _createReserved(address reserved, bytes32 termsHash) internal returns (bytes memory) {
+        address[] memory hooks = _one(address(hook));
+        bytes[] memory configs = new bytes[](1);
+        configs[0] = hook.encodeHookData(
+            SponsoredTaskHookV2.FundingRequest({
+                route: 0,
+                vault: address(vault),
+                vaultId: vault.vaultId(),
+                allocationId: bytes32(0),
+                epoch: 1,
+                feeBps: 0,
+                feeRecipient: address(0xFEE1),
+                grossAmount: GROSS,
+                taskTermsHash: termsHash
+            })
+        );
+        return abi.encodeCall(
+            ITMPReservation.createTask,
+            (
+                taskConfig(REWARD, DURATION, TMP_CLAIM),
+                ITMPCore.HookConfig({ contracts: hooks, data: abi.encode(configs) }),
+                ITMPCore.TaskContent({ contentHash: bytes32(0), contentURI: "", tags: new bytes32[](0) }),
+                noEvaluatorConfig(),
+                stakeTerms(false, 0),
+                reserved
+            )
+        );
+    }
+
+    /// @dev Rev031 (Cyclops 4445): the terms hash of a task with a reserved worker commits that
+    ///      worker, so a manager cannot fund a reservation the sponsor did not commit to.
+    function test_ReservedWorkerIsPartOfTheTermsHash() public {
+        SponsoredTaskTerms.SettlementTerms memory settlement;
+        bytes32 withoutWorker = _termsHash(_one(address(hook)), TMP_CLAIM, settlement);
+        bytes32 withWorker =
+            keccak256(abi.encode(SponsoredTaskTerms.RESERVED_TERMS_HASH_TYPEHASH, withoutWorker, worker));
+
+        bytes memory unbound = _createReserved(worker, withoutWorker);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ITMPHooksV2.HookRejected.selector,
+                uint8(0),
+                uint8(0),
+                abi.encodeWithSelector(SponsoredTaskHookV2.TaskTermsMismatch.selector, withoutWorker, withWorker)
+            )
+        );
+        forwarder.relay(address(market), requester, REWARD, unbound);
+
+        bytes32 taskId = abi.decode(
+            forwarder.relay(address(market), requester, REWARD, _createReserved(worker, withWorker)), (bytes32)
+        );
+        assertEq(hook.currentTaskTermsHash(taskId), withWorker, "the reservation's worker is committed");
+        (,,,,,,,, SponsoredTaskHookV2.HookStatus st) = hook.taskAllocationSettlement(taskId);
+        assertEq(uint8(st), uint8(SponsoredTaskHookV2.HookStatus.Reserved), "funded");
     }
 
     function _one(address h) internal pure returns (address[] memory a) {

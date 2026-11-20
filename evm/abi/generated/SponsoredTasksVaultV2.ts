@@ -27,6 +27,19 @@ export const SponsoredTasksVaultV2ABI = [
   },
   {
     "type": "function",
+    "name": "CONFIGURE_MANAGER_FOR_CHAIN_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "CONFIGURE_MANAGER_TYPEHASH",
     "inputs": [],
     "outputs": [
@@ -537,6 +550,72 @@ export const SponsoredTasksVaultV2ABI = [
   },
   {
     "type": "function",
+    "name": "configureManagerForChain",
+    "inputs": [
+      {
+        "name": "taskChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "configureManagerForChainBySig",
+    "inputs": [
+      {
+        "name": "taskChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "controller",
     "inputs": [],
     "outputs": [
@@ -884,8 +963,78 @@ export const SponsoredTasksVaultV2ABI = [
   },
   {
     "type": "function",
+    "name": "managerAccountForChain",
+    "inputs": [
+      {
+        "name": "taskChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "account",
+        "type": "tuple",
+        "internalType": "struct SponsoredTaskTypes.ManagerAccount",
+        "components": [
+          {
+            "name": "cap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reserved",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "spent",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "managerRemaining",
     "inputs": [
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "managerRemainingForChain",
+    "inputs": [
+      {
+        "name": "taskChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "manager",
         "type": "address",
@@ -1048,6 +1197,59 @@ export const SponsoredTasksVaultV2ABI = [
   },
   {
     "type": "function",
+    "name": "reserveTaskForChain",
+    "inputs": [
+      {
+        "name": "allocationId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "taskChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "grossAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expectedEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "expectedFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "expectedFeeRecipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "settlementChain",
     "inputs": [],
     "outputs": [
@@ -1071,6 +1273,25 @@ export const SponsoredTasksVaultV2ABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sweepExited",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1307,6 +1528,37 @@ export const SponsoredTasksVaultV2ABI = [
   },
   {
     "type": "event",
+    "name": "ExitedVaultSwept",
+    "inputs": [
+      {
+        "name": "vaultId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FeeClaimed",
     "inputs": [
       {
@@ -1359,6 +1611,49 @@ export const SponsoredTasksVaultV2ABI = [
     "type": "event",
     "name": "ManagerConfigured",
     "inputs": [
+      {
+        "name": "manager",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reserved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "spent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "active",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ManagerConfiguredForChain",
+    "inputs": [
+      {
+        "name": "taskChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "manager",
         "type": "address",
@@ -2268,6 +2563,11 @@ export const SponsoredTasksVaultV2ABI = [
   },
   {
     "type": "error",
+    "name": "TaskChainRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TaskIdRequired",
     "inputs": []
   },
@@ -2332,6 +2632,11 @@ export const SponsoredTasksVaultV2ABI = [
   {
     "type": "error",
     "name": "VaultNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultNotExited",
     "inputs": []
   },
   {

@@ -33,12 +33,12 @@ factory.
 
 Inherits the v1 vault unchanged and adds:
 
-| Function | Who signs | Effect |
-| --- | --- | --- |
-| `configureManagerBySig(manager, cap, active, deadline, signature)` | current `owner()` | same as `configureManager` |
-| `withdrawAvailableBySig(recipient, amount, deadline, signature)` | current `owner()` | same as `withdrawAvailable`; `AvailableWithdrawn` names the owner |
-| `emergencyExitVaultBySig(recipient, deadline, signature)` | current `owner()` | same as `emergencyExitVault`; `VaultEmergencyExited` names the owner |
-| `cancelOwnerSignatures()` | owner, as `msg.sender` | advances `ownerNonce`, revoking every outstanding signed action |
+| Function                                                                           | Who signs                                           | Effect                                                                            |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `configureManagerBySig(manager, cap, active, deadline, signature)`                 | current `owner()`                                   | same as `configureManager`                                                        |
+| `withdrawAvailableBySig(recipient, amount, deadline, signature)`                   | current `owner()`                                   | same as `withdrawAvailable`; `AvailableWithdrawn` names the owner                 |
+| `emergencyExitVaultBySig(recipient, deadline, signature)`                          | current `owner()`                                   | same as `emergencyExitVault`; `VaultEmergencyExited` names the owner              |
+| `cancelOwnerSignatures()`                                                          | owner, as `msg.sender`                              | advances `ownerNonce`, revoking every outstanding signed action                   |
 | `fundWithAuthorization(funder, amount, validAfter, validBefore, nonce, signature)` | `funder`, as an EIP-3009 `ReceiveWithAuthorization` | same accounting as `fund`: `totalFunded += amount`, `VaultFunded(funder, amount)` |
 
 Signed owner actions are EIP-712 typed data in the vault's own domain (`SponsoredTasksVault`,
@@ -79,15 +79,83 @@ v1 exact-amount checks (`TokenSenderAmountMismatch`, `TokenTransferAmountMismatc
 that implements EIP-3009 supports it; any other project token still funds with `approve` and
 `fund`.
 
+### Manager allowances keyed by task chain (rev031, `VAULT_VERSION` 3)
+
+A remote (settler-mode) vault funds tasks from more than one task chain. Until rev031 a vault kept
+one allowance per manager address, so whoever controls that address on any task chain could create
+tasks there that spend it. For an EOA manager that is the same key everywhere, but a contract-wallet
+manager (a Safe whose owners were changed on one chain only, a counterfactual wallet that someone
+else deploys first on another chain, a factory that is a different contract elsewhere) can be
+controlled by a different party on each chain, who could then reserve up to the manager's remaining
+cap and award the sponsor's tokens to accounts it controls. The Solana program already keys
+managers by `(chain_id, evm_address)`.
+
+From rev031 the vault keys each manager account by `(taskChainId, manager)`, and each allocation
+records the task chain its reservation charged, so its release and settlement refund and spend the
+same account. Every v2 entry point keeps its signature and acts on `block.chainid`, the vault's own
+chain, which is the only task chain a hook-mode vault serves: `configureManager`,
+`configureManagerBySig` (its typehash is unchanged), `reserveTask`, `managerAccount` and
+`managerRemaining`. The chain-scoped entry points name the task chain:
+
+| Function                                                                                | Who                       | Effect                                                         |
+| --------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------- |
+| `configureManagerForChain(taskChainId, manager, cap, active)`                           | owner                     | sets the manager's allowance for tasks from `taskChainId`      |
+| `configureManagerForChainBySig(taskChainId, manager, cap, active, deadline, signature)` | current `owner()`, signed | same, with the same owner nonce, deadline and ERC-1271 rules   |
+| `reserveTaskForChain(allocationId, taskChainId, taskId, manager, ...)`                  | controller (the settler)  | `reserveTask`, charging the allowance for `taskChainId`        |
+| `managerAccountForChain(taskChainId, manager)`, `managerRemainingForChain(...)`         | view                      | the account and what it may still reserve, for that task chain |
+
+```text
+ConfigureManagerForChain(bytes32 vaultId,uint256 taskChainId,address manager,uint256 cap,bool active,uint256 nonce,uint256 deadline)
+```
+
+`ManagerConfiguredForChain(taskChainId, manager, cap, reserved, spent, active)` carries the chain;
+`configureManager` still emits `ManagerConfigured`. A zero task chain reverts `TaskChainRequired`.
+`SponsoredTaskSettler` calls `reserveTaskForChain` with the `taskChainId` of the signed `Reserve`,
+which it already carried, so the signed message gains no field for this. A sponsor can give one
+manager different caps on Base and Tempo. The vault reports `VAULT_VERSION` 3 and its factory
+`IMPLEMENTATION_VERSION` 3, so clients tell these vaults from earlier ones by version; every v2
+signed action works on both.
+
+Vaults created before rev031 keep the address-only key for life. For them a remote vault serving
+more than one task chain should only have managers that are EOAs, or contract wallets with the same
+owners on every task chain; an owner who wants the chain-bound key withdraws and creates a new
+vault.
+
+### Exited vaults: sweep and the recorded exit amount
+
+The emergency exit is one-shot and accepts a short delivery (a token that charges a transfer fee),
+and afterwards every other path is closed: `withdrawAvailable` and `fund` need an active vault.
+Tokens an inexact exit left behind, or tokens sent to the vault after it exited, would be locked for
+good. `sweepExited(recipient)` lets the owner (as `msg.sender`) send the whole balance of an exited
+vault to `recipient`, with the exit's transfer check, and emits
+`ExitedVaultSwept(vaultId, owner, recipient, amount)`. An exited vault owes nothing (every
+reservation and unclaimed award defaulted when its epoch advanced), so its whole balance is the
+owner's. It reverts with `VaultNotExited` on an active vault, and with `ZeroAddress` for a zero
+recipient. It has no signed variant.
+
+`totalWithdrawn`, the value `emergencyExitVault` returns and `VaultEmergencyExited.amountWithdrawn`
+record what the recipient received, not the balance before a token's fee. `sweepExited` adds what it
+delivers to `totalWithdrawn` the same way.
+
+Vaults are clones of a fixed implementation, so this reaches only vaults cloned from an
+implementation deployed after the change, behind a new factory; existing vaults keep their code.
+
+The Solana program has the same gap and the same fix: `sweep_exited`, sponsor-only and open while
+paused, moves an exited vault's token balance to the sponsor's token account, adds it to
+`total_withdrawn` and emits `ExitedVaultSwept { vault, sponsor, recipient, amount }`
+(`VaultNotExited` on an active vault). A Solana mint cannot charge a transfer fee (`create_vault`
+rejects the extension), so its exit already records what arrived.
+
 ### `SponsoredTaskFactoryV2`
 
-`IMPLEMENTATION_VERSION = 2`; it clones `SponsoredTasksVaultV2` and registers each vault with the
+`IMPLEMENTATION_VERSION = 2` (3 from rev031, the vaults keyed by task chain); it clones
+`SponsoredTasksVaultV2` and registers each vault with the
 existing `SponsoredTaskRegistry`, once the registry owner has authorized it with `setFactory`.
 `VaultCreated` has the same signature as v1, so one ABI reads both factories.
 
-| Function | Effect |
-| --- | --- |
-| `createVault(token, vaultOwner, userSalt)` | as v1: the caller is the creator |
+| Function                                                             | Effect                                                                                                                                   |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `createVault(token, vaultOwner, userSalt)`                           | as v1: the caller is the creator                                                                                                         |
 | `createVaultBySig(token, vaultOwner, userSalt, deadline, signature)` | the owner is the creator: the vault gets the address `createVault` from the owner would give it, and `VaultCreated.creator` is the owner |
 
 `createVaultBySig` checks an EIP-712 signature (domain `SponsoredTaskFactory`, version `2`) by the

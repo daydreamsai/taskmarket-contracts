@@ -105,6 +105,25 @@ library LibProject {
         return _refund(taskId, amount);
     }
 
+    /// @notice Rev031: payRequester for a forfeited worker stake. The stake is the worker's money,
+    ///         never drawn from the project, so for a project task it is refunded to the pool as a
+    ///         windfall: it lowers no draw and gives nothing back to the operator's cap or period
+    ///         meter, whether the task reopens or has already ended (a terminal settlement has
+    ///         nothing left in escrow, so refund cannot tell the stake from returned pool money).
+    function payWindfall(AppStorage storage s, bytes32 taskId, uint256 amount) internal returns (bool) {
+        if (s.taskProjects[taskId] != 0) {
+            bytes32 slot = WINDFALL_SLOT;
+            // Memory-safe: transient storage only; the refund this payRequester reaches reads and
+            // clears it.
+            assembly ("memory-safe") {
+                tstore(slot, 1)
+            }
+        }
+        return payRequester(s, taskId, amount);
+    }
+
+    bytes32 private constant WINDFALL_SLOT = keccak256("taskmarket.rev031.refundWindfall");
+
     /// @dev The call into the diamond, kept out of payRequester so the optimizer does not inline
     ///      it at every payout site.
     function _refund(bytes32 taskId, uint256 amount) private returns (bool) {
@@ -156,6 +175,13 @@ library LibProject {
     ///         each.
     function refund(AppStorage storage s, bytes32 taskId, uint256 amount) internal {
         uint256 projectId = s.taskProjects[taskId];
+        bytes32 slot = WINDFALL_SLOT;
+        bool windfall;
+        // Memory-safe: transient storage only.
+        assembly ("memory-safe") {
+            windfall := tload(slot)
+            tstore(slot, 0)
+        }
         if (amount == 0) {
             _release(s, projectId, taskId, 0);
             return;
@@ -177,7 +203,7 @@ library LibProject {
         uint256 drawn = s.taskPoolDraws[taskId];
         (uint256 held,) = LibEscrow.owedParts(s, taskId);
         uint256 gone = drawn > held ? drawn - held : 0;
-        uint256 applied = amount > gone ? gone : amount;
+        uint256 applied = windfall ? 0 : (amount > gone ? gone : amount);
         // Rev030: the operator's cap and period meter get back the same `applied`, project money
         // coming back and nothing else. The forfeited stake still goes to the pool, but it was
         // never counted against the operator, so it must not raise the operator's cap.
@@ -390,6 +416,15 @@ library LibProject {
     ///         unchanged.
     function requireNotActingParty(AppStorage storage s, bytes32 taskId, address worker) internal view {
         if (s.taskProjects[taskId] != 0 && isActingParty(s, taskId, worker)) revert ITMPCore.InvalidWorker();
+    }
+
+    /// @notice Rev031: reverts InvalidWorker when `who` is the task's evaluator or dispute resolver.
+    ///         Whoever judges a task cannot also work on it, submit to it, appeal it or be awarded
+    ///         from it, on any task, or it could rule on its own work. The zero address is never a
+    ///         judge, so a task without an evaluator or resolver is unchanged.
+    function requireNotJudge(AppStorage storage s, bytes32 taskId, address who) internal view {
+        ITMPCore.TaskEvaluatorConfig storage c = s.taskEvaluatorConfigs[taskId];
+        if (who != address(0) && (who == c.evaluator || who == c.disputeResolver)) revert ITMPCore.InvalidWorker();
     }
 
     /// @notice Whether `caller` may act as the requester of an operator-created project task. The

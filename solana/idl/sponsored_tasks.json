@@ -286,8 +286,10 @@
       "name": "claim",
       "docs": [
         "Blocked while paused. Pays award leaf `leaf_index` of a settled reservation to the",
-        "worker's bound payout address. Anyone may relay it: the proof against the settled root",
-        "authorizes, and the `ClaimReceipt` it creates makes a second claim of the leaf fail.",
+        "worker's bound payout address, into that address's associated token account",
+        "(`PayoutAccountNotAssociated` otherwise). Anyone may relay it: the proof against the",
+        "settled root authorizes, and the `ClaimReceipt` it creates makes a second claim of the",
+        "leaf fail.",
         "It pays only once `Config::claim_delay` has passed since `settle`."
       ],
       "discriminator": [
@@ -742,6 +744,69 @@
       "args": []
     },
     {
+      "name": "extend_deadline",
+      "docs": [
+        "Settler-gated and blocked while paused. Moves a reserved reservation's deadline later, for a",
+        "task whose expiry the task chain extended after `reserve`, so `release_expired` cannot",
+        "return the reservation while the task is still live. The new deadline must be later than",
+        "both the current one and the clock (`DeadlineInPast`) and at most `MAX_RESERVATION_SECS`",
+        "after the clock (`DeadlineTooFar`); a settled or released reservation fails with",
+        "`ReservationWrongState`."
+      ],
+      "discriminator": [
+        18,
+        209,
+        27,
+        175,
+        87,
+        13,
+        213,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "relations": [
+            "reservation"
+          ]
+        },
+        {
+          "name": "reservation",
+          "writable": true
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_deadline",
+          "type": "i64"
+        }
+      ]
+    },
+    {
       "name": "fund",
       "docs": [
         "Open while paused, like the other paths that only add to or return sponsor funds."
@@ -1039,7 +1104,9 @@
     {
       "name": "reserve",
       "docs": [
-        "Settler-gated: the settler signatures come in as signer remaining accounts."
+        "Settler-gated: the settler signatures come in as signer remaining accounts. The deadline",
+        "must be later than the clock (`DeadlineInPast`) and at most `MAX_RESERVATION_SECS` after",
+        "it (`DeadlineTooFar`), so `release_expired` always becomes reachable."
       ],
       "discriminator": [
         92,
@@ -1161,7 +1228,9 @@
         "Admin-only and open whether or not the program is paused: undoes a settlement nobody has",
         "claimed against, so the settlers can sign a corrected root. It needs no pause because it",
         "touches only the one reservation, so revoking a bad root leaves claims on every other",
-        "vault running; a claimed leaf or fee still blocks it."
+        "vault running; a claimed leaf or fee still blocks it. The restored reservation's deadline",
+        "becomes at least one claim delay from now, so the settlers can sign the corrected root",
+        "before `release_expired` opens."
       ],
       "discriminator": [
         187,
@@ -1590,6 +1659,64 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "sweep_exited",
+      "docs": [
+        "Sponsor-only and open while paused. Sends every token in an exited vault's token account",
+        "to the sponsor's recipient: tokens sent to the vault after `emergency_exit`. An exited",
+        "vault owes nothing, so its whole balance is the sponsor's."
+      ],
+      "discriminator": [
+        49,
+        51,
+        165,
+        229,
+        234,
+        130,
+        98,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "sponsor",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1713,6 +1840,19 @@
       ]
     },
     {
+      "name": "ExitedVaultSwept",
+      "discriminator": [
+        253,
+        50,
+        228,
+        175,
+        185,
+        60,
+        9,
+        133
+      ]
+    },
+    {
       "name": "FeeClaimed",
       "discriminator": [
         202,
@@ -1801,6 +1941,19 @@
         194,
         195,
         31
+      ]
+    },
+    {
+      "name": "ReservationDeadlineExtended",
+      "discriminator": [
+        84,
+        139,
+        91,
+        136,
+        29,
+        55,
+        178,
+        64
       ]
     },
     {
@@ -1935,7 +2088,7 @@
     {
       "code": 6002,
       "name": "InvalidSettlers",
-      "msg": "Settler set is empty, too large or has duplicates"
+      "msg": "Settler set is empty, too large, has duplicates or the zero key"
     },
     {
       "code": 6003,
@@ -2131,6 +2284,21 @@
       "code": 6041,
       "name": "ReservationNotExpired",
       "msg": "Reservation deadline has not passed"
+    },
+    {
+      "code": 6042,
+      "name": "VaultNotExited",
+      "msg": "Vault has not exited"
+    },
+    {
+      "code": 6043,
+      "name": "DeadlineTooFar",
+      "msg": "Reservation deadline is more than MAX_RESERVATION_SECS from now"
+    },
+    {
+      "code": 6044,
+      "name": "PayoutAccountNotAssociated",
+      "msg": "Destination is not the payout's associated token account"
     }
   ],
   "types": [
@@ -2309,6 +2477,30 @@
                 32
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ExitedVaultSwept",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "sponsor",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }
@@ -2773,6 +2965,43 @@
               "change it. Zero while no root is installed."
             ],
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReservationDeadlineExtended",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reservation",
+            "type": "pubkey"
+          },
+          {
+            "name": "task_chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "task_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "old_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "new_deadline",
+            "type": "i64"
           }
         ]
       }

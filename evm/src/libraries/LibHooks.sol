@@ -109,8 +109,9 @@ library LibHooks {
         _self(abi.encodeCall(ITMPHookDispatch.hookBefore, (taskId, action, who, extra)));
     }
 
-    /// @notice The observer after-callback of a V2 task's action. `vetoable` is false for the
-    ///         non-vetoable exits, where a changed hook codehash does not block the action.
+    /// @notice The observer after-callback of a V2 task's action. A changed hook codehash never
+    ///         blocks it: with `vetoable` the changed observer is skipped and reported; `vetoable` is
+    ///         false for the non-vetoable exits, which do not compare codehashes.
     function _observe(AppStorage storage s, bytes32 taskId, uint8 action, bool vetoable) internal {
         if (s.taskHooksV2[taskId].length == 0) return;
         _self(abi.encodeCall(ITMPHookDispatch.hookObserve, (taskId, action, vetoable)));

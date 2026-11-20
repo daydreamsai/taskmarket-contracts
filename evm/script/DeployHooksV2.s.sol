@@ -14,6 +14,7 @@ import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTas
 import { SponsoredTaskCreationFee } from "../src/hooks/sponsored-task/SponsoredTaskCreationFee.sol";
 import { ISponsoredTaskRegistry } from "../src/hooks/sponsored-task/interfaces/ISponsoredTaskRegistry.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
+import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { TaskTokenRewardHookV2 } from "../src/hooks/TaskTokenRewardHookV2.sol";
 import { RewardVault } from "../src/hooks/RewardVault.sol";
 import { EpochBudget } from "../src/hooks/EpochBudget.sol";
@@ -34,11 +35,13 @@ interface IAuthorizedRelayerV2 {
 
 /// @notice Deploys the shared payout gate hook (rev028). Opt-in per task; never a default hook.
 /// @dev Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_DIAMOND_ADDRESS.
+///      Rev031: refuses a diamond below rev030: the gate reads `taskCallerRoles`, whose project role
+///      follows task control from rev030 on.
 contract DeployPayoutGateHook is Script {
     function run() external returns (PayoutGateHook gate) {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
-        Rev028Precondition.requireRev028(diamond);
+        Rev030Precondition.requireRev030(diamond, "Payout gate: diamond is not at rev030");
         vm.startBroadcast(deployerKey);
         gate = new PayoutGateHook(diamond);
         vm.stopBroadcast();
@@ -59,6 +62,8 @@ contract DeployPayoutGateHook is Script {
 ///   FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT
 /// Optional: FORGE_SPONSORED_TASK_CREATION_FEE_USDC (default 1,000,000).
 /// Rev030: refuses a diamond below rev030, whose stored verdicts the hook relies on.
+/// Rev031: refuses a registry or fee policy with no code, a fee policy the admin does not own, and a
+/// registry that is neither owned by the admin nor pending to it (as DeploySponsoredTask leaves it).
 contract DeploySponsoredTaskHookV2 is Script {
     function run() external returns (SponsoredTaskHookV2 hook, SponsoredTaskFactoryV2 factory) {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
@@ -67,9 +72,15 @@ contract DeploySponsoredTaskHookV2 is Script {
         Rev030Precondition.requireRev030(diamond, "Sponsored Task V2: diamond is not at rev030");
         IERC20 usdc = IERC20(vm.envAddress("FORGE_USDC_TOKEN_ADDRESS"));
         SponsoredTaskRegistry registry = SponsoredTaskRegistry(vm.envAddress("FORGE_SPONSORED_TASK_REGISTRY"));
+        address feePolicy = vm.envAddress("FORGE_SPONSORED_TASK_FEE_POLICY");
         address admin = vm.envAddress("FORGE_SPONSORED_TASK_ADMIN");
         require(admin.code.length != 0, "Sponsored Task V2: admin must be a contract");
         require(admin != deployer, "Sponsored Task V2: admin must not be the deployer");
+        require(address(registry).code.length != 0, "Sponsored Task V2: registry must be a contract");
+        require(feePolicy.code.length != 0, "Sponsored Task V2: fee policy must be a contract");
+        require(
+            SponsoredTaskFeePolicy(feePolicy).owner() == admin, "Sponsored Task V2: fee policy owner is not the admin"
+        );
         uint256 creationFee = vm.envOr("FORGE_SPONSORED_TASK_CREATION_FEE_USDC", uint256(1_000_000));
 
         vm.startBroadcast(deployerKey);
@@ -80,7 +91,7 @@ contract DeploySponsoredTaskHookV2 is Script {
         );
         factory = new SponsoredTaskFactoryV2(
             address(hook),
-            vm.envAddress("FORGE_SPONSORED_TASK_FEE_POLICY"),
+            feePolicy,
             registry,
             SponsoredTaskCreationFee.CreationFeeConfig({
                 token: usdc,
@@ -94,6 +105,10 @@ contract DeploySponsoredTaskHookV2 is Script {
 
         require(hook.owner() == admin, "Sponsored Task V2: hook owner is not the admin");
         require(hook.diamond() == diamond, "Sponsored Task V2: diamond mismatch");
+        require(
+            registry.owner() == admin || registry.pendingOwner() == admin,
+            "Sponsored Task V2: registry is neither owned by nor pending to the admin"
+        );
         console.log("=== Sponsored Task V2 deployment ===");
         console.log("SponsoredTaskHookV2 (proxy):", address(hook));
         console.log("Implementation:             ", implementation);
@@ -144,12 +159,14 @@ contract DeployRemoteSponsoredTaskHookV2 is Script {
 ///      Rev030: also FORGE_REWARD_HOOK_V2_ADMIN, a contract (Safe or timelock) that owns the hook, the
 ///      vault and the epoch budget once they are wired; the script refuses without it, so no
 ///      deployer key is left holding them.
+///      Rev031: refuses a diamond below rev030, as UpgradeRewardHookV2 does: the hook pays its bonus in
+///      afterComplete from the awards a rev030 diamond records.
 contract DeployRewardHookV2 is Script {
     function run() external returns (TaskTokenRewardHookV2 hook) {
         uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address diamond = vm.envAddress("FORGE_DIAMOND_ADDRESS");
-        Rev028Precondition.requireRev028(diamond);
+        Rev030Precondition.requireRev030(diamond, "Reward hook V2: diamond is not at rev030");
         address token = vm.envAddress("FORGE_PROTOCOL_TOKEN");
         address admin = vm.envAddress("FORGE_REWARD_HOOK_V2_ADMIN");
         require(admin.code.length != 0, "Reward hook V2: admin must be a contract");
@@ -244,6 +261,58 @@ contract UpgradeRewardHookV2 is Script {
     }
 }
 
+/// @notice Rev031: deploys a new EpochBudget with the live one's duration, caps, owner and hook, for a
+///         TaskTokenRewardHookV2 to switch to. EpochBudget is not upgradeable, so a fix to it
+///         (setEpochDuration rolls a lapsed epoch first) needs a new contract. The old budget keeps
+///         its hook: a reservation pinned to it is still released there. The new budget starts with
+///         no usage, so what the current epoch already consumed on the old one does not count against
+///         the new caps; the script prints that amount. When the key does not own the hook (a Safe
+///         does), it prints the `setEpochBudget` call for the owner.
+/// @dev Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_REWARD_HOOK_V2_ADDRESS (the hook proxy).
+contract RedeployEpochBudget is Script {
+    function run() external returns (EpochBudget budget) {
+        uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
+        address deployer = vm.addr(deployerKey);
+        TaskTokenRewardHookV2 hook = TaskTokenRewardHookV2(vm.envAddress("FORGE_REWARD_HOOK_V2_ADDRESS"));
+        EpochBudget previous = hook.epochBudget();
+        require(address(previous).code.length != 0, "Epoch budget: hook has no live budget");
+        require(previous.hook() == address(hook), "Epoch budget: live budget does not serve this hook");
+        address owner = previous.owner();
+        bool senderOwnsHook = hook.owner() == deployer;
+
+        vm.startBroadcast(deployerKey);
+        budget = new EpochBudget(
+            previous.epochDuration(),
+            previous.globalCapUsd(),
+            previous.workerCapUsd(),
+            previous.requesterCapUsd(),
+            previous.maxUsdPerTask(),
+            deployer
+        );
+        budget.setHook(address(hook));
+        if (owner != deployer) budget.transferOwnership(owner);
+        if (senderOwnsHook) hook.setEpochBudget(address(budget));
+        vm.stopBroadcast();
+
+        require(budget.owner() == owner, "Epoch budget: owner is not the live budget's owner");
+        require(budget.hook() == address(hook), "Epoch budget: hook mismatch");
+        console.log("=== EpochBudget redeployed (rev031) ===");
+        console.log("Previous EpochBudget:", address(previous));
+        console.log("EpochBudget:         ", address(budget));
+        console.log("Owner:               ", owner);
+        console.log("Current epoch usage left behind on the previous budget:", previous.globalUsed());
+        if (senderOwnsHook) {
+            console.log("The hook now uses the new budget.");
+            return budget;
+        }
+        console.log("The hook is owned by", hook.owner(), "(not this key). Propose from that owner:");
+        console.log("  to:   ", address(hook));
+        console.log("  value: 0");
+        console.log("  data:");
+        console.logBytes(abi.encodeCall(TaskTokenRewardHookV2.setEpochBudget, (address(budget))));
+    }
+}
+
 /// @dev The sponsored hook upgrades below rely on the diamond recording the awards a transforming hook
 ///      makes a requester acceptance pay (rev030), so each refuses a diamond below rev030.
 library Rev030Precondition {
@@ -326,6 +395,63 @@ contract UpgradeRemoteSponsoredTaskHookV2 is Script {
         Rev030Precondition.reportOrPropose(
             "RemoteSponsoredTaskHookV2", address(hook), hook.owner(), newImplementation, senderOwnsHook
         );
+    }
+}
+
+/// @notice Rev031: deploys a SponsoredTaskFactoryV2 with the same controller, fee policy, registry and
+///         creation fee as a live one, so new vaults are cloned from the current SponsoredTasksVaultV2
+///         implementation (`sweepExited`, the exit's received amount). Vaults are clones of a fixed
+///         implementation: existing vaults keep their code and keep working through the old factory's
+///         registry entry, which stays authorized. Works for a hook-mode factory (controller: the
+///         SponsoredTaskHookV2 proxy) and a settler-mode one (controller: the SponsoredTaskSettler).
+///         When the key does not own the registry, it prints the setFactory call for the owner.
+///         It refuses a settler-mode factory whose settler signs an older `Reserve` (one without a
+///         deadline): that pair is replaced by `RedeploySponsoredTaskSettler` in
+///         DeploySponsoredTaskSettler.s.sol, which deploys the new settler with its factory.
+/// @dev Required env vars: FORGE_DEV_PRIVATE_KEY, FORGE_SPONSORED_TASK_PREVIOUS_FACTORY (the live
+///      factory to copy).
+contract RedeploySponsoredTaskFactoryV2 is Script {
+    /// @dev `SponsoredTaskSettler.RESERVE_TYPEHASH` from rev031 on (the deadline-bearing `Reserve`).
+    bytes32 private constant BOUNDED_RESERVE_TYPEHASH = keccak256(
+        "Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash,uint64 deadline)"
+    );
+
+    function run() external returns (SponsoredTaskFactoryV2 factory) {
+        return redeploy(SponsoredTaskFactoryV2(vm.envAddress("FORGE_SPONSORED_TASK_PREVIOUS_FACTORY")));
+    }
+
+    function redeploy(SponsoredTaskFactoryV2 previous) public returns (SponsoredTaskFactoryV2 factory) {
+        uint256 deployerKey = vm.envUint("FORGE_DEV_PRIVATE_KEY");
+        require(address(previous).code.length != 0, "Sponsored Task factory: previous factory must be a contract");
+        (bool isSettler, bytes memory typehash) =
+            previous.controller().staticcall(abi.encodeWithSignature("RESERVE_TYPEHASH()"));
+        require(
+            !isSettler || typehash.length != 32 || bytes32(typehash) == BOUNDED_RESERVE_TYPEHASH,
+            "Sponsored Task factory: settler signs an older Reserve; use RedeploySponsoredTaskSettler"
+        );
+        ISponsoredTaskRegistry registry = previous.registry();
+        bool registered = SponsoredTaskRegistry(address(registry)).owner() == vm.addr(deployerKey);
+
+        vm.startBroadcast(deployerKey);
+        factory = new SponsoredTaskFactoryV2(
+            previous.controller(),
+            previous.feePolicy(),
+            registry,
+            SponsoredTaskCreationFee.CreationFeeConfig({
+                token: previous.feeToken(), amount: previous.creationFee(), recipient: previous.creationFeeRecipient()
+            })
+        );
+        if (registered) SponsoredTaskRegistry(address(registry)).setFactory(address(factory), true);
+        vm.stopBroadcast();
+
+        console.log("=== Sponsored Task factory redeployed (rev031) ===");
+        console.log("Previous factory:      ", address(previous));
+        console.log("SponsoredTaskFactoryV2:", address(factory));
+        console.log("Vault implementation:  ", factory.implementation());
+        if (!registered) {
+            console.log("Registry owner must execute on the registry:", address(registry));
+            console.logBytes(abi.encodeCall(SponsoredTaskRegistry.setFactory, (address(factory), true)));
+        }
     }
 }
 

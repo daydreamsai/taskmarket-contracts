@@ -5546,6 +5546,31 @@ export const RemoteSponsoredTaskHookV2ABI = [
   },
   {
     "type": "event",
+    "name": "SponsoredTaskDefaultedByRequester",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "allocationId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "requester",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SponsoredTaskEntitlement",
     "inputs": [
       {
@@ -5907,6 +5932,17 @@ export const RemoteSponsoredTaskHookV2ABI = [
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReleaseHeldForLiveSubmissions",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",

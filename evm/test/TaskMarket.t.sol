@@ -13,7 +13,9 @@ import { MockUSDC } from "../src/mocks/MockUSDC.sol";
 import "./mocks/MockReputationRegistry.sol";
 import "./mocks/MockIdentityRegistry.sol";
 import "./mocks/MockRevertingReputationRegistry.sol";
+import "./mocks/MockGasBurningReputationRegistry.sol";
 import "../src/interfaces/ITMPReputation.sol";
+import { LibTaskMarket } from "../src/libraries/LibTaskMarket.sol";
 import { ITMPFeedback } from "../src/interfaces/ITMPFeedback.sol";
 import "./helpers/DiamondTestHelper.sol";
 import "../src/interfaces/ITMPDiamond.sol";
@@ -392,6 +394,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 expectedWorkerPayment = REWARD - expectedFee;
         uint256 workerBalanceBefore = usdc.balanceOf(worker1);
 
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
 
         assertEq(usdc.balanceOf(worker1), workerBalanceBefore + expectedWorkerPayment + stakeAmount);
@@ -435,6 +438,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 expectedFee = (REWARD * defaultFeeBps) / 10000;
         uint256 expectedWorkerPayment = REWARD - expectedFee;
 
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
 
         assertEq(usdc.balanceOf(worker1) - 1000 * 10 ** 6, expectedWorkerPayment);
@@ -508,7 +512,7 @@ contract TaskMarketTest is DiamondTestHelper {
     }
 
     function test_SetReputationRegistry_UpdatesAddress() public {
-        address newRegistry = address(0x1234);
+        address newRegistry = address(new MockReputationRegistry());
         vm.prank(owner);
         market.setReputationRegistry(newRegistry);
         assertEq(market.reputationRegistry(), newRegistry);
@@ -1430,6 +1434,7 @@ contract TaskMarketTest is DiamondTestHelper {
         _claimTask(taskId2, worker1, 0);
 
         _acceptSubmission(taskId1, requester, worker1);
+        _submitWork(taskId2, worker1, keccak256("work"));
         _acceptSubmission(taskId2, requester, worker1);
 
         assertEq(market.getWorkerStats(worker1).completedTasks, 2);
@@ -1507,6 +1512,7 @@ contract TaskMarketTest is DiamondTestHelper {
         uint256 workerBalanceBefore = usdc.balanceOf(worker1);
         uint256 requesterBalanceBefore = usdc.balanceOf(requester);
 
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
 
         assertEq(usdc.balanceOf(worker1), workerBalanceBefore + expectedWorkerPayment);
@@ -1520,6 +1526,27 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         vm.expectRevert(ITMPCore.PriceExceedsMaxPrice.selector);
         forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.acceptAuction, (taskId, REWARD + 1)));
+    }
+
+    /// @dev Cyclops 7646: a zero accepted price would make stakeAmount zero, so the task pays nothing
+    ///      and a sponsored hook that weighs awards by it releases the whole sponsorship.
+    function test_RevertWhen_AcceptAuction_PriceZero() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
+        vm.expectRevert(ITMPCore.PriceZero.selector);
+        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.acceptAuction, (taskId, 0)));
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Open));
+        _acceptAuction(taskId, worker1, 1);
+        assertEq(market.getTask(taskId).stakeAmount, 1, "the smallest nonzero price is accepted");
+    }
+
+    /// @dev Cyclops 7646: a zero bid would become the running minimum and the selected price.
+    function test_RevertWhen_SubmitBid_PriceZero() public {
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_ENGLISH());
+        vm.expectRevert(ITMPCore.PriceZero.selector);
+        forwarder.relay(address(market), worker1, 0, abi.encodeCall(market.submitBid, (taskId, 0)));
+        assertEq(market.getBids(taskId).length, 0);
+        _submitBid(taskId, worker1, 1);
+        assertEq(market.getBids(taskId)[0].price, 1, "the smallest nonzero bid is taken");
     }
 
     function test_AcceptAuction_notAuction() public {
@@ -2924,6 +2951,7 @@ contract TaskMarketTest is DiamondTestHelper {
     function test_RateTask_LockedWorkerMode_RequiresTaskWorker() public {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
         _selectWorker(taskId, requester, worker1);
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
 
         vm.expectRevert(ITMPCore.NotAwarded.selector);
@@ -4399,11 +4427,13 @@ contract TaskMarketTest is DiamondTestHelper {
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
         _assignEvaluator(taskId, requester, evaluator, 0, uint32(2 days), uint32(1 days));
         _submitWork(taskId, worker1, keccak256("work"));
+        address third = address(0x3333);
+        _submitWork(taskId, third, keccak256("third"));
 
         ITMPCore.Award[] memory awards = new ITMPCore.Award[](3);
         awards[0] = ITMPCore.Award({ worker: worker1, amount: REWARD / 2, rank: 1 });
         awards[1] = ITMPCore.Award({ worker: worker2, amount: 0, rank: 2 }); // zero — skipped
-        awards[2] = ITMPCore.Award({ worker: worker1, amount: REWARD / 4, rank: 3 });
+        awards[2] = ITMPCore.Award({ worker: third, amount: REWARD / 4, rank: 3 });
 
         uint256 totalAwarded = REWARD / 2 + REWARD / 4;
         _evaluate(taskId, evaluator, ITMPCore.VerdictType.APPROVE, 1000, awards);
@@ -5508,6 +5538,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.CLAIM(), 0, 0);
         _claimTask(taskId, worker1, 0);
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
         _rateTask(taskId, requester, worker1, 80, 1, 0, "", bytes32(0));
         assertEq(reg.calls(), 1);
@@ -5521,6 +5552,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.PITCH(), 2 days, 0);
         _selectWorker(taskId, requester, worker1);
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
         _rateTask(taskId, requester, worker1, 70, 1, 0, "", bytes32(0));
         assertEq(reg.calls(), 1);
@@ -5546,6 +5578,7 @@ contract TaskMarketTest is DiamondTestHelper {
 
         bytes32 taskId = _createTask(requester, REWARD, DURATION, market.AUCTION(), 0, 1 days, market.AUCTION_DUTCH());
         _acceptAuction(taskId, worker1, REWARD / 2);
+        _submitWork(taskId, worker1, keccak256("work"));
         _acceptSubmission(taskId, requester, worker1);
         _rateTask(taskId, requester, worker1, 85, 1, 0, "", bytes32(0));
         assertEq(reg.calls(), 1);
@@ -5999,6 +6032,58 @@ contract TaskMarketTest is DiamondTestHelper {
 
         // Settlement itself must succeed regardless of the reputation registry reverting.
         assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+    }
+
+    /// @dev Cyclops 7631: a registry address with no code is refused by the setter.
+    function test_RevertWhen_SetReputationRegistry_HasNoCode() public {
+        vm.prank(owner);
+        vm.expectRevert(ITMPCore.ReputationRegistryHasNoCode.selector);
+        market.setReputationRegistry(address(0xBEEF));
+        vm.prank(owner);
+        market.setReputationRegistry(address(0));
+        assertEq(market.reputationRegistry(), address(0), "zero turns feedback off");
+    }
+
+    /// @dev Cyclops 7631: a registry that has no code when feedback is sent (set before the setter
+    ///      checked, or gone since) is skipped: the call would revert in the diamond's own frame,
+    ///      outside the try, and take every feedback path with it.
+    function test_RegistryWithNoCode_AcceptAndCancelStillSettle() public {
+        MockReputationRegistry reg = new MockReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+        vm.etch(address(reg), "");
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+        vm.expectEmit(true, true, false, true);
+        emit ITMPReputation.ReputationFeedbackFailed(taskId, 42);
+        forwarder.relay(
+            address(market), requester, 0, abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 42))
+        );
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+
+        bytes32 cancelled = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        _cancelTask(cancelled, requester);
+        assertEq(uint256(market.getTask(cancelled).status), uint256(ITMPCore.TaskStatus.Cancelled));
+    }
+
+    /// @dev Cyclops 7643: a registry that burns all the gas it is given gets at most
+    ///      FEEDBACK_CALL_GAS, so settlement completes without spending the rest of the transaction.
+    function test_GasBurningRegistry_AcceptSettlesWithinTheFeedbackGasCap() public {
+        MockGasBurningReputationRegistry reg = new MockGasBurningReputationRegistry();
+        vm.prank(owner);
+        market.setReputationRegistry(address(reg));
+
+        bytes32 taskId = _createTask(requester, REWARD, DURATION, market.BOUNTY(), 0, 0);
+        bytes32 hash = keccak256("work");
+        _submitWork(taskId, worker1, hash);
+        bytes memory accept = abi.encodeCall(market.acceptSubmission, (taskId, worker1, hash, 42));
+        uint256 before = gasleft();
+        forwarder.relay{ gas: 25_000_000 }(address(market), requester, 0, accept);
+        uint256 used = before - gasleft();
+        assertEq(uint256(market.getTask(taskId).status), uint256(ITMPCore.TaskStatus.Accepted));
+        assertLt(used, LibTaskMarket.FEEDBACK_CALL_GAS + 2_000_000, "the registry got at most the cap");
     }
 
     function test_AcceptSubmissions_WithRegistry() public {

@@ -79,6 +79,9 @@ interface ITMPCore is IERC165 {
     /// @notice Rev030: accepting a reservation would leave the task less delivery time than the
     ///         reservation promised, because a project task's expiry is held to the project's end.
     error ReservedDeliveryPeriodShortened();
+    /// @notice Rev031: a delivery to a project task with an evaluator would leave the evaluator less
+    ///         than its evaluation window, because the deadline is held to the project's end.
+    error ReviewWindowShortened();
 
     // Evaluator / appeal
     error EvaluatorAlreadyAssigned();
@@ -102,6 +105,8 @@ interface ITMPCore is IERC165 {
     error EvaluationWindowTooLong(uint32 evaluationWindow, uint32 maxWindow);
     error InvalidMinAppealWindow();
     error InvalidMinFeedbackGas();
+    /// @notice Rev031: setReputationRegistry with a nonzero address that has no code.
+    error ReputationRegistryHasNoCode();
     error InvalidHookGasStipend();
     error NoDisputeResolver();
 
@@ -112,6 +117,8 @@ interface ITMPCore is IERC165 {
     error NoBidsSubmitted();
     error BidsExist();
     error PriceExceedsMaxPrice();
+    /// @notice Rev031: submitBid or acceptAuction at a price of zero.
+    error PriceZero();
     error BidLimitReached();
 
     // Deadline / timing

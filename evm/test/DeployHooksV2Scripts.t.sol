@@ -14,6 +14,7 @@ import { SponsoredTaskFactoryV2 } from "../src/hooks/sponsored-task/SponsoredTas
 import { SponsoredTaskFeePolicy } from "../src/hooks/sponsored-task/SponsoredTaskFeePolicy.sol";
 import { SponsoredTaskRegistry } from "../src/hooks/sponsored-task/SponsoredTaskRegistry.sol";
 import { TaskTokenRewardHookV2 } from "../src/hooks/TaskTokenRewardHookV2.sol";
+import { EpochBudget } from "../src/hooks/EpochBudget.sol";
 import {
     DeployPayoutGateHook,
     DeploySponsoredTaskHookV2,
@@ -22,7 +23,9 @@ import {
     SetDefaultHooksV2,
     UpgradeRewardHookV2,
     UpgradeSponsoredTaskHookV2,
-    UpgradeRemoteSponsoredTaskHookV2
+    UpgradeRemoteSponsoredTaskHookV2,
+    RedeploySponsoredTaskFactoryV2,
+    RedeployEpochBudget
 } from "../script/DeployHooksV2.s.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 
@@ -61,9 +64,21 @@ contract DeployHooksV2ScriptsTest is DiamondTestHelper {
 
     function test_RefusesDiamondBelowRev028() public {
         placeAtVersion(address(market), 27);
-        DeployPayoutGateHook script = new DeployPayoutGateHook();
+        SetDefaultHooksV2 script = new SetDefaultHooksV2();
         vm.expectRevert("Hooks V2: diamond is not at rev028");
         script.run();
+    }
+
+    /// @dev Cyclops 7628: the payout gate and the reward hook rely on rev030 diamond behaviour, so their
+    ///      deploys refuse a rev028 or rev029 diamond, not only one below rev028.
+    function test_PayoutGateAndRewardHookDeploysRefuseDiamondBelowRev030() public {
+        placeAtVersion(address(market), 29);
+        DeployPayoutGateHook gate = new DeployPayoutGateHook();
+        vm.expectRevert("Payout gate: diamond is not at rev030");
+        gate.run();
+        DeployRewardHookV2 reward = new DeployRewardHookV2();
+        vm.expectRevert("Reward hook V2: diamond is not at rev030");
+        reward.run();
     }
 
     function test_DeploySponsoredHooksV2RefuseDiamondBelowRev030() public {
@@ -82,14 +97,59 @@ contract DeployHooksV2ScriptsTest is DiamondTestHelper {
         vm.setEnv("FORGE_DIAMOND_ADDRESS", vm.toString(address(market)));
     }
 
-    function test_DeploySponsoredTaskHookV2AndFactory() public {
-        SponsoredTaskRegistry registry = new SponsoredTaskRegistry(deployer);
-        SponsoredTaskFeePolicy feePolicy = new SponsoredTaskFeePolicy(address(admin), 0, address(0xFEE));
+    /// @dev The registry and fee policy as DeploySponsoredTask leaves them: the fee policy owned by the
+    ///      admin, the registry still owned by the deployer and pending to the admin.
+    function _sharedSponsoredPieces()
+        private
+        returns (SponsoredTaskRegistry registry, SponsoredTaskFeePolicy feePolicy)
+    {
+        registry = new SponsoredTaskRegistry(deployer);
+        vm.prank(deployer);
+        registry.transferOwnership(address(admin));
+        feePolicy = new SponsoredTaskFeePolicy(address(admin), 0, address(0xFEE));
         vm.setEnv("FORGE_USDC_TOKEN_ADDRESS", vm.toString(address(usdc)));
         vm.setEnv("FORGE_SPONSORED_TASK_REGISTRY", vm.toString(address(registry)));
         vm.setEnv("FORGE_SPONSORED_TASK_FEE_POLICY", vm.toString(address(feePolicy)));
         vm.setEnv("FORGE_SPONSORED_TASK_ADMIN", vm.toString(address(admin)));
         vm.setEnv("FORGE_SPONSORED_TASK_CREATION_FEE_RECIPIENT", vm.toString(address(0xFEE)));
+    }
+
+    /// @dev Cyclops 7662: the sponsored hook deploy checks the shared pieces it builds on, as
+    ///      DeploySponsoredTask does when it creates them.
+    function test_DeploySponsoredTaskHookV2RefusesUncheckedSharedPieces() public {
+        (SponsoredTaskRegistry registry, SponsoredTaskFeePolicy feePolicy) = _sharedSponsoredPieces();
+        DeploySponsoredTaskHookV2 script = new DeploySponsoredTaskHookV2();
+
+        vm.setEnv("FORGE_SPONSORED_TASK_REGISTRY", vm.toString(address(0xDEAD)));
+        vm.expectRevert("Sponsored Task V2: registry must be a contract");
+        script.run();
+        vm.setEnv("FORGE_SPONSORED_TASK_REGISTRY", vm.toString(address(registry)));
+
+        vm.setEnv("FORGE_SPONSORED_TASK_FEE_POLICY", vm.toString(address(0xDEAD)));
+        vm.expectRevert("Sponsored Task V2: fee policy must be a contract");
+        script.run();
+
+        SponsoredTaskFeePolicy otherPolicy = new SponsoredTaskFeePolicy(deployer, 0, address(0xFEE));
+        vm.setEnv("FORGE_SPONSORED_TASK_FEE_POLICY", vm.toString(address(otherPolicy)));
+        vm.expectRevert("Sponsored Task V2: fee policy owner is not the admin");
+        script.run();
+        vm.setEnv("FORGE_SPONSORED_TASK_FEE_POLICY", vm.toString(address(feePolicy)));
+
+        SponsoredTaskRegistry deployerRegistry = new SponsoredTaskRegistry(deployer);
+        vm.setEnv("FORGE_SPONSORED_TASK_REGISTRY", vm.toString(address(deployerRegistry)));
+        vm.expectRevert("Sponsored Task V2: registry is neither owned by nor pending to the admin");
+        script.run();
+
+        // Once the admin has accepted the registry, the script leaves the setFactory call to it.
+        vm.setEnv("FORGE_SPONSORED_TASK_REGISTRY", vm.toString(address(registry)));
+        vm.prank(address(admin));
+        registry.acceptOwnership();
+        (, SponsoredTaskFactoryV2 factory) = script.run();
+        assertFalse(registry.authorizedFactories(address(factory)), "left to the registry owner");
+    }
+
+    function test_DeploySponsoredTaskHookV2AndFactory() public {
+        (SponsoredTaskRegistry registry,) = _sharedSponsoredPieces();
         (SponsoredTaskHookV2 hook, SponsoredTaskFactoryV2 factory) = new DeploySponsoredTaskHookV2().run();
         assertEq(hook.owner(), address(admin));
         assertEq(hook.diamond(), address(market));
@@ -116,6 +176,25 @@ contract DeployHooksV2ScriptsTest is DiamondTestHelper {
         assertEq(_implementation(address(hook)), address(implementation), "the owner applies it");
         assertEq(address(hook).codehash, codehash, "the proxy codehash every attachment pinned is unchanged");
         assertEq(hook.owner(), address(admin), "state kept");
+    }
+
+    /// @dev Rev031: a new factory copies the live one's controller, fee policy, registry and creation
+    ///      fee, clones vaults from a new implementation, and leaves the old factory authorized.
+    function test_RedeploySponsoredTaskFactoryCopiesTheLiveOne() public {
+        (SponsoredTaskRegistry registry,) = _sharedSponsoredPieces();
+        (SponsoredTaskHookV2 hook, SponsoredTaskFactoryV2 previous) = new DeploySponsoredTaskHookV2().run();
+
+        vm.setEnv("FORGE_SPONSORED_TASK_PREVIOUS_FACTORY", vm.toString(address(previous)));
+        SponsoredTaskFactoryV2 factory = new RedeploySponsoredTaskFactoryV2().run();
+        assertEq(factory.controller(), address(hook), "same controller");
+        assertEq(factory.feePolicy(), previous.feePolicy(), "same fee policy");
+        assertEq(address(factory.registry()), address(registry), "same registry");
+        assertEq(address(factory.feeToken()), address(previous.feeToken()), "same fee token");
+        assertEq(factory.creationFee(), previous.creationFee(), "same creation fee");
+        assertEq(factory.creationFeeRecipient(), previous.creationFeeRecipient(), "same fee recipient");
+        assertTrue(factory.implementation() != previous.implementation(), "a new vault implementation");
+        assertTrue(registry.authorizedFactories(address(factory)), "new factory registered");
+        assertTrue(registry.authorizedFactories(address(previous)), "old factory still authorized");
     }
 
     function _implementation(address proxy) private view returns (address) {
@@ -191,5 +270,22 @@ contract DeployHooksV2ScriptsTest is DiamondTestHelper {
         assertEq(address(uint160(uint256(vm.load(address(hook), implSlot)))), implementation, "implementation");
         assertEq(address(hook).codehash, codehash, "the proxy codehash every attachment pinned is unchanged");
         assertEq(hook.bonusBps(), 750, "state kept");
+
+        // Rev031: a new epoch budget copies the live one and is left for the hook's owner to switch to.
+        EpochBudget previous = hook.epochBudget();
+        EpochBudget budget = new RedeployEpochBudget().run();
+        assertTrue(address(budget) != address(previous), "a new budget");
+        assertEq(budget.epochDuration(), previous.epochDuration(), "duration");
+        assertEq(budget.globalCapUsd(), previous.globalCapUsd(), "global cap");
+        assertEq(budget.workerCapUsd(), previous.workerCapUsd(), "worker cap");
+        assertEq(budget.requesterCapUsd(), previous.requesterCapUsd(), "requester cap");
+        assertEq(budget.maxUsdPerTask(), previous.maxUsdPerTask(), "per-task cap");
+        assertEq(budget.owner(), address(admin), "owned by the live budget's owner");
+        assertEq(budget.hook(), address(hook), "serves the hook");
+        assertEq(previous.hook(), address(hook), "the old budget still releases its reservations");
+        assertEq(address(hook.epochBudget()), address(previous), "not switched without the hook owner");
+        vm.prank(address(admin));
+        hook.setEpochBudget(address(budget));
+        assertEq(address(hook.epochBudget()), address(budget), "the owner switches the hook");
     }
 }

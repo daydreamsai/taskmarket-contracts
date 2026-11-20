@@ -25,29 +25,29 @@
 //
 // Run from packages/contracts (`pnpm generate-abi`, or via `make build contracts`).
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const DIAMOND_FACETS = [
-  'DiamondCutFacet.sol/DiamondCutFacet.json',
-  'DiamondLoupeFacet.sol/DiamondLoupeFacet.json',
-  'AdminFacet.sol/AdminFacet.json',
-  'CoreFacet.sol/CoreFacet.json',
-  'AuctionFacet.sol/AuctionFacet.json',
-  'AcceptanceFacet.sol/AcceptanceFacet.json',
-  'EvaluatorFacet.sol/EvaluatorFacet.json',
-  'RatingFacet.sol/RatingFacet.json',
-  'RegistryFacet.sol/RegistryFacet.json',
-  'SettlementFacet.sol/SettlementFacet.json',
-  'FeedbackFacet.sol/FeedbackFacet.json',
-  'WorkerFacet.sol/WorkerFacet.json',
-  'ProjectFacet.sol/ProjectFacet.json',
+  "DiamondCutFacet.sol/DiamondCutFacet.json",
+  "DiamondLoupeFacet.sol/DiamondLoupeFacet.json",
+  "AdminFacet.sol/AdminFacet.json",
+  "CoreFacet.sol/CoreFacet.json",
+  "AuctionFacet.sol/AuctionFacet.json",
+  "AcceptanceFacet.sol/AcceptanceFacet.json",
+  "EvaluatorFacet.sol/EvaluatorFacet.json",
+  "RatingFacet.sol/RatingFacet.json",
+  "RegistryFacet.sol/RegistryFacet.json",
+  "SettlementFacet.sol/SettlementFacet.json",
+  "FeedbackFacet.sol/FeedbackFacet.json",
+  "WorkerFacet.sol/WorkerFacet.json",
+  "ProjectFacet.sol/ProjectFacet.json",
   // rev028: Task Hook V2 views, settings, per-action data and the settlement record.
-  'HooksV2Facet.sol/HooksV2Facet.json',
+  "HooksV2Facet.sol/HooksV2Facet.json",
   // rev028: the internal hook dispatch. Its functions are callable only by the diamond itself,
   // but it emits the V1 hook events (HookRegistered, HookCallFailed) and raises the hook errors
   // the indexer and the backend's error map read, so its ABI belongs in the union.
-  'HookDispatchFacet.sol/HookDispatchFacet.json',
+  "HookDispatchFacet.sol/HookDispatchFacet.json",
 ];
 
 // Standalone contracts deployed at their own addresses. The indexer polls each of
@@ -59,20 +59,23 @@ const DIAMOND_FACETS = [
 // was absent that map could not name a single one of them -- an unnamed revert is treated as
 // transient and retried against a call that can only revert again.
 const STANDALONE: Record<string, string> = {
-  RewardVault: 'RewardVault.sol/RewardVault.json',
-  EpochBudget: 'EpochBudget.sol/EpochBudget.json',
-  TaskMarketForwarder: 'TaskMarketForwarderV2.sol/TaskMarketForwarderV2.json',
-  SponsoredTasksVaultV2: 'SponsoredTasksVaultV2.sol/SponsoredTasksVaultV2.json',
-  SponsoredTaskFactoryV2: 'SponsoredTaskFactoryV2.sol/SponsoredTaskFactoryV2.json',
-  SponsoredTaskRegistry: 'SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json',
-  SponsoredTaskFeePolicy: 'SponsoredTaskFeePolicy.sol/SponsoredTaskFeePolicy.json',
-  FundingPool: 'FundingPool.sol/FundingPool.json',
+  RewardVault: "RewardVault.sol/RewardVault.json",
+  EpochBudget: "EpochBudget.sol/EpochBudget.json",
+  TaskMarketForwarder: "TaskMarketForwarderV2.sol/TaskMarketForwarderV2.json",
+  SponsoredTasksVaultV2: "SponsoredTasksVaultV2.sol/SponsoredTasksVaultV2.json",
+  SponsoredTaskFactoryV2:
+    "SponsoredTaskFactoryV2.sol/SponsoredTaskFactoryV2.json",
+  SponsoredTaskRegistry: "SponsoredTaskRegistry.sol/SponsoredTaskRegistry.json",
+  SponsoredTaskFeePolicy:
+    "SponsoredTaskFeePolicy.sol/SponsoredTaskFeePolicy.json",
+  FundingPool: "FundingPool.sol/FundingPool.json",
   // rev028 Task Hook V2 hooks.
-  PayoutGateHook: 'PayoutGateHook.sol/PayoutGateHook.json',
-  ProofGateHook: 'ProofGateHook.sol/ProofGateHook.json',
-  SponsoredTaskHookV2: 'SponsoredTaskHookV2.sol/SponsoredTaskHookV2.json',
-  RemoteSponsoredTaskHookV2: 'RemoteSponsoredTaskHookV2.sol/RemoteSponsoredTaskHookV2.json',
-  TaskTokenRewardHookV2: 'TaskTokenRewardHookV2.sol/TaskTokenRewardHookV2.json',
+  PayoutGateHook: "PayoutGateHook.sol/PayoutGateHook.json",
+  ProofGateHook: "ProofGateHook.sol/ProofGateHook.json",
+  SponsoredTaskHookV2: "SponsoredTaskHookV2.sol/SponsoredTaskHookV2.json",
+  RemoteSponsoredTaskHookV2:
+    "RemoteSponsoredTaskHookV2.sol/RemoteSponsoredTaskHookV2.json",
+  TaskTokenRewardHookV2: "TaskTokenRewardHookV2.sol/TaskTokenRewardHookV2.json",
 };
 
 // Retired in rev030: the V1 hook contracts TaskTokenRewardHook and SponsoredTaskHook (and
@@ -87,12 +90,14 @@ const STANDALONE: Record<string, string> = {
 type AbiEntry = Record<string, unknown>;
 
 function loadAbi(artifact: string): AbiEntry[] {
-  const path = join('out', artifact);
+  const path = join("out", artifact);
   if (!existsSync(path)) {
-    console.error(`Missing forge artifact: ${path} (run \`forge build --root packages/contracts\` first)`);
+    console.error(
+      `Missing forge artifact: ${path} (run \`forge build --root packages/contracts\` first)`,
+    );
     process.exit(1);
   }
-  return JSON.parse(readFileSync(path, 'utf8')).abi as AbiEntry[];
+  return JSON.parse(readFileSync(path, "utf8")).abi as AbiEntry[];
 }
 
 /**
@@ -103,13 +108,13 @@ function loadAbi(artifact: string): AbiEntry[] {
  */
 function stableKey(value: unknown): string {
   if (Array.isArray(value)) {
-    return `[${value.map(stableKey).join(',')}]`;
+    return `[${value.map(stableKey).join(",")}]`;
   }
-  if (value !== null && typeof value === 'object') {
+  if (value !== null && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([key, nested]) => `${JSON.stringify(key)}:${stableKey(nested)}`);
-    return `{${entries.join(',')}}`;
+    return `{${entries.join(",")}}`;
   }
   return JSON.stringify(value);
 }
@@ -128,15 +133,17 @@ const TS_HEADER = `\
 function write(name: string, entries: AbiEntry[]): void {
   const body = JSON.stringify(entries, null, 2);
 
-  writeFileSync(join('abi', `${name}.json`), `${body}\n`);
+  writeFileSync(join("abi", `${name}.json`), `${body}\n`);
 
-  mkdirSync(join('abi', 'generated'), { recursive: true });
+  mkdirSync(join("abi", "generated"), { recursive: true });
   writeFileSync(
-    join('abi', 'generated', `${name}.ts`),
-    `${TS_HEADER}export const ${name}ABI = ${body} as const;\n`
+    join("abi", "generated", `${name}.ts`),
+    `${TS_HEADER}export const ${name}ABI = ${body} as const;\n`,
   );
 
-  console.log(`ABI: ${entries.length} entries -> abi/${name}.json, abi/generated/${name}.ts`);
+  console.log(
+    `ABI: ${entries.length} entries -> abi/${name}.json, abi/generated/${name}.ts`,
+  );
 }
 
 function main(): void {
@@ -150,14 +157,22 @@ function main(): void {
       merged.push(entry);
     }
   }
-  const retired = JSON.parse(readFileSync(join('abi', 'retired', 'TaskMarketV1Hooks.json'), 'utf8')) as AbiEntry[];
-  for (const entry of retired) {
+  // solc lists an error in a facet's ABI only where a `revert E()` names it. LibAwards returns an
+  // error's selector and the facet reverts with it, so without the interface's errors the union
+  // drops one the diamond still raises (InvalidAwardRank) and the backend cannot decode it.
+  const coreErrors = loadAbi("ITMPCore.sol/ITMPCore.json").filter(
+    (entry) => entry.type === "error",
+  );
+  const retired = JSON.parse(
+    readFileSync(join("abi", "retired", "TaskMarketV1Hooks.json"), "utf8"),
+  ) as AbiEntry[];
+  for (const entry of [...retired, ...coreErrors]) {
     const key = stableKey(entry);
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(entry);
   }
-  write('TaskMarket', merged);
+  write("TaskMarket", merged);
 
   for (const [name, artifact] of Object.entries(STANDALONE)) {
     write(name, loadAbi(artifact));

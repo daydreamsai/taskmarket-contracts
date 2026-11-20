@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 // Generated from SponsoredTaskHook.t.sol for the rev028 V2 port: the same cases, with the mock
 // market driving the V2 callbacks the diamond maps the V1 ones to.
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ITMPCore } from "../src/interfaces/ITMPCore.sol";
@@ -614,6 +614,80 @@ contract SponsoredTaskHookV2SuiteTest is Test {
         assertEq(hook.finalizeSettlement(TASK_ID, awards), bytes32(0));
     }
 
+    /// Zero-amount entries pay nobody, so they do not count toward MAX_AWARDS: an evaluator verdict
+    /// padded with them past the ceiling still settles the sponsorship.
+    function testZeroAmountAwardsDoNotCountTowardTheCeiling() external {
+        _fundLocal();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        ITMPCore.Award[] memory awards = _paddedAwards(1, 49);
+        ITMPCore.Verdict memory verdict = _verdict(ITMPCore.VerdictType.APPROVE, awards);
+
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, verdict));
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHookV2.HookStatus.CompletionCommitted));
+        hook.finalizeSettlement(TASK_ID, awards);
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHookV2.HookStatus.SettlementPrepared));
+    }
+
+    /// More than MAX_AWARDS paying entries still release the sponsorship, whatever the padding.
+    function testNonZeroAwardsAboveTheCeilingStillRelease() external {
+        _fundLocal();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        ITMPCore.Award[] memory awards = _paddedAwards(hook.MAX_AWARDS() + 1, 3);
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, awards)));
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHookV2.HookStatus.AwardCountExceeded));
+    }
+
+    /// Rev031: on a task with no evaluator the award list is the requester's (acceptSubmissions),
+    /// so the overflow release also records a default against the requester. Balances are as above.
+    function testRequesterAwardOverflowRecordsDefaultByRequester() external {
+        _fundLocal();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        uint256 availableBefore = vault.available();
+        ITMPCore.Award[] memory awards = _manyAwards(hook.MAX_AWARDS() + 1);
+        vm.expectEmit(address(hook));
+        emit SponsoredTaskHookV2.SponsoredTaskDefaultedByRequester(TASK_ID, TASK_ID, MANAGER);
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, awards)));
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHookV2.HookStatus.AwardCountExceeded));
+        assertEq(vault.available(), availableBefore + GROSS, "same release, no other balance effect");
+    }
+
+    /// An evaluator's oversized verdict releases the sponsorship without blaming the requester.
+    function testEvaluatorAwardOverflowRecordsNoRequesterDefault() external {
+        _fundLocal();
+        ITMPCore.TaskEvaluatorConfig memory config;
+        config.evaluator = address(0xE1A1);
+        market.setEvaluator(TASK_ID, config);
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        ITMPCore.Award[] memory awards = _manyAwards(hook.MAX_AWARDS() + 1);
+        vm.recordLogs();
+        assertTrue(market.callCheckCompleteV2(hook, TASK_ID, _verdict(ITMPCore.VerdictType.APPROVE, awards)));
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHookV2.HookStatus.AwardCountExceeded));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics.length == 0
+                    || logs[i].topics[0] != SponsoredTaskHookV2.SponsoredTaskDefaultedByRequester.selector,
+                "no requester default"
+            );
+        }
+    }
+
+    /// The diamond's widest verdict (50 entries, MAX_AWARDS of them paying) still commits well
+    /// inside the hook stipend.
+    function testWidestPaddedCommitmentStaysWellInsideHookStipend() external {
+        _fundLocal();
+        market.setStatus(TASK_ID, ITMPCore.TaskStatus.Accepted);
+        uint256 paying = hook.MAX_AWARDS();
+        ITMPCore.Award[] memory awards = _paddedAwards(paying, 50 - paying);
+        ITMPCore.Verdict memory verdict = _verdict(ITMPCore.VerdictType.APPROVE, awards);
+
+        uint256 gasBefore = gasleft();
+        market.callCheckCompleteV2(hook, TASK_ID, verdict);
+        uint256 used = gasBefore - gasleft();
+        assertLt(used, 900_000, "leave at least 10% headroom under Taskmarket stipend");
+        assertEq(uint8(_allocationStatus(hook, TASK_ID)), uint8(SponsoredTaskHookV2.HookStatus.CompletionCommitted));
+    }
+
     function testV1AwardCeilingIsPinnedAtEight() external view {
         assertEq(hook.MAX_AWARDS(), 8);
     }
@@ -682,6 +756,17 @@ contract SponsoredTaskHookV2SuiteTest is Test {
         awards = new ITMPCore.Award[](2);
         awards[0] = ITMPCore.Award({ worker: ALICE, amount: aliceAmount, rank: 1 });
         awards[1] = ITMPCore.Award({ worker: BOB, amount: bobAmount, rank: 2 });
+    }
+
+    /// `paying` awards of 1 followed by `zeros` zero-amount entries.
+    function _paddedAwards(uint256 paying, uint256 zeros) private pure returns (ITMPCore.Award[] memory awards) {
+        awards = new ITMPCore.Award[](paying + zeros);
+        for (uint256 i; i < paying; ++i) {
+            awards[i] = ITMPCore.Award({ worker: address(uint160(0x1000 + i)), amount: 1, rank: uint16(i + 1) });
+        }
+        for (uint256 i = paying; i < paying + zeros; ++i) {
+            awards[i] = ITMPCore.Award({ worker: address(0), amount: 0, rank: 0 });
+        }
     }
 
     function _manyAwards(uint256 count) private pure returns (ITMPCore.Award[] memory awards) {

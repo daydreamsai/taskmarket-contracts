@@ -77,6 +77,22 @@ contract FacetSelectorsTest is Test {
         _check("projectFacetSelectorsRev028Routed", FacetSelectors.projectFacetSelectorsRev028Routed());
         _check("hookDispatchFacetSelectors", FacetSelectors.hookDispatchFacetSelectors());
         _check("hooksV2FacetSelectors", FacetSelectors.hooksV2FacetSelectors());
+        _check("projectFacetSelectorsKeptRev031", FacetSelectors.projectFacetSelectorsKeptRev031());
+        _check("projectSelectorsAddedRev031", FacetSelectors.projectSelectorsAddedRev031());
+        _check("selectorsAddedRev031", FacetSelectors.selectorsAddedRev031());
+        _check("selectorsRemovedRev031", FacetSelectors.selectorsRemovedRev031());
+    }
+
+    /// @dev rev031 Removes the terms-only grantOperator by its written-out signature; these are the ids
+    ///      the rev030 and rev031 ProjectFacets route.
+    function testGrantOperatorSelectorsMatchRev030AndRev031() public pure {
+        assertEq(FacetSelectors.grantOperatorSelectorRev030(), bytes4(0xd2249c39), "terms-only grantOperator");
+        assertEq(FacetSelectors.projectSelectorsAddedRev031()[0], bytes4(0x301cd8aa), "grantOperator with limits");
+        assertEq(
+            FacetSelectors.projectFacetSelectorsKeptRev031().length + 1,
+            FacetSelectors.projectFacetSelectors().length,
+            "rev031 keeps every other ProjectFacet selector"
+        );
     }
 
     /// @dev The rev030 Removed selectors are written out (no facet serves them any more), so a typo in

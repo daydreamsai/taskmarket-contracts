@@ -201,6 +201,40 @@ fn claim_rejects_unbound_worker_and_other_destination() {
     assert_eq!(env.token_balance(&payout), 400);
 }
 
+/// A relayer cannot route a payout to another token account the payout owns: a program-derived
+/// payout may act only on its associated token account, so anything else could strand the award.
+#[test]
+fn claim_pays_only_the_payouts_associated_token_account() {
+    let mut env = Env::new();
+    let f = env.ready_vault(SPL_TOKEN, 1_000, manager(1), 1_000);
+    let s = env.settlers[0].insecure_clone();
+    let payer = env.payer.pubkey();
+    env.send(
+        &[f.reserve_ix(&payer, &[&s], task_id(1), 400, manager(1))],
+        &[&s],
+    )
+    .unwrap();
+    let r = reservation_pda(&f.vault, &task_id(1));
+    let (root, proofs) = award_tree(&f.vault, 1, &r, &task_id(1), &[(0, WORKER_A, 400)]);
+    env.send(
+        &[f.settle_ix(&[&s], r, SettleTerms::awards(root, 1, 400, 0))],
+        &[&s],
+    )
+    .unwrap();
+    env.pass_claim_delay();
+    let owner = Pubkey::find_program_address(&[b"payout"], &Pubkey::new_unique()).0;
+    env.put_binding(WORKER_A, owner);
+    let ix = |dest| f.claim_ix(&payer, r, 0, WORKER_A, 400, proofs[0].clone(), dest);
+
+    let other = env.token_account(&SPL_TOKEN, &f.mint, &owner);
+    assert_error(env.send(&[ix(other)], &[]), E::PayoutAccountNotAssociated);
+    assert_eq!(env.token_balance(&other), 0);
+
+    let associated = env.mint_to(&SPL_TOKEN, &f.mint, &owner, 0);
+    env.send(&[ix(associated)], &[]).unwrap();
+    assert_eq!(env.token_balance(&associated), 400);
+}
+
 #[test]
 fn an_attested_payout_change_is_used_only_after_the_claim_delay() {
     let mut env = Env::new();

@@ -76,6 +76,8 @@ library LibHooksV2 {
     uint8 internal constant FAIL_RESULT_INVALID = 4;
     /// @notice A best-effort callback skipped because too little gas was left for its budget.
     uint8 internal constant FAIL_GAS = 5;
+    /// @notice An observer callback skipped because the hook's code no longer matches its pinned codehash.
+    uint8 internal constant FAIL_CODE_CHANGED = 6;
 
     // HookIncompatible reasons.
     uint8 internal constant R_INTERFACE = 1;
@@ -104,8 +106,9 @@ library LibHooksV2 {
     ///         task carries. The first callback always runs, whatever its budget.
     uint256 internal constant MAX_EXIT_HOOK_GAS = 6_000_000;
     /// @notice Gas held back per remaining hook so that skipping it (event and sequence write)
-    ///         cannot run out of gas.
-    uint256 internal constant SKIP_RESERVE = 40_000;
+    ///         cannot run out of gas. Sized for Tempo, where a hook's first sequence write is a new
+    ///         storage slot at about 250k gas (about 20k on Base).
+    uint256 internal constant SKIP_RESERVE = 300_000;
     /// @notice Gas for each manifest read at attach (supportsInterface, hookCapabilities, minDiamondVersion).
     uint256 internal constant MANIFEST_GAS = 50_000;
     /// @notice Highest maxHookFeeBps the owner may set.
@@ -122,6 +125,16 @@ library LibHooksV2 {
         // Memory-safe: transient storage only.
         assembly ("memory-safe") {
             tstore(slot, actor)
+        }
+    }
+
+    /// @notice setActor(msg.sender), except on the diamond's call to itself, which keeps the actor the
+    ///         outer action recorded.
+    function setActorUnlessSelf() internal {
+        bytes32 slot = ACTOR_SLOT;
+        // Memory-safe: transient storage only.
+        assembly ("memory-safe") {
+            if iszero(eq(caller(), address())) { tstore(slot, caller()) }
         }
     }
 

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { LibAppStorage, AppStorage } from "../libraries/LibAppStorage.sol";
+import { LibAwards } from "../libraries/LibAwards.sol";
 import { LibGuards } from "../libraries/LibGuards.sol";
 import { LibProject } from "../libraries/LibProject.sol";
 import { LibEscrow } from "../libraries/LibEscrow.sol";
@@ -98,7 +99,7 @@ contract AcceptanceFacet {
             s.workerStats[worker].completedTasks--;
             s.taskAwarded[taskId][worker] = false;
             if (awards.length == 0) awards = verdict.awards;
-            else _recordPaidAwards(taskId, awards, s);
+            else _recordPaidAwards(taskId, task, awards, s);
             _payResult(taskId, requester, awards, paymentAmount, task.feeBps, hookFeeBps, feeHook, s);
         } else {
             if (paymentAmount > 0) s.taskAwarded[taskId][worker] = true;
@@ -108,18 +109,18 @@ contract AcceptanceFacet {
 
         // Rev030: when a transforming hook changed the awards, self-dealing is read from the awards
         // actually paid, as the multi-winner path does, not from the core worker.
-        bool selfPaid = worker == requester;
+        bool selfPaid = false;
         if (changed) {
-            selfPaid = false;
             for (uint256 i; i < awards.length; ++i) {
                 if (awards[i].amount == 0) continue;
                 if (LibProject.isActingParty(s, taskId, awards[i].worker)) {
                     emit ITMPCore.SelfAward(taskId, requester, awards[i].worker);
+                    selfPaid = true;
                 }
-                if (awards[i].worker == requester) selfPaid = true;
             }
         } else if (LibProject.isActingParty(s, taskId, worker)) {
             emit ITMPCore.SelfAward(taskId, requester, worker);
+            selfPaid = true;
         }
         if (mode == BOUNTY || mode == BENCHMARK) {
             emit ITMPCore.RequesterReputation(
@@ -231,6 +232,9 @@ contract AcceptanceFacet {
             if (!s.taskSubmissionHashExists[taskId][worker][deliverable]) revert ITMPCore.SubmissionNotFound();
             task.deliverable = deliverable;
         }
+        // Rev031: a single-payee task's deliverable is zero until delivery, so matching it alone
+        // would accept work that was never delivered.
+        if (deliverable == bytes32(0)) revert ITMPCore.DeliverableRequired();
     }
 
     /// @dev A delivery under review may be accepted until its review deadline, before or after
@@ -328,7 +332,7 @@ contract AcceptanceFacet {
             LibHooks._acceptV2(s, taskId, verdict, true, false, task.reward);
         if (changed) {
             if (result.length == 0) result = awards;
-            else _recordPaidAwards(taskId, result, s);
+            else _recordPaidAwards(taskId, task, result, s);
             _payResult(taskId, requester, result, task.reward, task.feeBps, hookFeeBps, feeHook, s);
             awards = result;
         } else {
@@ -412,8 +416,26 @@ contract AcceptanceFacet {
     /// @dev Rev030: when a transforming hook replaced the awards, the task's verdict records the
     ///      awards paid, as EvaluatorFacet._payAwards does, so getTaskVerdict reports what was paid
     ///      and an after-callback (the DREAMS reward hook's bonus) is sized from it. A requester
-    ///      acceptance no hook changed still stores no verdict.
-    function _recordPaidAwards(bytes32 taskId, ITMPCore.Award[] memory awards, AppStorage storage s) private {
+    ///      acceptance no hook changed still stores no verdict. Rev031: on a Bounty or Benchmark the
+    ///      task's worker then follows the lowest-ranked paid award (LibAwards.primary), as on the
+    ///      evaluator path, so getTask and the afterComplete context name the worker the hook paid
+    ///      first. A new primary worker's deliverable is its latest submission; the accepted worker
+    ///      keeps the one the requester accepted. A result that pays no one clears both.
+    function _recordPaidAwards(
+        bytes32 taskId,
+        ITMPCore.Task storage task,
+        ITMPCore.Award[] memory awards,
+        AppStorage storage s
+    ) private {
+        if (task.mode == BOUNTY || task.mode == BENCHMARK) {
+            uint256 p = LibAwards.primary(awards);
+            address primaryWorker = p == LibAwards.NONE ? address(0) : awards[p].worker;
+            if (primaryWorker != task.worker) {
+                task.worker = primaryWorker;
+                bytes32[] storage hashes = s.taskSubmissionHashes[taskId][primaryWorker];
+                task.deliverable = hashes.length == 0 ? bytes32(0) : hashes[hashes.length - 1];
+            }
+        }
         delete s.taskVerdicts[taskId];
         ITMPCore.Verdict storage v = s.taskVerdicts[taskId];
         v.issued = true;

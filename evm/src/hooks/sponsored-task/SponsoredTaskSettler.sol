@@ -36,7 +36,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     ISponsoredTaskRegistry public immutable registry;
 
     bytes32 public constant RESERVE_TYPEHASH = keccak256(
-        "Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash)"
+        "Reserve(address vault,bytes32 vaultId,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce,address manager,uint256 grossAmount,uint64 epoch,uint16 feeBps,address feeRecipient,bytes32 termsHash,uint64 deadline)"
     );
     bytes32 public constant RELEASE_TYPEHASH = keccak256(
         "Release(address vault,bytes32 allocationId,uint256 taskChainId,bytes32 taskId,uint64 commitmentNonce)"
@@ -68,6 +68,9 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         uint16 feeBps;
         address feeRecipient;
         bytes32 termsHash;
+        /// @dev Unix seconds. `reserve` refuses the request once `block.timestamp` is past it, so a
+        ///      reserve that did not land in its relay window can never land later.
+        uint64 deadline;
     }
 
     struct ReleaseRequest {
@@ -160,6 +163,7 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     error ScheduledChangeMismatch();
     error TimelockNotElapsed(uint256 eta);
     error OwnershipRenunciationDisabled();
+    error ReserveExpired(uint64 deadline);
 
     event TaskReservationAuthorized(
         address indexed vault,
@@ -237,8 +241,13 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
     // Settler-authorized actions (anyone may relay)
     // ---------------------------------------------------------------------------------------------
 
-    /// @notice Reserves `grossAmount` in `vault` for a task. Blocked while paused.
+    /// @notice Reserves `grossAmount` in `vault` for a task. Blocked while paused, and refused once
+    ///         the signed `deadline` has passed: the settlers checked the task was open when they
+    ///         signed, and a late relay could otherwise hold the amount and the manager's cap for a
+    ///         task that has since ended. A release or settle carries no deadline: a late release
+    ///         only returns funds, and a settle is bound to the reserved allocation's commitment.
     function reserve(ReserveRequest calldata request, bytes[] calldata signatures) external whenNotPaused nonReentrant {
+        if (block.timestamp > request.deadline) revert ReserveExpired(request.deadline);
         _authorize(keccak256(abi.encode(RESERVE_TYPEHASH, request)), signatures);
         _requireAllocationId(request.allocationId, request.taskChainId, request.taskId);
         _requireControlledVault(request.vault);
@@ -259,9 +268,11 @@ contract SponsoredTaskSettler is EIP712, Ownable2Step, Pausable, ReentrancyGuard
         record.taskId = request.taskId;
         record.grossAmount = request.grossAmount;
 
+        // The vault charges the manager's allowance for the signed task chain only.
         ISponsoredTasksVault(request.vault)
-            .reserveTask(
+            .reserveTaskForChain(
                 request.allocationId,
+                request.taskChainId,
                 request.taskId,
                 request.manager,
                 request.grossAmount,

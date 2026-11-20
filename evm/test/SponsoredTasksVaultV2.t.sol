@@ -179,7 +179,7 @@ contract SponsoredTasksVaultV2Test is VaultV2Base {
     // ---- identity ---------------------------------------------------------------------------
 
     function test_FactoryClonesTheV2Implementation() public view {
-        assertEq(vault.VAULT_VERSION(), 2);
+        assertEq(vault.VAULT_VERSION(), 3);
         assertEq(vault.owner(), vaultOwner);
         assertEq(vault.ownerNonce(), 0);
         assertEq(uint256(vault.status()), uint256(SponsoredTaskTypes.VaultStatus.Active));

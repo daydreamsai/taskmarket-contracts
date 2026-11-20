@@ -246,6 +246,7 @@ contract AdminFacet is Initializable {
 
     /// @notice Set the ERC-8004 reputation registry address (owner only).
     function setReputationRegistry(address registry) external onlyOwner {
+        if (registry != address(0) && registry.code.length == 0) revert ITMPCore.ReputationRegistryHasNoCode();
         LibAppStorage.appStorage().reputationRegistry = registry;
         emit ITMPReputation.ReputationRegistryUpdated(registry);
     }
@@ -278,8 +279,11 @@ contract AdminFacet is Initializable {
     ///         Zero is rejected: a zero floor is the degenerate case the guard exists to close,
     ///         and it is also the sentinel meaning "never set", so permitting it would make the
     ///         two indistinguishable in storage.
+    ///         Rev031: a value above the effective termsBounds maxWindowSecs is rejected too, since
+    ///         no appeal window could then satisfy both and no evaluator could be configured.
     function setMinAppealWindowSecs(uint32 newMinimum) external onlyOwner {
-        if (newMinimum == 0) revert ITMPCore.InvalidMinAppealWindow();
+        (, uint32 maxWindow,,) = LibTerms.bounds(LibAppStorage.appStorage());
+        if (newMinimum == 0 || newMinimum > maxWindow) revert ITMPCore.InvalidMinAppealWindow();
         LibAppStorage.appStorage().minAppealWindowSecs = newMinimum;
         emit ITMPCore.MinAppealWindowUpdated(newMinimum);
     }
@@ -324,6 +328,7 @@ contract AdminFacet is Initializable {
         if (
             minWindowSecs == 0 || minWindowSecs > maxWindowSecs || maxRejectFeeBps > 10000 || maxRevisions == 255
                 || maxWindowSecs < LibTaskMarket._minEvaluationWindowSecs(s)
+                || maxWindowSecs < LibTaskMarket._minAppealWindowSecs(s)
         ) {
             revert ITMPCore.InvalidTermsBounds();
         }

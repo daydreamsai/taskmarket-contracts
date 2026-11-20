@@ -9,10 +9,6 @@ import {
 } from "openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol";
 import { OwnableUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import { MessageHashUtils } from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ITMPHookV2 } from "../interfaces/ITMPHookV2.sol";
 import { ITMPCore } from "../interfaces/ITMPCore.sol";
 import { ITMPDiamond } from "../interfaces/ITMPDiamond.sol";
@@ -22,6 +18,7 @@ import { IRewardVault } from "../interfaces/IRewardVault.sol";
 import { IRewardVaultToken } from "../interfaces/IRewardVaultToken.sol";
 import { EpochBudget } from "./EpochBudget.sol";
 import { LibSettledAwards } from "./base/LibSettledAwards.sol";
+import { LibWithdrawAuthorization } from "./base/LibWithdrawAuthorization.sol";
 
 interface ISettlementStatus {
     function isSettling() external view returns (bool);
@@ -155,6 +152,13 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         // and the current dependency is used.
         mapping(bytes32 => Dependencies) reserveDependencies;
         mapping(bytes32 => Dependencies) releaseDependencies;
+        // Rev031: the share of an epoch's global budget, in bps, below which a reservation whose
+        // requester and worker both have a zero age multiplier may still be made. Stored plus one,
+        // so zero (never set) reads as the default; see `zeroAgeReserveShareBps()`.
+        uint16 zeroAgeShareBpsPlusOne;
+        // Rev031: the paying awards beforeAccept kept for an unreserved task, worker in the low
+        // 160 bits and amount above, for recoverReserve after a missed afterComplete.
+        mapping(bytes32 => uint256[]) keptAwards;
     }
 
     struct Dependencies {
@@ -180,6 +184,8 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     ///      for a costlier production token. It is above the diamond's 1M hook stipend, which
     ///      pays only seven first-time winners before reaching the floor.
     uint256 public constant RECOVER_BOUNTY_MIN_GAS = 1_500_000;
+    /// @notice Rev031: the default zero-age reservation share, 10% of the epoch's global budget.
+    uint16 public constant DEFAULT_ZERO_AGE_RESERVE_SHARE_BPS = 1000;
 
     bytes32 private constant HOOK_STORAGE_SLOT = keccak256("taskmarket.tokenrewardhookv2.storage.v1");
 
@@ -295,6 +301,14 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         return _s().usedWithdrawNonce[key];
     }
 
+    /// @notice Rev031: a reservation whose requester and worker both have a zero age multiplier is
+    ///         made only while the epoch's global usage, with it, stays within this share (bps) of
+    ///         the global cap, so such reservations never hold more than that share.
+    function zeroAgeReserveShareBps() public view returns (uint16) {
+        uint16 stored = _s().zeroAgeShareBpsPlusOne;
+        return stored == 0 ? DEFAULT_ZERO_AGE_RESERVE_SHARE_BPS : stored - 1;
+    }
+
     function walletHistorySealed() external view returns (bool) {
         return _s().walletHistorySealed;
     }
@@ -357,9 +371,15 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     error NothingToRecover(bytes32 taskId);
     error InsufficientRecoveryGas(bytes32 taskId);
 
+    /// @dev The check is a function rather than inline modifier code: the modifier guards every V2
+    ///      callback, and one shared copy keeps the hook under EIP-170's size limit (rev031).
     modifier onlyDiamond() {
-        if (msg.sender != _s().diamond) revert CallerNotDiamond();
+        _onlyDiamond();
         _;
+    }
+
+    function _onlyDiamond() private view {
+        if (msg.sender != _s().diamond) revert CallerNotDiamond();
     }
 
     /// @dev The implementation is never used directly -- all state lives behind the proxy -- so
@@ -605,7 +625,14 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
             // pay every winner: a short-gassed call would set `paid` and pay no one.
             if (gasleft() < RECOVER_BOUNTY_MIN_GAS) revert InsufficientRecoveryGas(taskId);
             ITMPCore.Verdict memory bv = ITMPDiamond(_s().diamond).getTaskVerdict(taskId);
-            if (bv.issued) {
+            if (!bv.issued) {
+                uint256[] storage kept = _s().keptAwards[taskId];
+                bv.awards = new ITMPCore.Award[](kept.length);
+                for (uint256 i; i < kept.length; ++i) {
+                    bv.awards[i] = ITMPCore.Award(address(uint160(kept[i])), kept[i] >> 160, 0);
+                }
+            }
+            if (bv.awards.length != 0) {
                 state.paid = true;
                 _payBounty(taskId, task.requester, bv.awards);
                 return;
@@ -690,29 +717,9 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         bytes32 nonceKey = keccak256(abi.encodePacked(wallet, nonce));
         if (_s().usedWithdrawNonce[nonceKey]) revert WithdrawNonceUsed();
 
-        string memory message = string.concat(
-            "taskmarket:withdraw-dreams:",
-            Strings.toHexString(wallet),
-            ":",
-            Strings.toHexString(destination),
-            ":",
-            nonce,
-            ":",
-            Strings.toString(validBefore),
-            ":",
-            Strings.toString(block.chainid),
-            ":",
-            Strings.toHexString(address(this))
-        );
-        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(bytes(message));
-        // An ECDSA signature by the wallet's own key, or the wallet's ERC-1271 validation. ECDSA
-        // is tried first and regardless of code, because an EOA upgraded with EIP-7702 has code
-        // (its delegation designator) but still holds its key; SignatureChecker would skip ECDSA
-        // for it. ERC-1271 must return exactly the magic value.
-        (address recovered, ECDSA.RecoverError err, bytes32 errArg) = ECDSA.tryRecover(digest, signature);
-        bool valid = err == ECDSA.RecoverError.NoError && errArg == bytes32(0) && recovered == wallet;
-        if (!valid) valid = SignatureChecker.isValidERC1271SignatureNow(wallet, digest, signature);
-        if (!valid) revert InvalidWithdrawSignature();
+        if (!LibWithdrawAuthorization.isAuthorized(wallet, destination, nonce, validBefore, signature)) {
+            revert InvalidWithdrawSignature();
+        }
 
         _s().usedWithdrawNonce[nonceKey] = true;
 
@@ -867,6 +874,13 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         _s().workerSplitBps = bps;
     }
 
+    /// @notice Rev031: set the zero-age reservation share (bps of the global cap). 10000 lifts the
+    ///         cap; 0 refuses every reservation whose requester and worker both earn nothing yet.
+    function setZeroAgeReserveShareBps(uint16 shareBps) external onlyOwner {
+        if (shareBps > 10000) revert InvalidBps();
+        _s().zeroAgeShareBpsPlusOne = shareBps + 1;
+    }
+
     function setRamp(uint40[3] calldata thresholds, uint16[4] calldata multipliers) external onlyOwner {
         if (thresholds[0] >= thresholds[1] || thresholds[1] >= thresholds[2]) revert InvalidRamp();
         if (
@@ -1010,32 +1024,52 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
         // A bonus that converts to zero tokens reserves nothing, so it must not consume epoch budget
         // either: with no reserved tokens a later cancel or expiry has no release to hand it back.
         uint256 tokenAmount = bonusUsd * rate / 1e6;
-        if (rate == 0 || bonusUsd == 0 || tokenAmount == 0) {
-            // No rate/bonus configured — no _s().token reward owed, but USDC flow is never blocked.
-            emit RewardReserved(taskId, worker, rate, 0);
-            return true;
+        // No rate/bonus configured, or (rev031) a zero-multiplier pair past its share of the epoch
+        // budget: no _s().token reward is reserved, but the USDC flow is never blocked.
+        // One emit below serves both outcomes (size, rev031): reservedTokenAmount is still 0 here.
+        if (rate != 0 && bonusUsd != 0 && tokenAmount != 0 && !_zeroAgeOverShare(requester, worker, bonusUsd)) {
+            // TOCTOU guard: budget may be exhausted between remaining() and checkAndConsume.
+            // reservedTokenAmount stays 0 on failure so no _s().token reward is owed without
+            // blocking USDC payout. _s().epochBudget is a trusted owner-set contract with no
+            // callback mechanism, so the reentrancy-no-eth finding is a false positive.
+            // slither-disable-next-line reentrancy-no-eth
+            try _s().epochBudget.checkAndConsume(taskId, requester, worker, bonusUsd) returns (uint64 epoch) {
+                // The Diamond turns any check-hook revert into HookCheckClaimRejected, so a short
+                // vault must skip the bonus rather than block claimTask/selectWorker. The consumed
+                // budget is handed back, leaving the same state as the budget-exhausted branch.
+                try _s().vault.reserve(taskId, tokenAmount) {
+                    state.reservedTokenAmount = tokenAmount;
+                    state.consumedEpoch = epoch;
+                    _pinReserveDependencies(taskId);
+                } catch {
+                    _tryBudgetRelease(taskId, requester, worker, bonusUsd, epoch);
+                }
+            } catch { }
         }
-
-        // TOCTOU guard: budget may be exhausted between remaining() and checkAndConsume.
-        // reservedTokenAmount stays 0 on failure so no _s().token reward is owed without
-        // blocking USDC payout. _s().epochBudget is a trusted owner-set contract with no
-        // callback mechanism, so the reentrancy-no-eth finding is a false positive.
-        // slither-disable-next-line reentrancy-no-eth
-        try _s().epochBudget.checkAndConsume(taskId, requester, worker, bonusUsd) returns (uint64 epoch) {
-            // The Diamond turns any check-hook revert into HookCheckClaimRejected, so a short
-            // vault must skip the bonus rather than block claimTask/selectWorker. The consumed
-            // budget is handed back, leaving the same state as the budget-exhausted branch.
-            try _s().vault.reserve(taskId, tokenAmount) {
-                state.reservedTokenAmount = tokenAmount;
-                state.consumedEpoch = epoch;
-                _pinReserveDependencies(taskId);
-            } catch {
-                try _s().epochBudget.release(taskId, requester, worker, bonusUsd, epoch) { } catch { }
-            }
-        } catch { }
 
         emit RewardReserved(taskId, worker, rate, state.reservedTokenAmount);
         return true;
+    }
+
+    /// @dev Rev031: true when neither wallet would be credited now (both age multipliers zero) and
+    ///      the reservation would take the epoch's global usage past the zero-age share. Such a
+    ///      reservation reserves nothing, as for an exhausted budget. Crediting still follows the
+    ///      wallets' age at payout.
+    function _zeroAgeOverShare(address requester, address worker, uint256 usd) private view returns (bool) {
+        if (!_bothZeroAge(requester, worker)) return false;
+        EpochBudget budget = _s().epochBudget;
+        return budget.globalUsed() + usd > budget.globalCapUsd() * zeroAgeReserveShareBps() / 10000;
+    }
+
+    /// @dev Rev031: neither wallet would be credited anything now (both age multipliers zero).
+    function _bothZeroAge(address requester, address worker) private view returns (bool) {
+        return _ageMultiplierBps(requester) == 0 && _ageMultiplierBps(worker) == 0;
+    }
+
+    /// @dev Hands back budget consumed for a bonus that was not reserved or paid; never reverts.
+    ///      One shared copy of the call (size, rev031).
+    function _tryBudgetRelease(bytes32 taskId, address requester, address worker, uint256 usd, uint64 epoch) private {
+        try _s().epochBudget.release(taskId, requester, worker, usd, epoch) { } catch { }
     }
 
     /// @dev Moves a due reservation into `releaseProgress` and attempts each dependency.
@@ -1197,6 +1231,9 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
             processed++;
             address worker = awards[i].worker;
             _touchFirstSeen(worker);
+            // Rev031: a winner and requester that would both be credited nothing are paid nothing,
+            // so the payout spends no epoch budget and moves no vault tokens it cannot credit.
+            if (_bothZeroAge(requester, worker)) continue;
             uint256 workerBonusUsd = workerUsd * bonus / 10000;
             // Includes what the task's other winners have already consumed of its per-task cap.
             uint256 budgetRemaining = _s().epochBudget.remaining(taskId, requester, worker);
@@ -1256,7 +1293,7 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
                 _creditWithSplit(requester, worker, tokenReward);
                 emit RewardPaid(taskId, worker, workerUsd, cappedUsd, rate, tokenReward);
             } else {
-                try _s().epochBudget.release(taskId, requester, worker, cappedUsd, consumeEpoch) { } catch { }
+                _tryBudgetRelease(taskId, requester, worker, cappedUsd, consumeEpoch);
             }
         }
     }
@@ -1345,14 +1382,23 @@ contract TaskTokenRewardHookV2 is ITMPHookV2, Ownable2StepUpgradeable, UUPSUpgra
     ///      what was settled. A task whose bonus is already paid is still refused, and the awards of
     ///      an unreserved task are kept for afterComplete in transient storage, since a requester
     ///      acceptance stores no verdict for the shares it pays.
-    function beforeAccept(bytes32 taskId, TaskContextV2 calldata, ITMPCore.Verdict calldata verdict, bytes calldata)
+    function beforeAccept(bytes32 taskId, TaskContextV2 calldata ctx, ITMPCore.Verdict calldata verdict, bytes calldata)
         external
         onlyDiamond
         returns (bytes4, SettlementDelta memory, ITMPCore.Award[] memory)
     {
         RewardState storage state = _s().rewardStates[taskId];
         if (state.paid) revert RewardAlreadyPaid(taskId);
-        if (!state.reserved) LibSettledAwards.keep(ACCEPTED_AWARDS_BASE, taskId, verdict.awards);
+        if (!state.reserved) {
+            LibSettledAwards.keep(ACCEPTED_AWARDS_BASE, taskId, verdict.awards);
+            if (ctx.mode == TMP_BOUNTY || ctx.mode == TMP_BENCHMARK) {
+                uint256[] storage kept = _s().keptAwards[taskId];
+                for (uint256 i; i < verdict.awards.length && kept.length < MAX_BONUS_AWARDS; ++i) {
+                    uint256 amount = verdict.awards[i].amount;
+                    if (amount != 0) kept.push(amount << 160 | uint160(verdict.awards[i].worker));
+                }
+            }
+        }
         bytes4 sel = this.beforeAccept.selector;
         return (sel, SettlementDelta(sel, 0, 0), new ITMPCore.Award[](0));
     }

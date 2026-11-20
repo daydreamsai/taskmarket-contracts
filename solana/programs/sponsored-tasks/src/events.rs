@@ -100,6 +100,16 @@ pub struct TaskReleased {
 }
 
 #[event]
+pub struct ReservationDeadlineExtended {
+    pub vault: Pubkey,
+    pub reservation: Pubkey,
+    pub task_chain_id: u64,
+    pub task_id: [u8; 32],
+    pub old_deadline: i64,
+    pub new_deadline: i64,
+}
+
+#[event]
 pub struct SettlementRevoked {
     pub vault: Pubkey,
     pub reservation: Pubkey,
@@ -117,6 +127,14 @@ pub struct VaultEmergencyExited {
     pub amount_withdrawn: u64,
     pub affected_reserved: u64,
     pub affected_claimable: u64,
+}
+
+#[event]
+pub struct ExitedVaultSwept {
+    pub vault: Pubkey,
+    pub sponsor: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
 }
 
 #[event]

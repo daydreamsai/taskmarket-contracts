@@ -62,7 +62,8 @@ for the leaf yet (`ClaimAlreadyPaid`), the proof of `award_leaf(vault, epoch, re
 task_id, leaf_index, worker, amount)` against the root (`InvalidClaimProof`), the running
 claimed total within `settled_total` (`InvalidSettlementTotals`), a binding for the worker
 (`PayoutNotBound`), and a destination owned by the bound payout address (Anchor
-`ConstraintTokenOwner`).
+`ConstraintTokenOwner`) that is that address's associated token account for the vault's mint and
+token program (`PayoutAccountNotAssociated`).
 
 The vault PDA signs a `transfer_checked` of `amount` to the destination. The reservation's
 `claimed_count` and `claimed_total` and the vault's `total_claimed` grow, and
@@ -115,12 +116,16 @@ claimed against: a later claim fails on the reservation state, and a corrected r
 delay when the settlers install it. Revoke needs no program-wide pause because it touches only
 the one reservation, so revoking one bad root leaves claims on every other vault running, as the
 EVM settler mode does. It stays admin-only and is refused (`SettlementHasClaims`) once a leaf or
-the fee has been claimed against the root.
+the fee has been claimed against the root. The restored reservation's deadline becomes the later of
+its own and the clock plus one claim delay (`Config::claim_delay`): a deadline that passed while the
+root was installed would otherwise let anyone `release_expired` the reservation before the settlers
+sign the corrected root, and a released reservation's task can never be reserved again.
 
 ## Expired reservations
 
 A reservation's `deadline` (unix seconds, set by the settlers at `reserve` and required to be in
-the future then) does not stop a settlement: `settle` does not read it. It bounds how long the
+the future then, and at most `MAX_RESERVATION_SECS`, 400 days, after the clock: `DeadlineTooFar`)
+does not stop a settlement: `settle` does not read it. It bounds how long the
 settlers can hold the sponsor's funds in an unsettled reservation. After the deadline, `release_expired`
 lets anyone return the reservation to the vault with the same bookkeeping and `TaskReleased` event
 as the settler-gated `release`. It fails with `ReservationNotExpired` until the clock is past the
@@ -128,6 +133,25 @@ deadline, with `ReservationWrongState` for a settled reservation (a pending root
 first), and with `VaultNotActive` or `EpochMismatch` as `release` does; a released reservation is a
 no-op. It is open while the program is paused. A settler `settle` that lands after the deadline but
 before anyone releases still succeeds, and whichever comes first wins.
+
+The deadline is fixed at `reserve`, but the task chain can push a task's expiry out after it
+(a reopen, a review window, an appeal), and a released reservation can never be reserved again:
+the reservation account already exists, so a second `reserve` for the same task fails. Without a
+way to move the deadline, anyone could release a live task's reservation once the settlers'
+margin ran out. `extend_deadline(new_deadline)`, settler-gated and blocked while paused like
+`reserve` (it extends a hold on the sponsor's funds), moves a `Reserved` reservation's deadline
+later. The new deadline must be later than both the current one and the clock
+(`DeadlineInPast`) and at most `MAX_RESERVATION_SECS` after the clock (`DeadlineTooFar`); a
+settled or released reservation fails with `ReservationWrongState`, an
+exited vault with `VaultNotActive`, an old epoch with `EpochMismatch`. It emits
+`ReservationDeadlineExtended { vault, reservation, task_chain_id, task_id, old_deadline,
+new_deadline }`. The settlers call it when the task chain reports a later expiry; the backend
+settler does not call it yet (a follow-up). The bound runs from the clock, so a settler threshold
+can still postpone `release_expired` indefinitely by extending again. That is accepted: the
+settlers can already release or settle a reservation at will, and the sponsor keeps
+`emergency_exit`. The bound only stops one signature from disabling `release_expired` for good (a
+deadline of `i64::MAX`); 400 days covers a task chain expiry of up to 365 days plus the 7-day
+release grace of `RemoteSponsoredTaskHookV2`.
 
 ## Reasoning
 
@@ -160,9 +184,10 @@ claim reaches the program and fails with the named `ClaimAlreadyPaid` instead of
 receipt always refers to the root it was paid against.
 
 **Payout.** The leaf names the worker by their EVM address, so it matches the task chain award. The
-program pays only the token account owned by the address in the worker's `PayoutBinding`, which
-the worker signed for (see [`payout-binding.md`](payout-binding.md)); the relayer cannot choose
-the destination.
+program pays only the associated token account of the address in the worker's `PayoutBinding`,
+which the worker signed for (see [`payout-binding.md`](payout-binding.md)); the relayer cannot
+choose the destination, not even among other token accounts the payout owns, which a payout that
+is a program-derived address may have no way to spend from.
 
 **Fee.** Fee terms are global in `Config` and read at settle. The admin rotates the basis points
 and the recipient with `set_fee` (open while paused). The fee recipient is read from `Config` at

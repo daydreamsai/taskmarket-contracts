@@ -61,8 +61,10 @@ library LibGuards {
     function _nonReentrantBefore(AppStorage storage s) internal {
         if (s.reentrancyStatus == ENTERED) revert ReentrancyGuardReentrantCall();
         s.reentrancyStatus = ENTERED;
-        // Rev028: the caller of the action under way, for the V2 hook context's actor.
-        LibHooksV2.setActor(msg.sender);
+        // Rev028: the caller of the action under way, for the V2 hook context's actor. Rev031: a
+        // self-call (refundExpired settling a verdict through finalizeVerdict) keeps the outer
+        // caller, which the outer action recorded, instead of naming the diamond.
+        LibHooksV2.setActorUnlessSelf();
     }
 
     function _nonReentrantAfter(AppStorage storage s) internal {

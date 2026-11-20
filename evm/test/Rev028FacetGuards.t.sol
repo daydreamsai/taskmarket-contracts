@@ -16,6 +16,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits } from "./helpers/GrantHelper.sol";
 
 /// @dev rev028 facet validation, guards and abuse paths: each test fails on the rev027 facets and
 ///      passes on rev028.
@@ -55,17 +56,6 @@ contract Rev028FacetGuardsTest is DiamondTestHelper {
 
     function _plainTerms() internal pure returns (ITMPCore.TaskTerms memory t) {
         t.version = 2;
-    }
-
-    function _eval(address who) internal pure returns (ITMPCore.TaskEvaluatorConfig memory) {
-        return ITMPCore.TaskEvaluatorConfig({
-            evaluator: who,
-            evaluatorStake: 0,
-            evaluatorFeeBps: 0,
-            evaluationWindow: 24 hours,
-            appealWindow: 1 hours,
-            disputeResolver: address(0)
-        });
     }
 
     function _createCall(
@@ -147,30 +137,6 @@ contract Rev028FacetGuardsTest is DiamondTestHelper {
 
         vm.expectRevert(ITMPCore.SubmissionAlreadyRejected.selector);
         _relay(worker, STAKE, abi.encodeCall(market.claimTask, (taskId, STAKE)));
-    }
-
-    // -------------------------------------------------------------------------
-    // Duplicate evaluator awards count one completed task
-    // -------------------------------------------------------------------------
-
-    function test_DuplicateAwards_CountOneCompletedTask() public {
-        bytes32 taskId = abi.decode(
-            _relay(requester, REWARD, _createCall(TMP_BOUNTY, _eval(evaluator), _plainTerms(), address(0))), (bytes32)
-        );
-        _relay(worker, 0, abi.encodeCall(market.submitWork, (taskId, WORK)));
-
-        ITMPCore.Award[] memory awards = new ITMPCore.Award[](2);
-        awards[0] = ITMPCore.Award({ worker: worker, amount: REWARD / 2, rank: 1 });
-        awards[1] = ITMPCore.Award({ worker: worker, amount: REWARD / 2, rank: 2 });
-        _relay(
-            evaluator,
-            0,
-            abi.encodeCall(market.evaluate, (taskId, ITMPCore.VerdictType.APPROVE, 900, 900, bytes32(0), awards))
-        );
-        vm.warp(block.timestamp + 1 hours + 1);
-        market.finalizeVerdict(taskId);
-
-        assertEq(market.getWorkerStats(worker).completedTasks, 1);
     }
 
     // -------------------------------------------------------------------------
@@ -326,8 +292,8 @@ contract Rev028ProjectGuardsTest is DiamondTestHelper {
             ownerOverride: true,
             revokeRemovesControl: true
         });
-        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, g)));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, keccak256(abi.encode(g)))));
+        _relay(owner, 0, abi.encodeCall(projects.grantOperator, (id, operator, g, noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (id, grantHash(g))));
     }
 
     function _relay(address sender, uint256 payment, bytes memory data) internal returns (bytes memory) {
@@ -460,7 +426,7 @@ contract Rev028ProjectGuardsTest is DiamondTestHelper {
         });
         vm.startPrank(owner);
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
-        projects.grantOperator(id, other, g);
+        projects.grantOperator(id, other, g, noGrantLimits());
         vm.expectRevert(ITMPCore.NotTrustedForwarder.selector);
         projects.revokeOperator(id, operator);
         vm.stopPrank();

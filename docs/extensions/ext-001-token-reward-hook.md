@@ -35,11 +35,11 @@ standard.
 
 ## Contracts
 
-| Contract | Role |
-|---|---|
+| Contract              | Role                                                                               |
+| --------------------- | ---------------------------------------------------------------------------------- |
 | `TaskTokenRewardHook` | `ITMPHook` implementation; orchestrates reservation, payment, and claimable escrow |
-| `RewardVault` | Holds pre-funded DREAMS tokens; tracks per-task reserved balances |
-| `EpochBudget` | Enforces global, per-worker, and per-requester USD emission caps per epoch |
+| `RewardVault`         | Holds pre-funded DREAMS tokens; tracks per-task reserved balances                  |
+| `EpochBudget`         | Enforces global, per-worker, and per-requester USD emission caps per epoch         |
 
 All three contracts are standalone. They do not modify the Diamond proxy or any
 existing storage — the hook is wired in via `setDefaultHooks()` on the Diamond's
@@ -84,7 +84,7 @@ tokenReward = reservedTokenAmount * award / awardable
 A full award pays the whole reservation. The unpaid part, and its share of the epoch
 budget, is released; a zero award releases all of it.
 
-For Bounty tasks (no pre-reservation), the *current* `bonusBps` and `dreamsPerUsdc` at
+For Bounty tasks (no pre-reservation), the _current_ `bonusBps` and `dreamsPerUsdc` at
 `checkComplete` time are used.
 
 **Worked example:** $100 USD task, `bonusBps = 750` (7.5%), rate 347 DREAMS/$1:
@@ -107,17 +107,17 @@ per-task `hookData` payload is needed.
 
 ## Lifecycle
 
-| Event | Hook call | Action |
-|---|---|---|
-| `createTask` | `checkFund` | Stores the initial `rewardUsd` from the task's USDC reward. Does not reserve tokens or read a rate yet. |
-| `claimTask` / `selectWorker` | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context (the accepted price for an Auction), then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, reserves nothing, hands the consumed `EpochBudget` amount back and does not block the USDC flow. |
-| `submitWork` | `checkSubmit` | Validates worker matches the reserved worker (reserved tasks only). |
-| `evaluate` | `checkEvaluate` | No-op. |
-| `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete` | Reserved path: pays the reservation scaled by the reserved worker's award (see Reward Formula) and releases the rest; a zero award releases all of it. Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid. |
-| `settleLapsedReview` / `finalizeVerdict` past expiry | `onComplete` | These skip `checkComplete`. A reservation still unpaid is paid here exactly as `checkComplete` would pay it, scaled by the award; a zero award releases it. An unpaid Bounty or Benchmark task pays its winners through the same bounded loop `checkComplete` uses. After a normal `checkComplete` this is a no-op. |
-| `cancelTask` | `onCancel` | Releases the full reservation (vault tokens + USD budget) to the pools. |
-| `refundExpired` | `onExpire` | Same as cancel. |
-| `forfeitAndReopen` | `onForfeit` | Same as cancel. |
+| Event                                                              | Hook call                          | Action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createTask`                                                       | `checkFund`                        | Stores the initial `rewardUsd` from the task's USDC reward. Does not reserve tokens or read a rate yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `claimTask` / `selectWorker`                                       | `checkClaim` / `checkSelectWorker` | Refreshes `rewardUsd` from the current task context (the accepted price for an Auction), then computes `usdBonusValue = rewardUsd * bonusBps / 10000` and snapshots the current `dreamsPerUsdc` into `startPrice`. Computes `tokenReward = usdBonusValue * startPrice / 1e6`. Consumes `usdBonusValue` (not raw `rewardUsd`) from `EpochBudget` and reserves `tokenReward` from the vault. If no rate or bonus is configured, reserves nothing but does not block the USDC flow. If the vault cannot cover the reservation, reserves nothing, hands the consumed `EpochBudget` amount back and does not block the USDC flow. |
+| `submitWork`                                                       | `checkSubmit`                      | Validates worker matches the reserved worker (reserved tasks only).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `evaluate`                                                         | `checkEvaluate`                    | No-op.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `acceptSubmission` / `finalizeVerdict(APPROVE)` / `resolveDispute` | `checkComplete`                    | Reserved path: pays the reservation scaled by the reserved worker's award (see Reward Formula) and releases the rest; a zero award releases all of it. Bounty path: prices each winner at the current rate, capped by USD budget and vault balance, then credits tokens. Marks the reward paid.                                                                                                                                                                                                                                                                                                                              |
+| `settleLapsedReview` / `finalizeVerdict` past expiry               | `onComplete`                       | These skip `checkComplete`. A reservation still unpaid is paid here exactly as `checkComplete` would pay it, scaled by the award; a zero award releases it. An unpaid Bounty or Benchmark task pays its winners through the same bounded loop `checkComplete` uses. After a normal `checkComplete` this is a no-op.                                                                                                                                                                                                                                                                                                          |
+| `cancelTask`                                                       | `onCancel`                         | Releases the full reservation (vault tokens + USD budget) to the pools.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `refundExpired`                                                    | `onExpire`                         | Same as cancel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `forfeitAndReopen`                                                 | `onForfeit`                        | Same as cancel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Multi-winner (Bounty) path:** `verdict.awards` lists each winner's pre-fee USDC
 amount. Each winner's USD basis is capped by `min(workerUsd, epochBudget.remaining(taskId, ...))`,
@@ -173,12 +173,12 @@ called by the authorized relayer (the server wallet) — see
 in USDC base units (6 decimals) — not DREAMS token amounts, so caps stay meaningful as
 the DREAMS/USDC rate moves:
 
-| Cap | Setter |
-|---|---|
-| Global USD per epoch | `setGlobalCapUsd` |
-| Per-worker USD per epoch | `setWorkerCapUsd` |
+| Cap                         | Setter               |
+| --------------------------- | -------------------- |
+| Global USD per epoch        | `setGlobalCapUsd`    |
+| Per-worker USD per epoch    | `setWorkerCapUsd`    |
 | Per-requester USD per epoch | `setRequesterCapUsd` |
-| Max USD per task | `setMaxUsdPerTask` |
+| Max USD per task            | `setMaxUsdPerTask`   |
 
 `checkAndConsume(taskId, requester, worker, usdAmount)` reverts if any cap would be exceeded;
 `release(taskId, requester, worker, usdAmount, consumedEpoch)` reverses a previous consumption
@@ -187,6 +187,30 @@ is checked against the task's running total across all its winners (`taskUsed(ta
 against each call alone, and the hook releases against the vault and budget a reservation was
 made on even if `setVault` or `setEpochBudget` has since replaced them. Epochs are time-based:
 `(block.timestamp - epochStart) / epochDuration`, rolled over lazily on the next call.
+
+### Zero-age reservation share
+
+Since rev031 a reservation whose requester and worker both have a zero age multiplier when it is
+made (both younger than `rampThresholds[0]` while `rampMultipliers[0]` is `0`) is taken only while
+the epoch's global usage, with it added, stays within `zeroAgeReserveShareBps()` of
+`globalCapUsd`. Past that point the hook reserves nothing and consumes no budget, as for an
+exhausted budget, and the USDC flow goes on. Such reservations together therefore never hold more
+than the share. The gate is measured against all usage, so once reservations by any wallets pass
+the share, a fresh pair reserves nothing until usage falls or the epoch rolls. Crediting still uses
+the wallets' age at payout, so a fresh pair whose task pays after the first ramp step is credited
+at that step. A reservation where either wallet has a non-zero multiplier is not gated. The owner
+sets the share with `setZeroAgeReserveShareBps` (0 to 10000; 10000 lifts the gate, 0 refuses every
+zero-multiplier reservation). Until it is set, `DEFAULT_ZERO_AGE_RESERVE_SHARE_BPS` (1000, 10%)
+applies. Without the gate, fresh wallet pairs, which earn nothing, could reserve the whole global
+budget at claim and hold it across the epoch roll.
+The gate applies only when both multipliers are zero; a reservation where either the requester or
+the worker has a non-zero multiplier is never gated.
+
+A Bounty or Benchmark payout (Path B, no reservation) follows the same rule at payout: a winner
+whose multiplier and the requester's are both zero would be credited nothing, so since rev031 it is
+skipped before the budget is touched. It consumes no epoch budget, moves no vault tokens and emits
+no `RewardPaid`, and it does not count toward the per-task cap. Any other winner is paid as before,
+at its age at payout.
 
 Caps are always checked/consumed/released against `usdBonusValue` (the bonus amount
 actually converted to tokens), never the raw `rewardUsd`. This was a latent bug in an
@@ -252,7 +276,7 @@ captured authorization cannot be re-presented by whoever holds the relaying key.
 
 The same binding was enforced off-chain before this, and still is; the checks
 are complementary rather than alternatives. What changed is that the rule is now
-enforceable against *any* caller, including a future code path that forgets to apply it,
+enforceable against _any_ caller, including a future code path that forgets to apply it,
 rather than resting on one hot key remaining correct forever.
 
 The message names the wallet, chain id and hook. Without the wallet, one ERC-1271 owner
@@ -290,20 +314,20 @@ See `DeployRewardHook.s.sol` and `DeployRewardHookTestnet.s.sol` for the authori
 list — do not rely on this doc for exact names; grep the scripts before deploying.
 Summary:
 
-| Variable | Required | Description |
-|---|---|---|
-| `FORGE_PROTOCOL_TOKEN` | yes | DREAMS token address |
-| `FORGE_DIAMOND_ADDRESS` | yes | TaskMarket Diamond proxy |
-| `FORGE_DREAMS_PER_USDC` | yes | Whole DREAMS per $1 (e.g. `347`); scaled ×1e18 by the script |
-| `FORGE_BONUS_BPS` | yes (mainnet) | USD bonus intensity in bps, e.g. `750` = 7.5% of task value; testnet script defaults to `750` |
-| `FORGE_EPOCH_DURATION` | yes | Seconds per emission epoch (e.g. `604800` = 1 week) |
-| `FORGE_GLOBAL_EPOCH_CAP_USD` | yes | Max USD-value emitted per epoch (USDC base units) |
-| `FORGE_WORKER_CAP_USD` | yes | Per-worker per-epoch cap (USDC base units) |
-| `FORGE_REQUESTER_CAP_USD` | yes | Per-requester per-epoch cap (USDC base units) |
-| `FORGE_MAX_USD_PER_TASK` | yes | Per-task emission cap (USDC base units) |
-| `FORGE_WORKER_SPLIT_BPS` | no | Worker share in bps (default 8000 = 80%) |
-| _(none)_ | — | The authorized relayer is read from the forwarder's `authorizedRelayer()` at deploy time rather than supplied separately, so the hook and the forwarder cannot disagree about who may relay |
-| `FORGE_INITIAL_VAULT_BALANCE` | no | Tokens to seed the vault with at deploy (wei) |
+| Variable                      | Required      | Description                                                                                                                                                                                 |
+| ----------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FORGE_PROTOCOL_TOKEN`        | yes           | DREAMS token address                                                                                                                                                                        |
+| `FORGE_DIAMOND_ADDRESS`       | yes           | TaskMarket Diamond proxy                                                                                                                                                                    |
+| `FORGE_DREAMS_PER_USDC`       | yes           | Whole DREAMS per $1 (e.g. `347`); scaled ×1e18 by the script                                                                                                                                |
+| `FORGE_BONUS_BPS`             | yes (mainnet) | USD bonus intensity in bps, e.g. `750` = 7.5% of task value; testnet script defaults to `750`                                                                                               |
+| `FORGE_EPOCH_DURATION`        | yes           | Seconds per emission epoch (e.g. `604800` = 1 week)                                                                                                                                         |
+| `FORGE_GLOBAL_EPOCH_CAP_USD`  | yes           | Max USD-value emitted per epoch (USDC base units)                                                                                                                                           |
+| `FORGE_WORKER_CAP_USD`        | yes           | Per-worker per-epoch cap (USDC base units)                                                                                                                                                  |
+| `FORGE_REQUESTER_CAP_USD`     | yes           | Per-requester per-epoch cap (USDC base units)                                                                                                                                               |
+| `FORGE_MAX_USD_PER_TASK`      | yes           | Per-task emission cap (USDC base units)                                                                                                                                                     |
+| `FORGE_WORKER_SPLIT_BPS`      | no            | Worker share in bps (default 8000 = 80%)                                                                                                                                                    |
+| _(none)_                      | —             | The authorized relayer is read from the forwarder's `authorizedRelayer()` at deploy time rather than supplied separately, so the hook and the forwarder cannot disagree about who may relay |
+| `FORGE_INITIAL_VAULT_BALANCE` | no            | Tokens to seed the vault with at deploy (wei)                                                                                                                                               |
 
 ### Deploy
 
@@ -414,6 +438,7 @@ and stay there is waiting for a quiet moment that never arrives. Freeze it inste
    `paid` states are excluded because `seedRewardStates` rejects them; empty ones because there is
    nothing to carry. That also excludes reservations orphaned by an earlier swap, whose state
    lives on a hook that is no longer the one being read.
+
 5. Re-point: `vault.setHook(proxy)`, `budget.setHook(proxy)`, and `setDefaultHooks([proxy])` on
    the Diamond.
 6. **`make contract evm unpause <network>`.** In-flight tasks now settle against the new hook exactly

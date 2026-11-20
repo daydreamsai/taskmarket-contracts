@@ -46,6 +46,7 @@ contract WorkerFacet {
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         if (worker == address(0)) revert ITMPCore.InvalidWorker();
         LibProject.requireNotActingParty(s, taskId, worker);
+        LibProject.requireNotJudge(s, taskId, worker);
         if (task.mode != TMP_CLAIM) revert ITMPCore.NotAClaimTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
@@ -102,6 +103,7 @@ contract WorkerFacet {
         LibGuards._requireRequester(s, taskId, requester);
         if (worker == address(0)) revert ITMPCore.InvalidWorker();
         LibProject.requireNotActingParty(s, taskId, worker);
+        LibProject.requireNotJudge(s, taskId, worker);
         if (task.mode != TMP_PITCH) revert ITMPCore.NotAPitchTask();
         if (task.status != ITMPCore.TaskStatus.Open) revert ITMPCore.TaskNotOpen();
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
@@ -189,6 +191,7 @@ contract WorkerFacet {
         ITMPCore.Task storage task = s.tasks[taskId];
         if (task.requester == address(0)) revert ITMPCore.TaskDoesNotExist();
         LibProject.requireNotActingParty(s, taskId, worker);
+        LibProject.requireNotJudge(s, taskId, worker);
         if (block.timestamp > task.expiryTime) revert ITMPCore.TaskIsExpired();
         LibHooksV2.snap(taskId, uint8(task.status));
         // Rev028: a zero hash on a revision resubmission would erase the delivery and restart the
@@ -226,9 +229,13 @@ contract WorkerFacet {
                 && (task.mode == TMP_CLAIM || task.mode == TMP_PITCH || task.mode == TMP_AUCTION)
         ) {
             task.status = ITMPCore.TaskStatus.Review;
-            // Rev030: on a project task the evaluation deadline is held to the project's latest
-            // expiry, as the expiry extension below is, so evaluatorTimeout opens by then.
-            uint256 reviewDeadline = LibProject.boundDeadline(s, taskId, block.timestamp + evalCfg.evaluationWindow);
+            // Rev031: a project task's evaluation deadline is held to the project's latest expiry, so
+            // a delivery the clamp would leave short of the whole window reverts: a short window
+            // would let evaluatorTimeout take the evaluator's stake through no fault of its own.
+            uint256 reviewDeadline = block.timestamp + evalCfg.evaluationWindow;
+            if (LibProject.boundDeadline(s, taskId, reviewDeadline) < reviewDeadline) {
+                revert ITMPCore.ReviewWindowShortened();
+            }
             s.phaseDeadline[taskId] = reviewDeadline;
             LibProject.extendExpiry(s, taskId, reviewDeadline);
         }

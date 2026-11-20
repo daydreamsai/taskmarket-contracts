@@ -17,6 +17,7 @@ import { IFundingPoolManager } from "../src/interfaces/IFundingPoolManager.sol";
 import { ITMPFundingPool } from "../src/interfaces/ITMPFundingPool.sol";
 import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
+import { grantHash, noGrantLimits } from "./helpers/GrantHelper.sol";
 
 /// @dev Stands in for the pool implementation a rev028 diamond runs: it does not report revision 29,
 ///      which is how the upgrade script tells the proxy still needs the new implementation.
@@ -75,8 +76,8 @@ contract Rev029UpgradeTest is Test, DiamondTestHelper {
 
         // A grant accepted and revoked on the rev028 diamond: the state rev029 exists to unstick.
         ITMPProject.GrantTerms memory terms = _terms(5e6);
-        _relay(projectOwner, 0, abi.encodeCall(projects.grantOperator, (projectId, operator, terms)));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (projectId, keccak256(abi.encode(terms)))));
+        _relay(projectOwner, 0, abi.encodeCall(projects.grantOperator, (projectId, operator, terms, noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (projectId, grantHash(terms))));
         _relay(projectOwner, 0, abi.encodeCall(projects.revokeOperator, (projectId, operator)));
 
         // rev028 routing: no raiseGrantCap.
@@ -128,8 +129,8 @@ contract Rev029UpgradeTest is Test, DiamondTestHelper {
         assertTrue(g.revoked && g.accepted, "grant survives the cut as it was");
 
         ITMPProject.GrantTerms memory fresh = _terms(6e6);
-        _relay(projectOwner, 0, abi.encodeCall(projects.grantOperator, (projectId, operator, fresh)));
-        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (projectId, keccak256(abi.encode(fresh)))));
+        _relay(projectOwner, 0, abi.encodeCall(projects.grantOperator, (projectId, operator, fresh, noGrantLimits())));
+        _relay(operator, 0, abi.encodeCall(projects.acceptGrant, (projectId, grantHash(fresh))));
         _relay(projectOwner, 0, abi.encodeCall(projects.raiseGrantCap, (projectId, operator, 8e6)));
         g = projects.getGrant(projectId, operator);
         assertTrue(g.accepted && !g.revoked);

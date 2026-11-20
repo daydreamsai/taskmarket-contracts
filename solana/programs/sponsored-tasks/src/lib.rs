@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::associated_token::{get_associated_token_address_with_program_id, AssociatedToken};
 use anchor_spl::token_2022::spl_token_2022::extension::{
     BaseStateWithExtensions, ExtensionType, StateWithExtensions,
 };
@@ -306,7 +306,9 @@ pub mod sponsored_tasks {
         Ok(())
     }
 
-    /// Settler-gated: the settler signatures come in as signer remaining accounts.
+    /// Settler-gated: the settler signatures come in as signer remaining accounts. The deadline
+    /// must be later than the clock (`DeadlineInPast`) and at most `MAX_RESERVATION_SECS` after
+    /// it (`DeadlineTooFar`), so `release_expired` always becomes reachable.
     #[allow(clippy::too_many_arguments)]
     pub fn reserve(
         ctx: Context<Reserve>,
@@ -325,10 +327,9 @@ pub mod sponsored_tasks {
             manager.chain_id == task_chain_id,
             SponsoredTasksError::ManagerChainMismatch
         );
-        require!(
-            deadline > Clock::get()?.unix_timestamp,
-            SponsoredTasksError::DeadlineInPast
-        );
+        let now = Clock::get()?.unix_timestamp;
+        require!(deadline > now, SponsoredTasksError::DeadlineInPast);
+        require_deadline_within_max(deadline, now)?;
 
         let vault_key = ctx.accounts.vault.key();
         let vault = &mut ctx.accounts.vault;
@@ -407,6 +408,50 @@ pub mod sponsored_tasks {
         )? {
             emit_cpi!(event);
         }
+        Ok(())
+    }
+
+    /// Settler-gated and blocked while paused. Moves a reserved reservation's deadline later, for a
+    /// task whose expiry the task chain extended after `reserve`, so `release_expired` cannot
+    /// return the reservation while the task is still live. The new deadline must be later than
+    /// both the current one and the clock (`DeadlineInPast`) and at most `MAX_RESERVATION_SECS`
+    /// after the clock (`DeadlineTooFar`); a settled or released reservation fails with
+    /// `ReservationWrongState`.
+    pub fn extend_deadline(ctx: Context<ExtendDeadline>, new_deadline: i64) -> Result<()> {
+        let config = &ctx.accounts.config;
+        require_settlers(config, ctx.remaining_accounts)?;
+        require!(!config.paused, SponsoredTasksError::Paused);
+        let vault = &ctx.accounts.vault;
+        require!(
+            vault.status == VaultStatus::Active,
+            SponsoredTasksError::VaultNotActive
+        );
+        let vault_key = vault.key();
+        let reservation = &mut ctx.accounts.reservation;
+        require!(
+            reservation.epoch == vault.epoch,
+            SponsoredTasksError::EpochMismatch
+        );
+        require!(
+            reservation.state == ReservationState::Reserved,
+            SponsoredTasksError::ReservationWrongState
+        );
+        let old_deadline = reservation.deadline;
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            new_deadline > old_deadline && new_deadline > now,
+            SponsoredTasksError::DeadlineInPast
+        );
+        require_deadline_within_max(new_deadline, now)?;
+        reservation.deadline = new_deadline;
+        emit_cpi!(ReservationDeadlineExtended {
+            vault: vault_key,
+            reservation: reservation.key(),
+            task_chain_id: reservation.task_chain_id,
+            task_id: reservation.task_id,
+            old_deadline,
+            new_deadline,
+        });
         Ok(())
     }
 
@@ -529,8 +574,10 @@ pub mod sponsored_tasks {
     }
 
     /// Blocked while paused. Pays award leaf `leaf_index` of a settled reservation to the
-    /// worker's bound payout address. Anyone may relay it: the proof against the settled root
-    /// authorizes, and the `ClaimReceipt` it creates makes a second claim of the leaf fail.
+    /// worker's bound payout address, into that address's associated token account
+    /// (`PayoutAccountNotAssociated` otherwise). Anyone may relay it: the proof against the
+    /// settled root authorizes, and the `ClaimReceipt` it creates makes a second claim of the
+    /// leaf fail.
     /// It pays only once `Config::claim_delay` has passed since `settle`.
     pub fn claim(
         ctx: Context<Claim>,
@@ -603,6 +650,17 @@ pub mod sponsored_tasks {
             destination.owner,
             payout,
             anchor_lang::error::ErrorCode::ConstraintTokenOwner
+        );
+        // Claims are relayed by anyone, so the relayer must not pick which of the payout's token
+        // accounts receives the award: a program-derived payout may act only on its associated one.
+        require_keys_eq!(
+            destination.key(),
+            get_associated_token_address_with_program_id(
+                &payout,
+                &ctx.accounts.mint.key(),
+                &ctx.accounts.token_program.key(),
+            ),
+            SponsoredTasksError::PayoutAccountNotAssociated
         );
 
         pay_from_vault(
@@ -702,7 +760,9 @@ pub mod sponsored_tasks {
     /// Admin-only and open whether or not the program is paused: undoes a settlement nobody has
     /// claimed against, so the settlers can sign a corrected root. It needs no pause because it
     /// touches only the one reservation, so revoking a bad root leaves claims on every other
-    /// vault running; a claimed leaf or fee still blocks it.
+    /// vault running; a claimed leaf or fee still blocks it. The restored reservation's deadline
+    /// becomes at least one claim delay from now, so the settlers can sign the corrected root
+    /// before `release_expired` opens.
     pub fn revoke_settlement(ctx: Context<RevokeSettlement>) -> Result<()> {
         let vault_key = ctx.accounts.vault.key();
         let vault = &mut ctx.accounts.vault;
@@ -776,6 +836,13 @@ pub mod sponsored_tasks {
         vault.total_settled = settled_after;
         vault.total_reserved = reserved_after;
         let root = reservation.root;
+        // A deadline that passed while the root was installed would let anyone `release_expired`
+        // the restored reservation before the settlers re-sign, and a released reservation's
+        // account blocks the task from ever being reserved again.
+        let resettle_by = Clock::get()?
+            .unix_timestamp
+            .saturating_add(ctx.accounts.config.claim_delay().min(i64::MAX as u64) as i64);
+        reservation.deadline = reservation.deadline.max(resettle_by);
         reservation.state = ReservationState::Reserved;
         reservation.root = [0; 32];
         reservation.leaf_count = 0;
@@ -881,6 +948,7 @@ pub mod sponsored_tasks {
             payout,
             nonce,
             effective_at,
+            now,
         )?;
         emit_cpi!(PayoutBindingPending {
             task_chain_id,
@@ -948,6 +1016,40 @@ pub mod sponsored_tasks {
         });
         Ok(())
     }
+
+    /// Sponsor-only and open while paused. Sends every token in an exited vault's token account
+    /// to the sponsor's recipient: tokens sent to the vault after `emergency_exit`. An exited
+    /// vault owes nothing, so its whole balance is the sponsor's.
+    pub fn sweep_exited(ctx: Context<SweepExited>) -> Result<()> {
+        require!(
+            ctx.accounts.vault.status == VaultStatus::Exited,
+            SponsoredTasksError::VaultNotExited
+        );
+        let amount = ctx.accounts.vault_token_account.amount;
+        if amount > 0 {
+            pay_from_vault(
+                &ctx.accounts.vault,
+                &ctx.accounts.mint,
+                &ctx.accounts.vault_token_account,
+                &ctx.accounts.recipient_token_account,
+                &ctx.accounts.token_program,
+                amount,
+            )?;
+        }
+        let vault_key = ctx.accounts.vault.key();
+        let vault = &mut ctx.accounts.vault;
+        vault.total_withdrawn = vault
+            .total_withdrawn
+            .checked_add(amount)
+            .ok_or(SponsoredTasksError::Overflow)?;
+        emit_cpi!(ExitedVaultSwept {
+            vault: vault_key,
+            sponsor: vault.sponsor,
+            recipient: ctx.accounts.recipient_token_account.key(),
+            amount,
+        });
+        Ok(())
+    }
 }
 
 /// Claims against a root wait the claim delay `settle` recorded, counted from the time it
@@ -996,6 +1098,14 @@ fn release_reservation(
     }))
 }
 
+fn require_deadline_within_max(deadline: i64, now: i64) -> Result<()> {
+    require!(
+        deadline <= now.saturating_add(MAX_RESERVATION_SECS),
+        SponsoredTasksError::DeadlineTooFar
+    );
+    Ok(())
+}
+
 fn require_claim_delay_elapsed(reservation: &Reservation) -> Result<()> {
     let claimable_at = reservation
         .settled_at
@@ -1033,7 +1143,10 @@ fn write_binding(
 }
 
 /// Stores a settler-attested payout as pending until `effective_at`; the current payout keeps
-/// being paid until then. The nonce sequence is shared with `write_binding`.
+/// being paid until then. The nonce sequence is shared with `write_binding`. An earlier attested
+/// payout that is already effective at `now` is first promoted into `payout`, so replacing it
+/// never falls back to the payout before it.
+#[allow(clippy::too_many_arguments)]
 fn write_pending_binding(
     binding: &mut Account<PayoutBinding>,
     bump: u8,
@@ -1042,10 +1155,12 @@ fn write_pending_binding(
     payout: Pubkey,
     nonce: u64,
     effective_at: i64,
+    now: i64,
 ) -> Result<()> {
     require!(nonce != u64::MAX, SponsoredTasksError::InvalidPayoutNonce);
     if binding.agent == agent {
         require!(nonce > binding.nonce, SponsoredTasksError::StalePayoutNonce);
+        binding.payout = binding.effective_payout(now);
     }
     binding.task_chain_id = task_chain_id;
     binding.agent = agent;
@@ -1097,7 +1212,7 @@ fn validate_settlers(settlers: &[Pubkey], threshold: u8) -> Result<()> {
     );
     for (i, s) in settlers.iter().enumerate() {
         require!(
-            !settlers[..i].contains(s),
+            *s != Pubkey::default() && !settlers[..i].contains(s),
             SponsoredTasksError::InvalidSettlers
         );
     }
@@ -1357,6 +1472,16 @@ pub struct Release<'info> {
 
 #[event_cpi]
 #[derive(Accounts)]
+pub struct ExtendDeadline<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    pub vault: Account<'info, Vault>,
+    #[account(mut, has_one = vault)]
+    pub reservation: Account<'info, Reservation>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
 pub struct ReleaseExpired<'info> {
     #[account(mut)]
     pub vault: Account<'info, Vault>,
@@ -1506,6 +1631,25 @@ pub struct AcceptAdmin<'info> {
 #[event_cpi]
 #[derive(Accounts)]
 pub struct EmergencyExit<'info> {
+    #[account(
+        mut,
+        has_one = sponsor @ SponsoredTasksError::NotSponsor,
+        has_one = mint,
+        has_one = token_program
+    )]
+    pub vault: Account<'info, Vault>,
+    pub sponsor: Signer<'info>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, address = vault.token_account)]
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, token::mint = mint, token::token_program = token_program)]
+    pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[event_cpi]
+#[derive(Accounts)]
+pub struct SweepExited<'info> {
     #[account(
         mut,
         has_one = sponsor @ SponsoredTasksError::NotSponsor,

@@ -37,7 +37,7 @@ contract SponsoredTaskFactoryV2Test is VaultV2Base {
         bytes memory sig = _createSig(ownerKey, vaultOwner, SALT, 0, deadline);
 
         vm.expectEmit(false, true, true, false, address(factory));
-        emit VaultCreated(bytes32(0), predicted, vaultOwner, vaultOwner, address(token), block.chainid, 2, SALT);
+        emit VaultCreated(bytes32(0), predicted, vaultOwner, vaultOwner, address(token), block.chainid, 3, SALT);
         vm.prank(relayer);
         (address vault, bytes32 vaultId) = factory.createVaultBySig(address(token), vaultOwner, SALT, deadline, sig);
 
@@ -46,9 +46,9 @@ contract SponsoredTaskFactoryV2Test is VaultV2Base {
         assertEq(factory.vaultOf(vaultId), vault);
         assertTrue(registry.isVault(vault));
         assertEq(SponsoredTasksVaultV2(vault).owner(), vaultOwner);
-        assertEq(SponsoredTasksVaultV2(vault).VAULT_VERSION(), 2);
+        assertEq(SponsoredTasksVaultV2(vault).VAULT_VERSION(), 3);
         assertEq(factory.createNonces(vaultOwner), 1);
-        assertEq(factory.IMPLEMENTATION_VERSION(), 2);
+        assertEq(factory.IMPLEMENTATION_VERSION(), 3);
     }
 
     function test_RevertWhen_CreateSignatureIsReplayed() public {

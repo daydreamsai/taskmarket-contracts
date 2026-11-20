@@ -16,6 +16,7 @@ import { MockPGTRForwarder } from "./mocks/MockPGTRForwarder.sol";
 import { DiamondTestHelper } from "./helpers/DiamondTestHelper.sol";
 import { taskConfig } from "./helpers/TaskConfigHelper.sol";
 import { noEvaluatorConfig, stakeTerms } from "./helpers/EvaluatorConfigHelper.sol";
+import { grantHash, noGrantLimits } from "./helpers/GrantHelper.sol";
 
 /// @dev The standalone payout gate hook V2: every path of the original gate, plus the re-link after
 ///      a gating task fails, the deadline extension, and the project operator's calls.
@@ -834,8 +835,8 @@ contract PayoutGateHookTest is DiamondTestHelper {
             _relay(requester, budget, abi.encodeCall(projects.createProject, (address(usdc), budget, endsAt, 30 days))),
             (uint256)
         );
-        _relay(requester, 0, abi.encodeCall(projects.grantOperator, (projectId, runner, terms)));
-        _relay(runner, 0, abi.encodeCall(projects.acceptGrant, (projectId, keccak256(abi.encode(terms)))));
+        _relay(requester, 0, abi.encodeCall(projects.grantOperator, (projectId, runner, terms, noGrantLimits())));
+        _relay(runner, 0, abi.encodeCall(projects.acceptGrant, (projectId, grantHash(terms))));
     }
 
     function _projectTask(address sender, uint256 pid, bytes memory config) internal returns (bytes32 taskId) {
